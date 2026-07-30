@@ -1834,6 +1834,53 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('does not overwrite a saved reading position with a restore-generated scroll event', () => {
+    const messageA = {
+      id: 'transient-layout-a',
+      role: 'assistant' as const,
+      content: '会话 A 的长内容',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'transient-layout-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="transient-layout-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    rerender(<ScrollableMessageArea conversationKey="transient-layout-b" messages={[messageB]} />)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 0
+    rerender(<ScrollableMessageArea conversationKey="transient-layout-a" messages={[messageA]} />)
+    scroller.scrollTop = 850
+    fireEvent.scroll(scroller)
+
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 300,
+      behavior: 'auto',
+    })
+  })
+
   test('restores a streaming conversation to its latest bottom after switching back', () => {
     const streamingMessage = {
       id: 'streaming-a',
@@ -2331,6 +2378,7 @@ describe('ScrollableMessageArea', () => {
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     scroller.scrollTop = 0
+    fireEvent.wheel(scroller, { deltaY: -80 })
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea
@@ -2353,6 +2401,82 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {
+    const streamingMessage = {
+      id: 'guidance-stream',
+      role: 'assistant' as const,
+      content: '正在处理现有回复',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="guidance-scroll" messages={[streamingMessage]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 240,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    flushScheduledTimers()
+    scroller.scrollTop = 240
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1000,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="guidance-scroll"
+        messages={[
+          {
+            ...streamingMessage,
+            id: 'guidance-stream-before',
+            status: 'done',
+            runtimeGuidanceSplitBefore: true,
+          },
+          {
+            id: 'guidance-user',
+            role: 'user',
+            content: '请优先修复滚动问题',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+            runtimeGuidance: true,
+          },
+          {
+            ...streamingMessage,
+            id: 'guidance-stream-after',
+            content: '',
+            runtimeGuidanceContinuation: true,
+          },
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1000,
+      behavior: 'auto',
+    })
   })
 
   test('keeps streaming content pinned when the user was already at the bottom', () => {

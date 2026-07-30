@@ -7,8 +7,6 @@
 import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import { ApiError } from '@/apis/client'
-import { createTextKnowledgeDocument } from '@/apis/knowledge'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,6 +27,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useUser } from '@/features/common/UserContext'
+import {
+  MAX_KNOWLEDGE_DOCUMENT_CONTENT_LENGTH,
+  MAX_KNOWLEDGE_DOCUMENT_TITLE_LENGTH,
+  useSaveKnowledgeDocument,
+} from '@/features/knowledge/document/hooks/useSaveKnowledgeDocument'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   AllGroupedKnowledgeResponse,
@@ -41,9 +44,6 @@ const WysiwygEditor = dynamic(
   () => import('@/components/common/WysiwygEditor').then(module => module.WysiwygEditor),
   { ssr: false }
 )
-
-const MAX_TITLE_LENGTH = 255
-const MAX_CONTENT_LENGTH = 500_000
 
 interface WritableKnowledgeBaseOption {
   knowledgeBase: KnowledgeBaseWithGroupInfo
@@ -103,14 +103,10 @@ export function SaveToKnowledgeDialog({
 }: SaveToKnowledgeDialogProps) {
   const { t } = useTranslation('chat')
   const { user } = useUser()
-  const [title, setTitle] = useState(initialTitle)
-  const [content, setContent] = useState(initialContent)
   const [selectedKnowledgeBaseId, setSelectedKnowledgeBaseId] = useState<string>()
   const [options, setOptions] = useState<WritableKnowledgeBaseOption[]>([])
   const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
   const [loadError, setLoadError] = useState(false)
-  const [submitError, setSubmitError] = useState<string>()
   const [defaultKnowledgeBaseReadOnly, setDefaultKnowledgeBaseReadOnly] = useState(false)
 
   const getScopeLabel = useCallback(
@@ -154,10 +150,7 @@ export function SaveToKnowledgeDialog({
 
   useEffect(() => {
     if (!open) return
-    setTitle(initialTitle)
-    setContent(initialContent)
     setSelectedKnowledgeBaseId(undefined)
-    setSubmitError(undefined)
     setDefaultKnowledgeBaseReadOnly(false)
     void loadKnowledgeBases()
   }, [initialContent, initialTitle, loadKnowledgeBases, open])
@@ -167,45 +160,31 @@ export function SaveToKnowledgeDialog({
     [options, selectedKnowledgeBaseId]
   )
 
-  const trimmedTitle = title.trim()
-  const trimmedContent = content.trim()
-  const isValid =
-    Boolean(selectedOption) &&
-    trimmedTitle.length > 0 &&
-    trimmedTitle.length <= MAX_TITLE_LENGTH &&
-    trimmedContent.length > 0 &&
-    content.length <= MAX_CONTENT_LENGTH
-
-  const handleSubmit = async () => {
-    if (!selectedOption || !isValid) return
-    setSubmitting(true)
-    setSubmitError(undefined)
-    try {
-      const document = await createTextKnowledgeDocument({
-        knowledge_base_id: selectedOption.knowledgeBase.id,
-        name: trimmedTitle,
-        content,
-      })
+  const {
+    title,
+    setTitle,
+    content,
+    setContent,
+    isSaving: submitting,
+    isValid,
+    error: submitError,
+    clearError,
+    submit,
+  } = useSaveKnowledgeDocument({
+    open,
+    initialTitle,
+    initialContent,
+    knowledgeBaseId: selectedOption?.knowledgeBase.id,
+    onSaved: document => {
+      if (!selectedOption) return
       onCreated(document, selectedOption.knowledgeBase)
       onOpenChange(false)
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 403) {
-        setSelectedKnowledgeBaseId(undefined)
-        setSubmitError(t('saveToKnowledge.errors.permissionChanged'))
-        void loadKnowledgeBases()
-      } else if (error instanceof ApiError && error.status === 404) {
-        setSelectedKnowledgeBaseId(undefined)
-        setSubmitError(t('saveToKnowledge.errors.targetMissing'))
-        void loadKnowledgeBases()
-      } else if (error instanceof ApiError && error.status === 422) {
-        setSubmitError(t('saveToKnowledge.errors.invalidContent'))
-      } else {
-        setSubmitError(t('saveToKnowledge.errors.saveFailed'))
-      }
-    } finally {
-      setSubmitting(false)
-    }
-  }
+    },
+    onTargetUnavailable: () => {
+      setSelectedKnowledgeBaseId(undefined)
+      void loadKnowledgeBases()
+    },
+  })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -223,7 +202,10 @@ export function SaveToKnowledgeDialog({
             <Label htmlFor="save-to-knowledge-target">{t('saveToKnowledge.targetLabel')}</Label>
             <Select
               value={selectedKnowledgeBaseId}
-              onValueChange={setSelectedKnowledgeBaseId}
+              onValueChange={value => {
+                clearError()
+                setSelectedKnowledgeBaseId(value)
+              }}
               disabled={loading || options.length === 0}
             >
               <SelectTrigger
@@ -279,7 +261,7 @@ export function SaveToKnowledgeDialog({
               id="save-to-knowledge-title"
               value={title}
               onChange={event => setTitle(event.target.value)}
-              maxLength={MAX_TITLE_LENGTH}
+              maxLength={MAX_KNOWLEDGE_DOCUMENT_TITLE_LENGTH}
               data-testid="save-to-knowledge-title-input"
             />
           </div>
@@ -297,14 +279,14 @@ export function SaveToKnowledgeDialog({
             <p className="text-right text-xs text-text-tertiary">
               {t('saveToKnowledge.contentLength', {
                 current: content.length,
-                max: MAX_CONTENT_LENGTH,
+                max: MAX_KNOWLEDGE_DOCUMENT_CONTENT_LENGTH,
               })}
             </p>
           </div>
 
           {submitError && (
             <p className="text-sm text-error" role="alert">
-              {submitError}
+              {t(`saveToKnowledge.errors.${submitError}`)}
             </p>
           )}
         </div>
@@ -322,7 +304,7 @@ export function SaveToKnowledgeDialog({
           <Button
             variant="primary"
             className="min-h-11"
-            onClick={handleSubmit}
+            onClick={() => void submit()}
             disabled={!isValid || submitting || loading}
             data-testid="save-to-knowledge-submit-button"
           >

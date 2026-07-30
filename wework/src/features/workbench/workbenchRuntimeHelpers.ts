@@ -117,6 +117,17 @@ export function isSameRuntimeTaskAddress(
   )
 }
 
+export function mergeRuntimeTaskHandles(
+  base?: Record<string, unknown> | null,
+  override?: Record<string, unknown> | null
+): Record<string, unknown> | undefined {
+  if (!base && !override) return undefined
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  }
+}
+
 function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
   return workspaces.flatMap(workspace =>
     workspace.tasks.map(task => runtimeTaskAddressFromWorkspace(workspace, task))

@@ -117,6 +117,56 @@ fn persistent_app_server_enables_deferred_mcp_tool_search() {
     assert!(!config
         .config_overrides
         .contains(&"features.tool_search_always_defer_mcp_tools=false".to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+}
+
+#[test]
+fn initialize_params_does_not_advertise_openai_form_elicitation_extension() {
+    let params = initialize_params();
+
+    assert_eq!(params["capabilities"]["experimentalApi"], true);
+    assert!(params["capabilities"]
+        .get("mcpServerOpenaiFormElicitation")
+        .is_none());
+}
+
+#[test]
+fn mcp_form_elicitation_maps_enum_names_to_request_user_input_options() {
+    let params = json!({
+        "serverName": "wegent-sites",
+        "mode": "form",
+        "message": "请选择内网访问范围。",
+        "requestedSchema": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string",
+                    "title": "访问范围",
+                    "description": "请选择站点发布到内网后的访问范围。",
+                    "enum": ["all", "owner", "custom"],
+                    "enumNames": ["所有人", "仅自己", "指定人"]
+                }
+            },
+            "required": ["audience"]
+        }
+    });
+
+    let payload = mcp_server_elicitation_request_user_input_params(&params)
+        .expect("enum + enumNames form should map to request_user_input payload");
+
+    assert_eq!(payload["itemId"], "mcp_server_elicitation");
+    assert_eq!(payload["questions"][0]["id"], "audience");
+    assert_eq!(payload["questions"][0]["header"], "访问范围");
+    assert_eq!(
+        payload["questions"][0]["options"],
+        json!([
+            {"label": "所有人", "description": "all"},
+            {"label": "仅自己", "description": "owner"},
+            {"label": "指定人", "description": "custom"}
+        ])
+    );
 }
 
 #[test]
@@ -274,6 +324,9 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -320,6 +373,21 @@ fn function_tool_profile_enables_responses_tool_conversion() {
     );
 
     assert!(upstream.convert_custom_tools);
+}
+
+#[test]
+fn explicit_upstream_uses_configured_max_output_tokens() {
+    let upstream = explicit_codex_upstream(
+        &json!({
+            "model_id": "moonshot-kimi-k3",
+            "upstream_api_format": "anthropic-messages",
+            "max_output_tokens": 96_000
+        }),
+        "https://example.com",
+        "secret",
+    );
+
+    assert_eq!(upstream.max_output_tokens, Some(96_000));
 }
 
 #[test]
@@ -577,6 +645,26 @@ fn codex_launch_config_forwards_web_search_mode() {
 }
 
 #[test]
+fn codex_launch_config_defaults_context_window_to_256k() {
+    let request = ExecutionRequest {
+        prompt: Value::String("create a file".to_owned()),
+        model_config: json!({
+            "model_id": "moonshot-kimi-k3",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config = build_codex_launch_config(&request);
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert_eq!(config.get("model_context_window"), Some(&json!(262_144)));
+}
+
+#[test]
 fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
     let request = ExecutionRequest {
         prompt: Value::String("create a file".to_owned()),
@@ -700,7 +788,7 @@ fn required_loopback_hosts_are_merged_into_no_proxy() {
 }
 
 #[test]
-fn codex_launch_config_does_not_forward_task_identity() {
+fn codex_launch_config_forwards_task_identity_to_thread_only() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
@@ -722,18 +810,26 @@ fn codex_launch_config_does_not_forward_task_identity() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_TASK_ID")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.AUTH_TOKEN")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
-        .is_none());
+    assert!(!launch_config
+        .env
+        .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_SKILL_USER_NAME"));
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
 }
 
 #[test]
@@ -744,6 +840,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "model_provider=wecode-openai".to_owned(),
             "model_catalog_json=\"/tmp/wework-models.json\"".to_owned(),
             "mcp_servers.wework.command=\"node\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_TASK_ID=\"task-525\"".to_owned(),
+            "shell_environment_policy.set.AUTH_TOKEN=\"task-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
         ],
         model_provider: Some("wecode-openai".to_owned()),
         effort: Some("high".to_owned()),
@@ -765,6 +865,17 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
         .config_overrides
         .iter()
         .any(|value| value.starts_with("model_catalog_json=")));
+    for key in [
+        "WEGENT_TASK_ID",
+        "AUTH_TOKEN",
+        "WEGENT_SKILL_IDENTITY_TOKEN",
+        "WEGENT_SKILL_USER_NAME",
+    ] {
+        assert!(!launch_config
+            .config_overrides
+            .iter()
+            .any(|value| value.starts_with(&format!("shell_environment_policy.set.{key}="))));
+    }
     assert!(launch_config
         .config_overrides
         .contains(&"goals=true".to_owned()));
@@ -1065,6 +1176,49 @@ fn codex_run_state_uses_latest_completed_agent_message_in_same_turn() {
 }
 
 #[test]
+fn codex_run_state_prefers_explicit_final_text_over_unphased_text() {
+    let mut state = CodexRunState::default();
+
+    for (id, phase, text) in [
+        ("msg-uncertain", None, "I may need another tool."),
+        ("msg-final", Some("final_answer"), "The task is complete."),
+    ] {
+        assert!(state
+            .handle_message(&json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": id,
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "phase": phase,
+                        "text": text
+                    }
+                }
+            }))
+            .is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "The task is complete.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn codex_run_state_does_not_duplicate_completed_text_after_matching_delta() {
     let mut state = CodexRunState::default();
 
@@ -1176,8 +1330,33 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
             params["permissions"],
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_thread_launch_disables_tool_call_mcp_elicitation() {
+    let request = ExecutionRequest::default();
+    let mut launch_config = CodexLaunchConfig::default();
+    launch_config
+        .config_overrides
+        .push(CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned());
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+
+    for params in [thread_start, thread_resume, thread_fork] {
+        assert_eq!(
+            params["config"]["features.tool_call_mcp_elicitation"],
+            false
+        );
+        assert_eq!(
+            params["approvalPolicy"]["granular"]["mcp_elicitations"],
+            true
+        );
     }
 }
 

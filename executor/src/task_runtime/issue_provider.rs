@@ -2,23 +2,39 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
-use reqwest::{Client, RequestBuilder};
-use serde::Deserialize;
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
+use chrono::Utc;
+use reqwest::{
+    multipart::{Form, Part},
+    Client, RequestBuilder,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use url::{form_urlencoded::byte_serialize, Url};
 
 use crate::logging::{format_executor_log, write_executor_log_line};
 
 use super::{
-    credentials::decrypt_provider_credential, IssueComment, LoopItem, TaskCreate, TaskProviderKind,
-    TaskRuntimeError, TaskUpdate,
+    credentials::decrypt_provider_credential, BinaryInput, IssueComment, LoopItem, TaskAttachment,
+    TaskCreate, TaskProviderKind, TaskRuntimeError, TaskUpdate,
 };
 
 const PARENT_MARKER: &str = "Wegent-Parent:";
 const PRIORITY_LABEL_PREFIX: &str = "wegent:priority:";
 const STATUS_LABEL_PREFIX: &str = "wegent:status:";
+const CREATOR_LABEL_PREFIX: &str = "wegent:creator:";
+const ATTACHMENT_BLOCK_START: &str = "<!-- wegent-attachments:v1:start -->";
+const ATTACHMENT_BLOCK_END: &str = "<!-- wegent-attachments:v1:end -->";
+const ATTACHMENT_DATA_PREFIX: &str = "<!-- wegent-attachments:data:";
 const PAGE_SIZE: usize = 100;
 const MAX_PAGES: usize = 100;
 
@@ -199,16 +215,17 @@ impl IssueProvider {
         let number = issue_number(project, task_id)?;
         let updates_labels =
             input.tags.is_some() || input.priority.is_some() || input.status.is_some();
+        let updates_description = input.description.is_some() || input.parent_id.is_some();
         let needs_current = (input.description.is_none() && input.parent_id.is_some())
-            || (updates_labels
-                && (input.tags.is_none() || input.priority.is_none() || input.status.is_none()));
+            || (provider == TaskProviderKind::Gitlab && updates_description)
+            || updates_labels;
         let current = if needs_current {
             Some(self.get(project, provider, task_id).await?)
         } else {
             None
         };
         let labels = if updates_labels {
-            let tags = input.tags.clone().unwrap_or_else(|| {
+            let mut tags = input.tags.clone().unwrap_or_else(|| {
                 current
                     .as_ref()
                     .and_then(|item| item.metadata.get("labels"))
@@ -222,6 +239,19 @@ impl IssueProvider {
                     })
                     .unwrap_or_default()
             });
+            tags.retain(|label| !label.starts_with(CREATOR_LABEL_PREFIX));
+            if let Some(creator_label) = current.as_ref().and_then(|item| {
+                item.metadata
+                    .get("creator_label")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .or_else(|| {
+                        (item.created_by_user_id > 0)
+                            .then(|| format!("{CREATOR_LABEL_PREFIX}{}", item.created_by_user_id))
+                    })
+            }) {
+                tags.push(creator_label);
+            }
             let priority = input
                 .priority
                 .as_deref()
@@ -297,6 +327,16 @@ impl IssueProvider {
                 let url = format!("{}/projects/{repository}/issues/{number}", config.api_base);
                 let mut body = serde_json::Map::new();
                 insert_optional(&mut body, "title", input.title);
+                let description = description
+                    .map(|description| {
+                        let attachments = current
+                            .as_ref()
+                            .map(gitlab_attachment_records)
+                            .transpose()?
+                            .unwrap_or_default();
+                        render_gitlab_attachment_manifest(&description, &attachments)
+                    })
+                    .transpose()?;
                 insert_optional(&mut body, "description", description);
                 if let Some(labels) = labels {
                     body.insert("labels".to_owned(), json!(labels.join(",")));
@@ -403,6 +443,265 @@ impl IssueProvider {
                 "{provider:?}"
             ))),
         }
+    }
+
+    pub(crate) async fn list_attachments(
+        &self,
+        project: &LoopItem,
+        provider: TaskProviderKind,
+        task_id: &str,
+    ) -> Result<Vec<TaskAttachment>, TaskRuntimeError> {
+        if provider != TaskProviderKind::Gitlab {
+            return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            )));
+        }
+        let item = self.get(project, provider, task_id).await?;
+        Ok(gitlab_attachment_records(&item)?
+            .into_iter()
+            .map(|record| record.to_task_attachment(task_id))
+            .collect())
+    }
+
+    pub(crate) async fn upload_attachment(
+        &self,
+        project: &LoopItem,
+        provider: TaskProviderKind,
+        task_id: &str,
+        input: BinaryInput,
+    ) -> Result<TaskAttachment, TaskRuntimeError> {
+        if provider != TaskProviderKind::Gitlab {
+            return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            )));
+        }
+        let config = self.provider_config(project, provider)?;
+        config.require_write_token()?;
+        let number = issue_number(project, task_id)?;
+        let current = self.get_gitlab(project, &config, number).await?;
+        let bytes = STANDARD
+            .decode(input.base64.as_bytes())
+            .map_err(|error| invalid(format!("attachment base64 is invalid: {error}")))?;
+        if input.display_name.trim().is_empty() {
+            return Err(invalid("attachment display_name is required"));
+        }
+        let repository = encode_path_segment(&config.repository);
+        let url = format!("{}/projects/{repository}/uploads", config.api_base);
+        let mut part = Part::bytes(bytes.clone()).file_name(input.display_name.clone());
+        if let Some(content_type) = input.content_type.as_deref() {
+            part = part.mime_str(content_type).map_err(provider_error)?;
+        }
+        let upload = self
+            .send(
+                provider,
+                "upload_attachment",
+                &config.repository,
+                config
+                    .authorize(self.client.post(url), provider)
+                    .multipart(Form::new().part("file", part)),
+            )
+            .await?
+            .json::<GitlabUpload>()
+            .await
+            .map_err(provider_error)?;
+        let secret = gitlab_upload_secret(&upload.url)?;
+        let record = GitlabAttachmentRecord {
+            id: format!("gitlab-{number}-{secret}"),
+            upload_id: upload.id,
+            secret,
+            display_name: input.display_name,
+            content_type: input.content_type,
+            size_bytes: bytes.len() as i64,
+            sha256: sha256_hex(&bytes),
+            url: upload.url,
+            full_path: upload.full_path,
+            markdown: upload.markdown,
+            created_at: Utc::now().to_rfc3339(),
+        };
+        let mut records = gitlab_attachment_records(&current)?;
+        records.push(record.clone());
+        if let Err(error) = self
+            .update_gitlab_attachment_manifest(
+                project,
+                &config,
+                number,
+                &current.description,
+                &records,
+            )
+            .await
+        {
+            let _ = self
+                .delete_gitlab_upload(&config, provider, &record.secret)
+                .await;
+            return Err(error);
+        }
+        Ok(record.to_task_attachment(task_id))
+    }
+
+    pub(crate) async fn download_attachment(
+        &self,
+        project: &LoopItem,
+        provider: TaskProviderKind,
+        task_id: &str,
+        attachment_id: &str,
+    ) -> Result<PathBuf, TaskRuntimeError> {
+        if provider != TaskProviderKind::Gitlab {
+            return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            )));
+        }
+        let config = self.provider_config(project, provider)?;
+        let item = self.get(project, provider, task_id).await?;
+        let record = find_gitlab_attachment(&item, attachment_id)?;
+        let repository = encode_path_segment(&config.repository);
+        let filename = encode_path_segment(&record.display_name);
+        let url = format!(
+            "{}/projects/{repository}/uploads/{}/{filename}",
+            config.api_base, record.secret
+        );
+        let bytes = self
+            .send(
+                provider,
+                "download_attachment",
+                &config.repository,
+                config.authorize(self.client.get(url), provider),
+            )
+            .await?
+            .bytes()
+            .await
+            .map_err(provider_error)?;
+        if sha256_hex(&bytes) != record.sha256 {
+            return Err(provider_error(
+                "downloaded attachment checksum does not match",
+            ));
+        }
+        let path = self.attachment_cache_path(task_id, &record)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| invalid(format!("cannot create attachment cache: {error}")))?;
+        }
+        fs::write(&path, &bytes)
+            .map_err(|error| invalid(format!("cannot write attachment cache: {error}")))?;
+        Ok(path)
+    }
+
+    pub(crate) async fn delete_attachment(
+        &self,
+        project: &LoopItem,
+        provider: TaskProviderKind,
+        task_id: &str,
+        attachment_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        if provider != TaskProviderKind::Gitlab {
+            return Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            )));
+        }
+        let config = self.provider_config(project, provider)?;
+        config.require_write_token()?;
+        let number = issue_number(project, task_id)?;
+        let current = self.get_gitlab(project, &config, number).await?;
+        let records = gitlab_attachment_records(&current)?;
+        let record = records
+            .iter()
+            .find(|record| record.id == attachment_id)
+            .cloned()
+            .ok_or(TaskRuntimeError::TaskNotFound)?;
+        let remaining = records
+            .iter()
+            .filter(|candidate| candidate.id != attachment_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        self.update_gitlab_attachment_manifest(
+            project,
+            &config,
+            number,
+            &current.description,
+            &remaining,
+        )
+        .await?;
+        if let Err(error) = self
+            .delete_gitlab_upload(&config, provider, &record.secret)
+            .await
+        {
+            let _ = self
+                .update_gitlab_attachment_manifest(
+                    project,
+                    &config,
+                    number,
+                    &current.description,
+                    &records,
+                )
+                .await;
+            return Err(error);
+        }
+        let cache_path = self.attachment_cache_path(task_id, &record)?;
+        let _ = fs::remove_file(cache_path);
+        Ok(())
+    }
+
+    async fn update_gitlab_attachment_manifest(
+        &self,
+        project: &LoopItem,
+        config: &ProviderConfig,
+        number: i64,
+        description: &str,
+        records: &[GitlabAttachmentRecord],
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        let repository = encode_path_segment(&config.repository);
+        let url = format!("{}/projects/{repository}/issues/{number}", config.api_base);
+        let issue = self
+            .send(
+                TaskProviderKind::Gitlab,
+                "update_attachment_manifest",
+                &config.repository,
+                config
+                    .authorize(self.client.put(url), TaskProviderKind::Gitlab)
+                    .json(&json!({
+                        "description": render_gitlab_attachment_manifest(description, records)?
+                    })),
+            )
+            .await?
+            .json::<GitlabIssue>()
+            .await
+            .map_err(provider_error)?;
+        Ok(gitlab_loop_item(project, issue))
+    }
+
+    async fn delete_gitlab_upload(
+        &self,
+        config: &ProviderConfig,
+        provider: TaskProviderKind,
+        secret: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let repository = encode_path_segment(&config.repository);
+        let secret = encode_path_segment(secret);
+        let url = format!("{}/projects/{repository}/uploads/{secret}", config.api_base);
+        self.send(
+            provider,
+            "delete_attachment",
+            &config.repository,
+            config.authorize(self.client.delete(url), provider),
+        )
+        .await?;
+        Ok(())
+    }
+
+    fn attachment_cache_path(
+        &self,
+        task_id: &str,
+        record: &GitlabAttachmentRecord,
+    ) -> Result<PathBuf, TaskRuntimeError> {
+        let root = self
+            .database_path
+            .parent()
+            .ok_or_else(|| invalid("task database path is invalid"))?
+            .join("cache")
+            .join("gitlab-attachments");
+        Ok(root
+            .join(safe_path_component(task_id)?)
+            .join(safe_path_component(&record.id)?)
+            .join(safe_file_name(&record.display_name)))
     }
 
     async fn list_github(
@@ -541,7 +840,7 @@ impl IssueProvider {
     ) -> Result<reqwest::Response, TaskRuntimeError> {
         let request = request.build().map_err(provider_error)?;
         let method = request.method().to_string();
-        let endpoint = request.url().to_string();
+        let endpoint = provider_log_endpoint(operation, request.url());
         let fields = [
             ("provider", provider_key(provider).to_owned()),
             ("operation", operation.to_owned()),
@@ -590,7 +889,36 @@ fn provider_key(provider: TaskProviderKind) -> &'static str {
         TaskProviderKind::Gitlab => "gitlab",
         TaskProviderKind::Local => "local",
         TaskProviderKind::Backend => "backend",
+        TaskProviderKind::DingtalkAitable => "dingtalk_aitable",
     }
+}
+
+fn provider_log_endpoint(operation: &str, url: &Url) -> String {
+    if !matches!(operation, "download_attachment" | "delete_attachment") {
+        return url.to_string();
+    }
+    let mut sanitized = url.clone();
+    let segments = sanitized
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+    let Some(upload_index) = segments.iter().position(|segment| *segment == "uploads") else {
+        return sanitized.to_string();
+    };
+    let redacted = segments
+        .iter()
+        .enumerate()
+        .map(|(index, segment)| {
+            if index == upload_index + 1 {
+                "***"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    sanitized.set_path(&format!("/{redacted}"));
+    sanitized.to_string()
 }
 
 fn normalize_repository(
@@ -747,6 +1075,44 @@ struct GitlabComment {
     updated_at: String,
 }
 
+#[derive(Deserialize)]
+struct GitlabUpload {
+    id: Option<i64>,
+    url: String,
+    full_path: String,
+    markdown: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct GitlabAttachmentRecord {
+    id: String,
+    upload_id: Option<i64>,
+    secret: String,
+    display_name: String,
+    content_type: Option<String>,
+    size_bytes: i64,
+    sha256: String,
+    url: String,
+    full_path: String,
+    markdown: String,
+    created_at: String,
+}
+
+impl GitlabAttachmentRecord {
+    fn to_task_attachment(&self, task_id: &str) -> TaskAttachment {
+        TaskAttachment {
+            id: self.id.clone(),
+            loop_item_id: task_id.to_owned(),
+            display_name: self.display_name.clone(),
+            content_type: self.content_type.clone(),
+            size_bytes: self.size_bytes,
+            sha256: self.sha256.clone(),
+            created_by_user_id: 0,
+            created_at: self.created_at.clone(),
+        }
+    }
+}
+
 fn github_loop_item(project: &LoopItem, issue: GithubIssue) -> LoopItem {
     issue_loop_item(
         project,
@@ -766,12 +1132,14 @@ fn github_loop_item(project: &LoopItem, issue: GithubIssue) -> LoopItem {
 }
 
 fn gitlab_loop_item(project: &LoopItem, issue: GitlabIssue) -> LoopItem {
-    issue_loop_item(
+    let (description, attachments) =
+        split_gitlab_attachment_manifest(issue.description.as_deref().unwrap_or_default());
+    let mut item = issue_loop_item(
         project,
         TaskProviderKind::Gitlab,
         issue.iid,
         issue.title,
-        issue.description.unwrap_or_default(),
+        description,
         issue.state,
         issue.web_url,
         issue.author.username,
@@ -780,7 +1148,9 @@ fn gitlab_loop_item(project: &LoopItem, issue: GitlabIssue) -> LoopItem {
         issue.created_at,
         issue.updated_at,
         issue.closed_at,
-    )
+    );
+    item.metadata["gitlab_attachments"] = json!(attachments);
+    item
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -803,10 +1173,17 @@ fn issue_loop_item(
     let parent_id = parent_number(&description).map(|number| issue_id(project, number));
     let status = status_from_labels(&provider_state, &labels);
     let priority = priority_from_labels(&labels);
+    let created_by_user_id = creator_from_labels(&labels);
+    let creator_label = labels
+        .iter()
+        .find(|label| label.starts_with(CREATOR_LABEL_PREFIX))
+        .cloned();
     let labels = labels
         .into_iter()
         .filter(|label| {
-            !label.starts_with(PRIORITY_LABEL_PREFIX) && !label.starts_with(STATUS_LABEL_PREFIX)
+            !label.starts_with(PRIORITY_LABEL_PREFIX)
+                && !label.starts_with(STATUS_LABEL_PREFIX)
+                && !label.starts_with(CREATOR_LABEL_PREFIX)
         })
         .collect::<Vec<_>>();
     LoopItem {
@@ -820,6 +1197,7 @@ fn issue_loop_item(
         name: None,
         title: Some(title),
         description,
+        created_by_user_id,
         sequence_number: Some(number),
         next_item_number: None,
         status: Some(status),
@@ -832,6 +1210,7 @@ fn issue_loop_item(
             "provider_state": provider_state,
             "web_url": web_url,
             "author": author,
+            "creator_label": creator_label,
             "labels": labels,
             "comments": comments,
         }),
@@ -874,6 +1253,18 @@ fn labels_for_write(mut tags: Vec<String>, priority: &str, status: &str) -> Vec<
     }
     tags.push(format!("{STATUS_LABEL_PREFIX}{status}"));
     tags
+}
+
+fn creator_from_labels(labels: &[String]) -> i64 {
+    // Labels are `wegent:creator:<id>` or `wegent:creator:<id>:<name>`; the
+    // numeric id is authoritative, the optional name is display-only.
+    labels
+        .iter()
+        .find_map(|label| label.strip_prefix(CREATOR_LABEL_PREFIX))
+        .map(|value| value.split(':').next().unwrap_or(value))
+        .and_then(|value| value.parse().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(0)
 }
 
 fn status_from_labels(provider_state: &str, labels: &[String]) -> String {
@@ -927,6 +1318,142 @@ fn with_parent_marker(description: &str, parent: Option<i64>) -> String {
         (true, Some(number)) => format!("{PARENT_MARKER} #{number}"),
         (false, Some(number)) => format!("{content}\n\n{PARENT_MARKER} #{number}"),
     }
+}
+
+fn gitlab_attachment_records(
+    item: &LoopItem,
+) -> Result<Vec<GitlabAttachmentRecord>, TaskRuntimeError> {
+    item.metadata
+        .get("gitlab_attachments")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| invalid(format!("GitLab attachment metadata is invalid: {error}")))
+        .map(Option::unwrap_or_default)
+}
+
+fn find_gitlab_attachment(
+    item: &LoopItem,
+    attachment_id: &str,
+) -> Result<GitlabAttachmentRecord, TaskRuntimeError> {
+    gitlab_attachment_records(item)?
+        .into_iter()
+        .find(|record| record.id == attachment_id)
+        .ok_or(TaskRuntimeError::TaskNotFound)
+}
+
+fn split_gitlab_attachment_manifest(description: &str) -> (String, Vec<GitlabAttachmentRecord>) {
+    let Some(start) = description.find(ATTACHMENT_BLOCK_START) else {
+        return (description.to_owned(), Vec::new());
+    };
+    let block_tail = &description[start + ATTACHMENT_BLOCK_START.len()..];
+    let Some(relative_end) = block_tail.find(ATTACHMENT_BLOCK_END) else {
+        return (description.to_owned(), Vec::new());
+    };
+    let end = start + ATTACHMENT_BLOCK_START.len() + relative_end + ATTACHMENT_BLOCK_END.len();
+    let block = &description[start..end];
+    let Some(attachments) = attachment_manifest_payload(block)
+        .and_then(|encoded| URL_SAFE_NO_PAD.decode(encoded.as_bytes()).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    else {
+        return (description.to_owned(), Vec::new());
+    };
+    let before = description[..start].trim_end();
+    let after = description[end..].trim_start();
+    let visible = match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => before.to_owned(),
+        (true, false) => after.to_owned(),
+        (false, false) => format!("{before}\n\n{after}"),
+    };
+    (visible, attachments)
+}
+
+fn attachment_manifest_payload(block: &str) -> Option<&str> {
+    let start = block.find(ATTACHMENT_DATA_PREFIX)? + ATTACHMENT_DATA_PREFIX.len();
+    let tail = &block[start..];
+    let end = tail.find("-->")?;
+    Some(tail[..end].trim())
+}
+
+fn render_gitlab_attachment_manifest(
+    description: &str,
+    attachments: &[GitlabAttachmentRecord],
+) -> Result<String, TaskRuntimeError> {
+    let (description, _) = split_gitlab_attachment_manifest(description);
+    if attachments.is_empty() {
+        return Ok(description.trim_end().to_owned());
+    }
+    let encoded = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(attachments)
+            .map_err(|error| invalid(format!("cannot encode attachment metadata: {error}")))?,
+    );
+    let links = attachments
+        .iter()
+        .map(|attachment| {
+            format!(
+                "- [{}]({})",
+                escape_markdown_label(&attachment.display_name),
+                attachment.url
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let block = format!(
+        "{ATTACHMENT_BLOCK_START}\n### Attachments\n\n{links}\n\
+         {ATTACHMENT_DATA_PREFIX}{encoded} -->\n{ATTACHMENT_BLOCK_END}"
+    );
+    let description = description.trim_end();
+    if description.is_empty() {
+        Ok(block)
+    } else {
+        Ok(format!("{description}\n\n{block}"))
+    }
+}
+
+fn gitlab_upload_secret(url: &str) -> Result<String, TaskRuntimeError> {
+    let secret = url
+        .split('/')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|parts| (parts[0] == "uploads").then_some(parts[1]))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| invalid("GitLab upload response does not include an upload secret"))?;
+    Ok(secret.to_owned())
+}
+
+fn escape_markdown_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
+fn safe_path_component(value: &str) -> Result<String, TaskRuntimeError> {
+    let mut components = Path::new(value).components();
+    if matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none() {
+        return Ok(value.to_owned());
+    }
+    Err(invalid("attachment cache key is invalid"))
+}
+
+fn safe_file_name(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| match character {
+            '/' | '\\' | '\0' => '_',
+            _ => character,
+        })
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "attachment".to_owned()
+    } else {
+        sanitized
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn insert_optional<T: serde::Serialize>(
@@ -1022,8 +1549,8 @@ fn provider_error(error: impl std::fmt::Display) -> TaskRuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{
-        labels_for_write, normalize_repository, parent_number, priority_from_labels,
-        status_from_labels,
+        creator_from_labels, labels_for_write, normalize_repository, parent_number,
+        priority_from_labels, status_from_labels,
     };
     use crate::task_runtime::TaskProviderKind;
 
@@ -1059,6 +1586,40 @@ mod tests {
         assert_eq!(priority_from_labels(&labels), "high");
         assert_eq!(status_from_labels("open", &labels), "in_review");
         assert_eq!(status_from_labels("opened", &labels), "in_review");
+    }
+
+    #[test]
+    fn reads_wegent_creator_from_reserved_issue_label() {
+        let labels = vec![
+            "bug".to_owned(),
+            "wegent:creator:42".to_owned(),
+            "wegent:status:pending".to_owned(),
+        ];
+        assert_eq!(creator_from_labels(&labels), 42);
+        assert_eq!(
+            labels_for_write(labels, "none", "in_progress"),
+            vec!["bug", "wegent:creator:42", "wegent:status:in_progress"]
+        );
+    }
+
+    #[test]
+    fn reads_wegent_creator_id_from_label_with_display_name() {
+        // The id segment stays authoritative when a display name is appended
+        // for humans browsing the provider UI.
+        let labels = vec![
+            "wegent:creator:42:Micro66".to_owned(),
+            "wegent:status:pending".to_owned(),
+        ];
+        assert_eq!(creator_from_labels(&labels), 42);
+        assert_eq!(
+            labels_for_write(labels, "none", "in_progress"),
+            vec!["wegent:creator:42:Micro66", "wegent:status:in_progress"]
+        );
+        // A label whose id segment is not numeric contributes no creator.
+        assert_eq!(
+            creator_from_labels(&["wegent:creator:unknown".to_owned()]),
+            0
+        );
     }
 
     #[test]

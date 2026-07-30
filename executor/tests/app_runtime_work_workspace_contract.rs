@@ -312,6 +312,77 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
 }
 
 #[tokio::test]
+async fn runtime_local_project_keeps_existing_project_used_as_additional_root() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-shared-root-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-shared-root-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let project_a_root = temp_path("runtime-shared-root-project-a", "dir");
+    let project_b_root = temp_path("runtime-shared-root-project-b", "dir");
+    fs::create_dir_all(&project_a_root).unwrap();
+    fs::create_dir_all(&project_b_root).unwrap();
+    let fake_codex = write_fake_codex_empty(&temp_path("runtime-shared-root-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": project_a_root,
+                "label": "Project A"
+            }
+        }))
+        .await
+        .expect("project A should open");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "project-b",
+                "name": "Project B",
+                "roots": [project_b_root, project_a_root]
+            }
+        }))
+        .await
+        .expect("project B should include project A as an additional root");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("projects should list");
+    let workspaces = listed["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array");
+
+    assert_eq!(workspaces.len(), 2);
+    assert!(workspaces.iter().any(|workspace| {
+        workspace["workspacePath"] == project_a_root.display().to_string()
+            && workspace["label"] == "Project A"
+            && workspace["projectKey"] == project_a_root.display().to_string()
+    }));
+    assert!(workspaces.iter().any(|workspace| {
+        workspace["workspacePath"] == project_b_root.display().to_string()
+            && workspace["label"] == "Project B"
+            && workspace["projectKey"] == "project-b"
+            && workspace["projectRoots"]
+                == json!([
+                    project_b_root.display().to_string(),
+                    project_a_root.display().to_string()
+                ])
+    }));
+}
+
+#[tokio::test]
 async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1442,7 +1513,7 @@ async fn runtime_task_list_keeps_distinct_tasks_with_matching_titles() {
 }
 
 #[tokio::test]
-async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
+async fn runtime_task_list_ignores_persisted_running_state_for_unmapped_tasks() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-pending-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1492,7 +1563,6 @@ async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
     let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["taskId"], "unmapped-pending");
-    assert_eq!(tasks[0]["status"], "active");
     assert_eq!(tasks[0]["running"], false);
 }
 

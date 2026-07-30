@@ -36,8 +36,9 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
-    combined_codex_developer_instructions, configured_inference_model_provider,
-    mcp_server_elicitation_request_user_input_params, strip_wework_browser_instructions,
+    codex_runtime_approval_policy, combined_codex_developer_instructions,
+    configured_inference_model_provider, mcp_server_elicitation_request_user_input_params,
+    strip_wework_browser_instructions,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
@@ -263,7 +264,7 @@ impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
     fn run(&self, mut request: ExecutionRequest) -> Self::RunFuture {
-        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
@@ -354,7 +355,7 @@ impl AgentEngine for AgentProcessEngine {
     where
         S: EventSink,
     {
-        crate::task_runtime::mcp::ensure_task_mcp_server(&mut request);
+        crate::task_runtime::mcp::ensure_space_mcp_server(&mut request);
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();

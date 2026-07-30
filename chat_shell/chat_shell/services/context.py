@@ -38,6 +38,7 @@ class ChatContextResult:
         extra_tools: All tools including builtin tools (LoadSkillTool, WebSearchTool, etc.)
         system_prompt: System prompt (may be updated by KB tools)
         kb_meta_prompt: Knowledge base meta prompt (dynamic, injected via dynamic_context)
+        backtrack_hint: History-backtracking nudge (dynamic, injected via dynamic_context)
         mcp_clients: MCP clients for cleanup
     """
 
@@ -45,6 +46,7 @@ class ChatContextResult:
     extra_tools: list = field(default_factory=list)
     system_prompt: str = ""
     kb_meta_prompt: str = ""
+    backtrack_hint: str = ""
     mcp_clients: list = field(default_factory=list)
 
 
@@ -54,6 +56,35 @@ class ChatContextResult:
 # label) matches only documents — not image/video headers, and not the
 # ``[Attachment N]`` index label (no colon).
 _DOCUMENT_ATTACHMENT = re.compile(r"\[Attachment:")
+
+
+_HISTORY_BACKTRACK_HINT = (
+    "Earlier turns were summarized out of your context — use `list_history` and "
+    "`read_subtask` to recover their original detail when you need it."
+)
+
+
+def _history_backtrack_signals(history: list) -> tuple[frozenset[int], bool]:
+    """Derive (in-context subtask ids, compaction-seen) from loaded history.
+
+    History dicts carry ``id`` (``"<subtask_id>"`` or ``"<subtask_id>-<idx>"``);
+    a ``metadata.summary_compacted`` flag marks a compaction summary present in
+    the live window, i.e. this session has been compacted.
+    """
+    ids: set[int] = set()
+    had_compaction = False
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        raw_id = message.get("id")
+        if raw_id is not None:
+            head = str(raw_id).split("-", 1)[0]
+            if head.isdigit():
+                ids.add(int(head))
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("summary_compacted") is True:
+            had_compaction = True
+    return frozenset(ids), had_compaction
 
 
 def _attachments_have_document(attachments: Any) -> bool:
@@ -250,10 +281,19 @@ class ChatContext:
                 )
             )
 
+            # History-backtracking signals: which subtasks are still in the live
+            # window, and whether compaction has summarized any away.
+            in_context_ids, had_compaction = _history_backtrack_signals(history)
+
             # Build extra_tools from all sources (including builtin tools)
             add_span_event("building_extra_tools")
             extra_tools = self._build_extra_tools(
-                kb_result, skill_tools, mcp_result, has_attachments=has_attachments
+                kb_result,
+                skill_tools,
+                mcp_result,
+                has_attachments=has_attachments,
+                in_context_ids=in_context_ids,
+                had_compaction=had_compaction,
             )
 
             # Process KB tools result for system prompt
@@ -261,6 +301,20 @@ class ChatContext:
             if kb_result.extra_tools:
                 system_prompt = kb_result.enhanced_system_prompt
             kb_meta_prompt = kb_result.kb_meta_prompt
+
+            # Nudge the model toward the backtracking tools only when compaction
+            # has actually dropped detail AND the tools were registered. Delivered
+            # via dynamic_context (message channel), never the system prompt, so
+            # the cacheable prefix stays stable across turns.
+            backtrack_hint = (
+                _HISTORY_BACKTRACK_HINT
+                if (
+                    had_compaction
+                    and self._request.enable_tools
+                    and self._backtrack_tools_enabled()
+                )
+                else ""
+            )
 
             # Track MCP clients for cleanup (both from MCP servers and skills)
             _, mcp_clients = mcp_result
@@ -281,6 +335,7 @@ class ChatContext:
                 extra_tools=extra_tools,
                 system_prompt=system_prompt,
                 kb_meta_prompt=kb_meta_prompt,
+                backtrack_hint=backtrack_hint,
                 mcp_clients=all_mcp_clients,
             )
 
@@ -793,12 +848,25 @@ class ChatContext:
         except Exception as e:
             logger.warning("[CHAT_CONTEXT] Failed to close MCP client: %s", e)
 
+    def _backtrack_tools_enabled(self) -> bool:
+        """Whether history-backtracking tools apply: summary compaction is active.
+
+        Mirrors the exact condition under which the summary compactor is created
+        (chat_service), so the tools/hint follow compaction rather than drifting.
+        """
+        return (
+            settings.MESSAGE_COMPRESSION_ENABLED
+            and not settings.DISABLE_SUMMARY_COMPACT
+        )
+
     def _build_extra_tools(
         self,
         kb_result,
         skill_tools: list,
         mcp_result: tuple[list, list],
         has_attachments: bool = False,
+        in_context_ids: frozenset[int] = frozenset(),
+        had_compaction: bool = False,
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
@@ -910,6 +978,27 @@ class ChatContext:
             logger.info(
                 "[CHAT_CONTEXT] Added ReadAttachmentTool for task_id=%d",
                 self._request.task_id,
+            )
+
+        # Add history-backtracking tools only once compaction has actually
+        # summarized detail out of context (had_compaction). Most tasks never
+        # compact, so gating here keeps the tools — and their prompt hint — out of
+        # those turns entirely. Task-scoped and read-only.
+        if self._backtrack_tools_enabled() and had_compaction:
+            from chat_shell.tools.builtin import ListHistoryTool, ReadSubtaskTool
+
+            extra_tools.append(
+                ListHistoryTool(
+                    task_id=self._request.task_id,
+                    in_context_ids=in_context_ids,
+                )
+            )
+            extra_tools.append(ReadSubtaskTool(task_id=self._request.task_id))
+            logger.info(
+                "[CHAT_CONTEXT] Added history-backtracking tools for task_id=%d "
+                "(in_context_subtasks=%d)",
+                self._request.task_id,
+                len(in_context_ids),
             )
 
         # Note: Subscription tools (preview_subscription, create_subscription) have been moved

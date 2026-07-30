@@ -138,6 +138,13 @@ class CloudProject(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "project"}
 
     @property
+    def visibility(self) -> str:
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return "private"
+        return "public" if metadata.get("visibility") == "public" else "private"
+
+    @property
     def tags(self) -> list[str]:
         """Project-level tag registry stored inside the metadata JSON column."""
         metadata = self.metadata_json
@@ -158,7 +165,8 @@ class CloudProject(LoopNode):
         if not isinstance(metadata, dict):
             return "local"
         provider = metadata.get("task_provider")
-        return provider if provider in {"local", "github", "gitlab"} else "local"
+        known = {"local", "github", "gitlab", "dingtalk_aitable"}
+        return provider if provider in known else "local"
 
     @property
     def provider_config(self) -> dict[str, object]:

@@ -16,22 +16,22 @@ sidebar_position: 18
 
 ## 状态信源清单
 
-| 状态                          | 唯一信源                                                                                           | 派生值/使用方                                                                                          | 维护规则                                                                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 消息内容与消息状态            | `useWorkbenchPaneSession.messages`                                                                 | `MessageList`、导出、文件变更、request user input                                                      | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新                                                                                                                     |
-| assistant turn 是否活跃       | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                              | 消息流式展示、调试状态                                                                                 | 实时 stream 与 transcript 事件统一路由到任务状态机；布局和 pane 代码不能再从消息自行推断 turn 是否活跃                                                                          |
-| 本地发送阶段                  | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                              | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | 乐观发送、确认、拒绝、stream 开始与结算都作为任务状态机事件处理                                                                                                                 |
-| 当前 runtime 运行快照         | executor 的 `running` 输入经 `RuntimeTaskLifecycleStore` 路由                                      | 生命周期快照、侧栏、composer、消息区、队列推进                                                         | executor 字段是权威外部事实；生命周期 Store 是前端唯一访问入口，乐观转换也由同一状态机维护                                                                                      |
-| pane 是否忙碌                 | `paneSession.status.isBusy`                                                                        | 当前 pane 队列是否可推进                                                                               | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成                                                                                  |
-| 队列消息                      | `queuedMessages`                                                                                   | `ConversationQueuePanel`、自动发送下一条 follow-up                                                     | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage`                                                                                                      |
-| 引导消息                      | `queuedMessages` + `messages` 中的本地 user message                                                | `ConversationQueuePanel`、`MessageList`                                                                | 发送引导时先把队列消息标记为 sending，再立即在当前 streaming assistant 位置插入本地 user message；不能等引导 RPC 返回后再插入                                                   |
-| transcript 加载与分页         | `transcriptLoading`、`transcriptHasMoreBefore`、`transcriptBeforeCursor`、`loadedTranscriptRanges` | 滚动加载、turn navigation                                                                              | 只由 transcript API 响应更新                                                                                                                                                    |
-| runtime goal                  | `threadGoal` + `pendingGoalState`                                                                  | goal bar、goal draft、首条消息 initial goal                                                            | 已持久化目标来自 runtime goal API；新建任务前目标暂存在 pending seed                                                                                                            |
-| request user input 已处理集合 | `answeredRequestUserInputIds`                                                                      | 隐藏已响应/忽略的 request user input 卡片                                                              | 只由提交或忽略动作更新                                                                                                                                                          |
-| 模型上下文用量                | Codex `thread/tokenUsage/updated` runtime stream 事件；`runtime.tasks.transcript.contextUsage`     | composer 右下角上下文窗口用量圆环和 tooltip                                                            | executor 必须原样转发 Codex token usage notification，并在历史 transcript 响应中从同一 rollout 读取最新 token count；UI 只按当前 runtime task 保存到 `projectChat.contextUsage` |
-| 长回复正文与工具输出          | `reduceWorkbenchMessages` 的预览窗口；`runtime.tasks.transcript` 的截断字段与完整加载标记          | `MessageList`、processing block、Debug Panel 内存摘要                                                  | 默认 resident `messages` 只保留尾部预览、原始长度和加载引用；只有用户显式加载完整 transcript 后，当前 pane 才能升级为完整态并替换 `messages`                                    |
-| 附件/模型/技能选择            | `projectChat` context                                                                              | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
-| 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                            | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
+| 状态                          | 唯一信源                                                                                                                        | 派生值/使用方                                                                                          | 维护规则                                                                                                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 消息内容与消息状态            | `useWorkbenchPaneSession.messages`                                                                                              | `MessageList`、导出、文件变更、request user input                                                      | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新                                                                                                                     |
+| assistant turn 是否活跃       | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                                                           | 消息流式展示、调试状态                                                                                 | 实时 stream 与 transcript 事件统一路由到任务状态机；布局和 pane 代码不能再从消息自行推断 turn 是否活跃                                                                          |
+| 本地发送阶段                  | `RuntimeTaskLifecycleStore` 中任务快照的 `turn.phase`                                                                           | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | 乐观发送、确认、拒绝、stream 开始与结算都作为任务状态机事件处理                                                                                                                 |
+| 当前 runtime 运行快照         | executor 的 `running` 输入经 `RuntimeTaskLifecycleStore` 路由                                                                   | 生命周期快照、侧栏、composer、消息区、队列推进                                                         | executor 字段是权威外部事实；生命周期 Store 是前端唯一访问入口，乐观转换也由同一状态机维护                                                                                      |
+| pane 是否忙碌                 | `paneSession.status.isBusy`                                                                                                     | 当前 pane 队列是否可推进                                                                               | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成                                                                                  |
+| 队列消息                      | `queuedMessages`                                                                                                                | `ConversationQueuePanel`、自动发送下一条 follow-up                                                     | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage`                                                                                                      |
+| 引导消息                      | 按生命周期阶段唯一：待应用时为 `queuedMessages`；应用后为当前或后台 live projection；Provider 覆盖该 turn 后为 Codex transcript | `ConversationQueuePanel`、`MessageList`                                                                | 引导成功后必须先从队列移除；源 pane 未挂载时写入的后台缓存只用于填补运行中 transcript 窗口，不能合并进 Provider 分页消息，Provider 覆盖同一 turn 后必须整体接管                 |
+| transcript 加载与分页         | `transcriptLoading`、`transcriptHasMoreBefore`、`transcriptBeforeCursor`、`loadedTranscriptRanges`                              | 滚动加载、turn navigation                                                                              | 只由 transcript API 响应更新                                                                                                                                                    |
+| runtime goal                  | `threadGoal` + `pendingGoalState`                                                                                               | goal bar、goal draft、首条消息 initial goal                                                            | 已持久化目标来自 runtime goal API；新建任务前目标暂存在 pending seed                                                                                                            |
+| request user input 已处理集合 | `answeredRequestUserInputIds`                                                                                                   | 隐藏已响应/忽略的 request user input 卡片                                                              | 只由提交或忽略动作更新                                                                                                                                                          |
+| 模型上下文用量                | Codex `thread/tokenUsage/updated` runtime stream 事件；`runtime.tasks.transcript.contextUsage`                                  | composer 右下角上下文窗口用量圆环和 tooltip                                                            | executor 必须原样转发 Codex token usage notification，并在历史 transcript 响应中从同一 rollout 读取最新 token count；UI 只按当前 runtime task 保存到 `projectChat.contextUsage` |
+| 长回复正文与工具输出          | `reduceWorkbenchMessages` 的预览窗口；`runtime.tasks.transcript` 的截断字段与完整加载标记                                       | `MessageList`、processing block、Debug Panel 内存摘要                                                  | 默认 resident `messages` 只保留尾部预览、原始长度和加载引用；只有用户显式加载完整 transcript 后，当前 pane 才能升级为完整态并替换 `messages`                                    |
+| 附件/模型/技能选择            | `projectChat` context                                                                                                           | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
+| 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                                                         | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
 
 ## Runtime 事件流
 
@@ -56,6 +56,23 @@ Codex provider 可能只发送带完整正文的 `item/completed`，而不发送
 正文转换为一次 `response.output_text.delta`；已接收 delta 时则忽略完成快照，避免
 重复正文。临时聊天是 ephemeral thread，不能依赖 `thread/read(includeTurns)` 补回
 丢失的实时文本。
+
+任务在后台结算后，用户切回 pane 时可能先加载到只包含上一轮的旧 transcript。
+`useWorkbenchPaneSession` 必须比较缓存最新轮和 transcript 已结算 assistant 的轮身份；
+轮身份由 `turnId` 与标准化 `subtaskId` 共同表示。transcript 尚未覆盖同一轮时，缓存仍
+是当前消息的权威来源；只有同一轮 assistant 已在 transcript 中结算后，才切换为
+transcript。不得按正文长度、block 数量或其他内容权重推断新旧。
+
+work list 刷新也可能立即触发一次已完成 transcript 重载。该 transcript 负责最终文本、
+消息状态和文件变更，但 Codex 的 `thread/read` 可能暂时缺少实时流中已经完成的工具
+条目。实时消息在 `assistant_done` 入口用规范 `turnId` 标准化 `subtaskId`；切换到同一
+轮 transcript 后，`useWorkbenchPaneSession` 保留 transcript 的权威字段，同时补回实时
+消息中状态为 `done` 或 `error` 且 transcript 尚未包含的 tool block。不得补回
+`pending` 或 `streaming` block，否则已完成任务会重新显示为执行中。
+
+同一个 Codex turn 可能因为工具调用或中途引导被拆成多条 assistant 消息。每条消息
+必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
+只能使用 Codex 持久化的规范 turn ID，不能使用为了界面分段生成的消息 ID。
 
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
@@ -136,6 +153,10 @@ turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal �
 
 未读只在当前 Wework renderer 生命周期内观察到 `running: true -> false` 边沿时产生，不根据 `status` 文本或持久化记录猜测运行历史；本地持久化只保存已经产生的未读结果，不保存运行态。持久化 Goal 仍为 `active` 但 executor 已不再运行的任务属于待恢复状态，不得因应用或 executor 重启产生完成未读。当前任务和所有运行中任务都必须从可见未读集合排除；打开任务会清除其未读状态。
 
+executor 的 `RuntimeTaskLink.running` 只存在于当前进程内存和 runtime API
+响应中。`runtime-work/index.json` 不得序列化该字段，读取旧索引时也必须忽略其中
+残留的 `running` 值；任务是否正在执行只能由当前 executor 的活动任务集合决定。
+
 ## Composer 模式提示
 
 当 composer 处于计划模式或目标草稿模式时，底部模式胶囊必须在标签左侧显示对应的语义图标：计划模式使用清单图标，目标草稿使用靶心图标。桌面和紧凑布局必须复用同一个模式胶囊实现，确保表达一致。
@@ -169,11 +190,11 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 - `MessageList` 和 `ToolBlocksDisplay` 只能渲染当前预览内容和截断提示；仅用 CSS 折叠隐藏完整内容不算释放内存。
 - 右侧临时聊天必须复用同一套 reducer 与 stream action 批处理，不能为临时线程单独累积完整输出。
 
-## Transcript 合并顺序
+## Transcript 顺序
 
-分页加载或刷新 runtime transcript 时，服务端返回的 `messageIndex` 是已持久化消息的主顺序。当前 pane 中还可能存在尚未带 `messageIndex` 的本地 user 或 streaming assistant 消息；合并逻辑必须用这些消息在现有列表中的前后已持久化消息作为锚点，保留其相对位置。不能把所有无序号消息统一排到 transcript 末尾，否则先前发送的用户消息会在刷新或加载历史页后沉到对话底部。
+服务端返回的 `messageIndex` 是 Codex 持久 transcript 的唯一顺序。加载较早页面或补中间 gap 时，只能把来自同一 Provider transcript 的页面按 `messageIndex` 组合；不得把后台消息缓存、`runtimeHandle.messages` 或按正文匹配出的本地用户消息并入 Provider 页面。
 
-加载较早页面或补中间 gap 时，带 `messageIndex` 的消息仍按服务端序号排序；同一锚点之间的本地消息保持 pane 中已有的稳定顺序。消息去重只使用稳定 message id，不根据内容、角色或 subtask 猜测身份。
+当前 pane 的实时 turn 尚未被 transcript 覆盖时，可以继续整体展示该 pane 的 stream 投影；Provider 覆盖同一 turn 后应整体切换到 transcript，而不是对两组消息做并集。消息分页去重只使用 Provider 的稳定 message id，不根据内容、角色或 subtask 猜测身份。
 
 ## 引导消息顺序
 
@@ -186,6 +207,10 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 5. 后续 `chat:chunk` 和 `chat:done` 可能携带完整文本，必须按拆分时记录的 assistant 文本前缀裁剪后再进入 reducer。
 
 不要把引导成功后的 user message append 到对话底部，也不要等 `runtime.tasks.guidance` 返回后才拆分 assistant；这会让引导请求等待期间产生的 assistant 文本出现在用户引导消息之前，造成流式显示和刷新后 transcript 顺序不一致。
+
+如果引导应用时源 pane 没有挂载，后台订阅者必须从 `queuedMessages` 移除对应条目，并把已确认的 user message 写入 `runtimeConversationCache.messages` 的内存 live projection。用户在 Codex transcript 尚未覆盖当前运行中 turn 时重新打开源对话，必须先看到这条已确认消息；Provider transcript 覆盖同一 turn 后再整体接管内容和顺序。该缓存不得持久化，也不得与 Provider 分页消息做并集合并，因此不会成为第二份持久 transcript 信源。
+
+引导消息插入后，即使用户此前已经向上滚动，消息区域也必须主动滚动到底部并保持一段短暂的稳定跟随，使新插入的 user message 和 assistant continuation 可见。该强制滚动只适用于当前会话中新应用的引导；加载包含旧引导的历史页面时，必须保留用户当前的视口锚点。
 
 ## 右侧临时聊天
 

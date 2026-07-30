@@ -1,5 +1,5 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -8,6 +8,7 @@ import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 
@@ -36,6 +37,8 @@ interface ComposerToolbarProps {
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
+  projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   leadingContext?: ReactNode
@@ -69,6 +72,8 @@ export function ComposerToolbar({
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
+  projectWorkMenuContext,
   onQuickPhraseSelect,
   onSubmit,
   leadingContext,
@@ -155,6 +160,9 @@ export function ComposerToolbar({
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
+        {showWorkspaceMenu && projectWorkMenuContext ? (
+          <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
+        ) : null}
         {isStreaming && !canSend ? (
           <button
             type="button"
@@ -186,6 +194,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
+                  shortcut: 'Enter',
                 },
                 {
                   label:
@@ -201,6 +210,7 @@ export function ComposerToolbar({
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
+                  shortcut: 'Command+Enter',
                 },
                 {
                   label:
@@ -216,6 +226,7 @@ export function ComposerToolbar({
                   icon: Zap,
                   testId: 'interrupt-and-send-option',
                   onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                  shortcut: 'Command+Shift+Enter',
                 },
               ]}
             />

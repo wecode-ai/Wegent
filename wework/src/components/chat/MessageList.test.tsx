@@ -4864,6 +4864,10 @@ describe('MessageList', () => {
     const pluginLink = screen.getByTestId('sent-plugin-token-Documents')
 
     expect(pluginLink).toHaveAttribute('href', 'plugin://documents@openai-primary-runtime')
+    fireEvent.click(pluginLink)
+    expect(`${window.location.pathname}${window.location.search}`).toBe(
+      '/plugins?plugin=documents&marketplace=openai-primary-runtime'
+    )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
@@ -4871,6 +4875,7 @@ describe('MessageList', () => {
     expect(
       screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
     ).not.toBeInTheDocument()
+    window.history.replaceState({}, '', '/')
   })
 
   test('renders cloud references in user messages without exposing the internal URI', () => {

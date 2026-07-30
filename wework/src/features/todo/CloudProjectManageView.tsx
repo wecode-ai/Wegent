@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Check, GitBranch, LockKeyhole, Pencil, Search, Tag, Trash2, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  GitBranch,
+  LockKeyhole,
+  Pencil,
+  Search,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react'
+import type { AITableApi, AITableField } from '@/api/aitable'
+import type { DwsApi, DwsAuthStatus } from '@/api/dws'
 import type {
   CloudLoopItem,
   CloudProject,
@@ -7,8 +20,13 @@ import type {
   CloudUserSearchItem,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { repositoryAddress, repositoryProviderConfig } from './projectProviderConfig'
+import {
+  parseDingTalkAITableLink,
+  repositoryAddress,
+  repositoryProviderConfig,
+} from './projectProviderConfig'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -18,15 +36,35 @@ const memberAvatarClasses = [
   'bg-gradient-to-br from-amber-400 to-amber-500',
 ]
 
+function configText(project: CloudProject, key: string): string {
+  const value = (project.provider_config as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : ''
+}
+
+const AITABLE_BOARD_FIELDS = [
+  ['title_field_id', '标题'],
+  ['description_field_id', '描述'],
+  ['status_field_id', '状态'],
+  ['parent_field_id', '父任务'],
+  ['priority_field_id', '优先级'],
+  ['assignee_field_id', '负责人'],
+  ['due_field_id', '截止时间'],
+] as const
+
 export function CloudProjectManageView({
   api,
+  aitableApi,
+  dwsApi,
   project,
   onProjectUpdated,
 }: {
   api: DeliveryApi
+  aitableApi?: AITableApi
+  dwsApi?: DwsApi
   project: CloudProject
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [members, setMembers] = useState<CloudProjectMember[]>([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<CloudUserSearchItem[]>([])
@@ -36,6 +74,10 @@ export function CloudProjectManageView({
   const [items, setItems] = useState<CloudLoopItem[]>([])
   const [registryTags, setRegistryTags] = useState<string[]>(project.tags ?? [])
   const [projectVersion, setProjectVersion] = useState(project.version)
+  const [visibility, setVisibility] = useState<'private' | 'public'>(
+    project.visibility ?? 'private'
+  )
+  const [visibilityBusy, setVisibilityBusy] = useState(false)
   const [newTag, setNewTag] = useState('')
   const [renamingTag, setRenamingTag] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -48,6 +90,62 @@ export function CloudProjectManageView({
   const [providerToken, setProviderToken] = useState('')
   const [providerBusy, setProviderBusy] = useState(false)
   const [providerSaved, setProviderSaved] = useState(false)
+  const isAITableProvider = project.task_provider === 'dingtalk_aitable'
+  const [aitableUrl, setAITableUrl] = useState(() => configText(project, 'source_url'))
+  const [dwsStatus, setDwsStatus] = useState<DwsAuthStatus | null>(null)
+  const [aitableFields, setAitableFields] = useState<AITableField[]>([])
+  const [aitableMapping, setAitableMapping] = useState<Record<string, string>>(() => {
+    const mapping = project.provider_config.board_mapping
+    return typeof mapping === 'object' && mapping !== null
+      ? Object.fromEntries(
+          Object.entries(mapping).filter((entry): entry is [string, string] =>
+            Boolean(entry[0] && typeof entry[1] === 'string')
+          )
+        )
+      : {}
+  })
+  const [statusMode, setStatusMode] = useState<'mapped' | 'custom'>(
+    project.provider_config.status_mode === 'custom' ? 'custom' : 'mapped'
+  )
+  const [statusMapping, setStatusMapping] = useState<Record<string, CloudLoopItem['status']>>(
+    project.provider_config.status_mapping ?? {}
+  )
+  const [customStatusOrder, setCustomStatusOrder] = useState<string[]>(
+    project.provider_config.custom_statuses ?? []
+  )
+  const [aitableBusy, setAitableBusy] = useState(false)
+  const [aitableSaved, setAITableSaved] = useState(false)
+  const aitableLink = parseDingTalkAITableLink(aitableUrl)
+  const statusField = aitableFields.find(field => field.id === aitableMapping.status_field_id)
+  const statusOptions = Array.from(
+    new Set([
+      ...(Array.isArray(statusField?.config?.options)
+        ? statusField.config.options
+            .map(option =>
+              typeof option === 'object' && option !== null && 'name' in option
+                ? String(option.name)
+                : ''
+            )
+            .filter(Boolean)
+        : []),
+      ...items.map(item => item.source_status ?? '').filter(Boolean),
+    ])
+  )
+  const orderedStatuses = [
+    ...customStatusOrder.filter(status => statusOptions.includes(status)),
+    ...statusOptions.filter(status => !customStatusOrder.includes(status)),
+  ]
+
+  function moveCustomStatus(status: string, offset: -1 | 1) {
+    const current = orderedStatuses
+    const index = current.indexOf(status)
+    const target = index + offset
+    if (index < 0 || target < 0 || target >= current.length) return
+    const next = [...current]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    setCustomStatusOrder(next)
+    setAITableSaved(false)
+  }
 
   useEffect(() => {
     let active = true
@@ -63,6 +161,27 @@ export function CloudProjectManageView({
       active = false
     }
   }, [api, project.id])
+
+  useEffect(() => {
+    if (!isAITableProvider || !aitableApi) return
+    let active = true
+    void aitableApi
+      .configureProject(project)
+      .then(() => aitableApi.describe(project.id))
+      .then(value => active && setAitableFields(value.fields))
+      .catch(cause => active && setError(cause instanceof Error ? cause.message : '加载字段失败'))
+    return () => {
+      active = false
+    }
+  }, [aitableApi, isAITableProvider, project])
+
+  useEffect(() => {
+    if (!isAITableProvider || !dwsApi) return
+    void dwsApi
+      .authStatus()
+      .then(setDwsStatus)
+      .catch(() => setDwsStatus(null))
+  }, [dwsApi, isAITableProvider])
 
   // Tags shown in the manager: project registry plus tags already on items.
   const allTags = Array.from(
@@ -80,6 +199,25 @@ export function CloudProjectManageView({
     setRegistryTags(updated.tags ?? [])
     setProjectVersion(updated.version)
     onProjectUpdated?.(updated)
+  }
+
+  async function saveVisibility(nextVisibility: 'private' | 'public') {
+    if (visibilityBusy || nextVisibility === visibility) return
+    setVisibilityBusy(true)
+    setError(null)
+    try {
+      const updated = await api.updateCloudProject(project.id, {
+        version: projectVersion,
+        visibility: nextVisibility,
+      })
+      setVisibility(updated.visibility ?? nextVisibility)
+      setProjectVersion(updated.version)
+      onProjectUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('todo.project_visibility_update_failed'))
+    } finally {
+      setVisibilityBusy(false)
+    }
   }
 
   async function saveProviderConfig() {
@@ -104,6 +242,42 @@ export function CloudProjectManageView({
       setError(cause instanceof Error ? cause.message : '保存任务来源失败')
     } finally {
       setProviderBusy(false)
+    }
+  }
+
+  async function saveAITableConfig() {
+    if (!isAITableProvider || aitableBusy) return
+    setAitableBusy(true)
+    setAITableSaved(false)
+    setError(null)
+    try {
+      const updated = await api.updateCloudProject(project.id, {
+        version: projectVersion,
+        provider_config: {
+          base_id: aitableLink!.baseId,
+          table_id: aitableLink!.tableId,
+          source_url: aitableLink!.url,
+          ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
+          board_mapping: Object.fromEntries(
+            Object.entries(aitableMapping).filter(([, value]) => value)
+          ),
+          status_mode: statusMode,
+          status_mapping:
+            statusMode === 'mapped'
+              ? Object.fromEntries(
+                  statusOptions.map(option => [option, statusMapping[option] ?? 'inbox'])
+                )
+              : {},
+          custom_statuses: statusMode === 'custom' ? orderedStatuses : [],
+        },
+      })
+      setProjectVersion(updated.version)
+      setAITableSaved(true)
+      onProjectUpdated?.(updated)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '保存钉钉多维表格配置失败')
+    } finally {
+      setAitableBusy(false)
     }
   }
 
@@ -250,111 +424,152 @@ export function CloudProjectManageView({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
       <div className="mx-auto max-w-[960px]">
-        <h2 className="text-heading-md font-semibold">项目成员</h2>
+        <h2 className="text-heading-md font-semibold">{t('todo.project_visibility')}</h2>
         <p className="mt-1 text-sm text-text-muted">
-          成员只能访问被授权的云项目、任务、共享文件和交付。
+          {t('todo.project_visibility_manage_description')}
         </p>
-
-        <div className="mt-6 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
-          {members.map((member, index) => (
-            <div
-              key={member.user_id}
-              className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0"
-              data-testid={`cloud-project-member-${member.user_id}`}
-            >
-              <span
-                className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
-                  memberAvatarClasses[index % memberAvatarClasses.length]
-                )}
-              >
-                {member.user_name.slice(0, 1)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{member.user_name}</span>
-                <span className="block truncate text-xs text-text-muted">{member.email}</span>
-              </span>
-              {member.role === 'Owner' ? (
-                <span className="w-24 text-xs text-text-secondary">Owner</span>
-              ) : (
-                <>
-                  <select
-                    data-testid={`cloud-project-member-role-${member.user_id}`}
-                    value={member.role}
-                    onChange={event =>
-                      void updateMember(
-                        member,
-                        event.target.value as Exclude<CloudProjectMember['role'], 'Owner'>
-                      )
-                    }
-                    className="h-8 w-24 rounded-lg border border-border bg-background px-1.5 text-xs outline-none focus:border-text-muted"
-                  >
-                    <option value="Maintainer">Maintainer</option>
-                    <option value="Developer">Developer</option>
-                    <option value="Reporter">Reporter</option>
-                  </select>
-                  <button
-                    type="button"
-                    data-testid={`cloud-project-member-remove-${member.user_id}`}
-                    onClick={() => void removeMember(member)}
-                    className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
-                    aria-label={`移除 ${member.user_name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          {(
+            [
+              [
+                'private',
+                t('todo.project_visibility_private'),
+                t('todo.project_visibility_private_manage_description'),
+              ],
+              [
+                'public',
+                t('todo.project_visibility_public'),
+                t('todo.project_visibility_public_manage_description'),
+              ],
+            ] as const
+          ).map(([value, label, detail]) => (
+            <button
+              key={value}
+              type="button"
+              data-testid={`cloud-project-manage-visibility-${value}`}
+              disabled={visibilityBusy}
+              aria-pressed={visibility === value}
+              onClick={() => void saveVisibility(value)}
+              className={cn(
+                'rounded-xl border px-4 py-3 text-left transition disabled:opacity-60',
+                visibility === value
+                  ? 'border-text-primary bg-muted/70 ring-1 ring-text-primary/10'
+                  : 'border-border hover:bg-muted/40'
               )}
-            </div>
+            >
+              <span className="block text-sm font-medium">{label}</span>
+              <span className="mt-1 block text-xs leading-4 text-text-muted">{detail}</span>
+            </button>
           ))}
         </div>
 
-        <div className="mt-8">
-          <h3 className="text-sm font-semibold">添加成员</h3>
-          <div className="mt-3 flex gap-2">
-            <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3 focus-within:border-text-muted">
-              <Search className="h-4 w-4 text-text-muted" />
-              <input
-                data-testid="cloud-member-search"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
-                placeholder="搜索用户名或邮箱"
-              />
-            </label>
-            <select
-              data-testid="cloud-member-role"
-              value={role}
-              onChange={event => setRole(event.target.value as CloudProjectMember['role'])}
-              className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
-            >
-              <option value="Maintainer">Maintainer</option>
-              <option value="Developer">Developer</option>
-              <option value="Reporter">Reporter</option>
-            </select>
-          </div>
-          {visibleResults.length > 0 && (
-            <div className="mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
-              {visibleResults.map(user => (
-                <button
-                  key={user.id}
-                  type="button"
-                  data-testid={`cloud-member-result-${user.id}`}
-                  disabled={savingUserId !== null}
-                  onClick={() => void addMember(user)}
-                  className="flex w-full items-center border-t border-border px-4 py-2.5 text-left transition first:border-t-0 hover:bg-hover disabled:opacity-50"
+        <div className="mt-10 border-t border-border pt-8">
+          <h2 className="text-heading-md font-semibold">项目成员</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            成员只能访问被授权的云项目、任务、共享文件和交付。
+          </p>
+
+          <div className="mt-6 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+            {members.map((member, index) => (
+              <div
+                key={member.user_id}
+                className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0"
+                data-testid={`cloud-project-member-${member.user_id}`}
+              >
+                <span
+                  className={cn(
+                    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
+                    memberAvatarClasses[index % memberAvatarClasses.length]
+                  )}
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{user.user_name}</span>
-                    <span className="block truncate text-xs text-text-muted">{user.email}</span>
-                  </span>
-                  <span className="rounded-md bg-text-primary px-2 py-1 text-xs text-background">
-                    {savingUserId === user.id ? '添加中…' : '添加'}
-                  </span>
-                </button>
-              ))}
+                  {member.user_name.slice(0, 1)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{member.user_name}</span>
+                  <span className="block truncate text-xs text-text-muted">{member.email}</span>
+                </span>
+                {member.role === 'Owner' ? (
+                  <span className="w-24 text-xs text-text-secondary">Owner</span>
+                ) : (
+                  <>
+                    <select
+                      data-testid={`cloud-project-member-role-${member.user_id}`}
+                      value={member.role}
+                      onChange={event =>
+                        void updateMember(
+                          member,
+                          event.target.value as Exclude<CloudProjectMember['role'], 'Owner'>
+                        )
+                      }
+                      className="h-8 w-24 rounded-lg border border-border bg-background px-1.5 text-xs outline-none focus:border-text-muted"
+                    >
+                      <option value="Maintainer">Maintainer</option>
+                      <option value="Developer">Developer</option>
+                      <option value="Reporter">Reporter</option>
+                    </select>
+                    <button
+                      type="button"
+                      data-testid={`cloud-project-member-remove-${member.user_id}`}
+                      onClick={() => void removeMember(member)}
+                      className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                      aria-label={`移除 ${member.user_name}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8">
+            <h3 className="text-sm font-semibold">添加成员</h3>
+            <div className="mt-3 flex gap-2">
+              <label className="flex h-9 min-w-0 flex-1 items-center rounded-lg border border-border bg-background px-3 focus-within:border-text-muted">
+                <Search className="h-4 w-4 text-text-muted" />
+                <input
+                  data-testid="cloud-member-search"
+                  value={query}
+                  onChange={event => setQuery(event.target.value)}
+                  className="ml-2 min-w-0 flex-1 bg-transparent text-sm outline-none"
+                  placeholder="搜索用户名或邮箱"
+                />
+              </label>
+              <select
+                data-testid="cloud-member-role"
+                value={role}
+                onChange={event => setRole(event.target.value as CloudProjectMember['role'])}
+                className="h-9 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
+              >
+                <option value="Maintainer">Maintainer</option>
+                <option value="Developer">Developer</option>
+                <option value="Reporter">Reporter</option>
+              </select>
             </div>
-          )}
-          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+            {visibleResults.length > 0 && (
+              <div className="mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-sm">
+                {visibleResults.map(user => (
+                  <button
+                    key={user.id}
+                    type="button"
+                    data-testid={`cloud-member-result-${user.id}`}
+                    disabled={savingUserId !== null}
+                    onClick={() => void addMember(user)}
+                    className="flex w-full items-center border-t border-border px-4 py-2.5 text-left transition first:border-t-0 hover:bg-hover disabled:opacity-50"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{user.user_name}</span>
+                      <span className="block truncate text-xs text-text-muted">{user.email}</span>
+                    </span>
+                    <span className="rounded-md bg-text-primary px-2 py-1 text-xs text-background">
+                      {savingUserId === user.id ? '添加中…' : '添加'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          </div>
         </div>
 
         <div className="mt-10">
@@ -471,6 +686,202 @@ export function CloudProjectManageView({
             ))}
           </div>
         </div>
+
+        {isAITableProvider && (
+          <section className="mt-10" data-testid="aitable-provider-settings">
+            <h2 className="text-heading-md font-semibold">钉钉多维表格</h2>
+            <p className="mt-1 text-sm text-text-muted">
+              配置数据源与看板字段映射。未映射的字段只会显示在表格视图中。
+            </p>
+            <div className="mt-4 space-y-4 rounded-xl border border-border bg-background p-4 shadow-sm">
+              <label className="block text-sm font-medium">
+                多维表格链接
+                <input
+                  data-testid="aitable-manage-url"
+                  value={aitableUrl}
+                  onChange={event => {
+                    setAITableUrl(event.target.value)
+                    setAITableSaved(false)
+                  }}
+                  className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm font-normal outline-none focus:border-focus"
+                  placeholder="粘贴 alidocs.dingtalk.com 多维表格链接"
+                />
+                {aitableUrl && !aitableLink ? (
+                  <span className="mt-1.5 block text-xs font-normal text-destructive">
+                    无法识别这个链接，请复制完整浏览器地址。
+                  </span>
+                ) : null}
+              </label>
+              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                <div>
+                  <p className="text-sm font-medium">
+                    {dwsStatus?.authenticated
+                      ? `已连接${dwsStatus.corp_name ? ` · ${dwsStatus.corp_name}` : ''}`
+                      : '尚未连接钉钉'}
+                  </p>
+                  <p className="mt-0.5 text-xs text-text-muted">
+                    Wework 项目角色与钉钉表格权限会同时生效。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="aitable-dws-login"
+                  disabled={!dwsApi || aitableBusy}
+                  onClick={() => {
+                    if (!dwsApi) return
+                    setAitableBusy(true)
+                    void dwsApi
+                      .login()
+                      .then(setDwsStatus)
+                      .catch(cause =>
+                        setError(cause instanceof Error ? cause.message : '连接钉钉失败')
+                      )
+                      .finally(() => setAitableBusy(false))
+                  }}
+                  className="h-9 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted disabled:opacity-40"
+                >
+                  {dwsStatus?.authenticated ? '重新连接' : '连接钉钉'}
+                </button>
+              </div>
+              <div>
+                <h3 className="text-sm font-medium">看板字段映射</h3>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  {AITABLE_BOARD_FIELDS.map(([key, label]) => (
+                    <label key={key} className="block text-xs text-text-muted">
+                      {label}
+                      <select
+                        data-testid={`aitable-mapping-${key}`}
+                        value={aitableMapping[key] ?? ''}
+                        onChange={event => {
+                          setAitableMapping(current => ({ ...current, [key]: event.target.value }))
+                          setAITableSaved(false)
+                        }}
+                        className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus"
+                      >
+                        <option value="">不映射</option>
+                        {aitableFields.map(field => (
+                          <option key={field.id} value={field.id}>
+                            {field.name} · {field.type}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {aitableMapping.status_field_id && (
+                <div>
+                  <h3 className="text-sm font-medium">状态泳道模式</h3>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        ['mapped', '映射', '归并到 Wework 的五种标准状态'],
+                        ['custom', '自定义多泳道', '按钉钉状态选项原样生成泳道'],
+                      ] as const
+                    ).map(([value, label, detail]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        data-testid={`aitable-status-mode-${value}`}
+                        aria-pressed={statusMode === value}
+                        onClick={() => {
+                          setStatusMode(value)
+                          setAITableSaved(false)
+                        }}
+                        className={cn(
+                          'rounded-lg border px-3 py-2 text-left',
+                          statusMode === value
+                            ? 'border-text-primary bg-muted/70'
+                            : 'border-border hover:bg-muted/40'
+                        )}
+                      >
+                        <span className="block text-sm font-medium">{label}</span>
+                        <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {statusMode === 'mapped' && statusOptions.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {statusOptions.map(option => (
+                        <label
+                          key={option}
+                          className="grid grid-cols-[minmax(0,1fr)_160px] items-center gap-3 text-sm"
+                        >
+                          <span className="truncate" title={option}>
+                            {option}
+                          </span>
+                          <select
+                            data-testid={`aitable-status-map-${option}`}
+                            value={statusMapping[option] ?? 'inbox'}
+                            onChange={event => {
+                              setStatusMapping(current => ({
+                                ...current,
+                                [option]: event.target.value as CloudLoopItem['status'],
+                              }))
+                              setAITableSaved(false)
+                            }}
+                            className="h-8 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-focus"
+                          >
+                            <option value="inbox">收集箱</option>
+                            <option value="pending">待开始</option>
+                            <option value="in_progress">进行中</option>
+                            <option value="in_review">待确认</option>
+                            <option value="completed">已完成</option>
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {statusMode === 'custom' && orderedStatuses.length > 0 && (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-border">
+                      {orderedStatuses.map((status, index) => (
+                        <div
+                          key={status}
+                          data-testid={`aitable-custom-status-${status}`}
+                          className="flex h-9 items-center gap-2 border-t border-border px-3 first:border-t-0"
+                        >
+                          <span className="min-w-0 flex-1 truncate text-sm">{status}</span>
+                          <button
+                            type="button"
+                            data-testid={`aitable-custom-status-up-${status}`}
+                            disabled={index === 0}
+                            onClick={() => moveCustomStatus(status, -1)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-30"
+                            aria-label={`上移${status}`}
+                          >
+                            <ArrowUp className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`aitable-custom-status-down-${status}`}
+                            disabled={index === orderedStatuses.length - 1}
+                            onClick={() => moveCustomStatus(status, 1)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-30"
+                            aria-label={`下移${status}`}
+                          >
+                            <ArrowDown className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-3">
+                {aitableSaved && <span className="text-xs text-emerald-600">已保存</span>}
+                <button
+                  type="button"
+                  data-testid="aitable-manage-save"
+                  disabled={aitableBusy || !aitableLink}
+                  onClick={() => void saveAITableConfig()}
+                  className="h-9 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-80 disabled:opacity-40"
+                >
+                  {aitableBusy ? '保存中…' : '保存配置'}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
 
         {externalProvider && (
           <section className="mt-10">

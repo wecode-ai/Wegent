@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
@@ -21,6 +21,13 @@ import {
 } from './keybindings'
 
 describe('keybindings', () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+  })
+
   it('normalizes equivalent modifier names', () => {
     expect(normalizeKeybinding('cmd+shift+j')).toBe('Shift+Command+J')
     expect(normalizeKeybinding('Ctrl+Option+`')).toBe('Control+Alt+`')
@@ -77,6 +84,41 @@ describe('keybindings', () => {
     expect(
       keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
     ).toBe('Command+Minus')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'Shift', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', {
+          key: '\u00a0',
+          code: 'Space',
+          altKey: true,
+          shiftKey: true,
+        })
+      )
+    ).toBe('Alt+Shift+Space')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'å', code: 'KeyA', altKey: true })
+      )
+    ).toBe('Alt+A')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '¡', code: 'Digit1', altKey: true })
+      )
+    ).toBe('Alt+1')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '≤', code: 'Comma', altKey: true })
+      )
+    ).toBe('Alt+,')
   })
 
   it('detects editable shortcut targets', () => {

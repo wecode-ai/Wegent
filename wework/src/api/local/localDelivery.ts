@@ -13,6 +13,7 @@ import type {
   DeliveryDetail,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { openLocalFile } from '@/lib/local-terminal'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 type LocalRequest = <T>(
@@ -31,6 +32,7 @@ interface LocalLoopItemRecord {
   name: string | null
   title: string | null
   description: string
+  created_by_user_id: number
   sequence_number: number | null
   status: string | null
   priority: string | null
@@ -82,7 +84,9 @@ function stringList(value: unknown): string[] {
 
 function localProject(record: LocalLoopItemRecord): CloudProject {
   const taskProvider =
-    record.metadata.task_provider === 'github' || record.metadata.task_provider === 'gitlab'
+    record.metadata.task_provider === 'github' ||
+    record.metadata.task_provider === 'gitlab' ||
+    record.metadata.task_provider === 'dingtalk_aitable'
       ? record.metadata.task_provider
       : 'local'
   return {
@@ -100,6 +104,10 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
     created_by_user_id: 0,
+    current_user_id: 0,
+    current_user_name: '',
+    access_role: 'Owner',
+    visibility: 'private',
     status: record.status ?? 'active',
     tags: stringList(record.metadata.tags),
     version: record.version,
@@ -132,18 +140,24 @@ export function createExternalIssueApi(request: LocalRequest) {
         project: externalProjectDescriptor(project, token),
       })
     },
+    async removeProject(projectId: CloudProject['id']) {
+      await request('external_projects.remove', { project_id: projectId })
+    },
+    async retainProjects(projectIds: CloudProject['id'][]) {
+      await request('external_projects.retain', { project_ids: projectIds })
+    },
     async listLoopItems(project: CloudProject) {
       const records = await request<LocalLoopItemRecord[]>('external_todos.list', {
         project: externalProjectDescriptor(project),
       })
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record, project)) }
     },
     async getLoopItem(project: CloudProject, itemId: string) {
       const record = await request<LocalLoopItemRecord>('external_todos.get', {
         project: externalProjectDescriptor(project),
         task_id: itemId,
       })
-      return localTask(record)
+      return localTask(record, project)
     },
     async createLoopItem(
       project: CloudProject,
@@ -154,8 +168,18 @@ export function createExternalIssueApi(request: LocalRequest) {
         priority?: CloudLoopItem['priority']
         parent_id?: string | null
         tags?: string[]
+        creator_name?: string
       }
     ) {
+      // The creator label keeps the numeric id as the authoritative identity
+      // (`wegent:creator:<id>`); a best-effort display name is appended for
+      // humans browsing the provider UI (`wegent:creator:<id>:<name>`).
+      // Provider label separators (comma for GitLab) cannot appear in names.
+      const creatorName = data.creator_name?.replace(/[,:]/g, ' ').trim()
+      const creatorLabel =
+        (project.current_user_id ?? 0) > 0
+          ? [`wegent:creator:${project.current_user_id}${creatorName ? `:${creatorName}` : ''}`]
+          : []
       const record = await request<LocalLoopItemRecord>('external_todos.create', {
         project: externalProjectDescriptor(project),
         todo: {
@@ -164,10 +188,10 @@ export function createExternalIssueApi(request: LocalRequest) {
           status: data.status ?? 'inbox',
           priority: data.priority ?? 'none',
           parent_id: data.parent_id ?? null,
-          tags: data.tags ?? [],
+          tags: [...(data.tags ?? []), ...creatorLabel],
         },
       })
-      return localTask(record)
+      return localTask(record, project)
     },
     async updateLoopItem(
       project: CloudProject,
@@ -179,18 +203,28 @@ export function createExternalIssueApi(request: LocalRequest) {
         task_id: itemId,
         todo: data,
       })
-      return localTask(record)
+      return localTask(record, project)
     },
   }
 }
 
-function localTask(record: LocalLoopItemRecord): CloudLoopItem {
+function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLoopItem {
+  const role = project?.access_role ?? 'Owner'
+  const isPublicVisitor = role === 'RestrictedAnalyst'
+  const ownsTask =
+    Boolean(project?.current_user_id) && record.created_by_user_id === project?.current_user_id
   return {
     id: record.id,
     cloud_project_id: record.cloud_project_id ?? '',
     sequence_number: record.sequence_number ?? 0,
     parent_id: record.parent_id,
-    created_by_user_id: 0,
+    created_by_user_id: record.created_by_user_id,
+    created_by_user_name:
+      typeof record.metadata.creator_label === 'string'
+        ? record.metadata.creator_label.split(':').slice(3).join(':').trim() || null
+        : null,
+    can_view_detail: !isPublicVisitor || ownsTask,
+    can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: null,
     title: record.title ?? '',
     description: record.description,
@@ -204,6 +238,8 @@ function localTask(record: LocalLoopItemRecord): CloudLoopItem {
     created_at: record.created_at,
     updated_at: record.updated_at,
     completed_at: record.completed_at,
+    source_status:
+      typeof record.metadata.source_status === 'string' ? record.metadata.source_status : null,
   }
 }
 
@@ -286,12 +322,21 @@ export function createLocalDeliveryApi(
       project_key?: string
       name: string
       description?: string
-      task_provider?: 'local' | 'github' | 'gitlab'
+      task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
       provider_config?: {
         repository?: string
         domain?: string
         api_base?: string
         token?: string
+        base_id?: string
+        table_id?: string
+        sheet_id?: string
+        source_url?: string
+        view_id?: string
+        board_mapping?: Record<string, string>
+        status_mode?: 'mapped' | 'custom'
+        status_mapping?: Record<string, CloudLoopItem['status']>
+        custom_statuses?: string[]
       }
     }) {
       const record = await request<LocalLoopItemRecord>('projects.create', {
@@ -324,7 +369,7 @@ export function createLocalDeliveryApi(
         project_id: projectId,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record)) }
     },
     async getLoopItem(itemId: string) {
       const projectId = await resolveProjectId(itemId)
@@ -384,7 +429,7 @@ export function createLocalDeliveryApi(
         reorder: data,
       })
       rememberTasks(projectId, records)
-      return { items: records.map(localTask) }
+      return { items: records.map(record => localTask(record)) }
     },
     async listLoopItemAttachments(itemId: string) {
       return request<CloudLoopItemAttachment[]>('attachments.list', {
@@ -405,6 +450,12 @@ export function createLocalDeliveryApi(
           attachment_id: attachmentId,
         })
       )
+    },
+    async downloadLoopItemAttachment(attachmentId: string) {
+      const access = await request<LocalAccessRecord>('attachments.access', {
+        attachment_id: attachmentId,
+      })
+      await openLocalFile(access.path)
     },
     async deleteLoopItemAttachment(attachmentId: string) {
       await request('attachments.delete', { attachment_id: attachmentId })

@@ -16,12 +16,14 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    feedback,
     groups,
     health,
     im_sessions,
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_stats,
     knowledge_transfer,
@@ -36,6 +38,7 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
+    runtime_automations,
     runtime_work,
     share,
     sites,
@@ -137,6 +140,7 @@ api_router.include_router(
     cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
 )
 api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(
@@ -202,6 +206,11 @@ api_router.include_router(
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
 )
 api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
@@ -286,6 +295,11 @@ api_router.include_router(
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
+)
+api_router.include_router(
+    runtime_automations.router,
+    prefix="/runtime-automations",
+    tags=["runtime-automations"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

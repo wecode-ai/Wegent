@@ -12,6 +12,8 @@ import { CloudConnectionDialog } from './CloudConnectionDialog'
 interface CloudConnectionSidebarButtonProps {
   devices: DeviceInfo[]
   cloudWorkStatus?: CloudWorkStatus
+  selected?: boolean
+  onOpenCloudWork: () => void
   onOpenSettings: () => void
   onSelectCloudDevice: (deviceId: string) => void
   onAddDevice: () => void
@@ -33,6 +35,8 @@ function hostLabel(value?: string | null): string {
 export function CloudConnectionSidebarButton({
   devices,
   cloudWorkStatus,
+  selected = false,
+  onOpenCloudWork,
   onOpenSettings,
   onSelectCloudDevice,
   onAddDevice,
@@ -183,7 +187,10 @@ export function CloudConnectionSidebarButton({
     <>
       <div
         ref={rootRef}
-        className="group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className={cn(
+          'group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]',
+          selected && 'bg-[rgb(var(--color-sidebar-active))]'
+        )}
       >
         <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center">
           {cloudWorkSyncing ? (
@@ -221,7 +228,7 @@ export function CloudConnectionSidebarButton({
           onClick={() => {
             if (connected) {
               if (cloudWorkAvailable) {
-                onOpenSettings()
+                onOpenCloudWork()
                 return
               }
               if (errorDetail) {

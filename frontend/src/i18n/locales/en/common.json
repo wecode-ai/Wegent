@@ -628,6 +628,7 @@
       "description": "Wework is requesting access to this cloud workspace. After authorization, local Wework can read your cloud models, devices, and runtime settings.",
       "cloud_label": "Cloud",
       "account_label": "Account",
+      "switch_account": "Switch account",
       "cancel": "Cancel",
       "approve": "Authorize",
       "authorization_failed": "Authorization failed"

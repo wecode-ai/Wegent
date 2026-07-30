@@ -1,5 +1,8 @@
+import { invoke } from '@tauri-apps/api/core'
 import type { HttpClient } from './http'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { openLocalFile } from '@/lib/local-terminal'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
@@ -43,6 +46,9 @@ export interface CloudLoopItem {
   sequence_number: number
   parent_id: string | null
   created_by_user_id: number
+  created_by_user_name?: string | null
+  can_view_detail?: boolean
+  can_edit?: boolean
   assignee_user_id: number | null
   title: string
   description: string
@@ -56,6 +62,7 @@ export interface CloudLoopItem {
   created_at: string
   updated_at: string
   completed_at: string | null
+  source_status?: string | null
 }
 
 export interface CloudLoopItemAttachment {
@@ -67,6 +74,8 @@ export interface CloudLoopItemAttachment {
   sha256: string
   created_by_user_id: number
   created_at: string
+  markdown_url: string
+  markdown: string
 }
 
 export interface CloudProject {
@@ -76,14 +85,28 @@ export interface CloudProject {
   name: string
   description: string
   project_store: 'local' | 'backend'
-  task_provider: 'local' | 'github' | 'gitlab'
+  // Cloud responses can contain provider kinds introduced by a newer backend.
+  task_provider: string
   provider_config: {
     repository?: string
     domain?: string
     api_base?: string
     credential_configured?: boolean
+    base_id?: string
+    table_id?: string
+    sheet_id?: string
+    source_url?: string
+    view_id?: string
+    board_mapping?: Record<string, string>
+    status_mode?: 'mapped' | 'custom'
+    status_mapping?: Record<string, CloudLoopItem['status']>
+    custom_statuses?: string[]
   }
   created_by_user_id: number
+  current_user_id?: number
+  current_user_name?: string
+  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst'
+  visibility?: 'private' | 'public'
   status: string
   tags: string[]
   version: number
@@ -185,18 +208,25 @@ export function createDeliveryApi(client: HttpClient) {
       project_key?: string
       name: string
       description?: string
-      task_provider?: 'local' | 'github' | 'gitlab'
+      task_provider?: 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
+      visibility?: 'private' | 'public'
       provider_config?: {
         repository?: string
         domain?: string
         api_base?: string
         token?: string
+        base_id?: string
+        table_id?: string
+        sheet_id?: string
+        source_url?: string
+        view_id?: string
+        board_mapping?: Record<string, string>
+        status_mode?: 'mapped' | 'custom'
+        status_mapping?: Record<string, CloudLoopItem['status']>
+        custom_statuses?: string[]
       }
     }): Promise<CloudProject> {
       return client.post('/v1/cloud-projects', data)
-    },
-    getCloudProjectProviderCredential(projectId: CloudProjectIdInput): Promise<{ token: string }> {
-      return client.get(`/v1/cloud-projects/${projectId}/provider-credential`)
     },
     updateCloudProject(
       projectId: CloudProjectIdInput,
@@ -204,11 +234,21 @@ export function createDeliveryApi(client: HttpClient) {
         name?: string
         description?: string
         tags?: string[]
+        visibility?: 'private' | 'public'
         provider_config?: {
           repository?: string
           domain?: string
           api_base?: string
           token?: string
+          base_id?: string
+          table_id?: string
+          sheet_id?: string
+          source_url?: string
+          view_id?: string
+          board_mapping?: Record<string, string>
+          status_mode?: 'mapped' | 'custom'
+          status_mapping?: Record<string, CloudLoopItem['status']>
+          custom_statuses?: string[]
         }
         version: number
       }
@@ -288,6 +328,27 @@ export function createDeliveryApi(client: HttpClient) {
       attachmentId: string
     ): Promise<{ url: string; expires_in_seconds: number }> {
       return client.get(`/v1/loop-item-attachments/${attachmentId}/access`)
+    },
+    readLoopItemAttachment(attachmentId: string): Promise<Blob> {
+      return client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
+    },
+    async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
+      const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
+      if (isTauriRuntime()) {
+        const path = await invoke<string>('save_local_attachment_file', {
+          workspacePath: null,
+          filename,
+          bytes: Array.from(new Uint8Array(await content.arrayBuffer())),
+        })
+        await openLocalFile(path)
+        return
+      }
+      const url = URL.createObjectURL(content)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
     },
     deleteLoopItemAttachment(attachmentId: string): Promise<void> {
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)

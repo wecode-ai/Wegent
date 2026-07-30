@@ -23,12 +23,16 @@ const mocks = vi.hoisted(() => {
   }
   const backendDeliveryApi = {
     listCloudProjects: vi.fn(async () => ({ items: [project] })),
-    getCloudProjectProviderCredential: vi.fn(async () => ({ token: 'gitlab-secret' })),
     listLoopItems: vi.fn(),
-    createLoopItem: vi.fn(),
+    createLoopItem: vi.fn(async () => ({
+      id: 'CLOUD-1',
+      cloud_project_id: project.id,
+      title: 'GitLab Issue',
+    })),
   }
   const externalIssueApi = {
     configureProject: vi.fn(async () => undefined),
+    retainProjects: vi.fn(async () => undefined),
     listLoopItems: vi.fn(async () => ({ items: [] })),
     createLoopItem: vi.fn(async () => ({
       id: 'CLOUD-1',
@@ -79,26 +83,24 @@ describe('default workbench project-space services', () => {
     vi.clearAllMocks()
   })
 
-  test('routes cloud GitLab tasks through the local executor in backend desktop mode', async () => {
+  test('keeps cloud GitLab tasks on the backend in backend desktop mode', async () => {
     const services = createDefaultWorkbenchServices()
     const api = services.projectSpaceApis!.cloud!
 
     await api.listCloudProjects()
-    const created = await api.createLoopItem(mocks.project.id, {
+    await api.createLoopItem(mocks.project.id, {
       title: 'GitLab Issue',
       status: 'pending',
     })
 
-    expect(created.id).toBe('CLOUD-1')
-    expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
-    expect(mocks.externalIssueApi.configureProject).toHaveBeenCalledWith(
-      mocks.project,
-      'gitlab-secret'
-    )
-    expect(mocks.externalIssueApi.createLoopItem).toHaveBeenCalledWith(mocks.project, {
+    expect(mocks.externalIssueApi.retainProjects).not.toHaveBeenCalled()
+    expect(mocks.backendDeliveryApi.listCloudProjects).toHaveBeenCalled()
+    expect(mocks.backendDeliveryApi.createLoopItem).toHaveBeenCalledWith(mocks.project.id, {
       title: 'GitLab Issue',
       status: 'pending',
     })
-    expect(mocks.backendDeliveryApi.createLoopItem).not.toHaveBeenCalled()
+    expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
+    expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
+    expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
   })
 })

@@ -11,13 +11,14 @@
 
 mod anthropic;
 mod chat;
+mod fork;
 mod history;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     pin::Pin,
     sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use axum::{
@@ -34,10 +35,21 @@ use sha2::{Digest, Sha256};
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
+use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
+const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
+const RATE_LIMIT_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+    Duration::from_secs(60),
+];
+const MAX_RATE_LIMIT_RETRIES: u32 = RATE_LIMIT_RETRY_DELAYS.len() as u32;
+const MAX_RATE_LIMIT_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 pub(crate) fn route<S>() -> MethodRouter<S>
 where
@@ -57,6 +69,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub proxy_url: Option<String>,
     pub model_id: Option<String>,
     pub routing_model_id: Option<String>,
+    pub max_output_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +262,7 @@ async fn handle_for_token(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
+    let forked_from_thread_id = codex_forked_from_thread_id(&headers);
     let (upstream, history, model_routing) = {
         let mut registry = registry()
             .lock()
@@ -279,51 +293,48 @@ async fn handle_for_token(
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.convert_custom_tools,
+        upstream.max_output_tokens,
         &request_body,
         history.as_ref(),
     )
     .await?;
     let request_body =
         prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
-    log_executor_event(
-        "local model proxy request started",
-        &[
-            ("api_format", upstream.api_format.clone()),
-            ("upstream", safe_url(&request_url)),
-            ("body_bytes", request_body.len().to_string()),
+    let (request_body, stripped_encrypted_content) =
+        prepare_fork_request(request_body, forked_from_thread_id.is_some())?;
+    let mut request_log_fields = vec![
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(&request_url)),
+        ("body_bytes", request_body.len().to_string()),
+        (
+            "expanded_browser_tools",
+            expanded_browser_tools.len().to_string(),
+        ),
+    ];
+    if let Some(parent_thread_id) = forked_from_thread_id {
+        request_log_fields.extend([
+            ("forked_from_thread_id", parent_thread_id),
             (
-                "expanded_browser_tools",
-                expanded_browser_tools.len().to_string(),
+                "stripped_encrypted_content",
+                stripped_encrypted_content.to_string(),
             ),
-        ],
-    );
-
-    let client = proxy_client(upstream.proxy_url.as_deref())?;
-    let mut request = client
-        .post(request_url)
-        .bearer_auth(&upstream.api_key)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .body(request_body);
-    if upstream.api_format == "anthropic-messages" {
-        request = request
-            .header("x-api-key", upstream.api_key)
-            .header("anthropic-version", "2023-06-01");
+        ]);
     }
-    if let Some(user_agent) = headers
+    log_executor_event("local model proxy request started", &request_log_fields);
+
+    let user_agent = headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
-    {
-        request = request.header(reqwest::header::USER_AGENT, user_agent);
-    }
-    for (key, value) in upstream.default_headers {
-        request = request.header(key, value);
-    }
-
-    let upstream_response = request.send().await.map_err(|error| HttpError {
-        status: StatusCode::BAD_GATEWAY,
-        detail: format!("Local model proxy request failed: {error}"),
-    })?;
+        .map(str::to_owned);
+    let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let upstream_response = send_upstream_request_with_rate_limit_retry(
+        &client,
+        &upstream,
+        &request_url,
+        &request_body,
+        user_agent.as_deref(),
+    )
+    .await?;
     let status = upstream_response.status();
     if status.is_success() {
         commit_model_request(&token, &model_routing);
@@ -355,6 +366,10 @@ async fn handle_for_token(
                 ("api_format", upstream.api_format),
                 ("status", status.as_u16().to_string()),
                 ("body_bytes", response_body.len().to_string()),
+                (
+                    "upstream_error_code",
+                    detect_upstream_error_code(&response_body).unwrap_or_default(),
+                ),
             ],
         );
         let mut response = Response::new(Body::from(response_body));
@@ -781,6 +796,7 @@ where
 async fn prepare_request_with_history(
     api_format: &str,
     convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
     body: &[u8],
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -806,7 +822,7 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, convert_custom_tools, &body);
+        return prepare_request(api_format, convert_custom_tools, max_output_tokens, &body);
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -826,13 +842,19 @@ async fn prepare_request_with_history(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize enriched Codex request: {error}"),
     })?;
-    prepare_request(api_format, convert_custom_tools, &enriched)
+    prepare_request(
+        api_format,
+        convert_custom_tools,
+        max_output_tokens,
+        &enriched,
+    )
 }
 
 #[allow(clippy::type_complexity)]
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
@@ -840,6 +862,7 @@ fn prepare_request(
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
     normalize_responses_request_ids(&mut responses_body);
+    apply_default_max_output_tokens(&mut responses_body, max_output_tokens);
 
     if api_format == "openai-responses" {
         let conversion = if convert_custom_tools {
@@ -879,6 +902,26 @@ fn prepare_request(
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
     Ok((body, Some(context), HashSet::new()))
+}
+
+fn apply_default_max_output_tokens(body: &mut Value, max_output_tokens: Option<u64>) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    if ["max_output_tokens", "max_completion_tokens", "max_tokens"]
+        .iter()
+        .any(|field| object.contains_key(*field))
+    {
+        return;
+    }
+    object.insert(
+        "max_output_tokens".to_owned(),
+        Value::Number(
+            max_output_tokens
+                .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+                .into(),
+        ),
+    );
 }
 
 fn normalize_responses_request_ids(body: &mut Value) -> usize {
@@ -982,6 +1025,113 @@ fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
         })
 }
 
+async fn send_upstream_request_with_rate_limit_retry(
+    client: &reqwest::Client,
+    upstream: &LocalModelProxyUpstream,
+    request_url: &str,
+    request_body: &[u8],
+    user_agent: Option<&str>,
+) -> Result<reqwest::Response, HttpError> {
+    for retry_count in 0..=MAX_RATE_LIMIT_RETRIES {
+        let response =
+            build_upstream_request(client, upstream, request_url, request_body, user_agent)
+                .send()
+                .await
+                .map_err(|error| HttpError {
+                    status: StatusCode::BAD_GATEWAY,
+                    detail: format!("Local model proxy request failed: {error}"),
+                })?;
+        if response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+            || retry_count == MAX_RATE_LIMIT_RETRIES
+        {
+            return Ok(response);
+        }
+
+        let delay = rate_limit_retry_delay(response.headers(), retry_count);
+        log_executor_event(
+            "local model proxy rate limited; retrying",
+            &[
+                ("api_format", upstream.api_format.clone()),
+                ("retry", (retry_count + 1).to_string()),
+                ("max_retries", MAX_RATE_LIMIT_RETRIES.to_string()),
+                ("delay_ms", delay.as_millis().to_string()),
+            ],
+        );
+        tokio::time::sleep(delay).await;
+    }
+
+    unreachable!("rate limit retry loop always returns a response")
+}
+
+fn build_upstream_request(
+    client: &reqwest::Client,
+    upstream: &LocalModelProxyUpstream,
+    request_url: &str,
+    request_body: &[u8],
+    user_agent: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .post(request_url)
+        .bearer_auth(&upstream.api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .body(request_body.to_vec());
+    if upstream.api_format == "anthropic-messages" {
+        request = request
+            .header("x-api-key", &upstream.api_key)
+            .header("anthropic-version", "2023-06-01");
+    }
+    if let Some(user_agent) = user_agent {
+        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    }
+    for (key, value) in &upstream.default_headers {
+        request = request.header(key, value);
+    }
+    request
+}
+
+fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(response_body);
+    [
+        "invalid_encrypted_content",
+        "context_length_exceeded",
+        "rate_limit_exceeded",
+    ]
+    .into_iter()
+    .find(|code| text.contains(code))
+    .map(str::to_owned)
+}
+
+fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
+    let retry_after = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after);
+    retry_after
+        .unwrap_or_else(|| configured_rate_limit_delay(retry_count))
+        .min(MAX_RATE_LIMIT_RETRY_DELAY)
+}
+
+fn parse_retry_after(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let retry_at = httpdate::parse_http_date(value).ok()?;
+    Some(
+        retry_at
+            .duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO),
+    )
+}
+
+fn configured_rate_limit_delay(retry_count: u32) -> Duration {
+    RATE_LIMIT_RETRY_DELAYS
+        .get(retry_count as usize)
+        .copied()
+        .unwrap_or(MAX_RATE_LIMIT_RETRY_DELAY)
+}
+
 fn safe_url(value: &str) -> String {
     reqwest::Url::parse(value)
         .ok()
@@ -999,6 +1149,7 @@ fn safe_url(value: &str) -> String {
 struct ResponsesStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: VecDeque<Result<Bytes, std::io::Error>>,
     source_done: bool,
     terminal_seen: bool,
@@ -1016,6 +1167,7 @@ where
     let state = ResponsesStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: VecDeque::new(),
         source_done: false,
         terminal_seen: false,
@@ -1040,7 +1192,13 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) =
+                        append_stream_utf8(&mut state.pending, &mut state.pending_utf8, &bytes)
+                    {
+                        state.source_done = true;
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     while let Some(event) = take_sse_block(&mut state.pending) {
                         state.terminal_seen |= is_responses_terminal_event(&event);
                         let normalized = if state.expanded_browser_tools.is_empty() {
@@ -1063,6 +1221,10 @@ where
                 }
                 None => {
                     state.source_done = true;
+                    if let Err(error) = finish_stream_utf8(&state.pending_utf8) {
+                        state.terminal_seen = true;
+                        return Some((Ok(responses_failed_event(&error.to_string())), state));
+                    }
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
@@ -1275,6 +1437,48 @@ pub(super) fn take_sse_block(buffer: &mut String) -> Option<String> {
     Some(block)
 }
 
+pub(super) fn append_stream_utf8(
+    buffer: &mut String,
+    pending_utf8: &mut Vec<u8>,
+    chunk: &[u8],
+) -> Result<(), std::io::Error> {
+    pending_utf8.extend_from_slice(chunk);
+    match std::str::from_utf8(pending_utf8) {
+        Ok(text) => {
+            buffer.push_str(text);
+            pending_utf8.clear();
+            Ok(())
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            let error_len = error.error_len();
+            if valid_up_to > 0 {
+                let valid = std::str::from_utf8(&pending_utf8[..valid_up_to])
+                    .expect("UTF-8 validator should identify a valid prefix");
+                buffer.push_str(valid);
+                pending_utf8.drain(..valid_up_to);
+            }
+            if error_len.is_some() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Upstream stream contains invalid UTF-8",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn finish_stream_utf8(pending_utf8: &[u8]) -> Result<(), std::io::Error> {
+    if pending_utf8.is_empty() {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::UnexpectedEof,
+        "Upstream stream ended with an incomplete UTF-8 sequence",
+    ))
+}
+
 fn normalize_responses_event(event: &str) -> String {
     if !event.contains("response.completed") {
         return event.to_owned();
@@ -1367,11 +1571,39 @@ fn ensure_usage_detail(usage: &mut Map<String, Value>, details_key: &str, field:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, fs, sync::Arc};
+    use std::{
+        env, fs,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
 
     use axum::{body::to_bytes, routing::post, Json, Router};
     use serde_json::json;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn detects_known_upstream_error_codes_in_priority_order() {
+        assert_eq!(
+            detect_upstream_error_code(
+                br#"{"error":{"code":"invalid_encrypted_content","message":"invalid"}}"#
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+        assert_eq!(
+            detect_upstream_error_code(br#"{"error":{"code":"upstream_unavailable"}}"#),
+            None
+        );
+        assert_eq!(
+            detect_upstream_error_code(
+                b"rate_limit_exceeded appeared first, then invalid_encrypted_content"
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+    }
 
     #[test]
     fn normalizes_completed_usage_details() {
@@ -1455,6 +1687,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1508,6 +1741,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1538,6 +1772,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let body = serde_json::to_vec(&json!({
             "model": "wework-gpt-5.6-sol",
@@ -1568,7 +1803,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_chat_request() {
-        let error = prepare_request("openai-chat-completions", false, b"not-json")
+        let error = prepare_request("openai-chat-completions", false, None, b"not-json")
             .expect_err("invalid JSON should fail");
         assert_eq!(error.status, StatusCode::BAD_REQUEST);
     }
@@ -1587,7 +1822,7 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, &body).expect("native request");
+            prepare_request("openai-responses", false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "custom");
@@ -1599,7 +1834,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", false, &body).expect("native request");
+            prepare_request("openai-responses", false, None, &body).expect("native request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["input"][0];
         let output = &prepared["input"][1];
@@ -1619,7 +1854,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("openai-chat-completions", false, &body).expect("chat request");
+            prepare_request("openai-chat-completions", false, None, &body).expect("chat request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["tool_calls"][0];
         let output = &prepared["messages"][1];
@@ -1636,7 +1871,7 @@ mod tests {
         let body = cross_protocol_history_with_invalid_ids();
 
         let (prepared, conversion, _) =
-            prepare_request("anthropic-messages", false, &body).expect("Anthropic request");
+            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
         let call = &prepared["messages"][0]["content"][0];
         let output = &prepared["messages"][1]["content"][0];
@@ -1646,6 +1881,52 @@ mod tests {
         assert_ne!(call_id, "functions.exec_command:0");
         assert_eq!(output["tool_use_id"], call["id"]);
         assert!(matches!(conversion, Some(Conversion::Anthropic(_))));
+    }
+
+    #[test]
+    fn defaults_anthropic_max_output_tokens_to_96000() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task"
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) =
+            prepare_request("anthropic-messages", false, None, &body).expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 96_000);
+    }
+
+    #[test]
+    fn configured_max_output_tokens_override_the_default() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task"
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(12_345), &body)
+            .expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 12_345);
+    }
+
+    #[test]
+    fn explicit_request_max_output_tokens_override_model_configuration() {
+        let body = serde_json::to_vec(&json!({
+            "model": "kimi-k3",
+            "input": "finish the task",
+            "max_output_tokens": 2_048
+        }))
+        .expect("request body");
+
+        let (prepared, _, _) = prepare_request("anthropic-messages", false, Some(96_000), &body)
+            .expect("Anthropic request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["max_tokens"], 2_048);
     }
 
     fn cross_protocol_history_with_invalid_ids() -> Vec<u8> {
@@ -1689,7 +1970,7 @@ mod tests {
         .expect("request body");
 
         let (prepared, conversion, _) =
-            prepare_request("openai-responses", true, &body).expect("converted request");
+            prepare_request("openai-responses", true, None, &body).expect("converted request");
         let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
 
         assert_eq!(prepared["tools"][0]["type"], "function");
@@ -1702,9 +1983,70 @@ mod tests {
     }
 
     #[test]
+    fn rate_limit_retry_delay_uses_retry_after_and_caps_large_values() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("2"),
+        );
+        assert_eq!(rate_limit_retry_delay(&headers, 0), Duration::from_secs(2));
+
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("120"),
+        );
+        assert_eq!(
+            rate_limit_retry_delay(&headers, 0),
+            MAX_RATE_LIMIT_RETRY_DELAY
+        );
+    }
+
+    #[test]
+    fn rate_limit_retry_delay_falls_back_to_configured_backoff_sequence() {
+        let headers = reqwest::header::HeaderMap::new();
+
+        let delays = (0..MAX_RATE_LIMIT_RETRIES)
+            .map(|retry_count| rate_limit_retry_delay(&headers, retry_count))
+            .collect::<Vec<_>>();
+
+        assert_eq!(delays, RATE_LIMIT_RETRY_DELAYS);
+        assert_eq!(
+            rate_limit_retry_delay(&headers, 20),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
     fn leaves_non_completed_events_unchanged() {
         let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
         assert_eq!(normalize_responses_event(event), event);
+    }
+
+    #[test]
+    fn buffers_incomplete_utf8_until_the_next_stream_chunk() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+
+        for byte in "在".as_bytes() {
+            append_stream_utf8(&mut buffer, &mut pending_utf8, &[*byte])
+                .expect("split UTF-8 should remain valid");
+        }
+
+        finish_stream_utf8(&pending_utf8).expect("all UTF-8 bytes should be consumed");
+        assert_eq!(buffer, "在");
+    }
+
+    #[test]
+    fn rejects_an_incomplete_utf8_sequence_at_stream_end() {
+        let mut buffer = String::new();
+        let mut pending_utf8 = Vec::new();
+        append_stream_utf8(&mut buffer, &mut pending_utf8, &["在".as_bytes()[0]])
+            .expect("an incomplete trailing sequence should be buffered");
+
+        let error = finish_stream_utf8(&pending_utf8).expect_err("stream should be incomplete");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert!(buffer.is_empty());
     }
 
     async fn collect_responses_stream<S, E>(stream: S) -> String
@@ -1781,6 +2123,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-luna".to_owned()),
             routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+            max_output_tokens: None,
         };
         let token = register("stable-task-route", initial);
         let original_history = registry()
@@ -1801,6 +2144,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let repeated_token = register("stable-task-route", updated.clone());
 
@@ -1852,6 +2196,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("gpt-5.6-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
         let task_a = register("stable-random-token-task-a", upstream.clone());
         let repeated_task_a = register("stable-random-token-task-a", upstream.clone());
@@ -1891,6 +2236,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("wework-gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
             },
         );
         {
@@ -1922,6 +2268,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -1962,6 +2309,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
 
         assert_eq!(
@@ -1982,6 +2330,7 @@ mod tests {
             proxy_url: None,
             model_id: Some("upstream-sol".to_owned()),
             routing_model_id: Some("gpt-5.6-sol".to_owned()),
+            max_output_tokens: None,
         };
 
         assert_eq!(
@@ -2004,6 +2353,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
@@ -2044,6 +2394,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         bind_thread(&token, "thread-root").expect("root thread should bind");
@@ -2107,6 +2458,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2126,6 +2478,140 @@ mod tests {
             .await
             .expect("response body");
         assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn retries_rate_limited_model_requests_until_success() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn({
+            let request_count = request_count.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/chat/completions",
+                        post(move || {
+                            let request_count = request_count.clone();
+                            async move {
+                                if request_count.fetch_add(1, Ordering::SeqCst) < 2 {
+                                    return (
+                                        StatusCode::TOO_MANY_REQUESTS,
+                                        [(header::RETRY_AFTER, "0")],
+                                        Json(json!({"error": {"message": "rate limited"}})),
+                                    );
+                                }
+                                (
+                                    StatusCode::OK,
+                                    [(header::RETRY_AFTER, "0")],
+                                    Json(json!({"choices": [{"message": {"content": "hi"}}]})),
+                                )
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .expect("upstream server");
+            }
+        });
+        let token = register(
+            "rate-limit-retry-success",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/chat/completions")),
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("proxy response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(request_count.load(Ordering::SeqCst), 3);
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn returns_last_rate_limit_response_after_retry_budget_is_exhausted() {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn({
+            let request_count = request_count.clone();
+            async move {
+                axum::serve(
+                    listener,
+                    Router::new().route(
+                        "/responses",
+                        post(move || {
+                            request_count.fetch_add(1, Ordering::SeqCst);
+                            async {
+                                (
+                                    StatusCode::TOO_MANY_REQUESTS,
+                                    [(header::RETRY_AFTER, "0")],
+                                    Json(json!({"error": {"message": "still rate limited"}})),
+                                )
+                            }
+                        }),
+                    ),
+                )
+                .await
+                .expect("upstream server");
+            }
+        });
+        let token = register(
+            "rate-limit-retry-exhausted",
+            LocalModelProxyUpstream {
+                base_url: format!("http://{address}"),
+                request_url: Some(format!("http://{address}/responses")),
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: None,
+                max_output_tokens: None,
+            },
+        );
+
+        let response = handle(
+            proxy_headers(&token),
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("proxy response");
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            (MAX_RATE_LIMIT_RETRIES + 1) as usize
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        assert!(String::from_utf8_lossy(&body).contains("still rate limited"));
 
         unregister(&token);
         server.abort();
@@ -2165,6 +2651,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-luna".to_owned()),
                 routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
             },
         );
         {
@@ -2187,6 +2674,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some("gpt-5.6-sol".to_owned()),
                 routing_model_id: Some("gpt-5.6-sol".to_owned()),
+                max_output_tokens: None,
             },
         );
         assert_eq!(repeated_token, token);
@@ -2261,6 +2749,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2347,6 +2836,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let response = handle(
@@ -2455,6 +2945,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let response = handle(
@@ -2579,6 +3070,7 @@ mod tests {
                 proxy_url: None,
                 model_id: None,
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let mut headers = HeaderMap::new();
@@ -2638,6 +3130,7 @@ mod tests {
                 proxy_url: None,
                 model_id: Some(model_id.clone()),
                 routing_model_id: None,
+                max_output_tokens: None,
             },
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

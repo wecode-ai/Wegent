@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
+import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -19,6 +19,11 @@ import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { openExternalUrl } from '@/lib/external-links'
+import {
+  getActiveKeybinding,
+  OPEN_TERMINAL_COMMAND,
+  TOGGLE_SIDE_PANEL_COMMAND,
+} from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -56,8 +61,10 @@ interface WorkspacePanelActionsProps {
   todoLabel?: string
   onManageTodo?: () => void
   rightPanelOpen: boolean
+  rightPanelExpanded: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
+  onToggleRightPanelExpanded: () => void
   onToggleBottomPanel: () => void
 }
 
@@ -86,8 +93,10 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   todoLabel,
   onManageTodo,
   rightPanelOpen,
+  rightPanelExpanded,
   bottomPanelOpen,
   onToggleRightPanel,
+  onToggleRightPanelExpanded,
   onToggleBottomPanel,
 }: WorkspacePanelActionsProps) {
   const { t } = useTranslation('common')
@@ -142,6 +151,9 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       : t('workbench.project_ide_cloud_only_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
+  const rightPanelExpandedTitle = rightPanelExpanded
+    ? t('workbench.restore_right_workspace_panel')
+    : t('workbench.expand_right_workspace_panel')
 
   const getStartFailedMessage = (error: unknown) => {
     if (error instanceof Error && error.message) {
@@ -295,10 +307,27 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {(showBottomPanelToggle || showRightPanelToggle) && (
         <>
+          {showRightPanelToggle && rightPanelOpen && (
+            <TitlebarTooltip label={rightPanelExpandedTitle} align="end">
+              <button
+                type="button"
+                data-testid="toggle-right-workspace-panel-expanded-button"
+                onClick={onToggleRightPanelExpanded}
+                className={cn(
+                  DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  rightPanelExpanded && 'bg-black/[0.10] text-[#374151]'
+                )}
+                aria-label={rightPanelExpandedTitle}
+                aria-pressed={rightPanelExpanded}
+              >
+                {rightPanelExpanded ? <Minimize2 /> : <Maximize2 />}
+              </button>
+            </TitlebarTooltip>
+          )}
           {showBottomPanelToggle && (
             <TitlebarTooltip
               label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
-              shortcut="Command+J"
+              shortcut={getActiveKeybinding(OPEN_TERMINAL_COMMAND) ?? 'Command+J'}
               align="end"
             >
               <button
@@ -316,7 +345,11 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             </TitlebarTooltip>
           )}
           {showRightPanelToggle && (
-            <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
+            <TitlebarTooltip
+              label={rightPanelTitle}
+              shortcut={getActiveKeybinding(TOGGLE_SIDE_PANEL_COMMAND) ?? 'Alt+Command+B'}
+              align="end"
+            >
               <button
                 type="button"
                 data-testid="toggle-right-workspace-panel-button"

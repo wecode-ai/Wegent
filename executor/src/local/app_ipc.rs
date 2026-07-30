@@ -379,8 +379,11 @@ impl AppIpcServer {
 
         if method.starts_with("projects.")
             || method.starts_with("external_projects.")
+            || method.starts_with("dws.")
+            || method.starts_with("aitable.")
             || method.starts_with("todos.")
             || method.starts_with("external_todos.")
+            || method.starts_with("external_attachments.")
             || method.starts_with("runtime_tasks.")
             || method.starts_with("files.")
             || method.starts_with("attachments.")
@@ -676,6 +679,22 @@ impl AppIpcServer {
 async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
     let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
     match method {
+        "dws.auth_status" => serialize_task_value(
+            runtime
+                .dws_auth_status()
+                .await
+                .map_err(task_runtime_error)?,
+        ),
+        "dws.auth_login" => {
+            serialize_task_value(runtime.dws_auth_login().await.map_err(task_runtime_error)?)
+        }
+        "dws.auth_logout" => {
+            runtime
+                .dws_auth_logout()
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "projects.list" => {
             serialize_task_value(runtime.list_projects().map_err(task_runtime_error)?)
         }
@@ -700,6 +719,139 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .configure_external_project(project)
                     .map_err(task_runtime_error)?,
             )
+        }
+        "external_projects.remove" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            runtime
+                .remove_external_project(project_id)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "external_projects.retain" => {
+            let project_ids = params
+                .get("project_ids")
+                .and_then(Value::as_array)
+                .ok_or_else(|| AppIpcError::new("bad_request", "project_ids must be an array"))?
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        AppIpcError::new("bad_request", "project_ids must contain strings")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            runtime
+                .retain_external_projects(&project_ids)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "aitable.describe" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .aitable_describe(project_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.list_records" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let query = params.get("query").and_then(Value::as_str);
+            let cursor = params.get("cursor").and_then(Value::as_str);
+            let limit = params.get("limit").and_then(Value::as_i64).unwrap_or(100);
+            serialize_task_value(
+                runtime
+                    .aitable_list_records(project_id, query, limit, cursor)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.get_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            serialize_task_value(
+                runtime
+                    .aitable_get_record(project_id, record_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.create_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let cells = params
+                .get("cells")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "cells must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_create_record(project_id, cells)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.update_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            let cells = params
+                .get("cells")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "cells must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_update_record(project_id, record_id, cells)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.delete_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            runtime
+                .aitable_delete_record(project_id, record_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "aitable.create_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let name = required_task_string(&params, "name")?;
+            let field_type = required_task_string(&params, "field_type")?;
+            let property = params
+                .get("config")
+                .or_else(|| params.get("property"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            serialize_task_value(
+                runtime
+                    .aitable_create_field(project_id, name, field_type, property)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.update_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let field_id = required_task_string(&params, "field_id")?;
+            let payload = params
+                .get("field")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "field must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_update_field(project_id, field_id, payload)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.delete_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let field_id = required_task_string(&params, "field_id")?;
+            runtime
+                .aitable_delete_field(project_id, field_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
         }
         "external_todos.list" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
@@ -740,6 +892,48 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .await
                     .map_err(task_runtime_error)?,
             )
+        }
+        "external_attachments.list" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .list_external_task_attachments(project, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.add" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .upload_external_task_attachment(project, task_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.access" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            Ok(json!({
+                "path": runtime
+                    .download_external_task_attachment(project, task_id, attachment_id)
+                    .await
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        "external_attachments.delete" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            runtime
+                .delete_external_task_attachment(project, task_id, attachment_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({"deleted": true}))
         }
         "todos.list" => {
             let project_id = required_task_string(&params, "project_id")?;
@@ -919,10 +1113,12 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             Ok(json!({"deleted": true}))
         }
         "attachments.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
             let item_id = required_task_string(&params, "item_id")?;
             serialize_task_value(
                 runtime
-                    .list_task_attachments(item_id)
+                    .list_task_attachments(project_id, item_id)
+                    .await
                     .map_err(task_runtime_error)?,
             )
         }
@@ -938,17 +1134,23 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             )
         }
         "attachments.access" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
             let attachment_id = required_task_string(&params, "attachment_id")?;
             Ok(json!({
                 "path": runtime
-                    .task_attachment_path(attachment_id)
+                    .task_attachment_path(project_id, item_id, attachment_id)
+                    .await
                     .map_err(task_runtime_error)?
             }))
         }
         "attachments.delete" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
             let attachment_id = required_task_string(&params, "attachment_id")?;
             runtime
-                .delete_task_attachment(attachment_id)
+                .delete_task_attachment(project_id, item_id, attachment_id)
+                .await
                 .map_err(task_runtime_error)?;
             Ok(json!({"deleted": true}))
         }

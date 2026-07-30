@@ -46,7 +46,7 @@ const forbiddenGlobalZIndexClasses = [
 describe('theme token guard', () => {
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
-    const source = readFileSync(tailwindConfigPath, 'utf8')
+    const source = readFileSync(tailwindConfigPath, 'utf8').replace(/\r\n/g, '\n')
     const colorsBlock = source.slice(source.indexOf('colors: {'), source.indexOf('borderRadius:'))
 
     expect(source).toContain(
@@ -80,16 +80,16 @@ describe('theme token guard', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
     const source = readFileSync(globalsPath, 'utf8')
 
-    expect(source).toContain('scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);')
+    expect(source).toContain('scrollbar-color: rgb(170 170 170 / 0.85) transparent;')
     expect(source).toContain('width: 7px;')
     expect(source).toContain('height: 7px;')
-    expect(source).toContain('background-color: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('background-color: rgb(170 170 170 / 0.85);')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track {')
-    expect(source).toContain('background: rgb(210 210 210 / 0.8);')
+    expect(source).toContain('background: transparent;')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-track-piece {')
     expect(source).toContain('.scrollbar-soft::-webkit-scrollbar-corner {')
-    expect(source).toContain('border: 0;')
-    expect(source).toContain('border-radius: 0;')
+    expect(source).toContain('border: 1px solid transparent;')
+    expect(source).toContain('border-radius: 999px;')
   })
 
   test.each(guardedFiles)(

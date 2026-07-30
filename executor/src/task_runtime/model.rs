@@ -19,6 +19,7 @@ pub enum TaskProviderKind {
     Backend,
     Github,
     Gitlab,
+    DingtalkAitable,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -27,9 +28,14 @@ pub struct ProjectCreate {
     pub project_key: Option<String>,
     #[serde(default)]
     pub description: String,
+    #[serde(default = "default_task_provider")]
     pub task_provider: TaskProviderKind,
     #[serde(default = "default_provider_config")]
     pub provider_config: Value,
+}
+
+fn default_task_provider() -> TaskProviderKind {
+    TaskProviderKind::Local
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -87,6 +93,21 @@ pub struct TaskReorder {
     pub parent_id: Option<String>,
     pub status: String,
     pub item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TaskSearch {
+    #[serde(default)]
+    pub query: String,
+    pub project_id: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub tag: Option<String>,
+    pub creator_user_id: Option<i64>,
+    pub parent_id: Option<String>,
+    pub has_children: Option<bool>,
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -216,6 +237,8 @@ pub struct LoopItem {
     pub name: Option<String>,
     pub title: Option<String>,
     pub description: String,
+    #[serde(default)]
+    pub created_by_user_id: i64,
     pub sequence_number: Option<i64>,
     pub next_item_number: Option<i64>,
     pub status: Option<String>,
@@ -239,6 +262,10 @@ pub fn default_priority() -> String {
 
 fn default_version() -> i64 {
     1
+}
+
+fn default_search_limit() -> usize {
+    50
 }
 
 fn default_provider_config() -> Value {

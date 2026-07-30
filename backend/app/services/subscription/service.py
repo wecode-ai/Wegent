@@ -973,6 +973,27 @@ class SubscriptionService:
         """
         from app.core.config import settings
 
+        runtime_automation = subscription.json.get("_internal", {}).get(
+            "runtime_automation"
+        )
+        if isinstance(runtime_automation, dict):
+            from app.tasks.subscription_tasks import execute_runtime_automation_task
+
+            if use_sync:
+                import threading
+
+                thread = threading.Thread(
+                    target=execute_runtime_automation_task.run,
+                    args=(subscription.id, execution.id),
+                    daemon=True,
+                )
+                thread.start()
+            else:
+                execute_runtime_automation_task.apply_async(
+                    args=[subscription.id, execution.id]
+                )
+            return
+
         subscription_crd = validate_subscription_for_read(subscription.json)
         timeout_seconds = getattr(
             subscription_crd.spec,

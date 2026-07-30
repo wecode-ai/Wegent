@@ -14,6 +14,8 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  settleRuntimeConversationGuidance,
+  takeAppliedRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 
 const address = {
@@ -141,6 +143,78 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+  })
+
+  test('settles background guidance into the conversation cache until transcript refresh', () => {
+    cacheRuntimeConversationMessages(address, [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'working',
+        status: 'streaming',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+    ])
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+
+    const settled = settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      guidanceId: 'runtime-guidance-1',
+      message: 'follow the updated direction',
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    expect(settled?.id).toBe('client-guidance-1')
+    expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'working',
+        status: 'streaming',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+      {
+        id: 'client-guidance-1',
+        role: 'user',
+        content: 'follow the updated direction',
+        status: 'done',
+        createdAt: '2026-07-27T00:00:02.000Z',
+        runtimeGuidance: true,
+      },
+    ])
+  })
+
+  test('returns an applied guidance to only one subscriber', () => {
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+    const payload = {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      guidanceId: 'client-guidance-1',
+      message: 'follow the updated direction',
+      appliedAtMs: Date.now(),
+    }
+
+    expect(takeAppliedRuntimeConversationGuidance(address, payload)).not.toBeNull()
+    expect(takeAppliedRuntimeConversationGuidance(address, payload)).toBeNull()
+    expect(getRuntimeConversationMessages(address)).toEqual([])
   })
 
   test('bounds cached transcripts when many conversations are opened', () => {

@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    credentials::mask_provider_config, issue_provider::IssueProvider, store::task_provider,
-    BinaryInput, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalTaskStore, LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate,
-    RuntimeTaskAddress, TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
-    TaskRuntimeError, TaskUpdate,
+    aitable_provider::AITableProvider, credentials::mask_provider_config,
+    issue_provider::IssueProvider, store::task_provider, BinaryInput, Delivery, DeliveryAsset,
+    DeliveryCreate, DeliveryDetail, IssueComment, LocalTaskStore, LoopItem, ProjectCreate,
+    ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding,
+    TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -19,6 +19,7 @@ use super::{
 pub struct TaskRuntime {
     local_store: LocalTaskStore,
     issue_provider: IssueProvider,
+    aitable_provider: AITableProvider,
 }
 
 impl TaskRuntime {
@@ -28,9 +29,11 @@ impl TaskRuntime {
 
     pub fn new(local_store: LocalTaskStore) -> Result<Self, TaskRuntimeError> {
         let issue_provider = IssueProvider::new(local_store.path().to_owned())?;
+        let aitable_provider = AITableProvider::new(local_store.path().to_owned())?;
         Ok(Self {
             local_store,
             issue_provider,
+            aitable_provider,
         })
     }
 
@@ -63,13 +66,24 @@ impl TaskRuntime {
             .map(mask_project)
     }
 
+    pub fn remove_external_project(&self, project_id: &str) -> Result<(), TaskRuntimeError> {
+        self.local_store.remove_external_project(project_id)
+    }
+
+    pub fn retain_external_projects(&self, project_ids: &[String]) -> Result<(), TaskRuntimeError> {
+        self.local_store.retain_external_projects(project_ids)
+    }
+
     pub async fn list_external_tasks(
         &self,
         project: ProjectDescriptor,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         let provider = project.task_provider;
         let project = self.local_store.external_project(project)?;
-        self.issue_provider.list(&project, provider).await
+        match provider {
+            TaskProviderKind::DingtalkAitable => self.aitable_provider.list_board(&project).await,
+            provider => self.issue_provider.list(&project, provider).await,
+        }
     }
 
     pub async fn get_external_task(
@@ -105,6 +119,60 @@ impl TaskRuntime {
             .await
     }
 
+    pub async fn list_external_task_attachments(
+        &self,
+        project: ProjectDescriptor,
+        task_id: &str,
+    ) -> Result<Vec<TaskAttachment>, TaskRuntimeError> {
+        let provider = project.task_provider;
+        let project = self.local_store.external_project(project)?;
+        self.issue_provider
+            .list_attachments(&project, provider, task_id)
+            .await
+    }
+
+    pub async fn upload_external_task_attachment(
+        &self,
+        project: ProjectDescriptor,
+        task_id: &str,
+        input: BinaryInput,
+    ) -> Result<TaskAttachment, TaskRuntimeError> {
+        let provider = project.task_provider;
+        let project = self.local_store.external_project(project)?;
+        self.issue_provider
+            .upload_attachment(&project, provider, task_id, input)
+            .await
+    }
+
+    pub async fn download_external_task_attachment(
+        &self,
+        project: ProjectDescriptor,
+        task_id: &str,
+        attachment_id: &str,
+    ) -> Result<String, TaskRuntimeError> {
+        let provider = project.task_provider;
+        let project = self.local_store.external_project(project)?;
+        Ok(self
+            .issue_provider
+            .download_attachment(&project, provider, task_id, attachment_id)
+            .await?
+            .display()
+            .to_string())
+    }
+
+    pub async fn delete_external_task_attachment(
+        &self,
+        project: ProjectDescriptor,
+        task_id: &str,
+        attachment_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let provider = project.task_provider;
+        let project = self.local_store.external_project(project)?;
+        self.issue_provider
+            .delete_attachment(&project, provider, task_id, attachment_id)
+            .await
+    }
+
     pub async fn list_tasks(&self, project_id: &str) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
@@ -112,10 +180,206 @@ impl TaskRuntime {
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.list(&project, provider).await
             }
+            TaskProviderKind::DingtalkAitable => self.aitable_provider.list_board(&project).await,
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
         }
+    }
+
+    // Native DingTalk AI Table operations (dynamic schema, records, fields).
+
+    pub async fn dws_auth_status(&self) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.aitable_provider.auth_status().await
+    }
+
+    pub async fn dws_auth_login(&self) -> Result<serde_json::Value, TaskRuntimeError> {
+        self.aitable_provider.auth_login().await
+    }
+
+    pub async fn dws_auth_logout(&self) -> Result<(), TaskRuntimeError> {
+        self.aitable_provider.auth_logout().await
+    }
+
+    pub async fn aitable_describe(
+        &self,
+        project_id: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.describe(&project).await
+    }
+
+    pub async fn aitable_list_records(
+        &self,
+        project_id: &str,
+        query: Option<&str>,
+        limit: i64,
+        cursor: Option<&str>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .list_records(&project, query, limit, cursor)
+            .await
+    }
+
+    pub async fn aitable_get_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.get_record(&project, record_id).await
+    }
+
+    pub async fn aitable_create_record(
+        &self,
+        project_id: &str,
+        cells: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.create_record(&project, cells).await
+    }
+
+    pub async fn aitable_update_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+        cells: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .update_record(&project, record_id, cells)
+            .await
+    }
+
+    pub async fn aitable_delete_record(
+        &self,
+        project_id: &str,
+        record_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .delete_record(&project, record_id)
+            .await
+    }
+
+    pub async fn aitable_create_field(
+        &self,
+        project_id: &str,
+        name: &str,
+        field_type: &str,
+        property: serde_json::Value,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .create_field(&project, name, field_type, property)
+            .await
+    }
+
+    pub async fn aitable_update_field(
+        &self,
+        project_id: &str,
+        field_id: &str,
+        payload: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .update_field(&project, field_id, payload)
+            .await
+    }
+
+    pub async fn aitable_delete_field(
+        &self,
+        project_id: &str,
+        field_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider.delete_field(&project, field_id).await
+    }
+
+    fn aitable_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        if task_provider(&project)? != TaskProviderKind::DingtalkAitable {
+            return Err(TaskRuntimeError::UnsupportedProvider(
+                "project is not a DingTalk AI Table project".to_owned(),
+            ));
+        }
+        Ok(project)
+    }
+
+    pub async fn search_tasks(
+        &self,
+        input: super::TaskSearch,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+        let projects = if let Some(project_id) = input.project_id.as_deref() {
+            vec![self.local_store.get_project(project_id)?]
+        } else {
+            self.local_store.list_projects()?
+        };
+        let query = input.query.trim().to_lowercase();
+        let mut matches = Vec::new();
+        for project in projects {
+            let tasks = self.list_tasks(&project.id).await?;
+            let child_ids = tasks
+                .iter()
+                .filter_map(|task| task.parent_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            for task in tasks {
+                let tags = task
+                    .metadata
+                    .get("tags")
+                    .or_else(|| task.metadata.get("labels"))
+                    .and_then(serde_json::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let text_matches = query.is_empty()
+                    || task.id.to_lowercase().contains(&query)
+                    || task
+                        .title
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .contains(&query)
+                    || task.description.to_lowercase().contains(&query)
+                    || tags.iter().any(|tag| tag.to_lowercase().contains(&query));
+                if !text_matches
+                    || input
+                        .status
+                        .as_deref()
+                        .is_some_and(|value| task.status.as_deref() != Some(value))
+                    || input
+                        .priority
+                        .as_deref()
+                        .is_some_and(|value| task.priority.as_deref() != Some(value))
+                    || input
+                        .tag
+                        .as_deref()
+                        .is_some_and(|value| !tags.contains(&value))
+                    || input
+                        .creator_user_id
+                        .is_some_and(|value| task.created_by_user_id != value)
+                    || input
+                        .parent_id
+                        .as_deref()
+                        .is_some_and(|value| task.parent_id.as_deref() != Some(value))
+                    || input
+                        .has_children
+                        .is_some_and(|value| child_ids.contains(&task.id) != value)
+                {
+                    continue;
+                }
+                matches.push(task);
+                if matches.len() >= input.limit.clamp(1, 200) {
+                    return Ok(matches);
+                }
+            }
+        }
+        Ok(matches)
     }
 
     pub async fn get_task(
@@ -128,6 +392,9 @@ impl TaskRuntime {
             TaskProviderKind::Local => self.local_store.get_task(project_id, task_id),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.get(&project, provider, task_id).await
+            }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider.get_board(&project, task_id).await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
@@ -145,6 +412,9 @@ impl TaskRuntime {
             TaskProviderKind::Local => self.local_store.create_task(project_id, input),
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider.create(&project, provider, input).await
+            }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider.create_board(&project, input).await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
@@ -164,6 +434,11 @@ impl TaskRuntime {
             provider @ (TaskProviderKind::Github | TaskProviderKind::Gitlab) => {
                 self.issue_provider
                     .update(&project, provider, task_id, input)
+                    .await
+            }
+            TaskProviderKind::DingtalkAitable => {
+                self.aitable_provider
+                    .update_board(&project, task_id, input)
                     .await
             }
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
@@ -199,9 +474,9 @@ impl TaskRuntime {
         let project = self.local_store.get_project(project_id)?;
         match task_provider(&project)? {
             TaskProviderKind::Local => self.local_store.reorder_tasks(project_id, input),
-            TaskProviderKind::Github | TaskProviderKind::Gitlab => {
-                self.list_tasks(project_id).await
-            }
+            TaskProviderKind::Github
+            | TaskProviderKind::Gitlab
+            | TaskProviderKind::DingtalkAitable => self.list_tasks(project_id).await,
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),
@@ -305,28 +580,90 @@ impl TaskRuntime {
         item_id: &str,
         input: BinaryInput,
     ) -> Result<TaskAttachment, TaskRuntimeError> {
-        let persisted = self.content_target(project_id, item_id).await?;
-        self.local_store
-            .add_task_attachment(project_id, item_id, persisted, input)
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Gitlab => {
+                self.issue_provider
+                    .upload_attachment(&project, TaskProviderKind::Gitlab, item_id, input)
+                    .await
+            }
+            TaskProviderKind::Local | TaskProviderKind::Github => {
+                let persisted = self.content_target(project_id, item_id).await?;
+                self.local_store
+                    .add_task_attachment(project_id, item_id, persisted, input)
+            }
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            ))),
+        }
     }
 
-    pub fn list_task_attachments(
+    pub async fn list_task_attachments(
         &self,
+        project_id: &str,
         item_id: &str,
     ) -> Result<Vec<TaskAttachment>, TaskRuntimeError> {
-        self.local_store.list_task_attachments(item_id)
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Gitlab => {
+                self.issue_provider
+                    .list_attachments(&project, TaskProviderKind::Gitlab, item_id)
+                    .await
+            }
+            TaskProviderKind::Local | TaskProviderKind::Github => {
+                self.local_store.list_task_attachments(item_id)
+            }
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            ))),
+        }
     }
 
-    pub fn task_attachment_path(&self, attachment_id: &str) -> Result<String, TaskRuntimeError> {
-        Ok(self
-            .local_store
-            .task_attachment_path(attachment_id)?
-            .display()
-            .to_string())
+    pub async fn task_attachment_path(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        attachment_id: &str,
+    ) -> Result<String, TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Gitlab => Ok(self
+                .issue_provider
+                .download_attachment(&project, TaskProviderKind::Gitlab, item_id, attachment_id)
+                .await?
+                .display()
+                .to_string()),
+            TaskProviderKind::Local | TaskProviderKind::Github => Ok(self
+                .local_store
+                .task_attachment_path(attachment_id)?
+                .display()
+                .to_string()),
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            ))),
+        }
     }
 
-    pub fn delete_task_attachment(&self, attachment_id: &str) -> Result<(), TaskRuntimeError> {
-        self.local_store.delete_task_attachment(attachment_id)
+    pub async fn delete_task_attachment(
+        &self,
+        project_id: &str,
+        item_id: &str,
+        attachment_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Gitlab => {
+                self.issue_provider
+                    .delete_attachment(&project, TaskProviderKind::Gitlab, item_id, attachment_id)
+                    .await
+            }
+            TaskProviderKind::Local | TaskProviderKind::Github => {
+                self.local_store.delete_task_attachment(attachment_id)
+            }
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?} attachments"
+            ))),
+        }
     }
 
     pub async fn create_delivery(
@@ -409,7 +746,15 @@ fn mask_project(mut project: LoopItem) -> LoopItem {
 
 #[cfg(test)]
 mod tests {
-    use axum::{http::HeaderMap, routing::get, Json, Router};
+    use std::sync::{Arc, Mutex};
+
+    use axum::{
+        extract::{Multipart, State},
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::get,
+        Json, Router,
+    };
     use serde_json::json;
 
     use crate::task_runtime::ProjectStoreKind;
@@ -633,6 +978,76 @@ mod tests {
             "created_at": "2026-07-08T01:00:00Z",
             "updated_at": "2026-07-08T01:00:00Z"
         }))
+    }
+
+    #[derive(Clone, Default)]
+    struct GitlabAttachmentState {
+        description: Arc<Mutex<String>>,
+        upload_deleted: Arc<Mutex<bool>>,
+    }
+
+    fn gitlab_attachment_issue(description: &str) -> serde_json::Value {
+        json!({
+            "iid": 11,
+            "title": "GitLab attachment issue",
+            "description": description,
+            "state": "opened",
+            "web_url": "https://gitlab.test/acme/repo/-/issues/11",
+            "author": {"username": "fox"},
+            "labels": ["wegent:status:pending"],
+            "user_notes_count": 0,
+            "created_at": "2026-07-27T00:00:00Z",
+            "updated_at": "2026-07-27T00:00:00Z",
+            "closed_at": null
+        })
+    }
+
+    async fn get_gitlab_attachment_issue(
+        State(state): State<GitlabAttachmentState>,
+    ) -> Json<serde_json::Value> {
+        Json(gitlab_attachment_issue(&state.description.lock().unwrap()))
+    }
+
+    async fn update_gitlab_attachment_issue(
+        State(state): State<GitlabAttachmentState>,
+        headers: HeaderMap,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(headers.get("private-token").unwrap(), "test-token");
+        let description = body["description"].as_str().unwrap().to_owned();
+        *state.description.lock().unwrap() = description.clone();
+        Json(gitlab_attachment_issue(&description))
+    }
+
+    async fn upload_gitlab_attachment(
+        headers: HeaderMap,
+        mut multipart: Multipart,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(headers.get("private-token").unwrap(), "test-token");
+        let field = multipart.next_field().await.unwrap().unwrap();
+        assert_eq!(field.name(), Some("file"));
+        assert_eq!(field.file_name(), Some("notes.txt"));
+        assert_eq!(field.bytes().await.unwrap().as_ref(), b"hello gitlab");
+        Json(json!({
+            "id": 55,
+            "url": "/uploads/upload-secret/notes.txt",
+            "full_path": "/-/project/12/uploads/upload-secret/notes.txt",
+            "markdown": "[notes.txt](/uploads/upload-secret/notes.txt)"
+        }))
+    }
+
+    async fn download_gitlab_attachment(headers: HeaderMap) -> impl IntoResponse {
+        assert_eq!(headers.get("private-token").unwrap(), "test-token");
+        (StatusCode::OK, b"hello gitlab".to_vec())
+    }
+
+    async fn delete_gitlab_attachment(
+        State(state): State<GitlabAttachmentState>,
+        headers: HeaderMap,
+    ) -> StatusCode {
+        assert_eq!(headers.get("private-token").unwrap(), "test-token");
+        *state.upload_deleted.lock().unwrap() = true;
+        StatusCode::NO_CONTENT
     }
 
     #[tokio::test]
@@ -924,5 +1339,194 @@ mod tests {
             Err(TaskRuntimeError::TaskNotFound)
         ));
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn stores_gitlab_task_attachments_in_project_uploads() {
+        let state = GitlabAttachmentState {
+            description: Arc::new(Mutex::new("Issue details".to_owned())),
+            upload_deleted: Arc::new(Mutex::new(false)),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_state = state.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/projects/12/issues/11",
+                        get(get_gitlab_attachment_issue).put(update_gitlab_attachment_issue),
+                    )
+                    .route(
+                        "/projects/12/uploads",
+                        axum::routing::post(upload_gitlab_attachment),
+                    )
+                    .route(
+                        "/projects/12/uploads/upload-secret/notes.txt",
+                        get(download_gitlab_attachment),
+                    )
+                    .route(
+                        "/projects/12/uploads/upload-secret",
+                        axum::routing::delete(delete_gitlab_attachment),
+                    )
+                    .with_state(server_state),
+            )
+            .await
+            .unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = store
+            .create_project(ProjectCreate {
+                name: "GitLab attachments".to_owned(),
+                project_key: Some("GL".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::Gitlab,
+                provider_config: json!({
+                    "repository": "12",
+                    "domain": "127.0.0.1",
+                    "api_base": format!("http://{address}"),
+                    "token": "test-token"
+                }),
+            })
+            .unwrap();
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let uploaded = runtime
+            .add_task_attachment(
+                &project.id,
+                "GL-11",
+                BinaryInput {
+                    display_name: "notes.txt".to_owned(),
+                    content_type: Some("text/plain".to_owned()),
+                    base64: "aGVsbG8gZ2l0bGFi".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(uploaded.id, "gitlab-11-upload-secret");
+        assert_eq!(uploaded.loop_item_id, "GL-11");
+        assert!(state
+            .description
+            .lock()
+            .unwrap()
+            .contains("<!-- wegent-attachments:v1:start -->"));
+        let attachments = runtime
+            .list_task_attachments(&project.id, "GL-11")
+            .await
+            .unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].display_name, "notes.txt");
+
+        let path = runtime
+            .task_attachment_path(&project.id, "GL-11", &uploaded.id)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "hello gitlab");
+
+        runtime
+            .update_task(
+                &project.id,
+                "GL-11",
+                TaskUpdate {
+                    version: 1,
+                    description: Some("Updated issue details".to_owned()),
+                    ..TaskUpdate::default()
+                },
+            )
+            .await
+            .unwrap();
+        let updated_description = state.description.lock().unwrap().clone();
+        assert!(updated_description.starts_with("Updated issue details"));
+        assert!(updated_description.contains("notes.txt"));
+
+        runtime
+            .delete_task_attachment(&project.id, "GL-11", &uploaded.id)
+            .await
+            .unwrap();
+        assert!(*state.upload_deleted.lock().unwrap());
+        assert_eq!(
+            state.description.lock().unwrap().as_str(),
+            "Updated issue details"
+        );
+        assert!(runtime
+            .list_task_attachments(&project.id, "GL-11")
+            .await
+            .unwrap()
+            .is_empty());
+        server.abort();
+    }
+
+    fn aitable_project(store: &LocalTaskStore) -> LoopItem {
+        store
+            .create_project(ProjectCreate {
+                name: "AI Table".to_owned(),
+                project_key: Some("AIT".to_owned()),
+                description: String::new(),
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "board_mapping": {
+                        "title_field_id": "fld_title",
+                        "status_field_id": "fld_status"
+                    }
+                }),
+            })
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn routes_aitable_board_projection_without_task_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+        assert!(matches!(
+            runtime.list_tasks(&project.id).await,
+            Err(TaskRuntimeError::ProviderRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn aitable_native_describe_returns_dynamic_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+        assert!(matches!(
+            runtime.aitable_describe(&project.id).await,
+            Err(TaskRuntimeError::ProviderRequest(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn aitable_record_write_requires_dws_authentication() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = aitable_project(&store);
+        let runtime = TaskRuntime::new(store).unwrap();
+
+        let mut cells = serde_json::Map::new();
+        cells.insert("fld_title".to_owned(), json!("x"));
+        let result = runtime.aitable_create_record(&project.id, cells).await;
+
+        assert!(matches!(result, Err(TaskRuntimeError::ProviderRequest(_))));
+    }
+
+    #[test]
+    fn aitable_provider_combinations_are_valid() {
+        assert!(crate::task_runtime::store::validate_provider(
+            ProjectStoreKind::Local,
+            TaskProviderKind::DingtalkAitable
+        )
+        .is_ok());
+        assert!(crate::task_runtime::store::validate_provider(
+            ProjectStoreKind::Backend,
+            TaskProviderKind::DingtalkAitable
+        )
+        .is_ok());
     }
 }

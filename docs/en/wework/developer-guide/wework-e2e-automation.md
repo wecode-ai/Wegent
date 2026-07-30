@@ -101,9 +101,49 @@ The model protocol matrix defines 18 combinations across execution location, mod
 
 Matrix submissions use a 10-second timeout. If the composer already displays a submission error, the runner throws that exact error immediately. Otherwise, a stalled protocol stage reports its current stage and captured requests instead of waiting through the general UI timeout.
 
-`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The test first verifies that “Thinking” appears below the visible reply, then scrolls upward while a long response continues to append, records a visible text anchor, and asserts that later streaming deltas do not move that anchor within the viewport. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario builds a long multi-turn conversation beyond the virtualization threshold. It first verifies that “Thinking” appears below the visible reply, then scrolls to completed history so the active response remains offscreen while it continues growing. The test waits for the list's total height to grow and asserts that the visible text anchor and `scrollTop` stay stable during streaming, after completion, and after reopening the task. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
+
+The main desktop runner also supports execution through ordered checkpoints.
+The checkpoints are `core-task-flow`, `window-lifecycle`, `goal-lifecycle`,
+`resilience`, `conversation-state`, `workspace-attachments`, and
+`rendering-extensions`. `--segment <checkpoint>` performs common startup and
+project initialization, then runs only the selected checkpoint.
+`--from-segment <checkpoint>` starts there and continues through every later
+checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
+its own minimal fixtures instead of depending on tasks or UI state created only
+by the complete flow. PR CI builds the smallest segment matrix for the changed
+feature paths. Shared desktop infrastructure, main, merge queue, scheduled
+runs, and `ci:all` still run the complete desktop suites. The mapping lives in
+`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature coverage is registered. Segment commands are also useful for focused
+local iteration:
+
+```bash
+pnpm --filter wework e2e:desktop -- --segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
+pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+```
+
+The plugin desktop suite reuses the same segment options while keeping its
+separate Codex Home initialization environment. Its ordered segments are
+`plugin-lifecycle`, `skill-mention-rendering`, and
+`sites-plugin-auto-install`. Each segment establishes the minimal plugin
+fixture it needs, so it can run alone or continue through the later plugin
+features:
+
+```bash
+pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
+pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-rendering
+```
+
+Ordinary desktop-runner UI steps time out after 10 seconds by default, so one
+failed step does not always wait for the former 120-second limit. Control
+commands and wait helpers accept `timeoutMs` for genuinely slower special
+steps; startup, workbench recovery, and the model protocol matrix keep their
+dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
+global default for ordinary steps in a slower diagnostic environment.
 
 The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
 
@@ -116,6 +156,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+
+On macOS, desktop E2E launches a temporary `.app` bundle in the background through `open -g`. The test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting keeps the Tauri main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. After the controller connects, the runner also asserts that the test application is not the current foreground process, preventing focus-stealing regressions. Only the desktop E2E runner injects this variable; normal development and production launches are unchanged.
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
@@ -323,6 +365,14 @@ Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
+
+The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
+dependencies in the runner user's home directory. Cache keys rotate weekly and
+are scoped by operating system and CPU architecture. Every run still executes
+`apt-get update`; an older cache is only a restore source, and missing or
+updated packages are downloaded from the Ubuntu repositories. Installation
+uses `--no-install-recommends` plus repository retries and timeouts to reduce
+whole-job timeouts caused by transient hosted-runner mirror degradation.
 
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 

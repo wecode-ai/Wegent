@@ -137,10 +137,10 @@ impl LocalTaskStore {
         validate_provider(project.project_store, project.task_provider)?;
         if !matches!(
             project.task_provider,
-            TaskProviderKind::Github | TaskProviderKind::Gitlab
+            TaskProviderKind::Github | TaskProviderKind::Gitlab | TaskProviderKind::DingtalkAitable
         ) {
             return Err(TaskRuntimeError::Invalid(
-                "external project requires github or gitlab".to_owned(),
+                "external project requires github, gitlab, or dingtalk_aitable".to_owned(),
             ));
         }
         let connection = self.connection()?;
@@ -192,6 +192,56 @@ impl LocalTaskStore {
             )?;
         }
         Ok(descriptor_loop_item(project, provider_config))
+    }
+
+    pub fn remove_external_project(&self, project_id: &str) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM project_provider_credentials
+             WHERE project_store = 'backend' AND project_id = ?1",
+            [project_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM external_project_catalog
+             WHERE project_store = 'backend' AND project_id = ?1",
+            [project_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn retain_external_projects(&self, project_ids: &[String]) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let transaction = connection.unchecked_transaction()?;
+        let retained = project_ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let mut statement = transaction.prepare(
+            "SELECT project_id FROM external_project_catalog WHERE project_store = 'backend'",
+        )?;
+        let stored = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        for project_id in stored {
+            if retained.contains(&project_id) {
+                continue;
+            }
+            transaction.execute(
+                "DELETE FROM project_provider_credentials
+                 WHERE project_store = 'backend' AND project_id = ?1",
+                [&project_id],
+            )?;
+            transaction.execute(
+                "DELETE FROM external_project_catalog
+                 WHERE project_store = 'backend' AND project_id = ?1",
+                [&project_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn external_project(
@@ -820,6 +870,7 @@ fn map_loop_item(row: &Row<'_>) -> rusqlite::Result<LoopItem> {
         name: row.get(7)?,
         title: row.get(8)?,
         description: row.get(9)?,
+        created_by_user_id: 0,
         sequence_number: row.get(10)?,
         next_item_number: row.get(11)?,
         status: row.get(12)?,
@@ -855,7 +906,7 @@ pub(crate) fn task_provider(project: &LoopItem) -> Result<TaskProviderKind, Task
     .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
 }
 
-fn validate_provider(
+pub(crate) fn validate_provider(
     store: ProjectStoreKind,
     provider: TaskProviderKind,
 ) -> Result<(), TaskRuntimeError> {
@@ -864,9 +915,11 @@ fn validate_provider(
         (ProjectStoreKind::Local, TaskProviderKind::Local)
             | (ProjectStoreKind::Local, TaskProviderKind::Github)
             | (ProjectStoreKind::Local, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Local, TaskProviderKind::DingtalkAitable)
             | (ProjectStoreKind::Backend, TaskProviderKind::Backend)
             | (ProjectStoreKind::Backend, TaskProviderKind::Github)
             | (ProjectStoreKind::Backend, TaskProviderKind::Gitlab)
+            | (ProjectStoreKind::Backend, TaskProviderKind::DingtalkAitable)
     );
     valid
         .then_some(())
@@ -886,6 +939,7 @@ fn task_provider_key(provider: TaskProviderKind) -> &'static str {
         TaskProviderKind::Backend => "backend",
         TaskProviderKind::Github => "github",
         TaskProviderKind::Gitlab => "gitlab",
+        TaskProviderKind::DingtalkAitable => "dingtalk_aitable",
     }
 }
 
@@ -912,27 +966,37 @@ fn provider_credential_config(
 
 fn list_external_projects(connection: &Connection) -> Result<Vec<LoopItem>, TaskRuntimeError> {
     let mut statement = connection.prepare(
-        "SELECT descriptor
+        "SELECT project_id, descriptor
          FROM external_project_catalog
          WHERE project_store = 'backend'
          ORDER BY updated_at DESC",
     )?;
     let descriptors = statement
-        .query_map([], |row| row.get::<_, String>(0))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
     descriptors
         .into_iter()
-        .map(|serialized| {
-            let descriptor = serde_json::from_str::<ProjectDescriptor>(&serialized)
-                .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
+        .filter_map(|(project_id, serialized)| {
+            let descriptor = match serde_json::from_str::<ProjectDescriptor>(&serialized) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    eprintln!(
+                        "ignoring incompatible cached external project {project_id}: {error}"
+                    );
+                    return None;
+                }
+            };
             let provider_config = provider_credential_config(
                 connection,
                 project_store_key(descriptor.project_store),
                 &descriptor.id,
-            )?
-            .unwrap_or_else(|| json!({}));
-            Ok(descriptor_loop_item(descriptor, provider_config))
+            )
+            .map(|config| config.unwrap_or_else(|| json!({})))
+            .map(|config| descriptor_loop_item(descriptor, config));
+            Some(provider_config)
         })
         .collect()
 }
@@ -980,6 +1044,7 @@ fn descriptor_loop_item(
         name: Some(project.name),
         title: None,
         description: project.description,
+        created_by_user_id: 0,
         sequence_number: None,
         next_item_number: Some(1),
         status: Some("active".to_owned()),
@@ -1194,6 +1259,151 @@ mod tests {
             store.get_project("cloud-1").unwrap().name.as_deref(),
             Some("Cloud GitHub board")
         );
+    }
+
+    #[test]
+    fn incompatible_cached_external_project_does_not_hide_local_projects() {
+        let (_directory, store) = store();
+        let local = local_project(&store);
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO external_project_catalog (
+                    project_store, project_id, descriptor, updated_at
+                 ) VALUES ('backend', 'future-1', ?1, ?2)",
+                params![
+                    json!({
+                        "id": "future-1",
+                        "project_key": "FUTURE",
+                        "name": "Future provider",
+                        "project_store": "backend",
+                        "task_provider": "provider_from_newer_branch",
+                    })
+                    .to_string(),
+                    now(),
+                ],
+            )
+            .unwrap();
+
+        let projects = store.list_projects().unwrap();
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, local.id);
+    }
+
+    #[test]
+    fn caches_backend_dingtalk_aitable_projects() {
+        let (_directory, store) = store();
+        let configured = store
+            .configure_external_project(ProjectDescriptor {
+                id: "aitable-cloud-1".to_owned(),
+                public_id: Some("aitable-public-1".to_owned()),
+                project_key: "AITABLE".to_owned(),
+                name: "DingTalk AI Table".to_owned(),
+                description: String::new(),
+                project_store: ProjectStoreKind::Backend,
+                task_provider: TaskProviderKind::DingtalkAitable,
+                provider_config: json!({
+                    "base_id": "base-1",
+                    "table_id": "table-1",
+                    "source_url": "https://alidocs.dingtalk.com/i/nodes/base-1",
+                }),
+                version: 1,
+            })
+            .unwrap();
+
+        assert_eq!(
+            configured.metadata["task_provider"],
+            json!(TaskProviderKind::DingtalkAitable)
+        );
+        assert_eq!(
+            configured.metadata["provider_config"]["base_id"],
+            json!("base-1")
+        );
+        assert_eq!(
+            store
+                .get_project("aitable-cloud-1")
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("DingTalk AI Table")
+        );
+    }
+
+    #[test]
+    fn removes_backend_external_project_credentials_and_catalog_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        let project = ProjectDescriptor {
+            id: "cloud-public".to_owned(),
+            public_id: Some("public-id".to_owned()),
+            project_key: "PUBLIC".to_owned(),
+            name: "Public GitHub".to_owned(),
+            description: String::new(),
+            project_store: ProjectStoreKind::Backend,
+            task_provider: TaskProviderKind::Github,
+            provider_config: json!({
+                "repository": "acme/public",
+                "token": "sensitive-token"
+            }),
+            version: 1,
+        };
+        store.configure_external_project(project).unwrap();
+
+        store.remove_external_project("cloud-public").unwrap();
+
+        assert!(store
+            .list_projects()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate.id != "cloud-public"));
+        let connection = store.connection().unwrap();
+        let credential_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM project_provider_credentials
+                 WHERE project_store = 'backend' AND project_id = 'cloud-public'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(credential_count, 0);
+    }
+
+    #[test]
+    fn retains_only_current_accounts_backend_external_projects() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(directory.path().join("tasks.sqlite")).unwrap();
+        for id in ["account-a", "account-b"] {
+            store
+                .configure_external_project(ProjectDescriptor {
+                    id: id.to_owned(),
+                    public_id: None,
+                    project_key: id.to_uppercase(),
+                    name: id.to_owned(),
+                    description: String::new(),
+                    project_store: ProjectStoreKind::Backend,
+                    task_provider: TaskProviderKind::Github,
+                    provider_config: json!({
+                        "repository": format!("acme/{id}"),
+                        "token": format!("{id}-token")
+                    }),
+                    version: 1,
+                })
+                .unwrap();
+        }
+
+        store
+            .retain_external_projects(&["account-b".to_owned()])
+            .unwrap();
+
+        let project_ids = store
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .map(|project| project.id)
+            .collect::<Vec<_>>();
+        assert_eq!(project_ids, vec!["account-b"]);
     }
 
     #[test]

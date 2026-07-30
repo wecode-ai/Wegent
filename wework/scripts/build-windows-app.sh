@@ -207,6 +207,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
 fi
 
 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 
 # Patch the generated NSIS installer to create the desktop shortcut via COM.
