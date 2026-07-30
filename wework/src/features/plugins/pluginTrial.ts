@@ -174,3 +174,107 @@ export function consumePluginTrialInput(): string | null {
 export function notifyLocalPluginSkillsChanged() {
   window.dispatchEvent(new Event(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT))
 }
+
+const PLUGIN_USAGE_STORAGE_KEY = 'wework:plugin-usage-30d'
+const TRIAL_GUIDE_DISMISSED_KEY = 'wework:dismissed-trial-guide'
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+function normalizePluginKey(pluginName: string): string {
+  return pluginName.trim().toLowerCase()
+}
+
+function readUsageMap(): Record<string, number[]> {
+  try {
+    const raw = window.localStorage.getItem(PLUGIN_USAGE_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return Object.fromEntries(
+      Object.entries(parsed).flatMap(([key, value]) =>
+        Array.isArray(value) && value.every(item => typeof item === 'number')
+          ? [[key, value as number[]]]
+          : []
+      )
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeUsageMap(map: Record<string, number[]>): void {
+  window.localStorage.setItem(PLUGIN_USAGE_STORAGE_KEY, JSON.stringify(map))
+}
+
+export function getPluginUseCount30d(pluginName: string): number {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return 0
+  const cutoff = Date.now() - THIRTY_DAYS_MS
+  return (readUsageMap()[key] ?? []).filter(timestamp => timestamp >= cutoff).length
+}
+
+export function recordPluginUsage(pluginName: string): void {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return
+  const map = readUsageMap()
+  const cutoff = Date.now() - THIRTY_DAYS_MS
+  map[key] = [...(map[key] ?? []).filter(timestamp => timestamp >= cutoff), Date.now()]
+  writeUsageMap(map)
+}
+
+const PLUGIN_MENTION_PATTERN = /\[\$([^\]]+)\]\((plugin:\/\/[^)]+)\)/g
+
+export function recordPluginUsageFromInput(input: string): void {
+  const seen = new Set<string>()
+  for (const match of input.matchAll(PLUGIN_MENTION_PATTERN)) {
+    const pluginName = match[1]?.trim()
+    if (!pluginName || seen.has(pluginName)) continue
+    seen.add(pluginName)
+    recordPluginUsage(pluginName)
+  }
+}
+
+function dismissedGuideKey(pluginName: string, scopeKey: string): string {
+  return `${scopeKey}:${normalizePluginKey(pluginName)}`
+}
+
+function readDismissedGuides(): Set<string> {
+  try {
+    const raw = window.sessionStorage.getItem(TRIAL_GUIDE_DISMISSED_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    return new Set(Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeDismissedGuides(keys: Set<string>): void {
+  window.sessionStorage.setItem(TRIAL_GUIDE_DISMISSED_KEY, JSON.stringify([...keys]))
+}
+
+export function isTrialGuideDismissed(pluginName: string, scopeKey: string): boolean {
+  return readDismissedGuides().has(dismissedGuideKey(pluginName, scopeKey))
+}
+
+export function dismissTrialGuide(pluginName: string, scopeKey: string): void {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return
+  const next = readDismissedGuides()
+  next.add(dismissedGuideKey(pluginName, scopeKey))
+  writeDismissedGuides(next)
+}
+
+export function shouldShowPluginTrialGuide(pluginName: string, scopeKey: string): boolean {
+  const key = normalizePluginKey(pluginName)
+  if (!key) return false
+  return getPluginUseCount30d(pluginName) === 0 && !isTrialGuideDismissed(pluginName, scopeKey)
+}
+
+export function buildTrialTemplatePrompt(
+  currentInput: string,
+  template: PluginPathComponent
+): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const templateText = template.description?.trim() || template.name.trim()
+  return prefix ? `${prefix} ${templateText} ` : `${templateText} `
+}

@@ -1,10 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
+import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
 
-function createPlugin(logo?: string): InstalledPluginItem {
+function createPlugin(options?: { logo?: string; pluginKey?: string }): InstalledPluginItem {
+  const pluginKey = options?.pluginKey ?? 'github'
   const raw: InstalledPlugin = {
     apiVersion: 'wegent.ai/v1',
     kind: 'InstalledPlugin',
@@ -13,7 +15,7 @@ function createPlugin(logo?: string): InstalledPluginItem {
       source: {
         type: 'marketplace',
         providerKey: 'wegent',
-        pluginKey: 'github',
+        pluginKey,
       },
       displayName: 'GitHub',
       description: 'GitHub plugin',
@@ -30,7 +32,7 @@ function createPlugin(logo?: string): InstalledPluginItem {
         monitors: [],
         bins: [],
       },
-      interface: logo ? { logo } : null,
+      interface: options?.logo ? { logo: options.logo } : null,
     },
     status: { state: 'installed' },
   }
@@ -54,7 +56,7 @@ describe('InstalledPluginRow', () => {
   test('renders the plugin logo from its installed release metadata', () => {
     render(
       <InstalledPluginRow
-        plugin={createPlugin('data:image/png;base64,cG5n')}
+        plugin={createPlugin({ logo: 'data:image/png;base64,cG5n' })}
         onToggle={vi.fn()}
         onUninstall={vi.fn()}
       />
@@ -67,13 +69,28 @@ describe('InstalledPluginRow', () => {
     expect(screen.getByTestId('installed-plugin-origin-59')).toHaveTextContent('企业内部')
   })
 
-  test('keeps the generic icon when the plugin has no logo', () => {
-    const { container } = render(
-      <InstalledPluginRow plugin={createPlugin()} onToggle={vi.fn()} onUninstall={vi.fn()} />
+  test('falls back to bundled brand icons when the plugin has no logo metadata', () => {
+    render(<InstalledPluginRow plugin={createPlugin()} onToggle={vi.fn()} onUninstall={vi.fn()} />)
+
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
+      'src',
+      '/plugin-icons/github.svg'
+    )
+  })
+
+  test('uses the Wework fallback icon when no logo metadata and no known plugin key', () => {
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin({ pluginKey: 'unknown-plugin' })}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+      />
     )
 
-    expect(screen.queryByTestId('installed-plugin-logo-59')).not.toBeInTheDocument()
-    expect(container.querySelector('svg')).toBeInTheDocument()
+    expect(screen.getByTestId('installed-plugin-logo-59')).toHaveAttribute(
+      'src',
+      '/plugin-icons/wework.svg'
+    )
   })
 
   test('uses the switch only for enablement and keeps uninstall in the more menu', () => {
@@ -93,5 +110,38 @@ describe('InstalledPluginRow', () => {
     fireEvent.click(screen.getByTestId('installed-plugin-uninstall-59'))
 
     expect(onUninstall).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides the enable switch for shared recipient plugins', () => {
+    const marketplaceItem = {
+      accessRole: 'recipient',
+      ownerDisplayName: '明德',
+    } as PluginMarketplaceItem
+
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin()}
+        marketplaceItem={marketplaceItem}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('installed-plugin-toggle-59')).not.toBeInTheDocument()
+    expect(screen.getByText(/创建者 明德 · 定向分享 · 仅可使用/)).toBeInTheDocument()
+  })
+})
+
+describe('buildInstalledPluginSubtitle', () => {
+  test('returns share recipient summary when the plugin is shared to the viewer', () => {
+    const plugin = createPlugin()
+    const marketplaceItem = {
+      accessRole: 'recipient',
+      ownerDisplayName: '明德',
+    } as PluginMarketplaceItem
+
+    expect(
+      buildInstalledPluginSubtitle(plugin, marketplaceItem, (_key, fallback) => fallback)
+    ).toBe('创建者 明德 · 定向分享 · 仅可使用')
   })
 })

@@ -90,8 +90,10 @@ export interface LocalCodexPluginApi {
   readState(params?: {
     q?: string
     marketplaceId?: string
+    mergeAllMarketplaces?: boolean
     refresh?: boolean
   }): Promise<LocalCodexPluginsState>
+  readMarketplacePluginDetail(marketplaceId: string, pluginName: string): Promise<InstalledPlugin>
   listInstalledPlugins(): Promise<InstalledPluginListResponse>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
@@ -172,7 +174,17 @@ interface CodexPluginDetail {
     materializedAppIds?: string[]
     reason?: string | null
   }>
+  agents?: Array<{
+    name: string
+    path?: string | null
+    description?: string | null
+  }>
   mcpServers?: string[]
+  connectors?: Array<{
+    slug: string
+    authPolicy?: 'on_install' | 'optional' | string | null
+    description?: string | null
+  }>
 }
 
 interface CodexAppInfo {
@@ -342,6 +354,18 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     })),
   ]
   components.templates = components.commands
+  components.connectors = (detail.connectors ?? []).map(connector => ({
+    slug: connector.slug,
+    authPolicy:
+      connector.authPolicy === 'on_install' || connector.authPolicy === 'optional'
+        ? connector.authPolicy
+        : 'optional',
+  }))
+  components.agents = (detail.agents ?? []).map(agent => ({
+    name: agent.name,
+    path: agent.path ?? agent.name,
+    description: agent.description ?? null,
+  }))
   return components
 }
 
@@ -418,6 +442,7 @@ function toMarketplaceItem(
     manifest: {
       name: plugin.name,
       id: plugin.id,
+      marketplaceId: marketplace.name,
       source: plugin.source ?? null,
       installPolicy: plugin.installPolicy ?? null,
       authPolicy: plugin.authPolicy ?? null,
@@ -522,12 +547,15 @@ async function readState(
   params: {
     query?: string
     marketplaceId?: string
+    mergeAllMarketplaces?: boolean
     refresh?: boolean
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
   const executorStatus = await ensureLocalExecutorStarted()
-  const requestedMarketplaceId = params.marketplaceId?.trim() || selectedMarketplaceId()
+  const requestedMarketplaceId = params.mergeAllMarketplaces
+    ? ''
+    : params.marketplaceId?.trim() || selectedMarketplaceId()
   const [availableResponse, installedResponse] = await Promise.all([
     codexAppServerRequest<{
       marketplaces: CodexPluginMarketplaceEntry[]
@@ -547,7 +575,9 @@ async function readState(
   )
     ? requestedSelectedId
     : (availableMarketplaces[0]?.name ?? '')
-  const selectedMarketplaces = filteredMarketplaces(availableMarketplaces, selectedId)
+  const selectedMarketplaces = params.mergeAllMarketplaces
+    ? availableMarketplaces
+    : filteredMarketplaces(availableMarketplaces, selectedId)
   const marketplaceItems = filterPluginItems(
     selectedMarketplaces.flatMap(marketplace =>
       marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
@@ -722,8 +752,32 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return readState({
         query: params.q,
         marketplaceId: params.marketplaceId,
+        mergeAllMarketplaces: params.mergeAllMarketplaces,
         refresh: params.refresh,
       })
+    },
+    async readMarketplacePluginDetail(marketplaceId, pluginName) {
+      if (!isTauriRuntime()) {
+        throw new Error('Reading local plugin detail requires the Wework desktop app')
+      }
+      const normalizedMarketplaceId = marketplaceId.trim()
+      const normalizedPluginName = pluginName.trim()
+      if (!normalizedMarketplaceId || !normalizedPluginName) {
+        throw new Error('Marketplace id and plugin name are required')
+      }
+      const state = cachedState ?? (await readState({ mergeAllMarketplaces: true }))
+      const marketplaceMeta = state.marketplaces.find(entry => entry.id === normalizedMarketplaceId)
+      if (!marketplaceMeta) {
+        throw new Error(`Codex marketplace "${normalizedMarketplaceId}" is unavailable`)
+      }
+      const marketplace: CodexPluginMarketplaceEntry = {
+        name: marketplaceMeta.id,
+        path: marketplaceMeta.path,
+        interface: { displayName: marketplaceMeta.name },
+        plugins: [],
+      }
+      const detail = await readPluginDetail(marketplace, normalizedPluginName)
+      return toInstalledPlugin(marketplace, detail.summary, detail)
     },
     async listInstalledPlugins() {
       const state = await readState()

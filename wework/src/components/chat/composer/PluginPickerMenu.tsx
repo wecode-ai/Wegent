@@ -6,6 +6,7 @@ import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
 import { appReference, displayAppName } from './composerMentionCandidates'
+import { OPEN_COMPOSER_PLUGIN_PICKER_EVENT } from './composerEvents'
 import { registerComposerMentionIcon } from './composerMentions'
 
 interface PluginPickerMenuProps {
@@ -36,6 +37,15 @@ export function PluginPickerMenu({
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open])
+
+  useEffect(() => {
+    const onOpenPicker = () => {
+      if (disabled) return
+      setOpen(true)
+    }
+    window.addEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
+    return () => window.removeEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
+  }, [disabled])
 
   useEffect(() => {
     let current = true

@@ -19,7 +19,7 @@ import { ModelSelector } from './ModelSelector'
 import { PluginPickerMenu } from './PluginPickerMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { openComposerSlashMenu } from './composerEvents'
+import { openComposerPluginPicker } from './composerEvents'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -120,10 +120,10 @@ export function ComposerToolbar({
           type="button"
           data-testid="composer-slash-button"
           disabled={disabled}
-          aria-label={t('workbench.composer_open_slash_menu', '打开斜杠菜单')}
-          title={t('workbench.composer_open_slash_menu', '打开斜杠菜单')}
+          aria-label={t('workbench.composer_open_plugin_picker', '选择插件')}
+          title={t('workbench.composer_open_plugin_picker', '选择插件')}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40"
-          onClick={openComposerSlashMenu}
+          onClick={openComposerPluginPicker}
         >
           <Slash className="h-4 w-4" />
         </button>

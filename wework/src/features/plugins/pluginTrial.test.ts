@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
+  buildTrialTemplatePrompt,
   consumePluginTrial,
   consumePluginTrialInput,
+  dismissTrialGuide,
+  getPluginUseCount30d,
   pluginTrialInput,
   queuePluginReferenceTrial,
   queuePluginTrial,
+  recordPluginUsage,
+  recordPluginUsageFromInput,
+  shouldShowPluginTrialGuide,
 } from './pluginTrial'
 
 function pluginWithSkill(
@@ -130,5 +136,33 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
+  })
+
+  test('tracks plugin usage for the 30-day guide gate', () => {
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+    expect(getPluginUseCount30d('Sites')).toBe(0)
+    expect(shouldShowPluginTrialGuide('Sites', 'scope-a')).toBe(true)
+    recordPluginUsage('Sites')
+    expect(getPluginUseCount30d('Sites')).toBe(1)
+    expect(shouldShowPluginTrialGuide('Sites', 'scope-a')).toBe(false)
+    dismissTrialGuide('Docs', 'scope-a')
+    expect(shouldShowPluginTrialGuide('Docs', 'scope-a')).toBe(false)
+  })
+
+  test('records plugin usage from composer mentions', () => {
+    window.localStorage.clear()
+    recordPluginUsageFromInput('[$Sites](plugin://sites@openai-bundled) summarize this repo')
+    expect(getPluginUseCount30d('Sites')).toBe(1)
+  })
+
+  test('builds trial template prompts from the current plugin mention', () => {
+    expect(
+      buildTrialTemplatePrompt('[$Sites](plugin://sites@openai-bundled) ', {
+        name: 'Project Memo',
+        path: 'project_memo',
+        description: 'Draft a project memo',
+      })
+    ).toBe('[$Sites](plugin://sites@openai-bundled) Draft a project memo ')
   })
 })

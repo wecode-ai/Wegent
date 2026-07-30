@@ -45,6 +45,11 @@ export interface ProjectChatControls {
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
+  trialPluginName?: string
+  onDismissTrialGuide?: () => void
+  onApplyTrialTemplate?: (template: PluginPathComponent) => void
+  dismissTrialGuide?: () => void
+  applyTrialTemplate?: (template: PluginPathComponent) => void
   selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
@@ -161,49 +166,85 @@ interface PendingQueuedSend {
   options?: ChatSubmitOptions
 }
 
-function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponent[] }) {
+function PluginTrialTemplateStrip({
+  templates,
+  pluginName,
+  onApplyTemplate,
+  onDismiss,
+}: {
+  templates: PluginPathComponent[]
+  pluginName?: string
+  onApplyTemplate?: (template: PluginPathComponent) => void
+  onDismiss?: () => void
+}) {
   const { t } = useTranslation('common')
-  const visibleTemplates = templates.filter(template => !template.unavailableReason).slice(0, 8)
+  const visibleTemplates = templates.filter(template => !template.unavailableReason).slice(0, 3)
   if (visibleTemplates.length === 0) return null
 
   return (
     <section
-      className="mb-2 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.06)]"
+      className="mx-auto mb-2 max-w-[760px] overflow-hidden rounded-[14px] border border-border bg-background shadow-[0_10px_34px_rgba(0,0,0,0.07)]"
       data-testid="plugin-trial-template-strip"
-      aria-label={t('workbench.plugin_trial_templates', '模板')}
+      aria-label={t('workbench.plugin_trial_start_with', '使用该插件开始')}
     >
-      <div className="mb-2 text-sm font-medium leading-5 text-text-muted">
-        {t('workbench.plugin_trial_templates', '模板')}
-      </div>
-      <div className="flex gap-3 overflow-x-auto pb-1">
-        {visibleTemplates.map(template => (
-          <div
-            key={template.path}
-            className="w-[132px] shrink-0 rounded-xl border border-border/70 bg-surface/50 p-3"
-            data-testid="plugin-trial-template-card"
+      <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
+        <div>
+          <div className="text-sm font-medium leading-5 text-text-primary">
+            {t('workbench.plugin_trial_start_with', '使用该插件开始')}
+          </div>
+          {pluginName ? (
+            <div className="text-xs leading-4 text-text-muted">{pluginName}</div>
+          ) : null}
+        </div>
+        {onDismiss && (
+          <button
+            type="button"
+            data-testid="plugin-trial-template-dismiss"
+            aria-label={t('workbench.close', '关闭')}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+            onClick={onDismiss}
           >
-            <div className="mb-3 flex h-[72px] items-center justify-center rounded-lg border border-border/60 bg-background">
+            ×
+          </button>
+        )}
+      </div>
+      <div className="flex gap-2 overflow-x-auto p-2.5">
+        {visibleTemplates.map(template => (
+          <button
+            key={template.path}
+            type="button"
+            className="w-[190px] shrink-0 overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:border-border hover:bg-surface"
+            data-testid="plugin-trial-template-card"
+            onClick={() => onApplyTemplate?.(template)}
+          >
+            <div className="flex min-h-[118px] flex-col gap-2.5 bg-surface p-3">
               {template.logoUrl || template.logoUrlDark ? (
                 <img
                   src={template.logoUrl || template.logoUrlDark || ''}
                   alt=""
-                  className="h-9 w-9 object-contain"
+                  className="h-8 w-8 rounded-lg object-contain"
                 />
               ) : (
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-sm font-medium text-text-secondary">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-sm font-medium text-text-secondary">
                   {template.name.slice(0, 1).toUpperCase()}
                 </span>
               )}
+              <strong className="truncate text-xs font-medium leading-4 text-text-primary">
+                {template.name}
+              </strong>
             </div>
-            <div className="truncate text-sm font-medium leading-5 text-text-primary">
-              {template.name}
+            <div className="space-y-1 px-2.5 py-2">
+              <small className="block text-xs leading-4 text-text-muted">
+                {t('workbench.plugin_template', '模板')}
+              </small>
+              <strong className="block truncate text-xs font-medium leading-4 text-text-primary">
+                {template.description?.trim() || template.name}
+              </strong>
+              <span className="block text-xs leading-4 text-text-muted">
+                {t('workbench.plugin_template_prefill_hint', '点击后预填，可继续修改')}
+              </span>
             </div>
-            {template.description ? (
-              <div className="mt-0.5 line-clamp-2 text-xs leading-4 text-text-muted">
-                {template.description}
-              </div>
-            ) : null}
-          </div>
+          </button>
         ))}
       </div>
     </section>
@@ -273,6 +314,7 @@ export function ChatInput({
     selectedModelOptions: {},
     isModelSelectionReady: true,
     trialTemplates: [],
+    trialPluginName: '',
     selectedSkills: [],
     attachments: [],
     uploadingFiles: new Map(),
@@ -401,7 +443,12 @@ export function ChatInput({
         <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
         {errorBanner}
-        <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
+        <PluginTrialTemplateStrip
+          templates={controls.trialTemplates ?? []}
+          pluginName={controls.trialPluginName}
+          onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
+          onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
+        />
         {displayedGoal && !goalDraftActive && (
           <GoalStatusBar
             goal={displayedGoal}
@@ -481,7 +528,12 @@ export function ChatInput({
       <TaskPlanProgress plan={taskPlan} />
       {queuePanel}
       {errorBanner}
-      <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
+      <PluginTrialTemplateStrip
+        templates={controls.trialTemplates ?? []}
+        pluginName={controls.trialPluginName}
+        onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
+        onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
+      />
       {displayedGoal && !goalDraftActive && (
         <GoalStatusBar
           goal={displayedGoal}

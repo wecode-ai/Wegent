@@ -64,10 +64,14 @@ import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import {
+  buildTrialTemplatePrompt,
   consumePluginTrial,
+  dismissTrialGuide,
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
   PLUGIN_TRIAL_QUEUED_EVENT,
+  recordPluginUsageFromInput,
+  shouldShowPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import type {
   WorkbenchContextValue,
@@ -260,8 +264,10 @@ export function WorkbenchProvider({
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
   >({})
+  const [trialPluginNameByScope, setTrialPluginNameByScope] = useState<Record<string, string>>({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
+  const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputByScope(current => {
@@ -275,9 +281,69 @@ export function WorkbenchProvider({
           delete next[projectChatScopeKey]
           return next
         })
+        setTrialPluginNameByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
       }
     },
     [projectChatScopeKey]
+  )
+  const dismissTrialGuideForScope = useCallback(() => {
+    if (!trialPluginName.trim()) {
+      setTrialTemplatesByScope(current => {
+        if (!current[projectChatScopeKey]) return current
+        const next = { ...current }
+        delete next[projectChatScopeKey]
+        return next
+      })
+      return
+    }
+    dismissTrialGuide(trialPluginName, projectChatScopeKey)
+    setTrialTemplatesByScope(current => {
+      if (!current[projectChatScopeKey]) return current
+      const next = { ...current }
+      delete next[projectChatScopeKey]
+      return next
+    })
+  }, [projectChatScopeKey, trialPluginName])
+  const applyTrialTemplate = useCallback(
+    (template: PluginPathComponent) => {
+      setDraftInput(buildTrialTemplatePrompt(draftInput, template))
+    },
+    [draftInput, setDraftInput]
+  )
+  const applyQueuedPluginTrial = useCallback(
+    (scopeKey: string, trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
+      setDraftInputByScope(current => ({ ...current, [scopeKey]: trial.input }))
+      const showGuide =
+        trial.pluginName.trim().length > 0 &&
+        shouldShowPluginTrialGuide(trial.pluginName, scopeKey) &&
+        trial.templates.length > 0
+      if (showGuide) {
+        setTrialPluginNameByScope(current => ({ ...current, [scopeKey]: trial.pluginName }))
+        setTrialTemplatesByScope(current => ({
+          ...current,
+          [scopeKey]: trial.templates.slice(0, 3),
+        }))
+        return
+      }
+      setTrialPluginNameByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+      setTrialTemplatesByScope(current => {
+        if (!current[scopeKey]) return current
+        const next = { ...current }
+        delete next[scopeKey]
+        return next
+      })
+    },
+    []
   )
   const consumeQueuedPluginTrial = useCallback(() => {
     const trial = consumePluginTrial()
@@ -288,7 +354,7 @@ export function WorkbenchProvider({
         standaloneChatKey: state.standaloneChatKey,
       })
       setDraftInputByScope(current => ({ ...current, [currentScopeKey]: trial.input }))
-      setTrialTemplatesByScope(current => ({ ...current, [currentScopeKey]: trial.templates }))
+      applyQueuedPluginTrial(currentScopeKey, trial)
       navigateTo('/')
       window.dispatchEvent(
         new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
@@ -314,7 +380,7 @@ export function WorkbenchProvider({
       startFreshChat: true,
     })
     setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
-    setTrialTemplatesByScope(current => ({ ...current, [nextScopeKey]: trial.templates }))
+    applyQueuedPluginTrial(nextScopeKey, trial)
     navigateTo('/')
     window.dispatchEvent(
       new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
@@ -322,6 +388,7 @@ export function WorkbenchProvider({
       })
     )
   }, [
+    applyQueuedPluginTrial,
     state.currentRuntimeTask,
     state.devices,
     state.standaloneChatKey,
@@ -1331,7 +1398,18 @@ export function WorkbenchProvider({
   const stableCompactRuntimePaneTask = useStableEvent(runtimeMessaging.compactRuntimePaneTask)
   const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
-  const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
+  const stableSendCurrentInput = useStableEvent(
+    async (
+      inputOverride?: string,
+      options?: Parameters<typeof runtimeMessaging.sendCurrentInput>[1]
+    ) => {
+      const sent = await runtimeMessaging.sendCurrentInput(inputOverride, options)
+      if (sent) {
+        recordPluginUsageFromInput(inputOverride ?? draftInputByScope[projectChatScopeKey] ?? '')
+      }
+      return sent
+    }
+  )
   const stableCreateTemporaryRuntimeTask = useStableEvent(
     runtimeMessaging.createTemporaryRuntimeTask
   )
@@ -1476,6 +1554,9 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       trialTemplates,
+      trialPluginName,
+      dismissTrialGuide: dismissTrialGuideForScope,
+      applyTrialTemplate,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -1511,6 +1592,9 @@ export function WorkbenchProvider({
       projectChatScopeKey,
       draftInput,
       trialTemplates,
+      trialPluginName,
+      dismissTrialGuideForScope,
+      applyTrialTemplate,
       handleBlockedModelSelect,
       currentContextUsage,
       isOptionsLocked,
@@ -1544,6 +1628,9 @@ export function WorkbenchProvider({
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
       trialTemplates,
+      trialPluginName,
+      dismissTrialGuide: dismissTrialGuideForScope,
+      applyTrialTemplate,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -1579,6 +1666,9 @@ export function WorkbenchProvider({
       projectChatScopeKey,
       draftInput,
       trialTemplates,
+      trialPluginName,
+      dismissTrialGuideForScope,
+      applyTrialTemplate,
       handleBlockedModelSelect,
       currentContextUsage,
       listLocalSkills,

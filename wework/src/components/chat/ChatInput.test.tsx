@@ -283,8 +283,7 @@ describe('ChatInput', () => {
     })
   })
 
-  test('selects plan mode from the independent slash menu button', async () => {
-    const setSelectedModelOption = vi.fn()
+  test('opens plugin picker from the toolbar slash button', async () => {
     render(
       <ChatInput
         value=""
@@ -292,20 +291,12 @@ describe('ChatInput', () => {
         onSubmit={vi.fn()}
         disabled={false}
         variant="desktop"
-        projectChat={projectChatControls({
-          selectedModelOptions: {},
-          setSelectedModelOption,
-        })}
+        projectChat={projectChatControls()}
       />
     )
 
-    expect(screen.queryByTestId('plan-mode-pill')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cancel-plan-mode-button')).not.toBeInTheDocument()
-
     await userEvent.click(screen.getByTestId('composer-slash-button'))
-    await userEvent.click(await screen.findByTestId('slash-command-option-plan'))
-
-    expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
+    expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
   test('shows the plan mode pill when plan mode is selected', async () => {

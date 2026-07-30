@@ -50,10 +50,8 @@ export function PluginCreateMenu({
         aria-expanded={isOpen}
         aria-label={compact ? t('workbench.plugins_create', '创建') : undefined}
         className={cn(
-          'flex min-w-[44px] items-center justify-center text-text-primary transition-colors',
-          compact
-            ? 'h-11 w-11 gap-0 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
-            : 'h-11 gap-1.5 rounded-lg bg-surface px-3 text-sm font-medium leading-[18px] hover:bg-muted active:bg-black/[0.10] md:h-7 md:bg-transparent md:px-2 md:hover:bg-black/[0.06]'
+          'plugin-market-action-button',
+          compact && 'h-11 w-11 min-w-[44px] justify-center gap-0 rounded-xl px-0 md:h-11'
         )}
         onClick={onToggle}
       >
@@ -61,8 +59,9 @@ export function PluginCreateMenu({
           <Plus className="h-5 w-5" />
         ) : (
           <>
+            <Plus className="h-[17px] w-[17px]" aria-hidden="true" />
             {t('workbench.plugins_create', '创建')}
-            <ChevronDown className="h-[18px] w-[18px] stroke-[2]" />
+            <ChevronDown className="h-[17px] w-[17px]" aria-hidden="true" />
           </>
         )}
       </button>

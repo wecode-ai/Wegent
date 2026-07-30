@@ -131,6 +131,9 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>

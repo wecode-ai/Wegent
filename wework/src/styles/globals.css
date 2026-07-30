@@ -38,8 +38,10 @@
   --font-size-ui: 14px;
   --font-size-code: 12px;
   --text-xs: 12px;
+  --text-2xs: 10px;
   --text-sm: 13px;
   --text-base: 14px;
+  --text-md: 15px;
   --text-lg: 16px;
   --text-xl: 28px;
   --text-2xl: 36px;
@@ -48,6 +50,7 @@
   --text-heading-sm: 18px;
   --text-heading-md: 20px;
   --text-heading-lg: 24px;
+  --text-market-title: 22px;
   --text-chat: 14px;
   --text-code: 12px;
   --text-code-sm: 11px;
@@ -240,6 +243,13 @@ button:disabled {
     line-height: 1.2;
   }
 
+  .heading-medium {
+    font-size: var(--text-xl);
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
   .heading-base {
     font-size: var(--text-heading-md);
     font-weight: 500;
@@ -271,6 +281,43 @@ button:disabled {
     line-height: 1.4;
   }
 
+  .plugin-management-pill {
+    display: inline-flex;
+    align-items: center;
+    margin-inline-start: 4px;
+    padding: 0 5px;
+    border: 0;
+    border-radius: 999px;
+    font-size: var(--text-code-sm);
+    line-height: 16px;
+    vertical-align: 1px;
+    white-space: nowrap;
+  }
+
+  .plugin-management-pill-official {
+    background: rgb(241 245 251);
+    color: rgb(53 104 169);
+  }
+
+  .plugin-management-pill-workspace {
+    background: rgb(240 246 243);
+    color: rgb(37 112 82);
+  }
+
+  .plugin-management-pill-personal {
+    background: rgb(245 242 250);
+    color: rgb(114 89 163);
+  }
+
+  .plugin-management-pill-public {
+    background: rgb(250 245 237);
+    color: rgb(151 103 45);
+  }
+
+  .plugin-management-row:hover {
+    background: rgb(250 250 249);
+  }
+
   .composer-mention-node {
     display: inline-flex;
     align-items: baseline;
@@ -285,7 +332,11 @@ button:disabled {
   }
 
   .composer-mention-link {
-    color: rgb(37 99 235);
+    color: rgb(46 95 158);
+    background: rgb(237 243 255);
+    border-radius: 6px;
+    padding: 2px 6px 2px 4px;
+    cursor: pointer;
   }
 
   .composer-mention-icon-slot {
@@ -326,7 +377,8 @@ button:disabled {
   }
 
   [data-theme='dark'] .composer-mention-link {
-    color: rgb(147 197 253);
+    color: rgb(191 219 254);
+    background: rgb(30 58 95 / 0.35);
   }
 
   .composer-mention-node[data-composer-skill-path] {
@@ -867,4 +919,703 @@ button:disabled {
   .scrollbar-soft::-webkit-scrollbar-thumb:hover {
     background-color: rgb(180 180 180 / 0.55);
   }
+}
+
+/* Plugin market page: unlayered so Tailwind preflight cannot strip button backgrounds. */
+.plugin-market-title {
+  font-size: var(--text-market-title);
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  line-height: 31px;
+}
+
+.plugin-market-header {
+  margin-bottom: 24px;
+}
+
+.plugin-market-body {
+  display: flex;
+  flex-direction: column;
+}
+
+button.plugin-market-action-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 31px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 8px;
+  background-color: rgb(var(--color-bg-base));
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(var(--color-text-primary));
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+}
+
+button.plugin-market-action-button:hover:not(:disabled) {
+  background-color: rgb(250 250 249);
+  border-color: rgb(210 210 206);
+}
+
+button.plugin-market-icon-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background-color: transparent;
+  padding: 0;
+  font: inherit;
+  color: rgb(var(--color-text-secondary));
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+button.plugin-market-icon-button:hover:not(:disabled) {
+  background-color: rgb(250 250 249);
+  border-color: rgb(210 210 206);
+  color: rgb(var(--color-text-primary));
+}
+
+button.plugin-market-filter {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  border-radius: 10px;
+  border: 1px solid rgb(var(--color-border));
+  background-color: rgb(var(--color-bg-base));
+  padding: 0 11px;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1;
+  color: rgb(95 95 91);
+  transition:
+    background-color 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+button.plugin-market-filter:hover:not(:disabled) {
+  background-color: rgb(250 250 249);
+  border-color: rgb(210 210 206);
+  color: rgb(var(--color-text-primary));
+}
+
+button.plugin-market-filter[aria-selected='true'] {
+  border-color: transparent;
+  background-color: rgb(243 243 241);
+  font-weight: 600;
+  color: rgb(var(--color-text-primary));
+}
+
+button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
+  background-color: rgb(236 236 234);
+  border-color: transparent;
+}
+
+.plugin-installed-icons-scroller {
+  overflow-x: auto;
+  overflow-y: visible;
+  min-height: 48px;
+  padding-bottom: 28px;
+  margin-bottom: -20px;
+  overscroll-behavior-x: contain;
+}
+
+.plugin-installed-icons-track {
+  display: flex;
+  min-height: 48px;
+  align-items: flex-start;
+  gap: 7px;
+  width: max-content;
+  padding-top: 1px;
+}
+
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:first-of-type:not(:last-of-type)::after {
+  left: 0;
+  transform: translateY(-2px);
+}
+
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:first-of-type:not(:last-of-type):hover::after,
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:first-of-type:not(:last-of-type):focus-visible::after {
+  transform: translateY(0);
+}
+
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:last-of-type:not(:first-of-type)::after {
+  left: auto;
+  right: 0;
+  transform: translateY(-2px);
+}
+
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:last-of-type:not(:first-of-type):hover::after,
+.plugin-installed-icons-track
+  > button.plugin-installed-strip-item:last-of-type:not(:first-of-type):focus-visible::after {
+  transform: translateY(0);
+}
+
+button.plugin-installed-strip-item {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    transform 0.12s,
+    background-color 0.12s;
+}
+
+button.plugin-installed-strip-item:hover:not(:disabled),
+button.plugin-installed-strip-item:focus-visible:not(:disabled) {
+  background-color: rgb(243 243 241);
+  transform: translateY(-1px);
+}
+
+button.plugin-installed-strip-item::after {
+  position: absolute;
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 50%;
+  z-index: 20;
+  min-width: max-content;
+  border-radius: 6px;
+  background: #242424;
+  padding: 4px 7px;
+  font-size: var(--text-2xs);
+  line-height: 1.2;
+  color: #fff;
+  content: attr(data-tooltip);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-2px);
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
+}
+
+button.plugin-installed-strip-item:hover::after,
+button.plugin-installed-strip-item:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.plugin-installed-strip-logo {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 5px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.05);
+  pointer-events: none;
+}
+
+.plugin-installed-strip-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.plugin-installed-strip {
+  overflow: visible;
+  margin: 0 0 26px;
+  padding: 0 0 16px;
+  border-bottom: 1px solid rgb(229 229 226);
+}
+
+.plugin-installed-strip-head {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.plugin-installed-strip-head h2 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(var(--color-text-primary));
+}
+
+button.plugin-installed-settings-button {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: rgb(var(--color-text-muted));
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+
+button.plugin-installed-settings-button:hover {
+  background-color: rgb(241 241 238);
+  color: rgb(var(--color-text-primary));
+}
+
+button.plugin-installed-settings-button::after {
+  position: absolute;
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 9;
+  min-width: max-content;
+  border-radius: 6px;
+  background: #242424;
+  padding: 4px 7px;
+  font-size: var(--text-2xs);
+  line-height: 1.2;
+  color: #fff;
+  content: attr(data-tooltip);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(2px);
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
+}
+
+button.plugin-installed-settings-button:hover::after,
+button.plugin-installed-settings-button:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.plugin-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button.plugin-detail-action-primary {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 37px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 9px;
+  background-color: rgb(37 37 37);
+  padding: 0 16px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1;
+  color: #fff;
+  transition: background-color 0.12s;
+}
+
+button.plugin-detail-action-primary:hover:not(:disabled) {
+  background-color: rgb(17 17 17);
+}
+
+button.plugin-detail-action-primary:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+button.plugin-detail-action-secondary {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 37px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 9px;
+  background-color: rgb(244 244 242);
+  padding: 0 16px;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1;
+  color: rgb(var(--color-text-primary));
+  transition:
+    background-color 0.12s,
+    border-color 0.12s;
+}
+
+button.plugin-detail-action-secondary:hover:not(:disabled) {
+  background-color: rgb(233 233 230);
+}
+
+button.plugin-detail-action-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button.plugin-detail-action-menu {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: rgb(38 38 38);
+  transition:
+    background-color 0.12s,
+    color 0.12s,
+    transform 0.12s;
+}
+
+button.plugin-detail-action-menu:hover:not(:disabled) {
+  background-color: rgb(236 236 234);
+  color: rgb(21 21 21);
+  transform: scale(1.04);
+}
+
+button.plugin-detail-action-menu:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+button.plugin-route-back-button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 31px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 9px;
+  font: inherit;
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(95 95 91);
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+
+button.plugin-route-back-button:hover {
+  background-color: rgb(243 243 241);
+  color: rgb(32 32 32);
+}
+
+.plugin-market-toolbar {
+  margin-bottom: 29px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid rgb(229 229 226);
+}
+
+.plugin-market-search-input {
+  height: 36px;
+  width: 100%;
+  max-width: 300px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 9px;
+  background-color: rgb(var(--color-bg-base));
+  padding: 0 36px 0 12px;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.25;
+  color: rgb(var(--color-text-primary));
+  outline: none;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.plugin-market-search-input::placeholder {
+  color: rgb(var(--color-text-muted));
+}
+
+.plugin-market-search-input:focus {
+  border-color: rgb(170 170 170);
+  box-shadow: 0 0 0 3px rgb(0 0 0 / 0.04);
+}
+
+.plugin-market-section-head {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  margin: 0 0 11px;
+}
+
+.plugin-market-catalog-after-strip .plugin-market-section-head {
+  margin-top: 29px;
+}
+
+.plugin-market-section-head h2 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.2;
+  color: rgb(var(--color-text-primary));
+}
+
+.plugin-market-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+@media (max-width: 1050px) {
+  .plugin-market-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+article.plugin-market-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 92px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 12px;
+  background-color: rgb(var(--color-bg-base));
+  padding: 6px 10px 6px 6px;
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+
+article.plugin-market-card:hover {
+  border-color: rgb(215 215 211);
+  background-color: rgb(250 250 249);
+}
+
+article.plugin-market-card:focus-visible {
+  outline: none;
+  border-color: rgb(155 187 237);
+  box-shadow: 0 0 0 3px rgb(51 112 216 / 0.12);
+}
+
+button.plugin-market-card-main {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-width: 0;
+  min-height: 78px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 7px;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.plugin-market-card-main:active {
+  background-color: rgb(240 240 237);
+}
+
+.plugin-market-card-logo {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid rgb(232 232 229);
+  border-radius: 10px;
+  background-color: rgb(var(--color-bg-base));
+  padding: 5px;
+}
+
+.plugin-market-card-logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.plugin-market-card-copy {
+  min-width: 0;
+}
+
+.plugin-market-card-copy strong {
+  display: block;
+  margin-bottom: 3px;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.25;
+  color: rgb(var(--color-text-primary));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-market-card-copy p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--text-code-sm);
+  line-height: 16px;
+  color: rgb(var(--color-text-secondary));
+}
+
+.plugin-market-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 4px;
+  font-size: var(--text-code-sm);
+  line-height: 1.2;
+  color: rgb(var(--color-text-muted));
+}
+
+.plugin-market-card-meta span {
+  white-space: nowrap;
+}
+
+.plugin-market-card-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+button.plugin-market-card-install {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  height: 32px;
+  min-width: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 10px;
+  background-color: rgb(var(--color-bg-base));
+  padding: 0 13px;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+  color: rgb(var(--color-text-primary));
+  transition:
+    border-color 0.12s,
+    background-color 0.12s,
+    transform 0.12s;
+}
+
+button.plugin-market-card-install:hover:not(:disabled) {
+  border-color: rgb(211 211 207);
+  background-color: rgb(241 241 238);
+}
+
+button.plugin-market-card-install:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button.plugin-market-card-install.is-failed {
+  color: rgb(220 38 38);
+}
+
+button.plugin-market-card-menu {
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  color: rgb(76 77 73);
+  transition:
+    background-color 0.12s,
+    color 0.12s,
+    transform 0.12s;
+}
+
+button.plugin-market-card-menu:hover {
+  background-color: rgb(236 236 234);
+  color: rgb(21 21 21);
+  transform: scale(1.04);
+}
+
+button.plugin-market-card-menu:active {
+  transform: scale(0.94);
+}
+
+.plugin-market-card-install-status {
+  display: inline-flex;
+  min-width: 88px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: rgb(var(--color-text-muted));
+  white-space: nowrap;
+}
+
+.plugin-market-card-install-status svg {
+  width: 17px;
+  height: 17px;
 }

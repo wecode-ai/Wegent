@@ -1005,7 +1005,7 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
+    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
@@ -1024,8 +1024,8 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
     expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
-    expect(screen.getByTestId('plugins-topbar').style.paddingLeft).toBe('')
+    expect(screen.getByTestId('plugins-page-content')).toHaveClass('md:pl-6')
+    expect(screen.getByTestId('plugins-page-content').style.paddingLeft).toBe('')
   })
 
   test('collapses and expands the desktop sidebar on plugin management route', async () => {
@@ -1109,7 +1109,8 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-topbar')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-management-page-content')).toBeInTheDocument()
     expect(await screen.findByText('还没有安装插件')).toBeInTheDocument()
     await waitFor(() =>
       expect(

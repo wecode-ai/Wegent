@@ -1,4 +1,3 @@
-import { ChevronLeft, Search } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
@@ -22,6 +21,7 @@ import {
 } from './installedPluginMerge'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginShareDialog } from './PluginShareDialog'
+import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { installedPluginDistribution } from './pluginDistribution'
 import { getRuntimeConfig } from '@/config/runtime'
 
@@ -80,7 +80,6 @@ export function PluginManagementWorkspace({
   cloudToken,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
-  const [query, setQuery] = useState('')
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
   const [marketplaceItems, setMarketplaceItems] = useState<PluginMarketplaceItem[]>([])
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(true)
@@ -88,6 +87,10 @@ export function PluginManagementWorkspace({
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [pluginShareState, setPluginShareState] = useState<PluginShareState | null>(null)
   const [pluginShareSaving, setPluginShareSaving] = useState(false)
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    id: string | number
+    name: string
+  } | null>(null)
   const [pluginShareError, setPluginShareError] = useState<string | null>(null)
   const [pluginSharePreparing, setPluginSharePreparing] = useState(false)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
@@ -141,18 +144,6 @@ export function PluginManagementWorkspace({
       current = false
     }
   }, [cloudPluginApi, localPluginApi])
-
-  const filteredInstalledPlugins = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-    if (!normalizedQuery) return installedPlugins
-    return installedPlugins.filter(plugin =>
-      `${plugin.name} ${plugin.description} ${plugin.sourceLabel} ${Object.keys(
-        plugin.componentCounts
-      ).join(' ')}`
-        .toLowerCase()
-        .includes(normalizedQuery)
-    )
-  }, [installedPlugins, query])
 
   const marketplaceById = useMemo(
     () => new Map(marketplaceItems.map(item => [String(item.id), item])),
@@ -236,6 +227,17 @@ export function PluginManagementWorkspace({
           previous.map(item => (String(item.id) === String(id) ? plugin : item))
         )
       })
+  }
+
+  const requestUninstallPlugin = (id: string | number, name: string) => {
+    setPendingUninstall({ id, name })
+  }
+
+  const confirmUninstallPlugin = () => {
+    if (!pendingUninstall) return
+    const { id } = pendingUninstall
+    setPendingUninstall(null)
+    uninstallInstalledPlugin(id)
   }
 
   const uninstallInstalledPlugin = (id: string | number) => {
@@ -374,6 +376,7 @@ export function PluginManagementWorkspace({
       <>
         <PluginDetailView
           plugin={selectedPlugin}
+          backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
           tertiaryActionLabel={
             selectedPlugin.origin === 'created' ? t('workbench.plugins_share', '分享') : undefined
           }
@@ -399,9 +402,16 @@ export function PluginManagementWorkspace({
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
           }
-          onUninstall={() => uninstallInstalledPlugin(selectedPlugin.id)}
+          onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
         />
         {pluginShareDialog}
+        {pendingUninstall && (
+          <UninstallPluginDialog
+            pluginName={pendingUninstall.name}
+            onCancel={() => setPendingUninstall(null)}
+            onConfirm={confirmUninstallPlugin}
+          />
+        )}
       </>
     )
   }
@@ -411,7 +421,7 @@ export function PluginManagementWorkspace({
       <DesktopTopBar
         testId="plugin-management-topbar"
         className={[
-          'sticky top-0 z-30 h-12 bg-background/95 pl-20 pr-4 backdrop-blur-xl md:h-[52px] md:pr-7',
+          'sticky top-0 z-30 shrink-0 border-b border-border/75 bg-background/95 backdrop-blur-xl',
           sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
         ].join(' ')}
         left={
@@ -420,98 +430,99 @@ export function PluginManagementWorkspace({
             <button
               type="button"
               data-testid="plugin-management-back-button"
-              className="flex h-8 items-center gap-1 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface hover:text-text-primary"
+              className="plugin-route-back-button"
               onClick={() => navigateTo('/plugins')}
             >
-              <ChevronLeft className="h-4 w-4" />
-              {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
+              ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
             </button>
           </>
         }
       />
 
-      <section className="mx-auto flex w-full max-w-[1060px] flex-col gap-6 px-5 pb-12 pt-8 md:px-8 md:pt-10">
-        <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="space-y-1.5">
-            <h1 className="heading-medium text-text-primary">
-              {t('workbench.plugins_manage_plugins', '管理插件')}
-            </h1>
-            <p className="text-sm text-text-secondary">
-              {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
-            </p>
-          </div>
-          <label className="relative w-full shrink-0 md:w-[320px]">
-            <span className="sr-only">{t('workbench.plugins_search_plugins', '搜索插件')}</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-            <input
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder={t('workbench.plugins_search_plugins', '搜索插件')}
-              data-testid="plugin-management-search-input"
-              className="h-10 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none placeholder:text-text-muted focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-            />
-          </label>
+      <div
+        data-testid="plugin-management-page-content"
+        className={[
+          'mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-[68px] md:px-[26px]',
+          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+          'pt-[27px]',
+        ].join(' ')}
+      >
+        <header className="mb-6">
+          <h1 className="heading-base tracking-tight text-text-primary">
+            {t('workbench.plugins_manage_plugins', '管理插件')}
+          </h1>
+          <p className="mt-1 text-sm leading-5 text-text-secondary">
+            {t('workbench.plugins_manage_plugins_description', '管理已安装插件。')}
+          </p>
         </header>
 
         {isLoadingPlugins ? (
           <div className="py-10 text-sm text-text-secondary">
             {t('workbench.plugins_loading_plugins', '正在加载插件')}
           </div>
-        ) : filteredInstalledPlugins.length > 0 ? (
+        ) : installedPlugins.length > 0 ? (
           <div
             data-testid="plugin-management-installed-list"
-            className="divide-y divide-border overflow-hidden rounded-xl border border-border"
+            className="overflow-hidden rounded-[12px] border border-border bg-background"
           >
-            {filteredInstalledPlugins.map(plugin => {
+            {installedPlugins.map(plugin => {
               const marketplaceItem = plugin.raw.spec.pluginId
                 ? marketplaceById.get(String(plugin.raw.spec.pluginId))
                 : undefined
               return (
-                <InstalledPluginRow
-                  key={plugin.id}
-                  plugin={plugin}
-                  onOpen={() => setSelectedPluginId(plugin.id)}
-                  onTry={() => tryPluginInChat(plugin.raw)}
-                  onShare={
-                    plugin.origin === 'created'
-                      ? () => void shareInstalledPlugin(plugin)
-                      : undefined
-                  }
-                  onCopy={
-                    marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
-                      ? () => void copyMarketplacePlugin(marketplaceItem)
-                      : undefined
-                  }
-                  onToggle={() => toggleInstalledPlugin(plugin.id)}
-                  onUninstall={() => uninstallInstalledPlugin(plugin.id)}
-                />
+                <div key={plugin.id} className="border-b border-border last:border-b-0">
+                  <InstalledPluginRow
+                    plugin={plugin}
+                    marketplaceItem={marketplaceItem}
+                    onOpen={() => setSelectedPluginId(plugin.id)}
+                    onTry={() => tryPluginInChat(plugin.raw)}
+                    onShare={
+                      plugin.origin === 'created'
+                        ? () => void shareInstalledPlugin(plugin)
+                        : undefined
+                    }
+                    onCopy={
+                      marketplaceItem?.accessRole === 'recipient' && marketplaceItem.allowCopy
+                        ? () => void copyMarketplacePlugin(marketplaceItem)
+                        : undefined
+                    }
+                    onToggle={() => toggleInstalledPlugin(plugin.id)}
+                    onUninstall={() => requestUninstallPlugin(plugin.id, plugin.name)}
+                  />
+                </div>
               )
             })}
           </div>
-        ) : query ? (
-          <div className="py-10 text-sm text-text-secondary">
-            {t('workbench.plugins_no_search_results', '没有匹配的插件')}
-          </div>
         ) : (
-          <div className="flex flex-col items-start gap-2 py-10 text-sm text-text-secondary">
-            <strong className="font-medium text-text-primary">
+          <div
+            data-testid="plugin-management-empty-state"
+            className="rounded-[14px] border border-dashed border-border bg-background px-[42px] py-[42px] text-center text-text-muted"
+          >
+            <strong className="mb-1.5 block font-medium text-text-primary">
               {t('workbench.plugins_no_installed_plugins', '还没有安装插件')}
             </strong>
-            <span>
+            <p className="mb-3.5 text-sm leading-5">
               {t('workbench.plugins_no_installed_plugins_hint', '安装后的插件会集中显示在这里。')}
-            </span>
+            </p>
             <button
               type="button"
               data-testid="plugin-management-browse-marketplace-button"
-              className="mt-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+              className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-semibold text-text-primary transition-colors hover:bg-muted"
               onClick={() => navigateTo('/plugins')}
             >
               {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
             </button>
           </div>
         )}
-      </section>
+      </div>
       {pluginShareDialog}
+      {pendingUninstall && (
+        <UninstallPluginDialog
+          pluginName={pendingUninstall.name}
+          onCancel={() => setPendingUninstall(null)}
+          onConfirm={confirmUninstallPlugin}
+        />
+      )}
     </main>
   )
 }

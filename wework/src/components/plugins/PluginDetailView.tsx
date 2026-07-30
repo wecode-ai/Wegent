@@ -6,6 +6,7 @@ import {
   Link2,
   MessageCircle,
   MoreHorizontal,
+  Plus,
   Sparkles,
   TerminalSquare,
 } from 'lucide-react'
@@ -16,10 +17,12 @@ import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { resolvePluginAssetUrl } from './plugin-assets'
+import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
   onBack: () => void
+  backLabel?: string
   onToggle: () => void
   onComponentToggle: (componentKey: string, enabled: boolean) => void
   onUninstall: () => void
@@ -37,6 +40,15 @@ interface PluginDetailViewProps {
   editActionLabel?: string
   onEditAction?: () => void
   onManageConnector?: (slug: string) => void
+  accessRole?: 'catalog' | 'owner' | 'recipient'
+  shareGrantUserCount?: number
+  shareGrantNamespaceCount?: number
+  onManageAccess?: () => void
+  isExternalSource?: boolean
+  onSkillRun?: (skillName: string) => void
+  shareRecipient?: boolean
+  primaryActionIcon?: 'try' | 'install' | 'none'
+  actionMenuBeforePrimary?: boolean
 }
 
 interface DetailComponentItem {
@@ -276,7 +288,10 @@ function componentIcon(type: string) {
   }
 }
 
-function detailRows(plugin: InstalledPlugin): Array<{
+function detailRows(
+  plugin: InstalledPlugin,
+  isExternalSource: boolean
+): Array<{
   label: string
   value: string
   href?: string
@@ -287,7 +302,7 @@ function detailRows(plugin: InstalledPlugin): Array<{
     plugin.spec.interface?.privacyPolicyUrl || formatManifestValue(manifest.privacyPolicy)
   const termsOfService =
     plugin.spec.interface?.termsOfServiceUrl || formatManifestValue(manifest.termsOfService)
-  return [
+  const rows = [
     {
       label: '开发者',
       value:
@@ -300,27 +315,35 @@ function detailRows(plugin: InstalledPlugin): Array<{
       label: '版本',
       value: plugin.spec.version || formatManifestValue(manifest.version),
     },
-    {
+  ]
+  if (isExternalSource && homepage) {
+    rows.push({
       label: '网站',
       value: homepage,
       href: homepage.startsWith('http') ? homepage : undefined,
-    },
-    {
+    })
+  }
+  if (isExternalSource && privacyPolicy) {
+    rows.push({
       label: '隐私政策',
       value: privacyPolicy,
       href: privacyPolicy.startsWith('http') ? privacyPolicy : undefined,
-    },
-    {
+    })
+  }
+  if (isExternalSource && termsOfService) {
+    rows.push({
       label: '服务条款',
       value: termsOfService,
       href: termsOfService.startsWith('http') ? termsOfService : undefined,
-    },
-  ].filter(row => row.value)
+    })
+  }
+  return rows.filter(row => row.value)
 }
 
 export function PluginDetailView({
   plugin,
   onBack,
+  backLabel,
   onToggle,
   onComponentToggle,
   onUninstall,
@@ -338,9 +361,19 @@ export function PluginDetailView({
   editActionLabel,
   onEditAction,
   onManageConnector,
+  accessRole,
+  shareGrantUserCount = 0,
+  shareGrantNamespaceCount = 0,
+  onManageAccess,
+  isExternalSource = false,
+  onSkillRun,
+  shareRecipient = false,
+  primaryActionIcon = 'try',
+  actionMenuBeforePrimary = true,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+  const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
   const raw = plugin.raw
   const isInstalled = raw.spec.installState === 'installed'
   const distributionLabel =
@@ -364,22 +397,150 @@ export function PluginDetailView({
             : distributionLabel,
     },
     { label: '功能', value: pluginCapabilitySummary(plugin) },
-    ...detailRows(raw),
+    ...detailRows(raw, isExternalSource),
   ].filter(row => row.value)
+  const resolvedBackLabel = backLabel ?? t('workbench.plugins_back_to_marketplace', '返回插件市场')
+  const showAccessScope =
+    isInstalled &&
+    (accessRole === 'owner' || accessRole === 'recipient' || plugin.distribution === 'personal')
+  const accessScopeSection = showAccessScope && (
+    <section className="mt-7 space-y-3" data-testid="plugin-detail-access-scope">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium leading-6 text-text-primary">
+            {t('workbench.plugin_detail_access_scope', '可用范围')}
+          </h2>
+          <p className="text-xs leading-4 text-text-muted">
+            {shareGrantUserCount + shareGrantNamespaceCount === 0
+              ? t('workbench.plugin_detail_access_private', '仅自己可用')
+              : t('workbench.plugin_detail_access_shared_summary', {
+                  departments: shareGrantNamespaceCount,
+                  members: shareGrantUserCount,
+                  defaultValue: `已分享给 ${shareGrantNamespaceCount} 个部门、${shareGrantUserCount} 位成员`,
+                })}
+          </p>
+        </div>
+        {accessRole === 'owner' && onManageAccess && (
+          <button
+            type="button"
+            data-testid="plugin-detail-manage-access"
+            className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+            onClick={onManageAccess}
+          >
+            {t('workbench.plugins_manage_access', '管理权限')}
+          </button>
+        )}
+      </div>
+    </section>
+  )
   const logo = installedPluginLogo(plugin)
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
   const deviceSummary = pluginDeviceSummary(plugin)
+  const PrimaryActionIcon =
+    primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
+  const showActionMenu = showUninstall || Boolean(onEditAction)
+  const actionMenu = showActionMenu ? (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={t('workbench.plugins_actions', '插件操作')}
+        aria-expanded={isActionMenuOpen}
+        data-testid={`plugin-detail-actions-${plugin.id}`}
+        className="plugin-detail-action-menu"
+        onClick={() => setIsActionMenuOpen(open => !open)}
+      >
+        <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
+      </button>
+      {isActionMenuOpen && (
+        <div
+          data-testid={`plugin-detail-actions-menu-${plugin.id}`}
+          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border bg-background p-1 shadow-xl"
+        >
+          {onEditAction && (
+            <button
+              type="button"
+              data-testid={`plugin-detail-edit-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onEditAction()
+              }}
+            >
+              {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
+            </button>
+          )}
+          {showUninstall && (
+            <button
+              type="button"
+              data-testid={`plugin-detail-uninstall-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onUninstall()
+              }}
+            >
+              {t('workbench.plugins_uninstall', '卸载')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null
+  const primaryActionButton = (
+    <button
+      type="button"
+      data-testid={`plugin-detail-toggle-${plugin.id}`}
+      disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
+      className="plugin-detail-action-primary"
+      onClick={onToggle}
+    >
+      {PrimaryActionIcon ? <PrimaryActionIcon className="h-4 w-4" /> : null}
+      {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '在对话中试用')}
+    </button>
+  )
+  const secondaryActionButton =
+    secondaryActionLabel && onSecondaryAction ? (
+      <button
+        type="button"
+        disabled={secondaryActionDisabled}
+        data-testid={`plugin-detail-secondary-${plugin.id}`}
+        className="plugin-detail-action-secondary"
+        onClick={onSecondaryAction}
+      >
+        {secondaryActionLabel}
+      </button>
+    ) : null
+  const tertiaryActionButton =
+    tertiaryActionLabel && onTertiaryAction ? (
+      <button
+        type="button"
+        disabled={tertiaryActionDisabled}
+        data-testid={`plugin-detail-tertiary-${plugin.id}`}
+        className="plugin-detail-action-secondary"
+        onClick={onTertiaryAction}
+      >
+        {tertiaryActionLabel}
+      </button>
+    ) : null
 
   const connectorItems = componentItems.filter(item => item.type === 'connector')
   const guideTemplateSection = prompts.length > 0 && (
-    <section className="mt-7 space-y-3">
+    <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
         <h2 className="text-base font-medium leading-6 text-text-primary">
           {t('workbench.plugin_detail_get_started', '开始使用')}
         </h2>
         <p className="text-xs leading-4 text-text-muted">
-          {t('workbench.plugin_detail_get_started_hint', '进入当前对话，问题可修改且不会自动发送')}
+          {isInstalled
+            ? t(
+                'workbench.plugin_detail_get_started_installed_hint',
+                '选择模板进入当前对话，可继续修改且不会自动发送'
+              )
+            : t(
+                'workbench.plugin_detail_get_started_uninstalled_hint',
+                '先预览使用方式；选择模板后将引导安装'
+              )}
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -391,23 +552,27 @@ export function PluginDetailView({
             className="overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:bg-surface/35"
             onClick={() => (onPromptSelect ? onPromptSelect(prompt) : onToggle())}
           >
-            <span className="flex h-20 items-start justify-between bg-surface p-3">
-              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-background">
-                {logo ? (
-                  <img src={logo} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <Boxes className="h-4 w-4" />
-                )}
+            <span className="flex min-h-20 flex-col gap-2 bg-surface p-3">
+              <span className="flex items-start justify-between">
+                <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-background">
+                  {logo ? (
+                    <img src={logo} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Boxes className="h-4 w-4" />
+                  )}
+                </span>
+                <ArrowRight className="h-4 w-4 text-text-muted" />
               </span>
-              <ArrowRight className="h-4 w-4 text-text-muted" />
+              <span className="text-xs font-medium text-text-secondary">
+                {t('workbench.plugin_template_prepare', '准备')}: {prompt.slice(0, 36)}
+                {prompt.length > 36 ? '…' : ''}
+              </span>
             </span>
             <span className="block px-3 py-2">
-              <small className="block text-xs text-text-muted">
-                {t('workbench.plugin_template', '模板')} {index + 1}
+              <strong className="line-clamp-2 text-xs font-medium leading-4">{prompt}</strong>
+              <small className="mt-1 block text-xs text-text-muted">
+                {t('workbench.plugin_template_prefill_hint', '点击后预填，可继续修改')}
               </small>
-              <strong className="mt-0.5 block line-clamp-2 text-xs font-medium leading-4">
-                {prompt}
-              </strong>
             </span>
           </button>
         ))}
@@ -419,16 +584,16 @@ export function PluginDetailView({
     <main className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
       <DesktopTopBar
         testId="plugin-detail-topbar"
-        className="sticky top-0 z-40 h-12 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
+        className="sticky top-0 z-40 border-b border-border/75 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
         dragRegionClassName="hidden md:block"
         left={
           <button
             type="button"
             data-testid="plugin-detail-back-button"
-            className="h-8 rounded-lg px-2 text-sm font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+            className="plugin-route-back-button"
             onClick={onBack}
           >
-            ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
+            ‹ {resolvedBackLabel}
           </button>
         }
       />
@@ -455,86 +620,22 @@ export function PluginDetailView({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {tertiaryActionLabel && onTertiaryAction && (
-              <button
-                type="button"
-                disabled={tertiaryActionDisabled}
-                data-testid={`plugin-detail-tertiary-${plugin.id}`}
-                className="flex h-8 items-center rounded-lg border border-border px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={onTertiaryAction}
-              >
-                {tertiaryActionLabel}
-              </button>
+          <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
+            {actionMenuBeforePrimary ? (
+              <>
+                {tertiaryActionButton}
+                {secondaryActionButton}
+                {actionMenu}
+                {primaryActionButton}
+              </>
+            ) : (
+              <>
+                {primaryActionButton}
+                {secondaryActionButton}
+                {tertiaryActionButton}
+                {actionMenu}
+              </>
             )}
-            {secondaryActionLabel && onSecondaryAction && (
-              <button
-                type="button"
-                disabled={secondaryActionDisabled}
-                data-testid={`plugin-detail-secondary-${plugin.id}`}
-                className="flex h-8 items-center rounded-lg border border-border px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={onSecondaryAction}
-              >
-                {secondaryActionLabel}
-              </button>
-            )}
-            {(showUninstall || onEditAction) && (
-              <div className="relative order-3">
-                <button
-                  type="button"
-                  aria-label={t('workbench.plugins_actions', '插件操作')}
-                  aria-expanded={isActionMenuOpen}
-                  data-testid={`plugin-detail-actions-${plugin.id}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
-                  onClick={() => setIsActionMenuOpen(open => !open)}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-                {isActionMenuOpen && (
-                  <div
-                    data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-                    className="absolute right-0 top-9 z-30 w-28 rounded-xl border border-border bg-background p-1 shadow-xl"
-                  >
-                    {onEditAction && (
-                      <button
-                        type="button"
-                        data-testid={`plugin-detail-edit-${plugin.id}`}
-                        className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface"
-                        onClick={() => {
-                          setIsActionMenuOpen(false)
-                          onEditAction()
-                        }}
-                      >
-                        {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
-                      </button>
-                    )}
-                    {showUninstall && (
-                      <button
-                        type="button"
-                        data-testid={`plugin-detail-uninstall-${plugin.id}`}
-                        className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
-                        onClick={() => {
-                          setIsActionMenuOpen(false)
-                          onUninstall()
-                        }}
-                      >
-                        {t('workbench.plugins_uninstall', '卸载')}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            <button
-              type="button"
-              data-testid={`plugin-detail-toggle-${plugin.id}`}
-              disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
-              className="flex h-9 items-center gap-1.5 rounded-lg bg-text-primary px-4 text-sm font-medium leading-[18px] text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
-              onClick={onToggle}
-            >
-              <MessageCircle className="h-4 w-4" />
-              {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '在对话中试用')}
-            </button>
           </div>
         </header>
 
@@ -553,6 +654,8 @@ export function PluginDetailView({
         )}
 
         {guideTemplateSection}
+
+        {accessScopeSection}
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">
@@ -612,11 +715,8 @@ export function PluginDetailView({
               {componentItems.map(item => {
                 const Icon = componentIcon(item.type)
                 const enabled = componentStates[item.componentKey] ?? true
-                return (
-                  <div
-                    key={item.key}
-                    className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
-                  >
+                const rowBody = (
+                  <>
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
                       <Icon className="h-4 w-4" />
                     </div>
@@ -629,7 +729,28 @@ export function PluginDetailView({
                         {item.description}
                       </p>
                     </div>
-                    {item.toggleable && isInstalled && (
+                  </>
+                )
+                return (
+                  <div
+                    key={item.key}
+                    className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                  >
+                    {item.type === 'skill' ? (
+                      <button
+                        type="button"
+                        data-testid={`plugin-skill-open-${item.name}`}
+                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 text-left hover:opacity-90"
+                        onClick={() => setSelectedSkill(item)}
+                      >
+                        {rowBody}
+                      </button>
+                    ) : (
+                      <div className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3">
+                        {rowBody}
+                      </div>
+                    )}
+                    {item.toggleable && isInstalled && !shareRecipient && (
                       <button
                         type="button"
                         role="switch"
@@ -688,6 +809,30 @@ export function PluginDetailView({
           </dl>
         </section>
       </div>
+      {selectedSkill && (
+        <SkillDetailDialog
+          skill={{
+            name: selectedSkill.name,
+            pluginName: plugin.name,
+            pluginLogoUrl: logo,
+            description: selectedSkill.description,
+            invocation: `/${selectedSkill.name}`,
+            installed: isInstalled,
+            enabled: (componentStates[selectedSkill.componentKey] ?? true) && plugin.enabled,
+            canToggle: isInstalled && !shareRecipient,
+          }}
+          onClose={() => setSelectedSkill(null)}
+          onRun={() => {
+            setSelectedSkill(null)
+            if (onSkillRun) {
+              onSkillRun(selectedSkill.name)
+              return
+            }
+            onToggle()
+          }}
+          onToggle={enabled => onComponentToggle(selectedSkill.componentKey, enabled)}
+        />
+      )}
     </main>
   )
 }
