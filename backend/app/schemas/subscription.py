@@ -86,8 +86,6 @@ class BackgroundExecutionStatus(str, Enum):
     FAILED = "FAILED"
     RETRYING = "RETRYING"
     CANCELLED = "CANCELLED"
-    NEEDS_ATTENTION = "NEEDS_ATTENTION"
-    SKIPPED = "SKIPPED"
 
 
 # Trigger configuration schemas
@@ -597,10 +595,6 @@ class BackgroundExecutionInDB(BackgroundExecutionBase):
     status: BackgroundExecutionStatus = BackgroundExecutionStatus.PENDING
     result_summary: Optional[str] = None
     error_message: Optional[str] = None
-    scheduled_for: Optional[datetime] = None
-    source_surface: str = "wegent"
-    runtime_device_id: Optional[str] = None
-    runtime_task_id: Optional[str] = None
     retry_attempt: int = 0
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None

@@ -42,7 +42,6 @@ interface AutomationDetailWorkspaceProps {
   automation: Automation | null
   runs: AutomationRun[]
   locale: string
-  cloudAvailable: boolean
   devices: DeviceInfo[]
   projects: RuntimeProjectWork[]
   models: UnifiedModel[]
@@ -66,7 +65,6 @@ export function AutomationDetailWorkspace({
   automation,
   runs,
   locale,
-  cloudAvailable,
   devices,
   projects,
   models,
@@ -267,7 +265,7 @@ export function AutomationDetailWorkspace({
                     {
                       value: 'cloud',
                       label: t('workbench.automation_cloud', '云端'),
-                      disabled: !cloudAvailable,
+                      disabled: true,
                     },
                   ]}
                 />

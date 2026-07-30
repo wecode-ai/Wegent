@@ -42,7 +42,7 @@ Enable **Settings → General → Popout Window → System drag panel** to show 
 
 New tasks start without a project. Use the project menu at the bottom of the composer to choose one, then use the more menu to select the current workspace or a new worktree, switch branches, and configure permissions. Wework remembers the user's latest selection the next time the Popout Window opens. After the first message is sent, the input window expands into a separate conversation window. **View in main window** closes the Popout Window and opens the current task in the main window, while **New message** returns to a fresh input state.
 
-Tasks created from the Popout Window still run on the local execution device and appear in the main window's task list. The Popout Window and main window are separate native windows, so hiding or moving one does not reposition the other.
+Tasks created from the Popout Window still run on the local execution device and immediately appear in the task list of an open main window without a manual refresh. The Popout Window and main window are separate native windows, so hiding or moving one does not reposition the other.
 
 ## Tray Display
 
