@@ -1298,7 +1298,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let turn = match timeout_at(
+        match timeout_at(
             startup_deadline,
             client.request(
                 "turn/start",
@@ -1307,7 +1307,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         )
         .await
         {
-            Ok(Ok(turn)) => turn,
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => return Err(error),
             Err(_) => {
                 return Err(recover_stalled_shared_turn(
@@ -1317,11 +1317,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await);
             }
-        };
-        let active_turn_id = turn_start_response_turn_id(&turn)
-            .ok_or_else(|| "turn/start response is missing required turn.id".to_owned())?;
-        if let Some(callback) = active_turn_started.as_ref() {
-            callback(thread_id.clone(), active_turn_id.clone());
         }
         let outcome_result = read_shared_turn_notifications(
             client,
@@ -1331,7 +1326,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
-                active_turn_id: Some(active_turn_id),
+                active_turn_id: None,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1736,7 +1731,7 @@ async fn read_shared_turn_notifications(
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         if let Some(turn_id) =
-            replacement_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
         {
             if let Some(callback) = options.active_turn_started.as_ref() {
                 callback(thread_id.to_owned(), turn_id.clone());
@@ -1770,15 +1765,6 @@ async fn read_shared_turn_notifications(
         {
             waiting_for_initial_progress = false;
         }
-        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
-            if options.active_turn_id.is_none() {
-                if let Some(callback) = options.active_turn_started.as_ref() {
-                    callback(thread_id.to_owned(), turn_id.clone());
-                }
-                options.active_turn_id = Some(turn_id);
-            }
-        }
-
         if let Some(sender) = &options.notifications {
             let _ = sender.send(message.clone());
         }
@@ -1991,20 +1977,7 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn turn_start_response_turn_id(response: &Value) -> Option<String> {
-    response
-        .get("turn")
-        .and_then(|turn| string_value(turn, "id"))
-}
-
-fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
-        return None;
-    }
-    root_turn_notification_id(message, state)
-}
-
-fn replacement_active_turn_id(
+fn started_active_turn_id(
     active_turn_id: Option<&str>,
     message: &Value,
     state: &CodexRunState,

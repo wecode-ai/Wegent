@@ -1897,6 +1897,42 @@ describe('MessageList', () => {
     )
   })
 
+  test('keeps the final processing shell for a processing-only segment before guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-processing-before-guidance',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeGuidanceSplitBefore: true,
+            blocks: [
+              {
+                id: 'tool-1',
+                subtaskId: 11,
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                toolOutput: '/workspace/project\n',
+                status: 'done',
+                createdAt: 1770000001000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const finalProcessingToggle = screen.getByTestId('final-processing-toggle')
+    expect(finalProcessingToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(finalProcessingToggle)
+    expect(screen.getByTestId('processing-summary-toggle')).toBeInTheDocument()
+  })
+
   test('keeps processing expanded for the assistant continuation after runtime guidance', () => {
     render(
       <MessageList

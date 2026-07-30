@@ -163,6 +163,14 @@ export type RuntimeConversationItem =
       type: 'block'
       block: ProcessingBlock
     }
+  | {
+      id: string
+      type: 'error'
+      message: string
+      errorType?: string
+      willRetry: boolean
+      createdAt: string
+    }
 
 export interface RuntimePaneTranscriptLoadOptions {
   limit?: number

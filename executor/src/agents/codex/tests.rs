@@ -1056,7 +1056,7 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
 }
 
 #[test]
-fn goal_continuation_turn_started_replaces_the_active_turn() {
+fn turn_started_sets_or_replaces_the_active_turn() {
     let state = CodexRunState::default();
     let notification = json!({
         "method": "turn/started",
@@ -1067,11 +1067,15 @@ fn goal_continuation_turn_started_replaces_the_active_turn() {
     });
 
     assert_eq!(
-        replacement_active_turn_id(Some("turn-1"), &notification, &state),
+        started_active_turn_id(None, &notification, &state),
         Some("turn-2".to_owned())
     );
     assert_eq!(
-        replacement_active_turn_id(Some("turn-2"), &notification, &state),
+        started_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        started_active_turn_id(Some("turn-2"), &notification, &state),
         None
     );
 }
@@ -1093,7 +1097,7 @@ fn item_notification_cannot_replace_the_active_turn() {
     });
 
     assert_eq!(
-        replacement_active_turn_id(Some("turn-1"), &notification, &state),
+        started_active_turn_id(Some("turn-1"), &notification, &state),
         None
     );
 }
@@ -1827,7 +1831,7 @@ fn thread_goal_set_params_rejects_empty_objective() {
 }
 
 #[test]
-fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+fn root_turn_notification_uses_protocol_turn_id_and_ignores_child_turns() {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("thread-root");
 
@@ -1840,7 +1844,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(
-        active_root_turn_notification_id(&active_item, &state).as_deref(),
+        root_turn_notification_id(&active_item, &state).as_deref(),
         Some("turn-current")
     );
 
@@ -1851,10 +1855,6 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
             "turn": { "id": "turn-current", "status": "completed" }
         }
     });
-    assert_eq!(
-        active_root_turn_notification_id(&completed_turn, &state),
-        None
-    );
     assert_eq!(
         root_turn_notification_id(&completed_turn, &state).as_deref(),
         Some("turn-current")
@@ -1869,21 +1869,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
             "item": { "type": "reasoning" }
         }
     });
-    assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
     assert_eq!(root_turn_notification_id(&child_item, &state), None);
-}
-
-#[test]
-fn turn_start_response_requires_protocol_turn_id() {
-    assert_eq!(
-        turn_start_response_turn_id(&json!({"turn": {"id": "turn-current"}})).as_deref(),
-        Some("turn-current")
-    );
-    assert_eq!(
-        turn_start_response_turn_id(&json!({"turnId": "legacy-turn"})),
-        None
-    );
-    assert_eq!(turn_start_response_turn_id(&json!({"turn": {}})), None);
 }
 
 #[test]

@@ -149,6 +149,7 @@ export type WorkbenchMessageAction<
       subtaskId?: string
       itemId?: string
       content: string
+      contentMode?: 'delta' | 'snapshot'
       offset?: number
       reasoningChunk?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
@@ -176,6 +177,7 @@ export type WorkbenchMessageAction<
   | {
       type: 'assistant_error'
       messageId?: string
+      itemId?: string
       subtaskId?: string
       error: string
       errorType?: string

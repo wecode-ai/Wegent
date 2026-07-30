@@ -693,6 +693,24 @@ export function emitResponseApiEvent(
     return
   }
 
+  if (eventName === 'response.output_text.done') {
+    const content =
+      stringField(data, 'text') ?? stringField(data, 'value') ?? stringField(data, 'output_text')
+    const itemId = idField(data, 'itemId') ?? idField(data, 'item_id')
+    if (!content || !itemId) {
+      warnDroppedResponseDelta(eventName, 'missing_completed_text_identity', base, data)
+      return
+    }
+    handlers.onChatChunk?.({
+      ...base,
+      itemId,
+      content,
+      contentMode: 'snapshot',
+      result: data,
+    })
+    return
+  }
+
   if (
     eventName === 'response.reasoning_summary_text.delta' ||
     eventName === 'response.reasoning_summary_part.added'
@@ -871,6 +889,7 @@ export function emitResponseApiEvent(
       ...base,
       error: errorMessage(payload, data),
       type: stringField(payload, 'type') ?? eventName,
+      shellType: stringField(payload, 'runtime') ?? stringField(data, 'runtime'),
     })
   }
 }

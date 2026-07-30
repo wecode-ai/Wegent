@@ -176,6 +176,7 @@ export function createRuntimeTaskStreamHandlers(
         subtaskId: identity.subtaskId,
         itemId: payload.itemId,
         content: payload.content,
+        contentMode: payload.contentMode,
         offset: payload.offset,
         reasoningChunk,
         blocks,
@@ -246,6 +247,14 @@ export function createRuntimeTaskStreamHandlers(
         handlers.onMessageAction({
           type: 'assistant_cancelled',
           subtaskId: identity.subtaskId,
+        })
+      } else if (payload.shellType?.toLowerCase() === 'codex') {
+        handlers.onMessageAction({
+          type: 'assistant_error',
+          subtaskId: identity.subtaskId,
+          itemId: crypto.randomUUID(),
+          error: payload.error,
+          errorType: payload.type,
         })
       } else {
         handlers.onMessageAction({
@@ -486,7 +495,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
     return [
       {
         id: turn.id,
-        clientUserMessageId: items.find(item => item.type === 'user_message')?.id,
+        clientUserMessageId: items.find(item => item.type === 'user_message')?.message.id,
         items,
         status,
         completedAt: turn.completedAt,

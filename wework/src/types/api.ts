@@ -1510,6 +1510,7 @@ export interface ChatChunkPayload {
   subtaskId?: string
   itemId?: string
   content: string
+  contentMode?: 'delta' | 'snapshot'
   offset?: number
   result?: ChatResultPayload
   deviceId?: string
@@ -1529,6 +1530,7 @@ export interface ChatErrorPayload {
   error: string
   type?: string
   deviceId?: string
+  shellType?: string
 }
 
 export interface ChatMessagePayload {

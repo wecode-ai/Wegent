@@ -1910,13 +1910,16 @@ function AssistantMessage({
     `${processingStateKey}:final-processing`
   )
   const [finalProcessingCompletedAt] = useState(() => Date.now())
+  const isProcessingOnlyBeforeGuidance =
+    Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
   const usesFinalProcessingShell =
     hasBlocks &&
-    hasVisibleContent &&
     !hasRunningBlocks &&
     !isCancelled &&
-    !message.runtimeGuidanceSplitBefore &&
-    !message.runtimeGuidanceContinuation
+    (isProcessingOnlyBeforeGuidance ||
+      (hasVisibleContent &&
+        !message.runtimeGuidanceSplitBefore &&
+        !message.runtimeGuidanceContinuation))
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),

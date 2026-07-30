@@ -59,7 +59,13 @@ export function reduceRuntimeConversationTurns(
         let items = upsertBlocks(turn.items, action.blocks)
         if (action.content) {
           if (action.itemId) {
-            items = upsertAssistantText(items, action.itemId, action.content, action.offset)
+            items = upsertAssistantText(
+              items,
+              action.itemId,
+              action.content,
+              action.contentMode,
+              action.offset
+            )
           } else {
             console.warn('[Wework] Dropped runtime assistant text without Codex item identity', {
               subtaskId: action.subtaskId,
@@ -92,6 +98,26 @@ export function reduceRuntimeConversationTurns(
         stoppedNotice: true,
       }))
     case 'assistant_error':
+      if (action.itemId) {
+        const itemId = action.itemId
+        const createdAt = new Date().toISOString()
+        return updateTurn(turns, action.subtaskId, turn => ({
+          ...turn,
+          items: [
+            ...turn.items,
+            {
+              id: itemId,
+              type: 'error',
+              message: action.error,
+              errorType: action.errorType,
+              willRetry: false,
+              createdAt,
+            },
+          ],
+          status: 'failed',
+          completedAt: createdAt,
+        }))
+      }
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'failed',
@@ -309,7 +335,8 @@ function updateTurn(
 function upsertAssistantText(
   items: RuntimeConversationItem[],
   itemId: string,
-  delta: string,
+  content: string,
+  contentMode: 'delta' | 'snapshot' | undefined,
   offset: number | undefined
 ): RuntimeConversationItem[] {
   const index = items.findIndex(item => item.type === 'assistant_text' && item.id === itemId)
@@ -319,24 +346,34 @@ function upsertAssistantText(
       {
         id: itemId,
         type: 'assistant_text',
-        content: delta,
-        streamTextOffset: offset === undefined ? undefined : offset + [...delta].length,
+        content,
+        streamTextOffset:
+          contentMode === 'snapshot' || offset === undefined
+            ? undefined
+            : offset + [...content].length,
         createdAt: new Date().toISOString(),
       },
     ]
   }
   const current = items[index]
   if (current.type !== 'assistant_text') return items
-  const content =
+  if (contentMode === 'snapshot') {
+    return replaceAt(items, index, {
+      ...current,
+      content,
+      streamTextOffset: undefined,
+    })
+  }
+  const mergedContent =
     offset === undefined
-      ? `${current.content}${delta}`
-      : `${current.content.slice(0, offset)}${delta}${current.content.slice(
-          offset + [...delta].length
+      ? `${current.content}${content}`
+      : `${current.content.slice(0, offset)}${content}${current.content.slice(
+          offset + [...content].length
         )}`
   return replaceAt(items, index, {
     ...current,
-    content,
-    streamTextOffset: offset === undefined ? undefined : offset + [...delta].length,
+    content: mergedContent,
+    streamTextOffset: offset === undefined ? undefined : offset + [...content].length,
   })
 }
 
@@ -369,24 +406,34 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
     }
     const textItems = assistantItems.filter(item => item.type === 'assistant_text')
     const blocks = assistantItems.flatMap(item => (item.type === 'block' ? [item.block] : []))
+    const terminalError = lastTerminalError(assistantItems)
     const firstItem = assistantItems[0]
     const createdAt =
       textItems[0]?.createdAt ??
-      (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : new Date().toISOString())
+      (blocks[0]
+        ? new Date(blocks[0].createdAt).toISOString()
+        : (terminalError?.createdAt ?? new Date().toISOString()))
     messages.push({
       id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? 'pending'}:${
         firstItem?.id ?? 'assistant'
       }`,
       role: 'assistant',
       content: textItems.map(item => item.content).join('\n\n'),
-      status: isLast && turn.status === 'failed' ? 'failed' : isLast ? turnStatus(turn) : 'done',
-      runtimeStatus: isLast ? turn.status : 'done',
+      status:
+        isLast && terminalError
+          ? 'failed'
+          : isLast && turn.status === 'failed'
+            ? 'failed'
+            : isLast
+              ? turnStatus(turn)
+              : 'done',
+      runtimeStatus: isLast && terminalError ? 'failed' : isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
       blocks: blocks.length > 0 ? blocks : undefined,
       fileChanges: isLast ? turn.fileChanges : undefined,
-      error: isLast ? turn.error : undefined,
-      errorType: isLast ? turn.errorType : undefined,
+      error: isLast ? (terminalError?.message ?? turn.error) : undefined,
+      errorType: isLast ? (terminalError?.errorType ?? turn.errorType) : undefined,
       completedAt: isLast ? turn.completedAt : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
       references: isLast ? turn.references : undefined,
@@ -415,6 +462,16 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
   }
   flushAssistant(true, false)
   return messages
+}
+
+function lastTerminalError(
+  items: RuntimeConversationItem[]
+): Extract<RuntimeConversationItem, { type: 'error' }> | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item?.type === 'error' && !item.willRetry) return item
+  }
+  return undefined
 }
 
 function projectedGuidanceBlock(

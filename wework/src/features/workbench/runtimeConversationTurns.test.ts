@@ -188,6 +188,51 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].status).toBe('done')
   })
 
+  test('keeps a live Codex error item when the provider snapshot omits the failure', () => {
+    const local = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_error',
+        subtaskId: 'turn-1',
+        itemId: 'local-error-1',
+        error: 'Context window exceeded',
+        errorType: 'response.failed',
+      }
+    )
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+    const [message] = projectRuntimeConversationTurns(merged)
+
+    expect(merged[0].status).toBe('done')
+    expect(merged[0].items).toEqual([
+      expect.objectContaining({
+        id: 'local-error-1',
+        type: 'error',
+        message: 'Context window exceeded',
+        willRetry: false,
+      }),
+    ])
+    expect(message).toMatchObject({
+      status: 'failed',
+      runtimeStatus: 'failed',
+      error: 'Context window exceeded',
+      errorType: 'response.failed',
+    })
+  })
+
   test('projects guidance boundaries from ordered turn items', () => {
     const guidance = {
       ...userMessage('client-guidance-1', 'Use the second approach'),
@@ -245,5 +290,32 @@ describe('runtimeConversationTurns', () => {
       '[Wework] Dropped runtime assistant text without Codex item identity',
       { subtaskId: 'turn-1' }
     )
+  })
+
+  test('replaces a streamed item with the completed snapshot by exact item id', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'Partial',
+      offset: 0,
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'Complete answer',
+      contentMode: 'snapshot',
+    })
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'message-1',
+        type: 'assistant_text',
+        content: 'Complete answer',
+        streamTextOffset: undefined,
+      }),
+    ])
   })
 })

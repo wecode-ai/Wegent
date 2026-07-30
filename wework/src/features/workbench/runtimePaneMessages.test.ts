@@ -76,6 +76,37 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('preserves completed item snapshot semantics', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      itemId: 'message-1',
+      content: 'Complete answer',
+      contentMode: 'snapshot',
+      result: {},
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        itemId: 'message-1',
+        content: 'Complete answer',
+        contentMode: 'snapshot',
+      }),
+    ])
+  })
+
   test('forwards the client user message id when the runtime turn starts', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
@@ -123,6 +154,35 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     expect(calls).toEqual(['assistant_done', 'lifecycle_settled'])
+  })
+
+  test('maps a Codex failure to an identified canonical error item action', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      shellType: 'codex',
+      error: 'Context window exceeded',
+      type: 'response.failed',
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_error',
+      subtaskId: 'codex-turn-9',
+      itemId: expect.any(String),
+      error: 'Context window exceeded',
+      errorType: 'response.failed',
+    })
   })
 
   test('forwards structured task-plan updates for the active runtime task', () => {
