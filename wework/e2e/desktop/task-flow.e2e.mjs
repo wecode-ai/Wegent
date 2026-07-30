@@ -379,7 +379,8 @@ const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKI
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
-  'https://github.com/wecode-ai/desktop-e2e-startup-network-probe.git'
+  'https://desktop-e2e-startup-probe.invalid/marketplace.git'
+const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -708,7 +709,10 @@ class BlockingNetworkProxy {
       if (request) return request
       await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
     }
-    throw new Error(`Codex did not send a startup request matching ${pattern}`)
+    const observedRequests = this.requests.slice(requestCount)
+    throw new Error(
+      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
+    )
   }
 
   requestCount() {
@@ -2902,7 +2906,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   const [blockedRequest] = await Promise.all([
     blockingNetworkProxy.waitForRequestMatchingAfter(
       requestCountBeforeRestart,
-      /github\.com/i,
+      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
       DEFAULT_STEP_TIMEOUT_MS
     ),
     control.command('waitFor', '[data-testid="projects-create-button"]', {
@@ -10013,7 +10017,14 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(RUNS_PLUGIN_E2E ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+      ...(RUNS_PLUGIN_E2E
+        ? {
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.proxy',
+            GIT_CONFIG_VALUE_0: blockingNetworkProxy.url,
+            WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
+          }
+        : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -10034,7 +10045,14 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
-          ...(RUNS_PLUGIN_E2E ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
+          ...(RUNS_PLUGIN_E2E
+            ? [
+                'GIT_CONFIG_COUNT',
+                'GIT_CONFIG_KEY_0',
+                'GIT_CONFIG_VALUE_0',
+                'WEWORK_E2E_NATIVE_CODEX_HOME',
+              ]
+            : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
