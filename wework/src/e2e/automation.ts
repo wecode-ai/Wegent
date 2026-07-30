@@ -26,6 +26,7 @@ import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { executeVerificationControlCommand } from './verification-control'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -723,6 +724,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
     })
   }
+
+  const verificationResult = await executeVerificationControlCommand(command, {
+    elementEnabled: desktopControlElementEnabled,
+  })
+  if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
     case 'capture':

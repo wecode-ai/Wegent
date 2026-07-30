@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
-import { resolveStartupTimeout, takeWritableCommandPoll } from './ai-verify.mjs'
+import {
+  resolveCommandTimeout,
+  resolveStartupTimeout,
+  takeWritableCommandPoll,
+} from './ai-verify.mjs'
 
 function commandPoll(response) {
   return {
@@ -46,4 +50,17 @@ describe('resolveStartupTimeout', () => {
       '--timeout must be a finite positive number'
     )
   })
+})
+
+describe('resolveCommandTimeout', () => {
+  test('uses finite positive timeout values', () => {
+    expect(resolveCommandTimeout('120000')).toBe(120000)
+  })
+
+  test.each([undefined, '0', '-1', 'Infinity', 'not-a-number'])(
+    'uses the command default for %s',
+    timeout => {
+      expect(resolveCommandTimeout(timeout)).toBe(30000)
+    }
+  )
 })
