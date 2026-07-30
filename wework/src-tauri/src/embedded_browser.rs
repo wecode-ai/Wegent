@@ -12,16 +12,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-#[cfg(target_os = "macos")]
-use block2::RcBlock;
-#[cfg(target_os = "macos")]
-use objc2::{msg_send, runtime::AnyObject};
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{
-    NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSImage,
-};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{NSDictionary, NSError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
@@ -868,62 +858,11 @@ async fn screenshot_embedded_browser(
 ) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
     let webview = entry.ready_webview()?;
-    let (sender, mut receiver) = tauri::async_runtime::channel(1);
-    webview
-        .with_webview(move |platform_webview| {
-            let completion = RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
-                let result = if image.is_null() {
-                    Err("WebKit returned no embedded browser snapshot".to_string())
-                } else {
-                    unsafe {
-                        let image = &*image;
-                        image
-                            .TIFFRepresentation()
-                            .ok_or_else(|| {
-                                "Failed to encode embedded browser snapshot as TIFF".to_string()
-                            })
-                            .and_then(|tiff| {
-                                NSBitmapImageRep::imageRepWithData(&tiff).ok_or_else(|| {
-                                    "Failed to create embedded browser bitmap snapshot".to_string()
-                                })
-                            })
-                            .and_then(|bitmap| {
-                                let properties = NSDictionary::<
-                                    NSBitmapImageRepPropertyKey,
-                                    AnyObject,
-                                >::dictionary();
-                                bitmap
-                                    .representationUsingType_properties(
-                                        NSBitmapImageFileType::PNG,
-                                        &properties,
-                                    )
-                                    .ok_or_else(|| {
-                                        "Failed to encode embedded browser snapshot as PNG"
-                                            .to_string()
-                                    })
-                            })
-                            .map(|png| png.as_bytes_unchecked().to_vec())
-                    }
-                };
-                let _ = sender.try_send(result);
-            });
-            let webview = platform_webview.inner().cast::<AnyObject>();
-            unsafe {
-                let _: () = msg_send![
-                    &*webview,
-                    takeSnapshotWithConfiguration: std::ptr::null::<AnyObject>(),
-                    completionHandler: &*completion
-                ];
-            }
-        })
-        .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
-    let png = tokio::time::timeout(
+    let png = crate::desktop_capture::capture_embedded_webview_png(
+        webview,
         Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS),
-        receiver.recv(),
     )
-    .await
-    .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
-    .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())??;
+    .await?;
     let path = screenshot_path()?;
     std::fs::write(&path, png)
         .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;

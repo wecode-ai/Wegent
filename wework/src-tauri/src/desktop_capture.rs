@@ -1,3 +1,14 @@
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, runtime::AnyObject};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSImage,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSDictionary, NSError};
+
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
     capture_main_webview_impl(app).await
@@ -6,6 +17,52 @@ pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, Strin
 #[tauri::command]
 pub async fn capture_popout_webview(app: tauri::AppHandle) -> Result<String, String> {
     capture_webview_impl(app, "popout-window", false).await
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) async fn capture_embedded_webview_png(
+    webview: tauri::Webview<tauri::Wry>,
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    webview
+        .with_webview(move |platform_webview| {
+            let completion = RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
+                let result = unsafe { encode_embedded_webview_snapshot(image) };
+                let _ = sender.try_send(result);
+            });
+            let webview = platform_webview.inner().cast::<AnyObject>();
+            unsafe {
+                let _: () = msg_send![
+                    &*webview,
+                    takeSnapshotWithConfiguration: std::ptr::null::<AnyObject>(),
+                    completionHandler: &*completion
+                ];
+            }
+        })
+        .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
+    tokio::time::timeout(timeout, receiver.recv())
+        .await
+        .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
+        .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())?
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn encode_embedded_webview_snapshot(image: *mut NSImage) -> Result<Vec<u8>, String> {
+    if image.is_null() {
+        return Err("WebKit returned no embedded browser snapshot".to_string());
+    }
+    let image = &*image;
+    let tiff = image
+        .TIFFRepresentation()
+        .ok_or_else(|| "Failed to encode embedded browser snapshot as TIFF".to_string())?;
+    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
+        .ok_or_else(|| "Failed to create embedded browser bitmap snapshot".to_string())?;
+    let properties = NSDictionary::<NSBitmapImageRepPropertyKey, AnyObject>::dictionary();
+    let png = bitmap
+        .representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+        .ok_or_else(|| "Failed to encode embedded browser snapshot as PNG".to_string())?;
+    Ok(png.as_bytes_unchecked().to_vec())
 }
 
 #[cfg(target_os = "macos")]
