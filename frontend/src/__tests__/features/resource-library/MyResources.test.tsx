@@ -9,6 +9,8 @@ import userEvent from '@testing-library/user-event'
 import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
 
+Element.prototype.scrollIntoView = jest.fn()
+
 const mockReplace = jest.fn()
 
 jest.mock('next/navigation', () => ({
@@ -30,18 +32,27 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
     sourceControls,
     sortControls,
     sortMode,
+    hideCreateActions,
+    groupFilter,
+    compact,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
+    hideCreateActions?: boolean
+    groupFilter?: string[]
+    compact?: boolean
   }) => (
     <div
       data-testid="agent-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
       data-sort={sortMode ?? ''}
+      data-hide-create-actions={hideCreateActions ? 'true' : 'false'}
+      data-group-filter={groupFilter?.join(',') || ''}
+      data-compact={compact ? 'true' : 'false'}
     >
       {sourceControls}
       {sortControls}
@@ -56,18 +67,30 @@ jest.mock('@/features/settings/components/ModelListWithScope', () => ({
     sourceControls,
     sortControls,
     sortMode,
+    sourceFilter,
+    categoryFilter,
+    hideCategoryFilterControls,
+    compact,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
+    sourceFilter?: string
+    categoryFilter?: string
+    hideCategoryFilterControls?: boolean
+    compact?: boolean
   }) => (
     <div
       data-testid="model-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
       data-sort={sortMode ?? ''}
+      data-source={sourceFilter ?? ''}
+      data-category-filter={categoryFilter ?? ''}
+      data-hide-category-filter={hideCategoryFilterControls ? 'true' : 'false'}
+      data-compact={compact ? 'true' : 'false'}
     >
       {sourceControls}
       {sortControls}
@@ -82,18 +105,21 @@ jest.mock('@/features/settings/components/ShellListWithScope', () => ({
     sourceControls,
     sortControls,
     sortMode,
+    compact,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
+    compact?: boolean
   }) => (
     <div
       data-testid="shell-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
       data-sort={sortMode ?? ''}
+      data-compact={compact ? 'true' : 'false'}
     >
       {sourceControls}
       {sortControls}
@@ -108,18 +134,24 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
     sourceControls,
     sortControls,
     sortMode,
+    showAutoEnabledSkills,
+    compact,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
+    showAutoEnabledSkills?: boolean
+    compact?: boolean
   }) => (
     <div
       data-testid="skill-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
       data-sort={sortMode ?? ''}
+      data-show-auto-enabled={showAutoEnabledSkills ? 'true' : 'false'}
+      data-compact={compact ? 'true' : 'false'}
     >
       {sourceControls}
       {sortControls}
@@ -134,18 +166,21 @@ jest.mock('@/features/settings/components/RetrieverListWithScope', () => ({
     sourceControls,
     sortControls,
     sortMode,
+    compact,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
     sortControls?: React.ReactNode
     sortMode?: string
+    compact?: boolean
   }) => (
     <div
       data-testid="retriever-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
       data-sort={sortMode ?? ''}
+      data-compact={compact ? 'true' : 'false'}
     >
       {sourceControls}
       {sortControls}
@@ -231,6 +266,7 @@ describe('MyResources', () => {
 
     expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'all')
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-compact', 'true')
     const header = screen.getByTestId('managed-resource-header')
     expect(within(header).getByRole('heading', { name: '资源库' })).toBeInTheDocument()
     expect(within(header).getByTestId('managed-resource-type-tabs')).toBeInTheDocument()
@@ -254,22 +290,143 @@ describe('MyResources', () => {
     expect(within(sourceFilter).getByTestId('resource-source-personal-button')).toBeInTheDocument()
     expect(within(sourceFilter).getByTestId('resource-source-group-button')).toBeInTheDocument()
     expect(within(sourceFilter).getByTestId('resource-source-system-button')).toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '排序' })).toBeInTheDocument()
 
     const sortControl = screen.getByTestId('managed-resource-sort-control')
     expect(within(sortControl).getByText('排序')).toBeInTheDocument()
-    expect(within(sortControl).getByTestId('resource-sort-default-button')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
-    expect(within(sortControl).getByTestId('resource-sort-latest-button')).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    )
+    expect(within(sortControl).getByTestId('resource-sort-select')).toHaveTextContent('默认')
 
     await openGroupMenu()
     expect(await screen.findByRole('menuitem', { name: '全部团队' })).toBeInTheDocument()
     expect(await screen.findByRole('menuitem', { name: 'Platform' })).toBeInTheDocument()
+  })
+
+  it('renders one unified agent list without duplicate create actions', async () => {
+    render(
+      <MyResources
+        allowedTypes={['agent']}
+        fixedSource="all"
+        hideSourceControls
+        hideTypeControls
+        hideManagerCreateActions
+      />
+    )
+
+    expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute(
+      'data-hide-create-actions',
+      'true'
+    )
+    expect(screen.queryByTestId('managed-resource-header')).not.toBeInTheDocument()
+  })
+
+  it('does not mix personal auto-enabled skills into a group skill list', async () => {
+    render(
+      <MyResources
+        allowedTypes={['skill']}
+        fixedSource="group"
+        fixedGroup="platform"
+        hideSourceControls
+        hideTypeControls
+      />
+    )
+
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'group'
+    )
+    expect(screen.getByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-show-auto-enabled',
+      'false'
+    )
+  })
+
+  it('passes the global model category filter without rendering a duplicate filter row', async () => {
+    render(
+      <MyResources
+        allowedTypes={['model']}
+        fixedSource="system"
+        hideSourceControls
+        hideTypeControls
+        modelCategoryFilter="embedding"
+        hideModelCategoryFilter
+      />
+    )
+
+    expect(await screen.findByTestId('model-resource-manager')).toHaveAttribute(
+      'data-category-filter',
+      'embedding'
+    )
+    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute(
+      'data-hide-category-filter',
+      'true'
+    )
+  })
+
+  it('passes a multi-team namespace filter to the resource manager', async () => {
+    render(
+      <MyResources
+        allowedTypes={['agent']}
+        fixedSource="group"
+        fixedGroup={null}
+        groupFilter={['platform', 'design']}
+        hideSourceControls
+        hideTypeControls
+      />
+    )
+
+    expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute(
+      'data-group-filter',
+      'platform,design'
+    )
+  })
+
+  it('renders leading filters inside the manager toolbar controls', async () => {
+    render(
+      <MyResources
+        allowedTypes={['agent']}
+        fixedSource="group"
+        hideSourceControls
+        hideTypeControls
+        leadingFilterControls={<div data-testid="leading-team-filter">团队范围</div>}
+      />
+    )
+
+    const manager = await screen.findByTestId('agent-resource-manager')
+    expect(within(manager).getByTestId('leading-team-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('managed-resource-source-filter')).not.toBeInTheDocument()
+  })
+
+  it('renders system models without mixing them into personal capabilities', async () => {
+    render(
+      <MyResources
+        allowedTypes={['model']}
+        fixedSource="system"
+        hideSourceControls
+        hideTypeControls
+        hideManagerCreateActions
+      />
+    )
+
+    expect(await screen.findByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-source', 'system')
+  })
+
+  it('does not show personal auto-enabled skills on the system capabilities page', async () => {
+    render(
+      <MyResources
+        allowedTypes={['skill']}
+        fixedSource="system"
+        hideSourceControls
+        hideTypeControls
+        hideManagerCreateActions
+      />
+    )
+
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-show-auto-enabled',
+      'false'
+    )
   })
 
   it('sorts team source options by display name', async () => {
@@ -346,18 +503,27 @@ describe('MyResources', () => {
     expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('managed-resource-model-tab'))
-    expect(await screen.findByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(await screen.findByTestId('model-resource-manager')).toHaveAttribute(
+      'data-compact',
+      'true'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-shell-tab'))
-    expect(await screen.findByTestId('shell-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(await screen.findByTestId('shell-resource-manager')).toHaveAttribute(
+      'data-compact',
+      'true'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-skill-tab'))
-    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-compact',
+      'true'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-retriever-tab'))
     expect(await screen.findByTestId('retriever-resource-manager')).toHaveAttribute(
-      'data-scope',
-      'all'
+      'data-compact',
+      'true'
     )
   })
 
@@ -376,10 +542,7 @@ describe('MyResources', () => {
     )
     expect(screen.getByTestId('skill-resource-manager')).toHaveAttribute('data-sort', 'latest')
     expect(screen.getByTestId('managed-resource-skill-tab')).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('resource-sort-latest-button')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    expect(screen.getByTestId('resource-sort-select')).toHaveTextContent('最新')
   })
 
   it('updates the URL query when switching managed resource types', async () => {
@@ -398,7 +561,8 @@ describe('MyResources', () => {
     window.history.replaceState({}, '', '/resource-library?tab=mine&type=agent&source=all')
     render(<MyResources />)
 
-    fireEvent.click(await screen.findByTestId('resource-sort-latest-button'))
+    fireEvent.keyDown(await screen.findByTestId('resource-sort-select'), { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: '最新' }))
 
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'latest')
     expect(mockReplace).toHaveBeenCalledWith(
@@ -406,7 +570,8 @@ describe('MyResources', () => {
       { scroll: false }
     )
 
-    fireEvent.click(screen.getByTestId('resource-sort-default-button'))
+    fireEvent.keyDown(screen.getByTestId('resource-sort-select'), { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: '默认' }))
 
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
     expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=all', {

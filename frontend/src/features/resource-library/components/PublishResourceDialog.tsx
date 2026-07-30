@@ -7,6 +7,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { fetchUnifiedSkillsList } from '@/apis/skills'
+import { teamApis } from '@/apis/team'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -28,11 +30,20 @@ import type { ResourceLibraryTypeFilter, VisibleResourceLibraryResourceType } fr
 interface PublishResourceDialogProps {
   open: boolean
   resourceType: ResourceLibraryTypeFilter
+  initialSourceId?: number
   onOpenChange: (open: boolean) => void
   onPublished: () => void
 }
 
 const publishableResourceTypes: VisibleResourceLibraryResourceType[] = ['agent', 'skill']
+
+interface PublishableResource {
+  id: number
+  name: string
+  displayName: string
+  description: string
+  version: string
+}
 
 function parseTags(value: string): string[] {
   return value
@@ -44,12 +55,13 @@ function parseTags(value: string): string[] {
 function defaultPublishType(
   resourceType: ResourceLibraryTypeFilter
 ): VisibleResourceLibraryResourceType {
-  return resourceType === 'all' ? 'agent' : resourceType
+  return resourceType === 'skill' ? 'skill' : 'agent'
 }
 
 export function PublishResourceDialog({
   open,
   resourceType,
+  initialSourceId,
   onOpenChange,
   onPublished,
 }: PublishResourceDialogProps) {
@@ -65,12 +77,66 @@ export function PublishResourceDialog({
   const [tags, setTags] = useState('')
   const [version, setVersion] = useState('1.0.0')
   const [isPublishing, setIsPublishing] = useState(false)
+  const [resources, setResources] = useState<PublishableResource[]>([])
+  const [isLoadingResources, setIsLoadingResources] = useState(false)
 
   useEffect(() => {
     if (open) {
       setSelectedType(defaultPublishType(resourceType))
     }
   }, [open, resourceType])
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setIsLoadingResources(true)
+    setSourceId('')
+
+    const request =
+      selectedType === 'agent'
+        ? teamApis.getTeams({ page: 1, limit: 100 }, 'personal').then(response =>
+            response.items.map(team => ({
+              id: team.id,
+              name: team.name,
+              displayName: team.displayName || team.name,
+              description: team.description || '',
+              version: '1.0.0',
+            }))
+          )
+        : fetchUnifiedSkillsList({ skip: 0, limit: 100, scope: 'personal' }).then(skills =>
+            skills.map(skill => ({
+              id: skill.id,
+              name: skill.name,
+              displayName: skill.displayName || skill.name,
+              description: skill.description || '',
+              version: skill.version || '1.0.0',
+            }))
+          )
+
+    request
+      .then(items => {
+        if (!active) return
+        setResources(items)
+        const selected = items.find(resource => resource.id === initialSourceId)
+        if (selected) {
+          setSourceId(String(selected.id))
+          setName(selected.name)
+          setDisplayName(selected.displayName)
+          setDescription(selected.description)
+          setVersion(selected.version)
+        }
+      })
+      .catch(() => {
+        if (active) setResources([])
+      })
+      .finally(() => {
+        if (active) setIsLoadingResources(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [initialSourceId, open, selectedType])
 
   const canPublish = useMemo(() => {
     return Boolean(Number(sourceId) > 0 && name.trim() && displayName.trim() && version.trim())
@@ -83,6 +149,16 @@ export function PublishResourceDialog({
     setDescription('')
     setTags('')
     setVersion('1.0.0')
+  }
+
+  const handleResourceChange = (value: string) => {
+    setSourceId(value)
+    const selected = resources.find(resource => resource.id === Number(value))
+    if (!selected) return
+    setName(selected.name)
+    setDisplayName(selected.displayName)
+    setDescription(selected.description)
+    setVersion(selected.version)
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -147,14 +223,21 @@ export function PublishResourceDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="resource-library-source-id">{t('fields.source_id')}</Label>
-              <Input
+              <select
                 id="resource-library-source-id"
                 value={sourceId}
-                onChange={event => setSourceId(event.target.value)}
-                inputMode="numeric"
-                className="h-11"
+                onChange={event => handleResourceChange(event.target.value)}
+                className="h-11 w-full rounded-md border border-border bg-base px-3 text-sm"
                 data-testid="publish-resource-source-id-input"
-              />
+                disabled={isLoadingResources}
+              >
+                <option value="">{t('publish.select_resource')}</option>
+                {resources.map(resource => (
+                  <option key={resource.id} value={resource.id}>
+                    {resource.displayName}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="resource-library-version">{t('fields.version')}</Label>

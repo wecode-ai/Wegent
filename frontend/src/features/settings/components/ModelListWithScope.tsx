@@ -12,6 +12,8 @@ import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import type { ResourceLibrarySortMode } from '@/features/resource-library/resourceSorting'
+import type { ResourceCreateRequest } from '@/features/resource-library/components/ResourceCreateButton'
+import type { ResourceLibraryModelCategoryFilter } from '@/features/resource-library/types'
 
 interface ModelListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -21,7 +23,16 @@ interface ModelListWithScopeProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  createRequest?: ResourceCreateRequest
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  hideCreateActions?: boolean
+  categoryFilter?: ResourceLibraryModelCategoryFilter
+  onCategoryFilterChange?: (category: ResourceLibraryModelCategoryFilter) => void
+  hideCategoryFilterControls?: boolean
+  compact?: boolean
 }
 
 export function ModelListWithScope({
@@ -32,7 +43,16 @@ export function ModelListWithScope({
   sortControls,
   sourceFilter,
   groups: externalGroups,
+  groupFilter,
   sortMode = 'default',
+  createRequest,
+  onCreateRequestClose,
+  creationOnly = false,
+  hideCreateActions = false,
+  categoryFilter,
+  onCategoryFilterChange,
+  hideCategoryFilterControls = false,
+  compact = false,
 }: ModelListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -84,7 +104,16 @@ export function ModelListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        categoryFilter={categoryFilter}
+        onCategoryFilterChange={onCategoryFilterChange}
+        hideCategoryFilterControls={hideCategoryFilterControls}
+        compact={compact}
       />
     )
   }
@@ -98,7 +127,16 @@ export function ModelListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        categoryFilter={categoryFilter}
+        onCategoryFilterChange={onCategoryFilterChange}
+        hideCategoryFilterControls={hideCategoryFilterControls}
+        compact={compact}
       />
     )
   }
@@ -122,7 +160,16 @@ export function ModelListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        categoryFilter={categoryFilter}
+        onCategoryFilterChange={onCategoryFilterChange}
+        hideCategoryFilterControls={hideCategoryFilterControls}
+        compact={compact}
       />
     </div>
   )

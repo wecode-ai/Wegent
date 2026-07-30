@@ -20,6 +20,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import { getPublicApiBaseUrl as getConfiguredPublicApiBaseUrl } from '@/lib/runtime-config'
 import type { Team } from '@/types/api'
 
@@ -308,13 +309,23 @@ export function buildTeamApiCodeSamples(
 
 interface TeamApiCallButtonProps {
   team: Team
+  emphasized?: boolean
+  hideTrigger?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
+export function TeamApiCallButton({
+  team,
+  emphasized = false,
+  hideTrigger = false,
+  open,
+  onOpenChange,
+}: TeamApiCallButtonProps) {
   const { t } = useTranslation('common')
   const { toast } = useToast()
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
   const [activeSampleLanguage, setActiveSampleLanguage] =
     useState<TeamApiCodeSampleLanguage>('curl')
 
@@ -332,6 +343,14 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
     codeSamples.find(sample => sample.language === activeSampleLanguage) ?? codeSamples[0]!
   const activeLanguageLabel = t(`teams.api_call.languages.${activeSample.language}`)
   const docsUrl = `https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-api`
+  const dialogOpen = open ?? internalOpen
+
+  const setDialogOpen = (nextOpen: boolean) => {
+    if (open === undefined) {
+      setInternalOpen(nextOpen)
+    }
+    onOpenChange?.(nextOpen)
+  }
 
   const handleSampleLanguageChange = (value: string) => {
     if ((TEAM_API_CODE_SAMPLE_LANGUAGES as readonly string[]).includes(value)) {
@@ -356,7 +375,7 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
   }
 
   const handleManageApiKeys = () => {
-    setOpen(false)
+    setDialogOpen(false)
     router.push(API_KEYS_PATH)
   }
 
@@ -366,19 +385,24 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={() => setOpen(true)}
-        title={t('teams.api_call.action')}
-        aria-label={t('teams.api_call.action')}
-        className="h-7 w-7 sm:h-8 sm:w-8"
-        data-testid={`team-api-call-button-${team.id}`}
-      >
-        <Plug className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-      </Button>
+      {!hideTrigger && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setDialogOpen(true)}
+          title={t('teams.api_call.action')}
+          aria-label={t('teams.api_call.action')}
+          className={cn(
+            'h-7 w-7 sm:h-8 sm:w-8',
+            emphasized && 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
+          )}
+          data-testid={`team-api-call-button-${team.id}`}
+        >
+          <Plug className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </Button>
+      )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{t('teams.api_call.title', { name: teamDisplayName })}</DialogTitle>

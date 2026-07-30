@@ -31,6 +31,39 @@ export function filterTeamsByMode(teams: Team[], currentMode: TeamModeFilter): T
   )
 }
 
+export function getRecentTeams(teams: Team[], recentTeamIds: number[], limit = 5): Team[] {
+  const teamById = new Map(teams.map(team => [team.id, team]))
+  const selected: Team[] = []
+  const selectedIds = new Set<number>()
+  const selectedIdentities = new Set<string>()
+
+  const addTeam = (team: Team) => {
+    const identity = `${team.namespace || 'default'}\u0000${team.name}`
+    if (selectedIds.has(team.id) || selectedIdentities.has(identity)) return false
+    selected.push(team)
+    selectedIds.add(team.id)
+    selectedIdentities.add(identity)
+    return true
+  }
+
+  for (const teamId of recentTeamIds) {
+    const team = teamById.get(teamId)
+    if (!team || !addTeam(team)) continue
+    if (selected.length === limit) return selected
+  }
+
+  const latestTeams = [...teams].sort((left, right) => {
+    const updatedResult = right.updated_at.localeCompare(left.updated_at)
+    return updatedResult || right.id - left.id
+  })
+  for (const team of latestTeams) {
+    if (!addTeam(team)) continue
+    if (selected.length === limit) break
+  }
+
+  return selected
+}
+
 export function getTeamTargetPage(team: Team, currentMode: TeamModeFilter): TeamTargetPage {
   const bindMode = team.bind_mode || ['chat', 'code']
   const targetMode =

@@ -135,6 +135,8 @@ const renderQuickAccessCards = (
 describe('QuickAccessCards', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockGetQuickAccess.mockReset()
+    mockGetQuickLaunch.mockReset()
     routerPush.mockClear()
     sessionStorage.clear()
     mockGetQuickLaunch.mockResolvedValue({

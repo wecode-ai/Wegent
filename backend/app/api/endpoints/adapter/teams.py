@@ -236,7 +236,7 @@ def copy_team(
     ),
     copy_skills: bool = Query(
         False,
-        description="If true, personal skills referenced by the team's bots are also copied to target_namespace.",
+        description="If true, target_namespace receives bindings to private Skills referenced by the team's bots.",
     ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
