@@ -114,15 +114,16 @@ WeWork 自研插件统一放在：
 https://github.com/wecode-ai/wework-plugins
 ```
 
-检出后目录为 `<checkout>/<slug>/`。该仓库只服务开发、评审、CI；Backend / Wework
-**不会**在启动时扫描它。
+布局对齐 openai/plugins：检出后目录为 `<checkout>/plugins/<slug>/`，并在
+`.agents/plugins/marketplace.json` 登记。该仓库只服务开发、评审、CI；
+Backend / Wework **不会**在启动时扫描它。
 
 本地只构建扫描（假设与 Wegent 同级检出）：
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/<plugin-slug> --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
 成功时输出 `name`、`version`、`sha256`。失败时先修扫描错误，再进入发布。
@@ -171,12 +172,14 @@ pnpm --filter wework dev:mac -- --executor-isolation
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/<plugin-slug> \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
 ```
+
+`--visibility workspace`（默认）进入「企业内部」Tab；`public` 进入「国内公开」。
 
 规则：
 

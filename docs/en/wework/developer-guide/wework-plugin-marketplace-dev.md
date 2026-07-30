@@ -114,16 +114,17 @@ WeWork-maintained plugins live in:
 https://github.com/wecode-ai/wework-plugins
 ```
 
-After checkout, each plugin is `<checkout>/<slug>/`. That repository is for
-development, review, and CI only. Backend and Wework **do not** scan it at
-startup.
+Layout matches openai/plugins: after checkout each plugin is
+`<checkout>/plugins/<slug>/`, registered in `.agents/plugins/marketplace.json`.
+That repository is for development, review, and CI only. Backend and Wework
+**do not** scan it at startup.
 
 Build and scan locally (sibling checkout next to Wegent):
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/<plugin-slug> --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
 Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
@@ -172,12 +173,15 @@ Best for company-maintained built-in capabilities. Identity fields:
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/<plugin-slug> \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
 ```
+
+`--visibility workspace` (default) maps to the enterprise-internal tab; `public`
+maps to the domestic-public tab.
 
 Rules:
 
