@@ -694,6 +694,7 @@ codex_targets = (
 resources = [
     *(f"binaries/codex/{target}/**/*" for target in codex_targets),
     "binaries/codex/legal/**/*",
+    "bundled-plugins",
     *os.environ["HOOK_RESOURCES"].splitlines(),
 ]
 
