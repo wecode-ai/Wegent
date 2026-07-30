@@ -859,10 +859,20 @@ fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
+async fn screenshot_embedded_browser(
+    state: &EmbeddedBrowserState,
+    label: &str,
+) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
     let webview = entry.ready_webview()?;
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let timeout_sender = sender.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS));
+        let _ = timeout_sender.try_send(Err(
+            "Timed out capturing embedded browser snapshot".to_string()
+        ));
+    });
     webview
         .with_webview(move |platform_webview| {
             let completion = RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
@@ -899,7 +909,7 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
                             .map(|png| png.as_bytes_unchecked().to_vec())
                     }
                 };
-                let _ = sender.send(result);
+                let _ = sender.try_send(result);
             });
             let webview = platform_webview.inner().cast::<AnyObject>();
             unsafe {
@@ -912,8 +922,9 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
         })
         .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
     let png = receiver
-        .recv_timeout(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS))
-        .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())??;
+        .recv()
+        .await
+        .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())??;
     let path = screenshot_path()?;
     std::fs::write(&path, png)
         .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
@@ -924,7 +935,7 @@ fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Res
 }
 
 #[cfg(not(target_os = "macos"))]
-fn screenshot_embedded_browser(
+async fn screenshot_embedded_browser(
     _state: &EmbeddedBrowserState,
     _label: &str,
 ) -> Result<Value, String> {
@@ -960,7 +971,7 @@ fn bridge_error(error: String) -> EmbeddedBrowserBridgeResponse {
     }
 }
 
-fn handle_bridge_request(
+async fn handle_bridge_request(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
     request: EmbeddedBrowserBridgeRequest,
@@ -1048,7 +1059,7 @@ fn handle_bridge_request(
             script_wait_for(&request),
             request.timeout_ms.unwrap_or(BRIDGE_EVAL_TIMEOUT_MS),
         ),
-        "screenshot" => screenshot_embedded_browser(state, &label),
+        "screenshot" => screenshot_embedded_browser(state, &label).await,
         _ => Err(format!(
             "Unknown embedded browser bridge action: {}",
             request.action
@@ -1123,7 +1134,7 @@ fn write_http_response(
     .map_err(|error| format!("Failed to write bridge response: {error}"))
 }
 
-fn handle_bridge_connection(
+async fn handle_bridge_connection(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
     mut stream: TcpStream,
@@ -1152,7 +1163,8 @@ fn handle_bridge_connection(
                 timeout_ms: None,
                 label: None,
             },
-        );
+        )
+        .await;
         let response = match result {
             Ok(data) => bridge_success(data),
             Err(error) => bridge_error(error),
@@ -1180,7 +1192,7 @@ fn handle_bridge_connection(
         "Embedded browser bridge request id={request_id} stage=dispatch_start action={action} label={label} elapsed_ms={}",
         started.elapsed().as_millis()
     );
-    let response = match handle_bridge_request(app, state, request) {
+    let response = match handle_bridge_request(app, state, request).await {
         Ok(data) => bridge_success(data),
         Err(error) => bridge_error(error),
     };
@@ -1223,11 +1235,28 @@ pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String
                         log::info!(
                             "Embedded browser bridge request id={request_id} stage=accepted peer={peer}"
                         );
-                        if let Err(error) =
-                            handle_bridge_connection(&app_handle, &state, stream, request_id)
-                        {
+                        let connection_app = app_handle.clone();
+                        let connection_state = state.clone();
+                        let thread_name = format!("embedded-browser-request-{request_id}");
+                        if let Err(error) = std::thread::Builder::new().name(thread_name).spawn(
+                            move || {
+                                let result = tauri::async_runtime::block_on(
+                                    handle_bridge_connection(
+                                        &connection_app,
+                                        &connection_state,
+                                        stream,
+                                        request_id,
+                                    ),
+                                );
+                                if let Err(error) = result {
+                                    log::warn!(
+                                        "Embedded browser bridge request id={request_id} stage=failed error={error}"
+                                    );
+                                }
+                            },
+                        ) {
                             log::warn!(
-                                "Embedded browser bridge request id={request_id} stage=failed error={error}"
+                                "Embedded browser bridge request id={request_id} stage=spawn_failed error={error}"
                             );
                         }
                     }

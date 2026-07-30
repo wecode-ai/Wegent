@@ -1,15 +1,15 @@
 use std::{
     collections::HashMap,
-    ffi::{c_char, c_void},
-    sync::{Mutex, Once, OnceLock},
+    ffi::{c_void, CStr},
+    sync::{Mutex, OnceLock},
 };
 
 use block2::Block;
 use objc2::{
-    ffi::{class_addMethod, class_getInstanceMethod, object_getClass},
+    ffi::{objc_getAssociatedObject, objc_setAssociatedObject, OBJC_ASSOCIATION_RETAIN_NONATOMIC},
     msg_send,
     rc::Retained,
-    runtime::{AnyClass, AnyObject, Imp, Sel},
+    runtime::{AnyClass, AnyObject, ClassBuilder, Sel},
     sel,
 };
 use objc2_foundation::NSString;
@@ -27,11 +27,12 @@ type AuthenticationChallengeCompletion = Block<dyn Fn(isize, *mut AnyObject)>;
 #[derive(Clone)]
 struct InvalidTlsWebviewContext {
     app: tauri::AppHandle,
-    native_label: String,
 }
 
-fn webview_contexts() -> &'static Mutex<HashMap<usize, InvalidTlsWebviewContext>> {
-    static CONTEXTS: OnceLock<Mutex<HashMap<usize, InvalidTlsWebviewContext>>> = OnceLock::new();
+static WEBVIEW_NATIVE_LABEL_KEY: u8 = 0;
+
+fn webview_contexts() -> &'static Mutex<HashMap<String, InvalidTlsWebviewContext>> {
+    static CONTEXTS: OnceLock<Mutex<HashMap<String, InvalidTlsWebviewContext>>> = OnceLock::new();
     CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -48,7 +49,7 @@ unsafe extern "C" {
 }
 
 unsafe extern "C-unwind" fn handle_authentication_challenge(
-    _delegate: *mut AnyObject,
+    _delegate: &AnyObject,
     _command: Sel,
     webview: *mut AnyObject,
     challenge: *mut AnyObject,
@@ -94,25 +95,33 @@ unsafe extern "C-unwind" fn handle_authentication_challenge(
     } else {
         format!("https://{host}:{port}/")
     };
-    let context = webview_contexts()
-        .lock()
-        .ok()
-        .and_then(|contexts| contexts.get(&(webview as usize)).cloned());
-    if let Some(context) = context {
-        let certificate = EmbeddedBrowserInvalidTlsCertificate {
-            native_label: context.native_label.clone(),
-            url: url.clone(),
-            host,
-            port,
-        };
-        if let Ok(mut certificates) = invalid_tls_certificates().lock() {
-            certificates.insert(context.native_label, certificate.clone());
+    let native_label = unsafe { native_label_for_webview(webview) };
+    let context = webview_contexts().lock().ok().and_then(|contexts| {
+        native_label
+            .as_ref()
+            .and_then(|label| contexts.get(label).cloned())
+    });
+    let (Some(native_label), Some(context)) = (native_label, context) else {
+        log::warn!("Rejected invalid TLS certificate without a registered browser context: {url}");
+        unsafe {
+            (*completion).call((
+                AUTH_CHALLENGE_PERFORM_DEFAULT_HANDLING,
+                std::ptr::null_mut(),
+            ));
         }
-        if let Err(error) = context.app.emit(INVALID_TLS_CERTIFICATE_EVENT, certificate) {
-            log::warn!("Failed to emit embedded browser invalid TLS warning: {error}");
-        }
-    } else {
-        log::warn!("Accepted invalid TLS certificate without a registered browser context: {url}");
+        return;
+    };
+    let certificate = EmbeddedBrowserInvalidTlsCertificate {
+        native_label: native_label.clone(),
+        url,
+        host,
+        port,
+    };
+    if let Ok(mut certificates) = invalid_tls_certificates().lock() {
+        certificates.insert(native_label, certificate.clone());
+    }
+    if let Err(error) = context.app.emit(INVALID_TLS_CERTIFICATE_EVENT, certificate) {
+        log::warn!("Failed to emit embedded browser invalid TLS warning: {error}");
     }
 
     let credential_class =
@@ -127,49 +136,100 @@ unsafe extern "C-unwind" fn handle_authentication_challenge(
     }
 }
 
-unsafe fn install_challenge_handler(delegate: *mut AnyObject) -> Result<(), String> {
-    static INSTALL_ONCE: Once = Once::new();
-    static INSTALL_ERROR: OnceLock<String> = OnceLock::new();
+fn challenge_delegate_class(superclass: &AnyClass) -> Result<&'static AnyClass, String> {
+    static CLASS: OnceLock<Result<&'static AnyClass, String>> = OnceLock::new();
+    CLASS
+        .get_or_init(|| {
+            let selector = sel!(webView:didReceiveAuthenticationChallenge:completionHandler:);
+            if superclass.instance_method(selector).is_some() {
+                return Err(format!(
+                    "Navigation delegate {} already implements TLS authentication handling",
+                    superclass.name().to_string_lossy()
+                ));
+            }
+            let unique_id = std::ptr::addr_of!(WEBVIEW_NATIVE_LABEL_KEY) as usize;
+            let class_name = format!("WegentEmbeddedBrowserNavigationDelegate_{unique_id:x}\0");
+            let class_name = CStr::from_bytes_with_nul(class_name.as_bytes()).map_err(|error| {
+                format!("Invalid embedded browser delegate class name: {error}")
+            })?;
+            let mut builder = ClassBuilder::new(class_name, superclass).ok_or_else(|| {
+                "Failed to allocate embedded browser navigation delegate subclass".to_string()
+            })?;
+            unsafe {
+                builder.add_method(
+                    selector,
+                    handle_authentication_challenge as unsafe extern "C-unwind" fn(_, _, _, _, _),
+                );
+            }
+            Ok(builder.register())
+        })
+        .clone()
+}
 
-    INSTALL_ONCE.call_once(|| {
-        let class = unsafe { object_getClass(delegate) }.cast_mut();
-        if class.is_null() {
-            let _ = INSTALL_ERROR.set("Embedded browser navigation delegate has no class".into());
-            return;
-        }
-        let selector = sel!(webView:didReceiveAuthenticationChallenge:completionHandler:);
-        if !unsafe { class_getInstanceMethod(class, selector) }.is_null() {
-            return;
-        }
-        let implementation: Imp = unsafe {
-            std::mem::transmute::<
-                unsafe extern "C-unwind" fn(
-                    *mut AnyObject,
-                    Sel,
-                    *mut AnyObject,
-                    *mut AnyObject,
-                    *mut AuthenticationChallengeCompletion,
-                ),
-                Imp,
-            >(handle_authentication_challenge)
-        };
-        let added = unsafe {
-            class_addMethod(
-                class,
-                selector,
-                implementation,
-                c"v@:@@@?".as_ptr().cast::<c_char>(),
-            )
-        };
-        if !added.as_bool() {
-            let _ = INSTALL_ERROR
-                .set("Failed to install embedded browser TLS authentication handler".into());
-        }
+unsafe fn native_label_for_webview(webview: *mut AnyObject) -> Option<String> {
+    if webview.is_null() {
+        return None;
+    }
+    let label = unsafe {
+        objc_getAssociatedObject(
+            webview,
+            std::ptr::addr_of!(WEBVIEW_NATIVE_LABEL_KEY).cast::<c_void>(),
+        )
+    };
+    if label.is_null() {
+        return None;
+    }
+    Some(unsafe { &*label.cast::<NSString>() }.to_string())
+}
+
+unsafe fn associate_native_label(webview: *mut AnyObject, native_label: Option<&str>) {
+    let label = native_label.map(NSString::from_str);
+    let value = label.as_ref().map_or(std::ptr::null_mut(), |label| {
+        Retained::as_ptr(label).cast::<AnyObject>().cast_mut()
     });
+    unsafe {
+        objc_setAssociatedObject(
+            webview,
+            std::ptr::addr_of!(WEBVIEW_NATIVE_LABEL_KEY).cast::<c_void>(),
+            value,
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC,
+        );
+    }
+}
 
-    match INSTALL_ERROR.get() {
-        Some(error) => Err(error.clone()),
-        None => Ok(()),
+unsafe fn install_challenge_handler(delegate: *mut AnyObject) -> Result<(), String> {
+    if delegate.is_null() {
+        return Err("Embedded browser navigation delegate is unavailable".to_string());
+    }
+    let delegate = unsafe { &*delegate };
+    let current_class = delegate.class();
+    let subclass = challenge_delegate_class(current_class)?;
+    if !std::ptr::eq(current_class, subclass) {
+        let previous_class = unsafe { AnyObject::set_class(delegate, subclass) };
+        if !std::ptr::eq(previous_class, current_class) {
+            return Err("Embedded browser navigation delegate class changed unexpectedly".into());
+        }
+    }
+    Ok(())
+}
+
+unsafe fn restore_navigation_delegate_class(delegate: *mut AnyObject) {
+    if delegate.is_null() {
+        return;
+    }
+    let delegate = unsafe { &*delegate };
+    let current_class = delegate.class();
+    let Some(superclass) = current_class.superclass() else {
+        return;
+    };
+    if current_class
+        .name()
+        .to_bytes()
+        .starts_with(b"WegentEmbeddedBrowserNavigationDelegate_")
+    {
+        unsafe {
+            AnyObject::set_class(delegate, superclass);
+        }
     }
 }
 
@@ -187,13 +247,11 @@ pub async fn register_invalid_tls_handler(
                 Err("Embedded browser navigation delegate is unavailable".to_string())
             } else {
                 install_challenge_handler(delegate).and_then(|_| {
+                    associate_native_label(webview, Some(&native_label));
                     webview_contexts()
                         .lock()
                         .map_err(|_| "Embedded browser TLS context lock poisoned".to_string())?
-                        .insert(
-                            webview as usize,
-                            InvalidTlsWebviewContext { app, native_label },
-                        );
+                        .insert(native_label, InvalidTlsWebviewContext { app });
                     let _: () = msg_send![
                         &*webview,
                         setNavigationDelegate: std::ptr::null::<AnyObject>()
@@ -212,12 +270,17 @@ pub async fn register_invalid_tls_handler(
 }
 
 pub fn unregister_invalid_tls_handler(webview: &Webview<Wry>) {
-    let _ = webview.with_webview(|platform_webview| {
-        if let Ok(mut contexts) = webview_contexts().lock() {
-            if let Some(context) = contexts.remove(&(platform_webview.inner() as usize)) {
-                clear_invalid_tls_certificate(&context.native_label);
+    let _ = webview.with_webview(|platform_webview| unsafe {
+        let webview = platform_webview.inner().cast::<AnyObject>();
+        if let Some(native_label) = native_label_for_webview(webview) {
+            if let Ok(mut contexts) = webview_contexts().lock() {
+                contexts.remove(&native_label);
             }
+            clear_invalid_tls_certificate(&native_label);
         }
+        associate_native_label(webview, None);
+        let delegate: *mut AnyObject = msg_send![&*webview, navigationDelegate];
+        restore_navigation_delegate_class(delegate);
     });
 }
 
