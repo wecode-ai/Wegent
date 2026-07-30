@@ -3367,6 +3367,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
     expect(await screen.findByTestId('local-project-create-dialog')).toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('local-project-create-name-input'))
     await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
     await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
     await waitFor(() =>
