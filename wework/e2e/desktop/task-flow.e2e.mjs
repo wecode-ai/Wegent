@@ -377,6 +377,9 @@ const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
+  'https://github.com/wecode-ai/desktop-e2e-startup-network-probe.git'
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -696,6 +699,16 @@ class BlockingNetworkProxy {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
     }
     throw new Error('Codex did not reach the blocking network proxy')
+  }
+
+  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+    }
+    throw new Error(`Codex did not send a startup request matching ${pattern}`)
   }
 
   requestCount() {
@@ -2887,7 +2900,11 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
   const [blockedRequest] = await Promise.all([
-    blockingNetworkProxy.waitForRequestAfter(requestCountBeforeRestart, DEFAULT_STEP_TIMEOUT_MS),
+    blockingNetworkProxy.waitForRequestMatchingAfter(
+      requestCountBeforeRestart,
+      /github\.com/i,
+      DEFAULT_STEP_TIMEOUT_MS
+    ),
     control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }),
@@ -10092,7 +10109,17 @@ async function main() {
         codexHome,
         control,
       })
-      await writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      await writeCodexConfig(
+        codexHome,
+        control.url,
+        `[features]
+plugins = true
+
+[marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
+source_type = "git"
+source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
+last_updated = "2026-07-30T00:00:00Z"`
+      )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
         control,
