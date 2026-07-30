@@ -5,14 +5,37 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn configure_codex_runtime_proxy(
+        &self,
+        proxy_url: Option<String>,
+        allow_active_turns: bool,
+    ) -> Result<bool, String> {
+        let mut config = self.codex_runtime_proxy_config.lock().await;
+        if config.initialized && config.proxy_url == proxy_url {
+            return Ok(false);
+        }
+
+        let changed = if allow_active_turns {
+            self.codex_app_server
+                .configure_runtime_proxy_for_restart(proxy_url.as_deref())
+                .await?
+        } else {
+            self.codex_app_server
+                .configure_runtime_proxy(proxy_url.as_deref())
+                .await?
+        };
+        config.initialized = true;
+        config.proxy_url = proxy_url;
+        Ok(changed)
+    }
+
     pub(super) async fn update_codex_runtime_config(
         &self,
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let proxy_url = optional_proxy_url(&payload)?;
         let changed = self
-            .codex_app_server
-            .configure_runtime_proxy(proxy_url.as_deref())
+            .configure_codex_runtime_proxy(proxy_url, false)
             .await
             .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         Ok(json!({"updated": changed}))

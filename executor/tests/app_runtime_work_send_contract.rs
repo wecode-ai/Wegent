@@ -1050,6 +1050,61 @@ async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() 
 }
 
 #[tokio::test]
+async fn duplicate_runtime_proxy_update_does_not_wait_for_stalled_codex_startup() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-duplicate-proxy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-duplicate-proxy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-duplicate-proxy-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_initialize(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let proxy_payload = json!({
+        "method": "runtime.codex.runtime_config.update",
+        "payload": {"proxyUrl": "http://127.0.0.1:7890"}
+    });
+
+    let configured = handler
+        .handle_runtime_rpc(proxy_payload.clone())
+        .await
+        .expect("initial runtime proxy configuration should succeed");
+    assert_eq!(configured["updated"], true);
+
+    let stalled_models = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.codex.models.list",
+                    "payload": {}
+                }))
+                .await
+        })
+    };
+    wait_for_method_count(&log_path, "initialize", 1).await;
+
+    let duplicate = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        handler.handle_runtime_rpc(proxy_payload),
+    )
+    .await
+    .expect("duplicate proxy update should not wait for Codex startup")
+    .expect("duplicate proxy update should succeed");
+
+    assert_eq!(duplicate["updated"], false);
+    stalled_models.abort();
+    let _ = stalled_models.await;
+}
+
+#[tokio::test]
 async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2877,6 +2932,22 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       ;;
   esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_hanging_initialize(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-hanging-initialize", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
 done
 "#,
         log_path.display()
