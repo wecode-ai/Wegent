@@ -1619,6 +1619,25 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     snapshot => !snapshot.testIds.includes(`runtime-local-task-running-${runningTaskId}`),
     'The rapid-switch background task did not settle after its response was released'
   )
+  const settledAfterRace = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(settledAfterRace.text, FRESH_CHAT_PROMPT) >= 2,
+    'The settled rapid switch lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(settledAfterRace.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'The settled rapid switch lost an earlier assistant message'
+  )
+  assert.equal(
+    settledAfterRace.text.includes(CONVERSATION_SWITCH_RACE_PROMPT),
+    false,
+    'The late background transcript leaked into the restored conversation'
+  )
   control.setScenario('fresh_chat')
   return shortConversationTaskRowTestId
 }
