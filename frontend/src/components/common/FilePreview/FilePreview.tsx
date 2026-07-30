@@ -4,6 +4,7 @@
 
 'use client'
 
+import dynamic from 'next/dynamic'
 import React, { useEffect, useState } from 'react'
 import { Loader2, AlertCircle } from 'lucide-react'
 import {
@@ -12,13 +13,24 @@ import {
   TextPreview,
   VideoPreview,
   AudioPreview,
-  ExcelPreview,
-  WordPreview,
   HtmlPreview,
   UnknownPreview,
 } from './preview-renderers'
-import { useFileBlob, useExcelParser } from './hooks'
-import { getPreviewType, getOfficeType } from './utils'
+import { useFileBlob } from './hooks'
+import { getPreviewType } from './utils'
+
+const FlyfishOfficePreview = dynamic(
+  () =>
+    import('./preview-renderers/FlyfishOfficePreview').then(module => module.FlyfishOfficePreview),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    ),
+  }
+)
 
 export interface FilePreviewProps {
   /** Attachment ID for fetching file */
@@ -37,6 +49,8 @@ export interface FilePreviewProps {
   onDownload?: () => void
   /** Callback when close is requested */
   onClose?: () => void
+  /** Callback when a renderer fails */
+  onError?: (error: Error) => void
   /** Whether to show toolbar (for fullscreen mode) */
   showToolbar?: boolean
   /** HTML preview mode: false = preview, true = source (controlled) */
@@ -58,6 +72,7 @@ export function FilePreview({
   shareToken,
   onDownload,
   onClose,
+  onError,
   showToolbar = true,
   htmlIsSourceMode,
   onHtmlViewModeChange,
@@ -67,9 +82,7 @@ export function FilePreview({
 
   const { blob, blobUrl, isLoading, error } = useFileBlob(attachmentId, fileBlob, shareToken)
 
-  const { sheets, parseExcel } = useExcelParser()
-
-  // Parse text, HTML and Excel content when blob is available
+  // Parse text and HTML content when blob is available
   useEffect(() => {
     if (!blob) return
 
@@ -81,24 +94,11 @@ export function FilePreview({
         } catch (err) {
           console.error('Failed to read text content:', err)
         }
-      } else if (previewType === 'office') {
-        const officeType = getOfficeType(filename)
-        if (officeType === 'excel') {
-          await parseExcel(blob)
-        } else {
-          // Word/PPT - try to read as text
-          try {
-            const text = await blob.text()
-            setTextContent(text)
-          } catch (err) {
-            console.error('Failed to read office content:', err)
-          }
-        }
       }
     }
 
     parseContent()
-  }, [blob, previewType, filename, parseExcel])
+  }, [blob, previewType])
 
   if (isLoading) {
     return (
@@ -153,13 +153,10 @@ export function FilePreview({
     case 'audio':
       return blobUrl ? <AudioPreview url={blobUrl} filename={filename} /> : null
 
-    case 'office': {
-      const officeType = getOfficeType(filename)
-      if (officeType === 'excel') {
-        return <ExcelPreview sheets={sheets} filename={filename} />
-      }
-      return <WordPreview content={textContent} filename={filename} />
-    }
+    case 'office':
+      return blob ? (
+        <FlyfishOfficePreview blob={blob} filename={filename} onError={onError} />
+      ) : null
 
     case 'unknown':
     default:

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
@@ -214,7 +215,7 @@ function DeleteArchivedConversationDialog({
         className="w-full max-w-[520px] rounded-[24px] border border-border bg-popover px-8 py-6 text-text-primary shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
         onClick={event => event.stopPropagation()}
       >
-        <h2 id={`${testId}-title`} className="text-xl font-semibold tracking-normal">
+        <h2 id={`${testId}-title`} className="heading-base tracking-normal">
           {title}
         </h2>
         <p className="mt-5 text-sm leading-6 text-text-secondary">{description}</p>
@@ -308,6 +309,15 @@ export function ArchivedConversationsSettingsPage({
       void loadArchivedConversations()
     }, 0)
     return () => window.clearTimeout(loadTimer)
+  }, [loadArchivedConversations])
+
+  useEffect(() => {
+    const handleCloudArchivesChanged = () => {
+      void loadArchivedConversations()
+    }
+    window.addEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
+    return () =>
+      window.removeEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
   }, [loadArchivedConversations])
 
   useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
@@ -429,7 +439,13 @@ export function ArchivedConversationsSettingsPage({
         let completed = 0
         let total = deleteItems.length
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
-          for (const batch of chunkItems(deleteItems, ARCHIVED_DELETE_BATCH_SIZE)) {
+          const localItems = deleteItems.filter(item => item.source === 'local')
+          const cloudItems = deleteItems.filter(item => item.source === 'cloud')
+          const batches = [
+            ...chunkItems(localItems, ARCHIVED_DELETE_BATCH_SIZE),
+            ...chunkItems(cloudItems, ARCHIVED_DELETE_BATCH_SIZE),
+          ]
+          for (const batch of batches) {
             const response = await api.deleteArchivedConversationsBulk({
               items: batch.map(archivedConversationAddress),
             })
@@ -541,7 +557,7 @@ export function ArchivedConversationsSettingsPage({
               data-testid="archived-bulk-delete-button"
               onClick={handleBulkDelete}
               disabled={bulkDeleteRunning}
-              className="flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 text-[13px] text-red-500 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11"
+              className="flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 text-sm text-red-500 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11"
             >
               {bulkDeleteRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -566,7 +582,7 @@ export function ArchivedConversationsSettingsPage({
               data-testid="archived-view-now-button"
               onClick={() => void openLastUnarchived()}
               disabled={busyKey === `open:${lastUnarchived.id}`}
-              className="h-8 shrink-0 rounded-md px-3 text-[13px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+              className="h-8 shrink-0 rounded-md px-3 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               {t('workbench.archived_view_now')}
             </button>

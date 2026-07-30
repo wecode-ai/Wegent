@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AlertCircle,
@@ -14,7 +14,12 @@ import {
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
+import {
+  applyLocalExecutorCloudConnection,
+  type LocalExecutorCloudConnection,
+} from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
@@ -24,8 +29,11 @@ import {
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
 
-const LOCAL_EXECUTOR_LOG_PATH = '~/.wegent-executor/logs/executor.log'
-const LOCAL_RUNTIME_ANIMATION_CYCLE_MS = 4800
+function getLocalExecutorLogDisplayPath(): string {
+  return getPlatform() === 'win'
+    ? '%USERPROFILE%\\.wegent-executor\\logs\\executor.log'
+    : '~/.wegent-executor/logs/executor.log'
+}
 const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 
 type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
@@ -33,6 +41,7 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
+  initialCloudConnection?: LocalExecutorCloudConnection
   startupReady?: boolean
 }
 
@@ -51,7 +60,6 @@ interface LocalRuntimeDebugInfo {
   runtimeMode: string
   phase: LocalRuntimePhase
   startupReady: boolean
-  minimumDelayElapsed: boolean
   ensureCallState: string
   error: string | null
   log: LocalExecutorLog | null
@@ -80,10 +88,6 @@ function sanitizeLocalRuntimeDebugText(text: string): string {
   return text.replace(/\btauri\b/gi, 'desktop app').replace(/\bsidecar\b/gi, 'executor process')
 }
 
-function localRuntimeMinimumReadyDelayMs(): number {
-  return import.meta.env.DEV ? LOCAL_RUNTIME_ANIMATION_CYCLE_MS : 0
-}
-
 async function resolveLocalRuntimeState(
   fallbackError: string,
   errorText: LocalRuntimeErrorText
@@ -104,7 +108,7 @@ async function resolveLocalRuntimeState(
 }
 
 function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
-  const logPath = info.log?.path ?? LOCAL_EXECUTOR_LOG_PATH
+  const logPath = info.log?.path ?? getLocalExecutorLogDisplayPath()
   const logContent = info.logError
     ? `Failed to read executor log: ${info.logError}`
     : info.log?.content || '(executor log is empty)'
@@ -115,13 +119,10 @@ function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
     `App mode: ${info.runtimeMode}`,
     `Startup phase: ${info.phase}`,
     `Startup ready: ${info.startupReady ? 'true' : 'false'}`,
-    `Minimum delay elapsed: ${info.minimumDelayElapsed ? 'true' : 'false'}`,
     `Startup check: ${info.ensureCallState}`,
     `Error: ${info.error ?? 'none'}`,
-    `Socket path: ${info.log?.socketPath ?? 'unknown'}`,
-    `Socket exists: ${info.log ? String(info.log.socketExists) : 'unknown'}`,
-    `Socket type: ${info.log?.socketFileType ?? 'unknown'}`,
-    `Socket connected: ${info.log ? String(info.log.socketConnected) : 'unknown'}`,
+    `IPC transport: ${info.log?.transport ?? 'unknown'}`,
+    `IPC connected: ${info.log ? String(info.log.transportConnected) : 'unknown'}`,
     `Executor PID(s): ${info.log?.processPids.length ? info.log.processPids.join(', ') : 'none'}`,
     `Executor process path(s): ${info.log?.processPaths.length ? info.log.processPaths.join(', ') : 'none'}`,
     `Executor launch source: ${info.log?.sidecarSource ?? 'unknown'}`,
@@ -249,12 +250,12 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
   return (
     <div
       data-testid="local-runtime-slow-startup-help"
-      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-200/70 bg-amber-50/70 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
+      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
     >
       <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
         <span
           data-testid="local-runtime-slow-startup-icon"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700 sm:h-8 sm:w-8"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-700 sm:h-8 sm:w-8 dark:text-amber-300"
         >
           <AlertCircle className="h-4 w-4" />
         </span>
@@ -268,7 +269,7 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
       <Button
         type="button"
         variant="outline"
-        className="h-11 min-w-[44px] border-amber-200/80 bg-base px-3 text-xs text-text-primary hover:bg-amber-50 sm:h-9 sm:w-auto"
+        className="h-11 min-w-[44px] border-border bg-base px-3 text-xs text-text-primary hover:bg-muted sm:h-9 sm:w-auto"
         onClick={onCopyDebugInfo}
         disabled={copying}
         data-testid="local-runtime-copy-debug-button"
@@ -282,13 +283,13 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 
 export function LocalRuntimeInitializer({
   children,
+  initialCloudConnection,
   startupReady = true,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
-  const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
+  const initialCloudConnectionRef = useRef(initialCloudConnection)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
@@ -315,17 +316,6 @@ export function LocalRuntimeInitializer({
     return () => window.clearTimeout(timer)
   }, [enabled, startupAttempt])
 
-  useEffect(() => {
-    if (minimumReadyDelayMs === 0) {
-      return undefined
-    }
-
-    const timer = window.setTimeout(() => {
-      setMinimumDelayElapsed(true)
-    }, minimumReadyDelayMs)
-    return () => window.clearTimeout(timer)
-  }, [minimumReadyDelayMs])
-
   const retryInitialize = useCallback(async () => {
     if (!enabled) return
     setStartupAttempt(attempt => attempt + 1)
@@ -348,6 +338,14 @@ export function LocalRuntimeInitializer({
     }
   }, [enabled, fallbackError, runtimeErrorText])
 
+  useEffect(() => {
+    if (!enabled || state.phase !== 'ready' || !initialCloudConnectionRef.current) return
+
+    void applyLocalExecutorCloudConnection(initialCloudConnectionRef.current).catch(error => {
+      console.error('[Wework] Failed to apply cloud connection to local executor:', error)
+    })
+  }, [enabled, state.phase])
+
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
     let log: LocalExecutorLog | null = null
@@ -364,7 +362,6 @@ export function LocalRuntimeInitializer({
       runtimeMode: getRuntimeConfig().runtimeMode,
       phase: state.phase,
       startupReady,
-      minimumDelayElapsed,
       ensureCallState:
         state.phase === 'starting' ? 'pending' : state.phase === 'failed' ? 'failed' : 'resolved',
       error: state.error,
@@ -378,10 +375,10 @@ export function LocalRuntimeInitializer({
     } catch {
       setCopyDebugState('failed')
     }
-  }, [minimumDelayElapsed, startupReady, state.error, state.phase, t])
+  }, [startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren && (!enabled || minimumDelayElapsed)
+  const canRevealChildren = canMountChildren
   const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 
@@ -411,9 +408,7 @@ export function LocalRuntimeInitializer({
             ) : (
               <WorkspaceSetupAnimation />
             )}
-            <h1 className="text-xl font-semibold">
-              {failed ? t('failed_title') : t('starting_title')}
-            </h1>
+            <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
               {failed ? t('failed_description') : t('starting_description')}
             </p>
@@ -431,7 +426,7 @@ export function LocalRuntimeInitializer({
                 <div className="mt-3 text-xs leading-5 text-text-secondary">
                   <span className="font-medium">{t('log_label')}: </span>
                   <code className="break-all rounded bg-base px-1.5 py-0.5 text-text-primary">
-                    {LOCAL_EXECUTOR_LOG_PATH}
+                    {getLocalExecutorLogDisplayPath()}
                   </code>
                 </div>
               </div>

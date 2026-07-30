@@ -4,10 +4,14 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
-  DEFAULT_KEYBINDINGS,
+  getDefaultKeybindings,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
   KEYBINDINGS_CHANGED_EVENT,
+  OPEN_SEARCH_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -29,6 +33,10 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
     label: 'keyboard_shortcuts_open_settings',
     description: 'keyboard_shortcuts_open_settings_description',
   },
+  [OPEN_SEARCH_COMMAND]: {
+    label: 'keyboard_shortcuts_open_search',
+    description: 'keyboard_shortcuts_open_search_description',
+  },
   [GO_BACK_COMMAND]: {
     label: 'keyboard_shortcuts_go_back',
     description: 'keyboard_shortcuts_go_back_description',
@@ -49,31 +57,51 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
     label: 'keyboard_shortcuts_toggle_model_selector',
     description: 'keyboard_shortcuts_toggle_model_selector_description',
   },
+  [INCREASE_FONT_SIZE_COMMAND]: {
+    label: 'keyboard_shortcuts_increase_font_size',
+    description: 'keyboard_shortcuts_increase_font_size_description',
+  },
+  [DECREASE_FONT_SIZE_COMMAND]: {
+    label: 'keyboard_shortcuts_decrease_font_size',
+    description: 'keyboard_shortcuts_decrease_font_size_description',
+  },
+  [RESET_FONT_SIZE_COMMAND]: {
+    label: 'keyboard_shortcuts_reset_font_size',
+    description: 'keyboard_shortcuts_reset_font_size_description',
+  },
 }
 
 function commandFallback(command: string): string {
   if (command === OPEN_SETTINGS_COMMAND) return '打开设置'
+  if (command === OPEN_SEARCH_COMMAND) return '打开搜索'
   if (command === GO_BACK_COMMAND) return '返回'
   if (command === GO_FORWARD_COMMAND) return '前进'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '切换边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '切换侧边面板'
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '选择模型'
+  if (command === INCREASE_FONT_SIZE_COMMAND) return '增大字号'
+  if (command === DECREASE_FONT_SIZE_COMMAND) return '减小字号'
+  if (command === RESET_FONT_SIZE_COMMAND) return '重置字号'
   return command === OPEN_TERMINAL_COMMAND ? '切换底部面板' : command
 }
 
 function commandDescriptionFallback(command: string): string {
   if (command === OPEN_SETTINGS_COMMAND) return '打开设置页面'
+  if (command === OPEN_SEARCH_COMMAND) return '打开搜索面板'
   if (command === GO_BACK_COMMAND) return '返回导航历史'
   if (command === GO_FORWARD_COMMAND) return '前进导航历史'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '显示或隐藏边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '显示或隐藏侧边面板'
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '打开或关闭当前输入区的模型选择器'
+  if (command === INCREASE_FONT_SIZE_COMMAND) return '同时增大 UI 和代码字号'
+  if (command === DECREASE_FONT_SIZE_COMMAND) return '同时减小 UI 和代码字号'
+  if (command === RESET_FONT_SIZE_COMMAND) return '将 UI 和代码字号恢复为默认值'
   return command === OPEN_TERMINAL_COMMAND ? '显示或隐藏底部面板' : ''
 }
 
 function KeybindingPill({ value }: { value: string }) {
   return (
-    <span className="inline-flex min-h-7 items-center rounded-full bg-muted px-2.5 text-[13px] font-medium leading-[18px] text-text-secondary">
+    <span className="inline-flex min-h-7 items-center rounded-full bg-muted px-2.5 text-sm font-medium leading-[18px] text-text-secondary">
       {value.split('+').map((part, index) => (
         <span key={`${part}-${index}`} className="inline-flex items-center">
           {index > 0 ? <span className="mx-0.5"> </span> : null}
@@ -90,6 +118,8 @@ function KeybindingPart({ value }: { value: string }) {
   if (value === 'Control') return <span aria-label="Control">⌃</span>
   if (value === 'Alt') return <span aria-label="Option">⌥</span>
   if (value === 'Enter') return <CornerDownLeft className="h-3.5 w-3.5" aria-label="Enter" />
+  if (value === 'Plus') return <span aria-label="Plus">+</span>
+  if (value === 'Minus') return <span aria-label="Minus">−</span>
   return <span>{value}</span>
 }
 
@@ -102,11 +132,12 @@ export function KeyboardShortcutsSettingsPage() {
   const [query, setQuery] = useState('')
   const [error, setError] = useState<string | null>(null)
 
+  const defaultBindings = useMemo(() => getDefaultKeybindings(), [])
   const bindings = useMemo(() => mergeKeybindings(overrides), [overrides])
   const filteredCommands = useMemo(() => {
     const trimmedQuery = query.trim().toLowerCase()
-    if (!trimmedQuery) return DEFAULT_KEYBINDINGS
-    return DEFAULT_KEYBINDINGS.filter(item => {
+    if (!trimmedQuery) return defaultBindings
+    return defaultBindings.filter(item => {
       const labels = COMMAND_LABELS[item.command]
       const label = t(`workbench.${labels.label}`, commandFallback(item.command)).toLowerCase()
       const description = t(
@@ -119,7 +150,7 @@ export function KeyboardShortcutsSettingsPage() {
         description.includes(trimmedQuery)
       )
     })
-  }, [query, t])
+  }, [query, t, defaultBindings])
 
   const saveOverride = useCallback(
     async (command: string, key: string | null) => {
@@ -130,7 +161,7 @@ export function KeyboardShortcutsSettingsPage() {
         item =>
           normalizeKeybinding(item.key ?? '') !==
           normalizeKeybinding(
-            DEFAULT_KEYBINDINGS.find(base => base.command === item.command)?.defaultKey ?? ''
+            defaultBindings.find(base => base.command === item.command)?.defaultKey ?? ''
           )
       )
 
@@ -150,7 +181,7 @@ export function KeyboardShortcutsSettingsPage() {
         setSavingCommand(null)
       }
     },
-    [overrides, t]
+    [defaultBindings, overrides, t]
   )
 
   useEffect(() => {
@@ -211,7 +242,7 @@ export function KeyboardShortcutsSettingsPage() {
           value={query}
           onChange={event => setQuery(event.target.value)}
           placeholder={t('workbench.keyboard_shortcuts_search', '搜索快捷键')}
-          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] leading-[18px] outline-none focus:border-primary"
+          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm leading-[18px] outline-none focus:border-primary"
         />
       </div>
       <div>
@@ -255,13 +286,13 @@ export function KeyboardShortcutsSettingsPage() {
                     className="inline-flex min-h-8 items-center justify-start text-left disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {recording ? (
-                      <span className="inline-flex min-h-7 items-center rounded-full bg-primary/10 px-2.5 text-[13px] font-medium leading-[18px] text-primary">
+                      <span className="inline-flex min-h-7 items-center rounded-full bg-primary/10 px-2.5 text-sm font-medium leading-[18px] text-primary">
                         {t('workbench.keyboard_shortcuts_recording', '按下快捷键')}
                       </span>
                     ) : currentKey ? (
                       <KeybindingPill value={currentKey} />
                     ) : (
-                      <span className="text-[13px] leading-[18px] text-text-muted">
+                      <span className="text-sm leading-[18px] text-text-muted">
                         {t('workbench.keyboard_shortcuts_unassigned', '未设置')}
                       </span>
                     )}

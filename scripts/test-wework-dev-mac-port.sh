@@ -109,12 +109,15 @@ output="$(
   WEGENT_DISABLE_SHARED_CARGO_TARGET=1 \
     WEWORK_DRY_RUN=1 \
     WEWORK_PORT="$requested_port" \
+    VITE_WEGENT_BACKEND_URL="https://backend.example.com/api" \
+    VITE_WEGENT_SOCKET_URL="wss://socket.example.com" \
     bash "$DEV_SCRIPT"
 )"
 
 assert_contains "$output" "WEWORK_PORT=$expected_port" "dry-run output"
 assert_contains "$output" "\"devUrl\": \"http://localhost:$expected_port\"" "Tauri devUrl"
 assert_contains "$output" "pnpm exec vite --host 0.0.0.0 --port $expected_port --strictPort" "beforeDevCommand"
-assert_contains "$output" "VITE_SOCKET_BASE_URL=http://localhost:$expected_port" "socket base URL"
+assert_contains "$output" "VITE_WEGENT_BACKEND_URL=https://backend.example.com/api" "backend URL"
+assert_contains "$output" "VITE_WEGENT_SOCKET_URL=wss://socket.example.com" "socket URL"
 
 echo "WeWork macOS dev port selection regression test passed"

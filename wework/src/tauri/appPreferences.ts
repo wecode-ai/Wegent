@@ -4,9 +4,12 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  systemDragEnabled: boolean
+  preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
+  experimentalFeaturesEnabled: boolean
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
@@ -15,6 +18,38 @@ export interface AppPreferences {
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
+  appshotsPlaySound: boolean
+  popoutWindowShortcut: string | null
+  popoutWindowProjectlessDefaultEnabled: boolean
+  quickPhrases: QuickPhrase[]
+}
+
+export type QuickPhraseMode = 'normal' | 'plan' | 'goal'
+
+export interface QuickPhrase {
+  id: string
+  title: string
+  content: string
+  mode: QuickPhraseMode
+  attachmentPaths?: string[]
+  createdAt?: number
+}
+
+export const QUICK_PHRASE_STASH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+function stashCreatedAt(phrase: Pick<QuickPhrase, 'id' | 'createdAt'>): number | null {
+  if (typeof phrase.createdAt === 'number' && Number.isFinite(phrase.createdAt)) {
+    return phrase.createdAt
+  }
+  if (!phrase.id.startsWith('stash-')) return null
+  const timestamp = Number(phrase.id.slice('stash-'.length).split('-')[0])
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now()): boolean {
+  if (!phrase.id.startsWith('stash-')) return false
+  const createdAt = stashCreatedAt(phrase)
+  return createdAt !== null && now - createdAt >= QUICK_PHRASE_STASH_MAX_AGE_MS
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -23,9 +58,12 @@ export type BrowserLinkTarget = 'system' | 'wework'
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  systemDragEnabled?: boolean
+  preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
+  experimentalFeaturesEnabled?: boolean
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
@@ -34,14 +72,42 @@ export interface AppPreferencesPatch {
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
+  appshotsPlaySound?: boolean
+  popoutWindowShortcut?: string | null
+  popoutWindowProjectlessDefaultEnabled?: boolean
+  quickPhrases?: QuickPhrase[]
 }
+
+export const defaultQuickPhrases: QuickPhrase[] = [
+  {
+    id: 'default-summary-progress',
+    title: '总结当前进展',
+    content: '总结目前完成的工作和下一步建议',
+    mode: 'normal',
+  },
+  {
+    id: 'default-create-plan',
+    title: '制定实施计划',
+    content: '分析需求并制定详细的实施计划',
+    mode: 'plan',
+  },
+  {
+    id: 'default-pursue-goal',
+    title: '持续完成这个目标',
+    content: '持续推进这个目标，直到真正完成',
+    mode: 'goal',
+  },
+]
 
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -50,6 +116,10 @@ export const defaultAppPreferences: AppPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
+  popoutWindowShortcut: 'Alt+Shift+Space',
+  popoutWindowProjectlessDefaultEnabled: false,
+  quickPhrases: defaultQuickPhrases,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
@@ -86,6 +156,14 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    systemDragEnabled:
+      typeof record.systemDragEnabled === 'boolean'
+        ? record.systemDragEnabled
+        : defaultAppPreferences.systemDragEnabled,
+    preventSleepWhileTasksRunning:
+      typeof record.preventSleepWhileTasksRunning === 'boolean'
+        ? record.preventSleepWhileTasksRunning
+        : defaultAppPreferences.preventSleepWhileTasksRunning,
     closeToTrayHintSeen:
       typeof record.closeToTrayHintSeen === 'boolean'
         ? record.closeToTrayHintSeen
@@ -99,6 +177,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.terminalContextInjectionEnabled === 'boolean'
         ? record.terminalContextInjectionEnabled
         : defaultAppPreferences.terminalContextInjectionEnabled,
+    experimentalFeaturesEnabled:
+      typeof record.experimentalFeaturesEnabled === 'boolean'
+        ? record.experimentalFeaturesEnabled
+        : defaultAppPreferences.experimentalFeaturesEnabled,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled
@@ -133,7 +215,62 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.browserAskBeforeDownload === 'boolean'
         ? record.browserAskBeforeDownload
         : defaultAppPreferences.browserAskBeforeDownload,
+    appshotsPlaySound:
+      typeof record.appshotsPlaySound === 'boolean'
+        ? record.appshotsPlaySound
+        : defaultAppPreferences.appshotsPlaySound,
+    popoutWindowShortcut:
+      typeof record.popoutWindowShortcut === 'string' && record.popoutWindowShortcut.trim()
+        ? record.popoutWindowShortcut.trim()
+        : Object.prototype.hasOwnProperty.call(record, 'popoutWindowShortcut')
+          ? null
+          : defaultAppPreferences.popoutWindowShortcut,
+    popoutWindowProjectlessDefaultEnabled:
+      typeof record.popoutWindowProjectlessDefaultEnabled === 'boolean'
+        ? record.popoutWindowProjectlessDefaultEnabled
+        : defaultAppPreferences.popoutWindowProjectlessDefaultEnabled,
+    quickPhrases: Array.isArray(record.quickPhrases)
+      ? record.quickPhrases
+          .flatMap(item => normalizeQuickPhrase(item))
+          .filter(item => !isExpiredQuickPhraseStash(item))
+      : defaultAppPreferences.quickPhrases,
   }
+}
+
+function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
+  if (!value || typeof value !== 'object') return []
+  const record = value as Partial<QuickPhrase>
+  const id = typeof record.id === 'string' ? record.id : ''
+  const title = typeof record.title === 'string' ? record.title.trim() : ''
+  const content = typeof record.content === 'string' ? record.content.trim() : ''
+  const attachmentPaths = Array.isArray(record.attachmentPaths)
+    ? record.attachmentPaths.flatMap(path =>
+        typeof path === 'string' && path.trim() ? [path.trim()] : []
+      )
+    : []
+  const mode = record.mode
+  const createdAt =
+    typeof record.createdAt === 'number' && Number.isFinite(record.createdAt)
+      ? record.createdAt
+      : undefined
+  if (
+    !id ||
+    !title ||
+    (!content && attachmentPaths.length === 0) ||
+    !['normal', 'plan', 'goal'].includes(mode ?? '')
+  ) {
+    return []
+  }
+  return [
+    {
+      id,
+      title,
+      content,
+      mode: mode as QuickPhraseMode,
+      ...(attachmentPaths.length > 0 && { attachmentPaths }),
+      ...(createdAt !== undefined && { createdAt }),
+    },
+  ]
 }
 
 function emitAppPreferencesChanged(preferences: AppPreferences) {
@@ -155,11 +292,17 @@ export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<
     return preferences
   }
 
-  const nativePatch =
-    Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
+  const nativePatch = {
+    ...patch,
+    ...(Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
     patch.browserDownloadDirectory === null
-      ? { ...patch, browserDownloadDirectory: '' }
-      : patch
+      ? { browserDownloadDirectory: '' }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut') &&
+    patch.popoutWindowShortcut === null
+      ? { popoutWindowShortcut: '' }
+      : {}),
+  }
   const preferences = mergeAppPreferences(
     await invoke('update_app_preferences', { patch: nativePatch })
   )

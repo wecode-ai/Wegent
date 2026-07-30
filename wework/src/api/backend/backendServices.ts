@@ -1,18 +1,22 @@
 import { getToken } from '@/api/auth'
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
 import { createExecutorClientFromApis, type ExecutorTransportKind } from '@/api/executorAccess'
+import { createFeedbackApi } from '@/api/feedback'
 import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createAutomationApi } from '@/api/automations'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@wegent/chat-core'
 
@@ -42,8 +46,11 @@ export function createBackendWorkbenchServices(
     redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
   const deviceApi = createDeviceApi(client)
+  const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
+  const automationApi = createAutomationApi(client)
   const taskApi = createTaskApi(client)
+  const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
     socketBaseUrl: () => socketBaseUrl,
     path: socketPath,
@@ -57,12 +64,19 @@ export function createBackendWorkbenchServices(
     teamApi: createTeamApi(client),
     modelApi: createModelApi(client),
     skillApi: createSkillApi(client),
-    projectApi: createProjectApi(client),
+    projectApi,
     gitApi: createGitApi(client),
     taskApi,
     deviceApi,
+    deliveryApi,
+    feedbackApi: createFeedbackApi(apiBaseUrl, resolveToken),
+    projectSpaceApis: {
+      cloud: deliveryApi,
+      defaultLocation: 'cloud',
+    },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    automationApi,
     executorClient: createExecutorClientFromApis({
       transportKind,
       deviceApi,
@@ -73,6 +87,18 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    workspaceSessionApi: {
+      startProjectTerminal: projectApi.startTerminalSession,
+      startProjectCodeServer: projectApi.startCodeServerSession,
+      startDeviceTerminal: deviceApi.startTerminal,
+      startDeviceCodeServer: deviceApi.startCodeServer,
+      createRemoteTerminalClient: sessionId =>
+        createRemoteTerminalClient(sessionId, {
+          socketBaseUrl,
+          socketPath,
+          getToken: resolveToken,
+        }),
+    },
     chatStream: createChatStream(socketClient.socket),
   }
 }

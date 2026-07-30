@@ -61,12 +61,9 @@ test.describe('Admin - Public Model Management', () => {
     expect(adminPage.isOnAdminPage()).toBe(true)
 
     // Should see public models section - use more flexible selectors
-    const hasContent = await page
-      .locator('h2, h3, [data-testid="model-list"], table, .space-y-3, button')
-      .first()
-      .isVisible({ timeout: 10000 })
-      .catch(() => false)
-    expect(hasContent).toBe(true)
+    await expect(
+      page.locator('h2, h3, [data-testid="model-list"], table, .space-y-3, button').first()
+    ).toBeVisible({ timeout: 10000 })
   })
 
   test('should display public model list', async () => {

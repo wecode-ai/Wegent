@@ -206,6 +206,25 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
             "payload": {"projectKey": "p2", "appearance": {"color": "blue"}}
         }),
         json!({
+            "method": "runtime.sidebar.projects.sync_remote",
+            "payload": {
+                "projects": [{
+                    "id": "remote-1",
+                    "hostId": "remote-host-1",
+                    "remotePath": "/srv/remote",
+                    "label": "Remote"
+                }]
+            }
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.activate",
+            "payload": {
+                "projectKey": "remote-1",
+                "workspacePath": "/srv/remote",
+                "remoteHostId": "remote-host-1"
+            }
+        }),
+        json!({
             "method": "runtime.sidebar.tasks.reorder",
             "payload": {"projectKey": "p2", "threadId": "t2", "beforeThreadId": "t1"}
         }),
@@ -223,15 +242,144 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
     }
 
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
-    assert_eq!(state["project-order"], json!(["p2", "p1"]));
+    assert_eq!(state["project-order"], json!(["remote-1", "p2", "p1"]));
     assert_eq!(state["pinned-project-ids"], json!(["p2", "p1"]));
     assert_eq!(state["project-appearances"]["p2"], json!({"color": "blue"}));
+    assert_eq!(
+        state["remote-projects"],
+        json!([{
+            "id": "remote-1",
+            "hostId": "remote-host-1",
+            "remotePath": "/srv/remote",
+            "label": "Remote"
+        }])
+    );
+    assert_eq!(state["active-remote-project-id"], "remote-1");
+    assert_eq!(state["selected-remote-host-id"], "remote-host-1");
     assert_eq!(
         state["sidebar-project-thread-orders"]["p2"]["threadIds"],
         json!(["t2", "t1"])
     );
     assert_eq!(state["pinned-thread-ids"], json!(["t2", "t1"]));
     assert_eq!(state["unknown-codex-setting"], json!({"keep": true}));
+}
+
+#[tokio::test]
+async fn runtime_local_project_rpc_persists_multiple_roots() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-local-project-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-local-project-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(&codex_home, json!({"unknown": true}));
+    let first_root = temp_path("runtime-local-project-first", "dir");
+    let second_root = temp_path("runtime-local-project-second", "dir");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    let fake_codex = write_fake_codex_empty(&temp_path("runtime-local-project-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root]
+            }
+        }))
+        .await
+        .expect("local project mutation should succeed");
+
+    assert_eq!(response["accepted"], true);
+    assert_eq!(response["deviceId"], "device-1");
+    assert_eq!(response["projectKey"], "product");
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(state["local-projects"]["product"]["name"], "Product");
+    assert_eq!(
+        state["project-writable-roots"]["product"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(state["unknown"], true);
+}
+
+#[tokio::test]
+async fn runtime_local_project_keeps_existing_project_used_as_additional_root() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-shared-root-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-shared-root-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let project_a_root = temp_path("runtime-shared-root-project-a", "dir");
+    let project_b_root = temp_path("runtime-shared-root-project-b", "dir");
+    fs::create_dir_all(&project_a_root).unwrap();
+    fs::create_dir_all(&project_b_root).unwrap();
+    let fake_codex = write_fake_codex_empty(&temp_path("runtime-shared-root-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.workspaces.open",
+            "payload": {
+                "runtime": "codex",
+                "workspacePath": project_a_root,
+                "label": "Project A"
+            }
+        }))
+        .await
+        .expect("project A should open");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "project-b",
+                "name": "Project B",
+                "roots": [project_b_root, project_a_root]
+            }
+        }))
+        .await
+        .expect("project B should include project A as an additional root");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("projects should list");
+    let workspaces = listed["workspaces"]
+        .as_array()
+        .expect("workspaces should be an array");
+
+    assert_eq!(workspaces.len(), 2);
+    assert!(workspaces.iter().any(|workspace| {
+        workspace["workspacePath"] == project_a_root.display().to_string()
+            && workspace["label"] == "Project A"
+            && workspace["projectKey"] == project_a_root.display().to_string()
+    }));
+    assert!(workspaces.iter().any(|workspace| {
+        workspace["workspacePath"] == project_b_root.display().to_string()
+            && workspace["label"] == "Project B"
+            && workspace["projectKey"] == "project-b"
+            && workspace["projectRoots"]
+                == json!([
+                    project_b_root.display().to_string(),
+                    project_a_root.display().to_string()
+                ])
+    }));
 }
 
 #[tokio::test]
@@ -357,7 +505,10 @@ async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
         json!({
             "projectless-thread-ids": ["thread-newer", "thread-older"],
             "sidebar-project-thread-orders": {
-                "chats": {"threadIds": ["thread-older", "thread-newer"]}
+                "chats": {
+                    "threadIds": ["thread-older", "thread-newer"],
+                    "sortKey": "manual"
+                }
             }
         }),
     );
@@ -1023,6 +1174,13 @@ async fn runtime_archives_project_and_all_conversations() {
     assert_eq!(archive_calls.len(), 2);
     assert_eq!(archive_calls[0]["params"]["threadId"], "thread-project");
     assert_eq!(archive_calls[1]["params"]["threadId"], "thread-other");
+    let unsubscribe_calls = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "thread/unsubscribe")
+        .collect::<Vec<_>>();
+    assert_eq!(unsubscribe_calls.len(), 2);
+    assert_eq!(unsubscribe_calls[0]["params"]["threadId"], "thread-project");
+    assert_eq!(unsubscribe_calls[1]["params"]["threadId"], "thread-other");
 }
 
 #[tokio::test]
@@ -1088,6 +1246,9 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     let mut codex_state = read_json_file(&codex_home.join(".codex-global-state.json"));
     codex_state["active-workspace-roots"] = json!(["/tmp/project"]);
     codex_state["pinned-project-ids"] = json!(["/tmp/project", "remote-project"]);
+    codex_state["thread-workspace-root-hints"] = json!({
+        "thread-in-project": "/tmp/project"
+    });
     write_codex_global_state(&codex_home, codex_state);
     let removed = handler
         .handle_runtime_rpc(json!({
@@ -1120,6 +1281,7 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     assert_eq!(codex_state["project-order"], json!([]));
     assert_eq!(codex_state["active-workspace-roots"], json!([]));
     assert_eq!(codex_state["pinned-project-ids"], json!(["remote-project"]));
+    assert_eq!(codex_state["thread-workspace-root-hints"], json!({}));
     assert_eq!(codex_state["electron-workspace-root-labels"], json!({}));
 }
 
@@ -1282,7 +1444,7 @@ async fn runtime_task_list_keeps_cached_codex_store_entries_until_provider_disco
 }
 
 #[tokio::test]
-async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_thread_exists() {
+async fn runtime_task_list_keeps_distinct_tasks_with_matching_titles() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-pending-shadow-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1345,13 +1507,13 @@ async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_threa
         .expect("task list should succeed");
 
     let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["taskId"], "thread-real");
-    assert_eq!(tasks[0]["running"], false);
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks.iter().any(|task| task["taskId"] == "thread-real"));
+    assert!(tasks.iter().any(|task| task["taskId"] == "local-pending"));
 }
 
 #[tokio::test]
-async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
+async fn runtime_task_list_ignores_persisted_running_state_for_unmapped_tasks() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-pending-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1401,7 +1563,6 @@ async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
     let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["taskId"], "unmapped-pending");
-    assert_eq!(tasks[0]["status"], "active");
     assert_eq!(tasks[0]["running"], false);
 }
 
@@ -1436,6 +1597,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/archive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"success":true}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
   esac
 done

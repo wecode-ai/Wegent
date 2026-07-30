@@ -50,6 +50,19 @@ class APIKeyListResponse(BaseModel):
     total: int
 
 
+class APIKeyLookupRequest(BaseModel):
+    """Request schema for looking up an API key's owner."""
+
+    api_key: str = Field(..., min_length=1, description="Raw API key to look up")
+
+
+class APIKeyLookupResponse(BaseModel):
+    """Response schema for an API key lookup."""
+
+    exists: bool
+    user_name: Optional[str] = None
+
+
 # Service Key Schemas
 
 

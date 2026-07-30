@@ -76,4 +76,5 @@ async def test_cleanup_sandbox_by_task_id_calls_manager(mocker):
         task_id=1967,
         dry_run=False,
         archive_before_delete=False,
+        delete_on_archive_failure=False,
     )

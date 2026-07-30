@@ -4,6 +4,7 @@ import {
   ChevronRight,
   FolderGit2,
   Info,
+  MessageSquareText,
   Package,
   Palette,
   SlidersHorizontal,
@@ -22,6 +23,7 @@ import { PluginSettingsPage } from './PluginSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
@@ -51,10 +53,37 @@ export function MobileSettingsPage({
     | 'about'
     | 'personal'
     | 'model-settings'
+    | 'quick-phrases'
     | 'plugins'
     | 'worktrees'
     | 'archived-conversations'
   >('menu')
+
+  if (activePage === 'quick-phrases') {
+    return (
+      <main
+        data-testid="mobile-quick-phrases-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-quick-phrases-back-button"
+            onClick={() => setActivePage('personal')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.quick_phrases', '快捷短语')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <QuickPhrasesSettingsPage />
+        </div>
+      </main>
+    )
+  }
 
   if (activePage === 'general') {
     return (
@@ -326,6 +355,18 @@ export function MobileSettingsPage({
             <Info className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
               {t('workbench.settings_nav_about', '关于')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
+            data-testid="mobile-settings-quick-phrases-button"
+            onClick={() => setActivePage('quick-phrases')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <MessageSquareText className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.quick_phrases', '快捷短语')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>

@@ -318,6 +318,62 @@ export function selectRuntimeWorkView(
     : localRuntimeWork
 }
 
+function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
+  return workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId)
+}
+
+function isRemoteRuntimeProject(project: RuntimeProjectWork): boolean {
+  return (
+    project.project.kind === 'remote' ||
+    project.project.source === 'remote_project' ||
+    (project.deviceWorkspaces.length > 0 &&
+      project.deviceWorkspaces.every(isRemoteRuntimeWorkspace))
+  )
+}
+
+export function filterDisconnectedRemoteRuntimeWork(
+  runtimeWork: RuntimeWorkListResponse
+): RuntimeWorkListResponse {
+  let changed = false
+  const projects = runtimeWork.projects.flatMap(project => {
+    if (isRemoteRuntimeProject(project)) {
+      changed = true
+      return []
+    }
+
+    const deviceWorkspaces = project.deviceWorkspaces.filter(
+      workspace => !isRemoteRuntimeWorkspace(workspace)
+    )
+    if (deviceWorkspaces.length === project.deviceWorkspaces.length) {
+      return [project]
+    }
+
+    changed = true
+    if (deviceWorkspaces.length === 0) return []
+    return [
+      {
+        ...project,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      },
+    ]
+  })
+  const chats = runtimeWork.chats.filter(workspace => !isRemoteRuntimeWorkspace(workspace))
+  if (chats.length !== runtimeWork.chats.length) changed = true
+  if (!changed) return runtimeWork
+
+  return {
+    ...runtimeWork,
+    projects,
+    chats,
+    totalTasks:
+      projects.reduce(
+        (total, project) => total + countWorkspaceTasks(project.deviceWorkspaces),
+        0
+      ) + countWorkspaceTasks(chats),
+  }
+}
+
 export function createDeviceResolver(input: {
   localDevices: DeviceInfo[]
   cloudState: CloudRuntimeState
@@ -486,7 +542,7 @@ function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): D
 }
 
 function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
-  return deviceRoutePriority(incoming) < deviceRoutePriority(existing) ? incoming : existing
+  return deviceRoutePriority(incoming) <= deviceRoutePriority(existing) ? incoming : existing
 }
 
 function deviceRoutePriority(device: DeviceInfo): number {
@@ -585,6 +641,7 @@ function mergeRuntimeProjects(
   canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeProjectWork[] {
   const projects = new Map<string, RuntimeProjectWork>()
+  const remoteProjectAliases = new Map<string, string>()
 
   const upsertProject = (project: RuntimeProjectWork) => {
     const normalizedProject: RuntimeProjectWork = {
@@ -598,26 +655,63 @@ function mergeRuntimeProjects(
     }
     normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
-    const key = runtimeProjectKey(normalizedProject)
+    const defaultKey = runtimeProjectKey(normalizedProject)
+    const remoteIdentity = normalizedProject.deviceWorkspaces
+      .map(runtimeRemoteWorkspaceIdentity)
+      .find(identity => remoteProjectAliases.has(identity))
+    const key = remoteIdentity
+      ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
+      : defaultKey
+    if (isRuntimeRemoteProjectDescriptor(normalizedProject)) {
+      normalizedProject.deviceWorkspaces.forEach(workspace => {
+        remoteProjectAliases.set(runtimeRemoteWorkspaceIdentity(workspace), key)
+      })
+    }
     const existing = projects.get(key)
     if (!existing) {
       projects.set(key, normalizedProject)
       return
     }
 
+    const existingIsRemoteDescriptor = isRuntimeRemoteProjectDescriptor(existing)
+    const incomingIsRemoteDescriptor = isRuntimeRemoteProjectDescriptor(normalizedProject)
+    const incomingWorkspaces = existingIsRemoteDescriptor
+      ? normalizedProject.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          workspaceSource: 'remote',
+          remoteHostId: workspace.remoteHostId ?? workspace.deviceId,
+        }))
+      : normalizedProject.deviceWorkspaces
     const deviceWorkspaces = mergeRuntimeWorkspaces(
-      existing.deviceWorkspaces,
-      normalizedProject.deviceWorkspaces,
+      existingIsRemoteDescriptor && !incomingIsRemoteDescriptor ? [] : existing.deviceWorkspaces,
+      incomingWorkspaces,
       taskOwners,
       canonicalizer
     )
+    const projectRef =
+      existingIsRemoteDescriptor && !incomingIsRemoteDescriptor
+        ? {
+            ...existing.project,
+            ...normalizedProject.project,
+            key: normalizedProject.project.key,
+            sidebarStateKey: existing.project.sidebarStateKey ?? existing.project.key,
+            stateDeviceId: existing.project.stateDeviceId,
+            kind: 'remote',
+            source: 'remote_project',
+            name: existing.project.name,
+            pinned: existing.project.pinned,
+            pinnedOrder: existing.project.pinnedOrder,
+            active: existing.project.active,
+            appearance: existing.project.appearance,
+          }
+        : {
+            ...normalizedProject.project,
+            ...existing.project,
+          }
     projects.set(key, {
       ...existing,
       ...normalizedProject,
-      project: {
-        ...normalizedProject.project,
-        ...existing.project,
-      },
+      project: projectRef,
       deviceWorkspaces,
       totalTasks: countWorkspaceTasks(deviceWorkspaces),
     })
@@ -627,6 +721,15 @@ function mergeRuntimeProjects(
   secondaryProjects.forEach(upsertProject)
 
   return Array.from(projects.values())
+}
+
+function isRuntimeRemoteProjectDescriptor(project: RuntimeProjectWork): boolean {
+  return project.project.source === 'remote_project' && Boolean(project.project.sidebarStateKey)
+}
+
+function runtimeRemoteWorkspaceIdentity(workspace: RuntimeDeviceWorkspace): string {
+  const normalizedPath = workspace.workspacePath.trim().replace(/\/+$/u, '') || '/'
+  return `${workspace.remoteHostId ?? workspace.deviceId}\0${normalizedPath}`
 }
 
 function mergeRuntimeWorkspaces(
@@ -656,6 +759,10 @@ function mergeRuntimeWorkspaces(
       workspace: {
         ...canonicalWorkspace,
         ...(existing ?? {}),
+        deviceName:
+          existing?.workspaceSource === 'remote' && canonicalWorkspace.workspaceSource === 'remote'
+            ? (canonicalWorkspace.deviceName ?? existing.deviceName)
+            : (existing?.deviceName ?? canonicalWorkspace.deviceName),
         available: (existing?.available ?? false) || canonicalWorkspace.available,
         tasks,
       },

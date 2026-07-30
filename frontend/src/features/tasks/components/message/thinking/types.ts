@@ -98,10 +98,12 @@ export type ToolStatus =
  */
 interface BaseBlock {
   id: string // Unique block identifier
+  parent_tool_use_id?: string // Parent subagent tool use ID
   status?:
     | 'pending'
     | 'generating_arguments'
     | 'streaming'
+    | 'invoking'
     | 'done'
     | 'error'
     | 'queued'
@@ -133,6 +135,23 @@ export interface ToolBlock extends BaseBlock {
   render_payload?: unknown // UI-only renderer payload
   argument_status?: 'streaming' | 'done'
   metadata?: Record<string, unknown> // Additional metadata
+}
+
+/**
+ * Claude Code subagent block
+ */
+export interface SubagentBlock extends BaseBlock {
+  type: 'subagent'
+  tool_use_id: string // Parent Task tool call ID
+  tool_name?: string // Usually Task
+  display_name?: string
+  agent_type?: string
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: MessageBlock[] // Nested text/thinking/tool blocks from the child agent
+  metadata?: Record<string, unknown>
 }
 
 /**
@@ -266,6 +285,7 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
 export type MessageBlock =
   | TextBlock
   | ToolBlock
+  | SubagentBlock
   | ThinkingBlock
   | GuidanceBlock
   | ErrorBlock
@@ -286,6 +306,13 @@ export function isTextBlock(block: MessageBlock): block is TextBlock {
  */
 export function isToolBlock(block: MessageBlock): block is ToolBlock {
   return block.type === 'tool'
+}
+
+/**
+ * Type guard for SubagentBlock
+ */
+export function isSubagentBlock(block: MessageBlock): block is SubagentBlock {
+  return block.type === 'subagent'
 }
 
 /**

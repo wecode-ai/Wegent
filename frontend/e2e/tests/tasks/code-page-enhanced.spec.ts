@@ -30,15 +30,7 @@ test.describe('Code Mode - Enhanced Tests', () => {
     expect(currentUrl.pathname).toBe('/chat')
     expect(currentUrl.searchParams.get('agent')).toBe('code')
 
-    // Check main layout elements - use flexible check
-    const sidebar = page.locator('[data-testid="task-sidebar"], aside').first()
-    const hasSidebar = await sidebar.isVisible({ timeout: 10000 }).catch(() => false)
-
-    // Check top navigation
-    const topNav = page.locator('nav, header').first()
-    const hasNav = await topNav.isVisible({ timeout: 5000 }).catch(() => false)
-
-    expect(hasSidebar || hasNav).toBe(true)
+    await expect(page.getByTestId('task-sidebar')).toBeVisible({ timeout: 15000 })
   })
 
   test('should display team selector in code mode', async ({ page }) => {

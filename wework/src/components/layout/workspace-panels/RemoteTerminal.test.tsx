@@ -1,10 +1,12 @@
 import { render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { RemoteTerminal } from './RemoteTerminal'
 
 const testState = vi.hoisted(() => ({
+  terminalConstructorOptions: [] as Array<Record<string, unknown>>,
   terminalInstances: [] as Array<{
     rows: number
     cols: number
@@ -54,7 +56,8 @@ vi.mock('@xterm/addon-web-links', () => ({
 }))
 
 vi.mock('@xterm/xterm', () => ({
-  Terminal: vi.fn().mockImplementation(function TerminalMock() {
+  Terminal: vi.fn().mockImplementation(function TerminalMock(options: Record<string, unknown>) {
+    testState.terminalConstructorOptions.push(options)
     const dataHandlers: Array<(data: string) => void> = []
     const terminal = {
       rows: 24,
@@ -122,6 +125,7 @@ describe('RemoteTerminal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     testState.terminalInstances.length = 0
+    testState.terminalConstructorOptions.length = 0
     testState.webLinksAddonInstances.length = 0
     testState.resizeObserverInstances.length = 0
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
@@ -148,11 +152,49 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     testState.terminalInstances[0].emitData('pwd\r')
 
     await waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to write to remote terminal:', error)
+    })
+  })
+
+  test('keeps one terminal client during the StrictMode effect replay', async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null
+    const client = createClient({
+      onOutput: vi.fn(handler => {
+        outputHandler = handler
+        return vi.fn()
+      }),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    const { unmount } = render(
+      <StrictMode>
+        <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+      </StrictMode>
+    )
+
+    await waitFor(() => {
+      expect(createRemoteTerminalClientMock).toHaveBeenCalledTimes(1)
+      expect(client.attach).toHaveBeenCalledTimes(1)
+    })
+    outputHandler?.({ session_id: 'terminal-1', data: 'remote prompt$ ' })
+
+    expect(testState.terminalInstances).toHaveLength(1)
+    expect(testState.terminalInstances[0].write).toHaveBeenCalledWith('remote prompt$ ')
+
+    unmount()
+    await waitFor(() => {
+      expect(client.close).toHaveBeenCalledTimes(1)
+      expect(client.dispose).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -168,7 +210,14 @@ describe('RemoteTerminal', () => {
     const onExit = vi.fn()
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} onExit={onExit} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+        onExit={onExit}
+      />
+    )
     exitHandler?.({ session_id: 'terminal-1' })
 
     expect(onExit).toHaveBeenCalledTimes(1)
@@ -183,7 +232,13 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     testState.resizeObserverInstances[0].trigger()
 
     expect(client.resize).not.toHaveBeenCalled()
@@ -195,14 +250,24 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    const { rerender } = render(<RemoteTerminal sessionId="terminal-1" active />)
+    const { rerender } = render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     await waitFor(() => {
       expect(client.resize).toHaveBeenCalledTimes(1)
     })
 
-    rerender(<RemoteTerminal sessionId="terminal-1" active={false} />)
-    rerender(<RemoteTerminal sessionId="terminal-1" active />)
+    rerender(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
+    rerender(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     expect(client.resize).toHaveBeenCalledTimes(1)
   })
@@ -215,7 +280,9 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active />)
+    render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     await waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -232,12 +299,41 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     const terminal = testState.terminalInstances[0]
     const webLinksAddon = testState.webLinksAddonInstances[0]
 
     expect(terminal.loadAddon).toHaveBeenCalledWith(webLinksAddon)
     webLinksAddon.openUri('https://example.com/docs')
     expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/docs')
+  })
+
+  test('enables xterm transparency for a workbench background', () => {
+    createRemoteTerminalClientMock.mockReturnValue(
+      createClient({ attach: vi.fn(() => new Promise(() => undefined)) })
+    )
+
+    const { getByTestId } = render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active
+        showWorkbenchBackground
+      />
+    )
+
+    expect(testState.terminalConstructorOptions[0]).toEqual(
+      expect.objectContaining({
+        allowTransparency: true,
+        theme: expect.objectContaining({ background: 'rgba(0, 0, 0, 0)' }),
+      })
+    )
+    expect(getByTestId('remote-terminal')).toHaveClass('bg-transparent')
   })
 })

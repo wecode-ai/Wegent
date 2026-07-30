@@ -587,6 +587,7 @@ async def _create_subscription_task(
         git_repo_id=ws.git_repo_id,
         git_domain=ws.git_domain,
         branch_name=ws.branch_name,
+        task_type="task" if resolved_device_id else None,
         device_id=resolved_device_id,
     )
 
@@ -650,6 +651,7 @@ def _add_subscription_labels_to_task(
 
     Sets:
     - type='subscription': Mark this as a Subscription-triggered task
+    - taskType='task': Restore task-mode capabilities for device subscriptions
     - userInteracted='false': Task hidden from history until user interacts
     - subscriptionId: Associated Subscription ID
     - executionId/backgroundExecutionId: Associated execution record ID
@@ -682,6 +684,8 @@ def _add_subscription_labels_to_task(
         )
     # Subscription task identification
     task_crd.metadata.labels["type"] = "subscription"
+    if task_crd.spec.device_id:
+        task_crd.metadata.labels["taskType"] = "task"
     task_crd.metadata.labels["userInteracted"] = "false"
     # Subscription-specific labels
     task_crd.metadata.labels[LABEL_SUBSCRIPTION_ID] = str(subscription_id)
@@ -838,6 +842,36 @@ def _dispatch_due_subscription(
 
     try:
         subscription_crd = validate_subscription_for_read(subscription.json)
+        internal = subscription.json.get("_internal", {})
+        runtime_automation = internal.get("runtime_automation")
+        scheduled_for_value = internal.get("next_execution_time")
+        scheduled_for = None
+        if scheduled_for_value:
+            try:
+                scheduled_for = datetime.fromisoformat(scheduled_for_value)
+                if scheduled_for.tzinfo is not None:
+                    scheduled_for = scheduled_for.astimezone(timezone.utc).replace(
+                        tzinfo=None
+                    )
+            except (TypeError, ValueError):
+                scheduled_for = None
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        missed_recurring_run = (
+            isinstance(runtime_automation, dict)
+            and internal.get("trigger_type") != "one_time"
+            and scheduled_for is not None
+            and scheduled_for + timedelta(minutes=1) < now
+        )
+        overlapping_run = (
+            isinstance(runtime_automation, dict)
+            and db.query(BackgroundExecution.id)
+            .filter(
+                BackgroundExecution.subscription_id == subscription.id,
+                BackgroundExecution.status.in_(["PENDING", "RUNNING"]),
+            )
+            .first()
+            is not None
+        )
 
         trigger_reason = _get_trigger_reason(subscription_crd, trigger_type)
         execution = subscription_service.create_execution(
@@ -847,6 +881,22 @@ def _dispatch_due_subscription(
             trigger_type=trigger_type,
             trigger_reason=trigger_reason,
         )
+        if isinstance(runtime_automation, dict):
+            execution_model = (
+                db.query(BackgroundExecution)
+                .filter(BackgroundExecution.id == execution.id)
+                .first()
+            )
+            if execution_model is None:
+                raise RuntimeError(
+                    f"Background execution {execution.id} was not persisted"
+                )
+            execution_model.source_surface = "wework"
+            execution_model.runtime_device_id = runtime_automation.get(
+                "task_request", {}
+            ).get("deviceId")
+            execution_model.scheduled_for = scheduled_for or now
+            db.commit()
 
         try:
             _update_next_execution_time(
@@ -876,6 +926,21 @@ def _dispatch_due_subscription(
                 )
                 db.rollback()
             return False
+
+        if missed_recurring_run or overlapping_run:
+            reason = (
+                "Skipped because the scheduled time was missed"
+                if missed_recurring_run
+                else "Skipped because another automation run is active"
+            )
+            subscription_service.update_execution_status(
+                db,
+                execution_id=execution.id,
+                status=BackgroundExecutionStatus.SKIPPED,
+                error_message=reason,
+                skip_notifications=True,
+            )
+            return True
 
         try:
             subscription_service.dispatch_background_execution(
@@ -918,6 +983,120 @@ def _dispatch_due_subscription(
 
 # Lock timeout for check_due_subscriptions (should be longer than expected execution time)
 CHECK_DUE_SUBSCRIPTIONS_LOCK_TIMEOUT = 120  # seconds
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.subscription_tasks.execute_runtime_automation_task",
+    max_retries=0,
+)
+def execute_runtime_automation_task(
+    self,
+    subscription_id: int,
+    execution_id: int,
+):
+    """Create a Wework Runtime Task for a cloud automation execution."""
+    import asyncio
+
+    from app.db.session import get_db_session
+    from app.models.kind import Kind
+    from app.models.subscription import BackgroundExecution
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskCreateRequest
+    from app.schemas.subscription import BackgroundExecutionStatus
+    from app.services import runtime_work_service
+
+    with get_db_session() as db:
+        subscription = (
+            db.query(Kind)
+            .filter(
+                Kind.id == subscription_id,
+                Kind.kind == "Subscription",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(BackgroundExecution.id == execution_id)
+            .first()
+        )
+        if not subscription or not execution:
+            return {"status": "failed", "error": "automation execution not found"}
+
+        runtime_config = subscription.json.get("_internal", {}).get(
+            "runtime_automation"
+        )
+        if not isinstance(runtime_config, dict):
+            execution.status = BackgroundExecutionStatus.FAILED.value
+            execution.error_message = "Runtime automation configuration is missing"
+            db.commit()
+            return {"status": "failed", "error": execution.error_message}
+
+        try:
+            conversation_mode = runtime_config.get("conversation_mode", "independent")
+            payload_key = (
+                "continuation_payload"
+                if conversation_mode == "continue_thread"
+                else "task_request"
+            )
+            request_payload = dict(runtime_config.get(payload_key) or {})
+            request_payload["message"] = execution.prompt
+            context = dict(request_payload.get("additionalContext") or {})
+            context["automation_info"] = {
+                "type": "automation_info",
+                "value": {
+                    "automationId": f"cloud:{subscription_id}",
+                    "runId": f"cloud-run:{execution_id}",
+                    "scheduledFor": (
+                        execution.scheduled_for or execution.created_at
+                    ).isoformat(),
+                },
+            }
+            request_payload["additionalContext"] = context
+            if conversation_mode == "continue_thread":
+                request = RuntimeSendRequest.model_validate(request_payload)
+                response = asyncio.run(
+                    runtime_work_service.send_runtime_message(
+                        db=db,
+                        user_id=subscription.user_id,
+                        request=request,
+                    )
+                )
+                execution.runtime_device_id = request.address.device_id
+            else:
+                request = RuntimeTaskCreateRequest.model_validate(request_payload)
+                response = asyncio.run(
+                    runtime_work_service.create_runtime_task(
+                        db=db,
+                        user_id=subscription.user_id,
+                        request=request,
+                    )
+                )
+                execution.runtime_device_id = response.device_id
+            execution.runtime_task_id = response.local_task_id
+            execution.status = BackgroundExecutionStatus.RUNNING.value
+            execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            execution.error_message = ""
+            db.commit()
+            return {
+                "status": "running",
+                "device_id": execution.runtime_device_id,
+                "task_id": response.local_task_id,
+            }
+        except Exception as exc:
+            error = str(exc)
+            execution.status = BackgroundExecutionStatus.FAILED.value
+            execution.error_message = error
+            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            db.commit()
+            logger.error(
+                "[runtime_automation] Failed execution %s for subscription %s: %s",
+                execution_id,
+                subscription_id,
+                error,
+                exc_info=True,
+            )
+            return {"status": "failed", "error": error}
 
 
 @celery_app.task(bind=True, name="app.tasks.subscription_tasks.check_due_subscriptions")

@@ -32,6 +32,11 @@ interface ResolveProjectRuntimeWorkspaceTargetOptions {
   selectedDeviceWorkspaceId?: number | null
 }
 
+interface ResolveProjectRuntimeWorkspaceTargetsOptions {
+  currentProject: ProjectWithTasks | null
+  runtimeWork: RuntimeWorkListResponse | null
+}
+
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget
@@ -55,6 +60,17 @@ export function createLocalFileWorkspaceTarget(
     source: 'runtime',
     workspaceSource: 'local',
   }
+}
+
+export function createLocalAttachmentWorkspaceTarget(
+  filePath: string,
+  devices: DeviceInfo[]
+): WorkspaceTarget | null {
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
+  const isLocalAttachment =
+    normalizedPath.includes('/.wegent-executor/workspace/attachments/') ||
+    normalizedPath.includes('/.wegent/attachments/')
+  return isLocalAttachment ? createLocalFileWorkspaceTarget(normalizedPath, devices) : null
 }
 
 async function projectWorkspaceTarget(
@@ -101,6 +117,11 @@ function selectProjectDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+function workspaceTargetDeviceId(workspace: RuntimeDeviceWorkspace): string {
+  const remoteHostId = workspace.remoteHostId?.trim()
+  return workspace.workspaceSource === 'remote' && remoteHostId ? remoteHostId : workspace.deviceId
+}
+
 export function resolveProjectRuntimeWorkspaceTarget({
   currentProject,
   runtimeWork,
@@ -114,13 +135,27 @@ export function resolveProjectRuntimeWorkspaceTarget({
   if (!workspace || !workspacePath) return null
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'project',
     ...(workspace.workspaceSource !== undefined
       ? { workspaceSource: workspace.workspaceSource }
       : {}),
   }
+}
+
+export function resolveProjectRuntimeWorkspaceTargets({
+  currentProject,
+  runtimeWork,
+}: ResolveProjectRuntimeWorkspaceTargetsOptions): WorkspaceTarget[] {
+  return projectDeviceWorkspaces(runtimeWork, currentProject?.id).map(workspace => ({
+    deviceId: workspaceTargetDeviceId(workspace),
+    path: workspace.workspacePath,
+    source: 'project',
+    ...(workspace.workspaceSource !== undefined
+      ? { workspaceSource: workspace.workspaceSource }
+      : {}),
+  }))
 }
 
 function workspaceTargetFromRuntimeTask(
@@ -133,7 +168,7 @@ function workspaceTargetFromRuntimeTask(
       : task.workspacePath || workspace.workspacePath
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'runtime',
     taskId: task.taskId,

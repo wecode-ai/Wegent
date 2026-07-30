@@ -7,16 +7,17 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 60_000
+const commandResultGraceMs = 5_000
 const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -26,15 +27,22 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|click|close-to-tray|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
+  --codex-home-initialization true
+                            Seed and verify isolated first-run Codex migration
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
+                            Required destination selector for drag
+  --file PATH               File to dispatch for drop-file
+  --value JSON              Path descriptors for paste-paths or drop-paths
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
+  --visible true            Require a visible element for wait-for
+  --stable MS               Require the wait-for condition to remain stable
   --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
 }
 
@@ -51,6 +59,14 @@ function parseArgs(argv) {
     index += 1
   }
   return { command, options }
+}
+
+export function resolveStartupTimeout(timeout) {
+  const configuredTimeout = timeout === undefined ? startupTimeoutMs : Number(timeout)
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new Error('--timeout must be a finite positive number')
+  }
+  return configuredTimeout
 }
 
 function json(response, status, value) {
@@ -93,6 +109,16 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+export function takeWritableCommandPoll(commandPolls) {
+  let poll = commandPolls.shift()
+  while (poll) {
+    clearTimeout(poll.timer)
+    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
+    poll = commandPolls.shift()
+  }
+  return undefined
+}
+
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
   await signalProcessGroup(session.launcherPid, 'TERM')
@@ -112,6 +138,7 @@ function signalProcessGroup(processGroupId, signal) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
+  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -131,11 +158,28 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
+        if (command) return json(response, 200, command)
+
+        const poll = { response, timer: undefined, closed: false }
+        poll.timer = setTimeout(() => {
+          const index = commandPolls.indexOf(poll)
+          if (index >= 0) commandPolls.splice(index, 1)
           response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+          response.end()
+        }, defaultTimeoutMs)
+        commandPolls.push(poll)
+        response.once('close', () => {
+          poll.closed = true
+          const index = commandPolls.indexOf(poll)
+          if (index < 0) return
+          commandPolls.splice(index, 1)
+          clearTimeout(poll.timer)
+        })
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        response.writeHead(204, corsHeaders)
+        return response.end()
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -152,6 +196,9 @@ async function runServer(sessionPath, token) {
           ready: Boolean(ready),
           readyInfo: ready,
           pid: app?.pid ?? null,
+          queuedCommands: queue.length,
+          commandPolls: commandPolls.length,
+          pendingCommands: pending.size,
         })
       }
       if (request.method === 'POST' && url.pathname === '/command') {
@@ -162,11 +209,21 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const nextCommand = { id, ...command }
+        const poll = takeWritableCommandPoll(commandPolls)
+        if (poll) {
+          json(poll.response, 200, nextCommand)
+        } else {
+          queue.push(nextCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
-            value: await withTimeout(result, timeoutMs, `Timed out running ${command.action}`),
+            value: await withTimeout(
+              result,
+              timeoutMs + commandResultGraceMs,
+              `Timed out running ${command.action}`
+            ),
           })
         } catch (error) {
           pending.delete(id)
@@ -191,30 +248,35 @@ async function runServer(sessionPath, token) {
   const updated = {
     ...session,
     controlUrl,
-    socketPath: join(tmpdir(), `wework-ai-${randomUUID()}.sock`),
     status: 'starting',
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = session.verifyCodexHomeInitialization
+    ? join(session.directory, 'native-codex')
+    : undefined
   await mkdir(codexHome, { recursive: true })
-  await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
+  if (nativeCodexHome) {
+    await mkdir(nativeCodexHome, { recursive: true })
+    await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
+    await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
+  }
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
-    env: {
-      ...process.env,
-      VITE_WEWORK_E2E: 'true',
-      VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-      VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
-      CODEX_HOME: codexHome,
-      DEVICE_ID: session.deviceId,
-      WEGENT_EXECUTOR_APP_IPC_SOCKET: updated.socketPath,
-      WEGENT_EXECUTOR_HOME: executorHome,
-      WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
-      WEGENT_EXECUTOR_LOG_DIR: session.directory,
-    },
+    env: buildAiVerifyEnvironment(process.env, {
+      controlUrl,
+      token,
+      codexHome,
+      nativeCodexHome,
+      verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
+      deviceId: session.deviceId,
+      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
+      executorHome,
+      sessionDirectory: session.directory,
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
@@ -267,6 +329,7 @@ async function main() {
           directory,
           token,
           status: 'starting',
+          verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,
         2
@@ -278,9 +341,16 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    const startupDeadline = Date.now() + startupTimeoutMs
+    const startupDeadline = Date.now() + resolveStartupTimeout(options.timeout)
     while (Date.now() < startupDeadline) {
-      const session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      let session
+      try {
+        session = JSON.parse(await readFile(sessionPath, 'utf8'))
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+        continue
+      }
       if (session.controlUrl) {
         try {
           const status = await request(session, token, '/status')
@@ -303,7 +373,6 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(session.socketPath, { force: true })
     await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
     return
   }
@@ -313,14 +382,27 @@ async function main() {
   }
   const action = {
     capture: 'capture',
+    'capture-popout': 'capturePopoutWindow',
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    'dismiss-popout': 'dismissPopoutWindow',
+    drag: 'drag',
+    'drop-file': 'dropFile',
+    'drop-paths': 'dropPaths',
     fill: 'fill',
     hover: 'hover',
+    metrics: 'getElementMetrics',
+    navigate: 'navigate',
+    'paste-paths': 'pastePaths',
     'pointer-move': 'pointerMove',
     press: 'press',
+    'scroll-into-view': 'scrollIntoView',
+    'select-text': 'selectText',
+    'show-popout': 'showPopoutWindow',
+    'system-drag-drop': 'completeSystemDragDrop',
     'wait-for': 'waitFor',
+    'window-focus-snapshot': 'getWindowFocusSnapshot',
     text: 'getText',
   }[command]
   if (!action) {
@@ -331,23 +413,44 @@ async function main() {
   const selector =
     options.selector ??
     (command === 'capture' ||
+    command === 'capture-popout' ||
     command === 'snapshot' ||
+    command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
+    command === 'dismiss-popout' ||
+    command === 'show-popout' ||
+    command === 'system-drag-drop' ||
+    command === 'window-focus-snapshot' ||
     command === 'close-to-tray'
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')
+  const dropFilePath = command === 'drop-file' ? options.file : undefined
+  if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
+  const dropFileExtension = dropFilePath ? extname(dropFilePath).toLowerCase() : ''
+  const dropFileMimeType =
+    dropFileExtension === '.png'
+      ? 'image/png'
+      : dropFileExtension === '.jpg' || dropFileExtension === '.jpeg'
+        ? 'image/jpeg'
+        : dropFileExtension === '.txt'
+          ? 'text/plain'
+          : 'application/octet-stream'
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
     target: options.target,
-    value: options.value,
+    value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,
+    filename: dropFilePath ? basename(dropFilePath) : undefined,
+    mimeType: dropFilePath ? dropFileMimeType : undefined,
     key: options.key,
     text: options.text,
+    visible: options.visible === 'true',
+    stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: options.timeout ? Number(options.timeout) : undefined,
   })
-  if (command === 'capture') {
+  if (command === 'capture' || command === 'capture-popout') {
     if (!options.output) throw new Error('--output is required')
     const prefix = 'data:image/png;base64,'
     if (!value.value?.startsWith(prefix)) throw new Error('Invalid screenshot payload')
@@ -360,7 +463,9 @@ async function main() {
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
-main().catch(error => {
-  console.error(`ai:verify: ${error.message ?? error}`)
-  process.exitCode = 1
-})
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`ai:verify: ${error.message ?? error}`)
+    process.exitCode = 1
+  })
+}

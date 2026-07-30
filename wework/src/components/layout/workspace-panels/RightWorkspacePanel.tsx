@@ -18,6 +18,7 @@ import {
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
@@ -26,6 +27,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
@@ -36,12 +38,22 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 
-const RIGHT_WORKSPACE_SHORTCUTS = {
-  review: '⌥⌘R',
-  browser: '⌘T',
-  chat: '⌥⌘S',
-  files: '⌥⌘F',
-} as const
+function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
+  if (platform === 'win') {
+    return {
+      review: 'Alt+Ctrl+R',
+      browser: 'Ctrl+T',
+      chat: 'Alt+Ctrl+S',
+      files: 'Alt+Ctrl+F',
+    } as const
+  }
+  return {
+    review: '⌥⌘R',
+    browser: '⌘T',
+    chat: '⌥⌘S',
+    files: '⌥⌘F',
+  } as const
+}
 
 export type RightWorkspaceChatTab = `chat:${string}`
 export type RightWorkspacePanelTab =
@@ -73,7 +85,9 @@ interface RightWorkspaceReviewState {
 }
 
 interface RightWorkspacePanelProps {
+  showWorkbenchBackground?: boolean
   visible: boolean
+  expanded?: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
@@ -82,8 +96,10 @@ interface RightWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   fileWorkspaceTarget?: WorkspaceTarget | null
+  fileWorkspaceTargets?: WorkspaceTarget[]
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
+  workspaceSessionApi?: WorkspaceSessionApi
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
@@ -95,6 +111,7 @@ interface RightWorkspacePanelProps {
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
   onSelectReview: () => void
   onSelectTerminal: () => void
   onSelectBrowser: () => void
@@ -104,10 +121,14 @@ interface RightWorkspacePanelProps {
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onRefreshReview?: () => void
+  onRestoreConversation?: () => void
+  getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
+  showWorkbenchBackground = false,
   visible,
+  expanded = false,
   activeView,
   openTabs,
   currentProject,
@@ -116,8 +137,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   devices,
   workspaceTarget,
   fileWorkspaceTarget = workspaceTarget,
+  fileWorkspaceTargets,
   preferLocalTerminal = false,
   terminalContextTitle,
+  workspaceSessionApi,
   workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
@@ -129,6 +152,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onSelectFileWorkspaceTarget,
   onSelectReview,
   onSelectTerminal,
   onSelectBrowser,
@@ -137,11 +161,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onSelectTab,
   onCloseTab,
   onRefreshReview,
+  onRestoreConversation,
+  getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
-  const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
+  const platform = getPlatform()
+  const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
   const [browserTitle, setBrowserTitle] = useState<string | null>(null)
@@ -152,7 +179,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     setBrowserFaviconUrl(null)
     setBrowserTitle(null)
     onSelectBrowser()
-  }, [onSelectBrowser])
+  }, [onSelectBrowser, setBrowserFaviconUrl, setBrowserTitle])
 
   useEffect(() => {
     if (!visible) return
@@ -161,7 +188,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       if (event.defaultPrevented || isEditableShortcutTarget(event.target)) return
 
       const key = event.key.toLowerCase()
-      const primaryPressed = event.metaKey && !event.ctrlKey && !event.shiftKey
+      const primaryPressed =
+        platform === 'win'
+          ? event.ctrlKey && !event.metaKey && !event.shiftKey
+          : event.metaKey && !event.shiftKey
 
       if (primaryPressed && !event.altKey && key === 't' && !browserOpen) {
         event.preventDefault()
@@ -193,6 +223,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     onSelectFiles,
     onSelectReview,
     openBrowserTab,
+    platform,
     visible,
   ])
 
@@ -215,7 +246,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       testId: 'right-workspace-review-option',
       icon: FileDiff,
       label: t('workbench.workspace_tab_review', '审查'),
-      shortcut: RIGHT_WORKSPACE_SHORTCUTS.review,
+      shortcut: getRightWorkspaceShortcuts(platform).review,
       disabled: !canOpenReview,
       onSelect: onSelectReview,
     },
@@ -233,7 +264,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             testId: 'right-workspace-browser-option',
             icon: Globe2,
             label: t('workbench.browser'),
-            shortcut: RIGHT_WORKSPACE_SHORTCUTS.browser,
+            shortcut: getRightWorkspaceShortcuts(platform).browser,
             onSelect: openBrowserTab,
           },
         ]
@@ -243,7 +274,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       testId: 'right-workspace-chat-option',
       icon: MessageCircle,
       label: t('workbench.workspace_tab_chat', '临时聊天'),
-      shortcut: RIGHT_WORKSPACE_SHORTCUTS.chat,
+      shortcut: getRightWorkspaceShortcuts(platform).chat,
       onSelect: onSelectChat,
     },
     ...(canBrowseFiles
@@ -253,7 +284,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             testId: 'right-workspace-file-option',
             icon: File,
             label: t('workbench.workspace_tab_files', '文件'),
-            shortcut: RIGHT_WORKSPACE_SHORTCUTS.files,
+            shortcut: getRightWorkspaceShortcuts(platform).files,
             onSelect: onSelectFiles,
           },
         ]
@@ -268,7 +299,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         'relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
         renderTabsInTitlebar
           ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
-          : 'h-10 border-b border-border bg-background px-3'
+          : cn(
+              'h-10 px-3',
+              platform === 'win' ? '' : 'border-b border-border',
+              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+            )
       )}
     >
       {visibleTabs.map(tab => (
@@ -319,7 +354,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   return (
     <section
       data-testid="right-workspace-panel"
-      className="relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col bg-background opacity-100 transition-[opacity,transform] duration-300 ease-out"
+      className={cn(
+        'relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col opacity-100 transition-[opacity,transform] duration-300 ease-out',
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      )}
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}
       {renderTabsInTitlebar ? null : tabBar}
@@ -349,6 +387,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'terminal' ? (
           <WorkspacePanelCards
+            showWorkbenchBackground={showWorkbenchBackground}
             currentProject={currentProject}
             devices={devices}
             workspaceTarget={workspaceTarget}
@@ -356,6 +395,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             hideTerminalChrome
             preferLocalTerminal={preferLocalTerminal}
             terminalContextTitle={terminalContextTitle}
+            workspaceSessionApi={workspaceSessionApi}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
@@ -378,9 +418,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                   : 'empty'
               }
               target={fileWorkspaceTarget}
+              workspaceTargets={fileWorkspaceTargets}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}
+              onSelectWorkspaceTarget={onSelectFileWorkspaceTarget}
             />
           )
         )}
@@ -393,6 +435,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               currentProject={currentProject}
               source={currentRuntimeTask}
               instanceId={tab}
+              initialInput={getChatInitialInput?.(tab)}
+              expanded={expanded && activeView === tab}
+              onRestoreConversation={onRestoreConversation}
               testId={
                 activeView === tab
                   ? 'right-workspace-chat-panel'
@@ -528,7 +573,7 @@ function PlanWorkspacePanel({ content }: { content: string }) {
       data-testid="workspace-plan-panel"
       className="min-h-0 flex-1 overflow-y-auto bg-background px-8 py-6"
     >
-      <div className="mx-auto max-w-4xl text-[15px] leading-7 text-text-primary">
+      <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
         {content.trim() ? (
           <AssistantMarkdown content={content} />
         ) : (
@@ -559,6 +604,7 @@ function RightWorkspaceLauncher({
   onSelectChat: () => void
 }) {
   const { t } = useTranslation('common')
+  const platform = getPlatform()
 
   return (
     <div
@@ -570,7 +616,7 @@ function RightWorkspaceLauncher({
           data-testid="right-workspace-review-option"
           icon={FileDiff}
           label={t('workbench.workspace_tab_review', '审查')}
-          shortcut={RIGHT_WORKSPACE_SHORTCUTS.review}
+          shortcut={getRightWorkspaceShortcuts(platform).review}
           onClick={onSelectReview}
           disabled={!canOpenReview}
         />
@@ -579,7 +625,7 @@ function RightWorkspaceLauncher({
             data-testid="right-workspace-browser-option"
             icon={Globe2}
             label={t('workbench.browser')}
-            shortcut={RIGHT_WORKSPACE_SHORTCUTS.browser}
+            shortcut={getRightWorkspaceShortcuts(platform).browser}
             onClick={onSelectBrowser}
           />
         )}
@@ -587,7 +633,7 @@ function RightWorkspaceLauncher({
           data-testid="right-workspace-chat-option"
           icon={MessageCircle}
           label={t('workbench.workspace_tab_chat', '临时聊天')}
-          shortcut={RIGHT_WORKSPACE_SHORTCUTS.chat}
+          shortcut={getRightWorkspaceShortcuts(platform).chat}
           onClick={onSelectChat}
         />
         {canBrowseFiles && (
@@ -595,7 +641,7 @@ function RightWorkspaceLauncher({
             data-testid="right-workspace-file-option"
             icon={File}
             label={t('workbench.workspace_tab_files', '文件')}
-            shortcut={RIGHT_WORKSPACE_SHORTCUTS.files}
+            shortcut={getRightWorkspaceShortcuts(platform).files}
             onClick={onSelectFiles}
           />
         )}
@@ -625,11 +671,11 @@ function RightWorkspaceLauncherItem({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-[13px] font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-[11px] font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
         {shortcut}
       </span>
     </button>

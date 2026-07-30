@@ -1,17 +1,10 @@
-import {
-  ArrowRight,
-  Boxes,
-  ExternalLink,
-  MessageCircle,
-  MoreHorizontal,
-  Sparkles,
-} from 'lucide-react'
+import { ArrowRight, ExternalLink, MessageCircle, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { resolvePluginAssetUrl } from './plugin-assets'
+import { PluginLogo } from './PluginLogo'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
@@ -137,12 +130,6 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       toggleable: false,
     })),
   ]
-}
-
-function installedPluginLogo(plugin: InstalledPluginItem): string {
-  return resolvePluginAssetUrl(
-    plugin.raw.spec.interface?.logo || plugin.raw.spec.interface?.composerIcon
-  )
 }
 
 function pluginDisplayDescription(plugin: InstalledPluginItem): string {
@@ -284,7 +271,7 @@ export function PluginDetailView({
     { label: '功能', value: pluginCapabilitySummary(plugin) },
     ...detailRows(raw),
   ].filter(row => row.value)
-  const logo = installedPluginLogo(plugin)
+  const logo = raw.spec.interface?.logo || raw.spec.interface?.composerIcon
   const prompts = pluginPromptExamples(plugin)
   const description = pluginDisplayDescription(plugin)
 
@@ -296,7 +283,7 @@ export function PluginDetailView({
         dragRegionClassName="hidden md:block"
         left={
           <nav
-            className="flex items-center gap-2 text-[13px] font-medium leading-[18px] text-text-muted"
+            className="flex items-center gap-2 text-sm font-medium leading-[18px] text-text-muted"
             aria-label="breadcrumb"
           >
             <button
@@ -316,16 +303,16 @@ export function PluginDetailView({
         <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
             <div className="mb-5 flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-border bg-violet-50 text-violet-600 shadow-sm">
-              {logo ? (
-                <img src={logo} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Boxes className="h-7 w-7" />
-              )}
+              <PluginLogo
+                source={logo}
+                fallbackClassName="h-7 w-7"
+                testId={`plugin-detail-logo-${plugin.id}`}
+              />
             </div>
-            <h1 className="text-[28px] font-normal leading-9 tracking-normal text-text-primary">
+            <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">
               {plugin.name}
             </h1>
-            <p className="mt-1 max-w-[560px] text-[13px] leading-5 text-text-secondary">
+            <p className="mt-1 max-w-[560px] text-sm leading-5 text-text-secondary">
               {plugin.description}
             </p>
           </div>
@@ -351,7 +338,7 @@ export function PluginDetailView({
                     <button
                       type="button"
                       data-testid={`plugin-detail-uninstall-${plugin.id}`}
-                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-[13px] leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
                       onClick={() => {
                         setIsActionMenuOpen(false)
                         onUninstall()
@@ -367,7 +354,7 @@ export function PluginDetailView({
               type="button"
               data-testid={`plugin-detail-toggle-${plugin.id}`}
               disabled={primaryActionDisabled}
-              className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-[13px] font-medium leading-[18px] text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
+              className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium leading-[18px] text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
               onClick={onToggle}
             >
               <MessageCircle className="h-4 w-4" />
@@ -382,7 +369,7 @@ export function PluginDetailView({
               <button
                 key={prompt}
                 type="button"
-                className="grid w-full grid-cols-[minmax(0,1fr)_34px] items-center gap-3 rounded-xl bg-background/80 px-3 py-2.5 text-left text-[13px] font-medium leading-5 text-text-primary shadow-sm backdrop-blur"
+                className="grid w-full grid-cols-[minmax(0,1fr)_34px] items-center gap-3 rounded-xl bg-background/80 px-3 py-2.5 text-left text-sm font-medium leading-5 text-text-primary shadow-sm backdrop-blur"
               >
                 <span className="min-w-0">
                   <span className="font-medium text-emerald-700">{plugin.name}</span> {prompt}
@@ -395,10 +382,10 @@ export function PluginDetailView({
           </div>
         </section>
 
-        <p className="max-w-[720px] text-[13px] leading-6 text-text-secondary">{description}</p>
+        <p className="max-w-[720px] text-sm leading-6 text-text-secondary">{description}</p>
 
         <section className="space-y-5">
-          <h2 className="text-[15px] font-medium leading-6 text-text-muted">
+          <h2 className="text-base font-medium leading-6 text-text-muted">
             {t('workbench.plugin_detail_contents', '包含内容')} {componentItems.length}
           </h2>
           <div className="space-y-4">
@@ -408,20 +395,21 @@ export function PluginDetailView({
                 className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3"
               >
                 <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-emerald-700">
-                  {logo ? (
-                    <img src={logo} alt="" className="h-full w-full rounded-lg object-cover" />
-                  ) : (
-                    <Sparkles className="h-4 w-4" />
-                  )}
+                  <PluginLogo
+                    source={logo}
+                    imageClassName="h-full w-full rounded-lg object-cover"
+                    fallbackClassName="h-4 w-4"
+                    testId={`plugin-component-logo-${item.key}`}
+                  />
                 </div>
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
-                    <h3 className="truncate text-[14px] font-medium leading-5">{item.name}</h3>
-                    <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-[11px] font-medium leading-4 text-text-muted">
+                    <h3 className="truncate text-base font-medium leading-5">{item.name}</h3>
+                    <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium leading-4 text-text-muted">
                       {componentTypeLabel(item.type, t)}
                     </span>
                   </div>
-                  <p className="truncate text-[13px] leading-[18px] text-text-muted">
+                  <p className="truncate text-sm leading-[18px] text-text-muted">
                     {item.description}
                   </p>
                 </div>
@@ -453,7 +441,7 @@ export function PluginDetailView({
                     />
                   </button>
                 ) : (
-                  <span className="text-[13px] leading-5 text-text-muted">
+                  <span className="text-sm leading-5 text-text-muted">
                     {t('workbench.plugins_component_included', '已包含')}
                   </span>
                 )}
@@ -463,14 +451,14 @@ export function PluginDetailView({
         </section>
 
         <section className="space-y-5">
-          <h2 className="text-[15px] font-medium leading-6 text-text-primary">
+          <h2 className="text-base font-medium leading-6 text-text-primary">
             {t('workbench.plugin_detail_info', '信息')}
           </h2>
           <dl className="space-y-5">
             {rows.map(row => (
               <div
                 key={row.label}
-                className="grid gap-2 text-[13px] leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
+                className="grid gap-2 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
               >
                 <dt className="font-medium text-text-muted">{row.label}</dt>
                 <dd className="min-w-0 text-text-primary">

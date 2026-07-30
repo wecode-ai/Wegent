@@ -7,9 +7,12 @@ import { ContextSettingsPage } from './ContextSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -18,6 +21,7 @@ const defaultPreferences: AppPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -36,13 +40,17 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    experimentalFeaturesEnabled: false,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
+    appshotsPlaySound: true,
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,

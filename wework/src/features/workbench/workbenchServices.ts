@@ -1,25 +1,60 @@
 import { createDeviceApi } from '@/api/devices'
+import { createDeliveryApi } from '@/api/deliveries'
+import type { AITableApi } from '@/api/aitable'
+import type { DwsApi } from '@/api/dws'
 import {
   createExecutorClientFromApis,
   type ExecutorClient,
   type ExecutorTransportKind,
 } from '@/api/executorAccess'
 import { createGitApi } from '@/api/git'
+import { createFeedbackApi } from '@/api/feedback'
 import { createImSessionApi } from '@/api/imSessions'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { createCloudProjectSpaceApi } from '@/api/hybrid/cloudProjectSpaceApi'
 import { createHybridWorkbenchServices } from '@/api/hybrid/hybridServices'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createAutomationApi } from '@/api/automations'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectDeviceSessionResponse,
+  RuntimeWorkListResponse,
+  User,
+} from '@/types/api'
+import type { DeviceSessionResponse } from '@/types/devices'
+import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
+import type { createExternalIssueApi } from '@/api/local/localDelivery'
+
+export interface WorkspaceSessionApi {
+  startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
+  startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
+  startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
+  startDeviceCodeServer: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
+  createRemoteTerminalClient: RemoteTerminalClientFactory
+}
+
+export type ProjectSpaceLocation = 'local' | 'cloud'
+export type DeliveryApi = ReturnType<typeof createDeliveryApi>
+export type ExternalIssueApi = ReturnType<typeof createExternalIssueApi>
+
+export interface ProjectSpaceApis {
+  local?: DeliveryApi
+  cloud?: DeliveryApi
+  defaultLocation: ProjectSpaceLocation
+}
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
@@ -47,12 +82,20 @@ export interface WorkbenchServices {
     | 'readWorkspaceTextFile'
     | 'readWorkspaceFileChunk'
   > & {
+    writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
   }
+  deliveryApi?: DeliveryApi
+  feedbackApi?: ReturnType<typeof createFeedbackApi>
+  aitableApi?: AITableApi
+  dwsApi?: DwsApi
+  externalIssueApi?: ExternalIssueApi
+  projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  automationApi?: ReturnType<typeof createAutomationApi>
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
@@ -60,6 +103,7 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
@@ -76,6 +120,7 @@ interface CloudConnectionServicesSnapshot {
   socketBaseUrl?: string
   socketPath?: string
   token: string | null
+  user?: User
 }
 
 export function createExecutorClientForWorkbenchServices(
@@ -111,14 +156,31 @@ export function createDefaultWorkbenchServices(
       cloudConnection.token
     ) {
       return createHybridWorkbenchServices({
+        backendUrl: cloudConnection.backendUrl,
         apiBaseUrl: cloudConnection.apiBaseUrl,
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user,
       })
     }
-    return createLocalAppServices()
+    return createLocalAppServices({ user: cloudConnection?.user })
   }
 
-  return createBackendWorkbenchServices()
+  const cloudServices = createBackendWorkbenchServices()
+  if (!isTauriRuntime()) return cloudServices
+
+  const localServices = createLocalAppServices({ user: cloudConnection?.user })
+  const cloudProjectSpaceApi = createCloudProjectSpaceApi(cloudServices.deliveryApi!)
+  return {
+    ...cloudServices,
+    aitableApi: localServices.aitableApi,
+    dwsApi: localServices.dwsApi,
+    externalIssueApi: localServices.externalIssueApi,
+    projectSpaceApis: {
+      local: localServices.deliveryApi,
+      cloud: cloudProjectSpaceApi,
+      defaultLocation: 'cloud',
+    },
+  }
 }

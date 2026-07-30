@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { MessageBlock } from '../message-blocks'
+import { nestMessageBlocks, type MessageBlock } from '../message-blocks'
 
 export type StreamingBlockType = 'text' | 'thinking'
 
@@ -92,21 +92,29 @@ export function mergeBlocksForDone(
   existingMessageBlocks: MessageBlock[],
   incomingBlocks: MessageBlock[]
 ): MessageBlock[] {
-  const existingBlocks = finalizeStreamingBlocks(existingMessageBlocks, ['text', 'thinking'])
+  const existingBlocks = finalizeStreamingBlocks(nestMessageBlocks(existingMessageBlocks), [
+    'text',
+    'thinking',
+  ])
+  const normalizedIncomingBlocks = nestMessageBlocks(incomingBlocks)
 
   if (existingBlocks.length === 0) {
-    return incomingBlocks
+    return normalizedIncomingBlocks
   }
 
-  if (incomingBlocks.length === 0) {
+  if (normalizedIncomingBlocks.length === 0) {
     return existingBlocks
   }
 
   if (existingBlocks.some(block => block.type === 'thinking')) {
-    return mergeDoneBlocksWithInlineThinking(existingBlocks, incomingBlocks)
+    return nestMessageBlocks(
+      mergeDoneBlocksWithInlineThinking(existingBlocks, normalizedIncomingBlocks)
+    )
   }
 
-  return mergeDoneBlocksWithBackendOrder(existingBlocks, incomingBlocks)
+  return nestMessageBlocks(
+    mergeDoneBlocksWithBackendOrder(existingBlocks, normalizedIncomingBlocks)
+  )
 }
 
 function mergeTextBlockWithId(
@@ -169,17 +177,7 @@ function mergeIncomingBlocks(
   incomingBlocks: MessageBlock[]
 ): MessageBlock[] {
   const blocksArray = finalizeStreamingBlocks(existingBlocks, ['text', 'thinking'])
-  const blocksMap = new Map(blocksArray.map(block => [block.id, block]))
-
-  incomingBlocks.forEach(incomingBlock => {
-    const existingBlock = blocksMap.get(incomingBlock.id)
-    blocksMap.set(
-      incomingBlock.id,
-      existingBlock ? { ...existingBlock, ...incomingBlock } : incomingBlock
-    )
-  })
-
-  return Array.from(blocksMap.values())
+  return nestMessageBlocks([...blocksArray, ...incomingBlocks])
 }
 
 function mergeDoneBlocksWithInlineThinking(

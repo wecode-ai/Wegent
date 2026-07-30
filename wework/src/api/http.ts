@@ -74,9 +74,11 @@ export interface HttpRequestOptions {
 
 export interface HttpClient {
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
+  getBlob(endpoint: string): Promise<Blob>
   post<T>(endpoint: string, data?: unknown): Promise<T>
   put<T>(endpoint: string, data?: unknown): Promise<T>
-  delete<T>(endpoint: string): Promise<T>
+  patch<T>(endpoint: string, data?: unknown): Promise<T>
+  delete<T>(endpoint: string, data?: unknown): Promise<T>
 }
 
 function defaultGetToken(): string | null {
@@ -91,7 +93,7 @@ async function parseError(response: Response): Promise<ApiError> {
 
   try {
     const json = JSON.parse(errorText)
-    detail = json.detail
+    detail = json.errors ? { detail: json.detail, errors: json.errors } : json.detail
     if (typeof json.detail === 'string') {
       message = json.detail
     } else if (json.detail && typeof json.detail === 'object') {
@@ -104,6 +106,15 @@ async function parseError(response: Response): Promise<ApiError> {
     }
     if (json.error_code) {
       errorCode = json.error_code
+    }
+    if (json.error && typeof json.error === 'object') {
+      detail = json.error
+      if (typeof json.error.message === 'string') {
+        message = json.error.message
+      }
+      if (json.error.code || json.error.error_code) {
+        errorCode = json.error.code ?? json.error.error_code
+      }
     }
   } catch {
     message = errorText || `HTTP ${response.status}`
@@ -181,8 +192,18 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return nextRequest
   }
 
+  async function getBlob(endpoint: string): Promise<Blob> {
+    const token = getToken()
+    const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw await parseError(response)
+    return response.blob()
+  }
+
   return {
     get,
+    getBlob,
     post: (endpoint, data) =>
       request(endpoint, {
         method: 'POST',
@@ -195,6 +216,16 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         body:
           data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
       }),
-    delete: endpoint => request(endpoint, { method: 'DELETE' }),
+    patch: (endpoint, data) =>
+      request(endpoint, {
+        method: 'PATCH',
+        body:
+          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+      }),
+    delete: (endpoint, data) =>
+      request(endpoint, {
+        method: 'DELETE',
+        body: data === undefined ? undefined : JSON.stringify(data),
+      }),
   }
 }

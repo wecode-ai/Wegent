@@ -7,16 +7,23 @@ from app.api.endpoints import (
     api_keys,
     attachments_open,
     auth,
+    cloud_projects,
+    connector_app_projection,
+    connector_apps,
+    connector_runtime,
     deep_research,
+    deliveries,
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    feedback,
     groups,
     health,
     im_sessions,
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_transfer,
     knowledge_video_upload,
@@ -31,8 +38,10 @@ from app.api.endpoints import (
     remote_devices,
     repository,
     resource_library,
+    runtime_automations,
     runtime_work,
     share,
+    sites,
     skill_identity,
     skill_market,
     subtasks,
@@ -73,6 +82,9 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.internal import (
+    api_keys_internal_router,
+)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -89,7 +101,6 @@ from app.api.endpoints.internal import (
     rag_content_router,
     services_router,
     skills_router,
-    subscriptions_router,
     tables_router,
     workspace_archives_router,
 )
@@ -114,11 +125,27 @@ api_router.include_router(
     prefix="/resource-library",
     tags=["resource-library"],
 )
+api_router.include_router(
+    connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
+)
+api_router.include_router(
+    connector_app_projection.router, prefix="/apps", tags=["apps"]
+)
+api_router.include_router(
+    connector_runtime.router,
+    prefix="/connector-runtime",
+    tags=["connector-runtime"],
+)
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(im_sessions.im_router, prefix="/im", tags=["im"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
+api_router.include_router(
+    cloud_projects.router, prefix="/v1/cloud-projects", tags=["cloud-projects"]
+)
+api_router.include_router(deliveries.router, prefix="/v1", tags=["deliveries"])
+api_router.include_router(feedback.router, prefix="/v1/feedback", tags=["feedback"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
 api_router.include_router(
@@ -176,6 +203,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]
@@ -183,6 +211,11 @@ api_router.include_router(
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
 )
 api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
@@ -262,6 +295,11 @@ api_router.include_router(
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
 )
+api_router.include_router(
+    runtime_automations.router,
+    prefix="/runtime-automations",
+    tags=["runtime-automations"],
+)
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
@@ -316,9 +354,6 @@ api_router.include_router(
     tags=["internal-workspace-archives"],
 )
 api_router.include_router(
-    subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
-)
-api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
 )
 api_router.include_router(
@@ -335,4 +370,9 @@ api_router.include_router(
     internal_model_config_router,
     prefix="/internal",
     tags=["internal-model-config"],
+)
+api_router.include_router(
+    api_keys_internal_router,
+    prefix="/internal",
+    tags=["internal-api-keys"],
 )

@@ -9,6 +9,7 @@ import { BookOpen, Database, User, Building2, Users, FileText } from 'lucide-rea
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -24,6 +25,8 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import type {
+  DirectAccessRequirement,
+  KnowledgeBaseCreate,
   SummaryModelRef,
   KnowledgeBaseType,
   RetrievalConfigDraft,
@@ -44,25 +47,12 @@ export interface AvailableGroup {
 interface CreateKnowledgeBaseDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSubmit: (data: {
-    name: string
-    description?: string
-    retrieval_config?: RetrievalConfigDraft
-    rag_config_mode?: RagConfigMode
-    summary_enabled?: boolean
-    summary_model_ref?: SummaryModelRef | null
-    multimodal_analysis_enabled?: boolean
-    multimodal_analysis_model_ref?: SummaryModelRef | null
-    multimodal_analysis_video_prompt?: string | null
-    multimodal_analysis_image_prompt?: string | null
-    guided_questions?: string[]
-    max_calls_per_conversation: number
-    exempt_calls_before_check: number
-    /** Selected group ID for creating the KB */
-    selectedGroupId?: string
-    /** Knowledge base type selected by user */
-    kb_type: KnowledgeBaseType
-  }) => Promise<void>
+  onSubmit: (
+    data: Omit<KnowledgeBaseCreate, 'namespace'> & {
+      /** Selected group ID for creating the KB */
+      selectedGroupId?: string
+    }
+  ) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'organization' | 'all'
   groupName?: string
@@ -124,6 +114,8 @@ export function CreateKnowledgeBaseDialog({
   const { t } = useTranslation()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [directAccessRequirement, setDirectAccessRequirement] =
+    useState<DirectAccessRequirement>('read')
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
   // Default enable summary for all KB types
@@ -169,6 +161,7 @@ export function CreateKnowledgeBaseDialog({
     if (open) {
       setSelectedKbType(initialKbType)
       setSelectedGroupId(defaultGroupId || 'personal')
+      setDirectAccessRequirement('read')
     }
   }, [open, initialKbType, defaultGroupId])
 
@@ -216,6 +209,7 @@ export function CreateKnowledgeBaseDialog({
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
+        direct_access_requirement: directAccessRequirement,
         retrieval_config: ragConfigMode === 'disabled' ? undefined : retrievalConfig,
         rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
@@ -229,6 +223,7 @@ export function CreateKnowledgeBaseDialog({
       })
       setName('')
       setDescription('')
+      setDirectAccessRequirement('read')
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setSummaryEnabled(true)
@@ -248,6 +243,7 @@ export function CreateKnowledgeBaseDialog({
     if (!newOpen) {
       setName('')
       setDescription('')
+      setDirectAccessRequirement('read')
       // Reset selectedKbType and keep summaryEnabled as true
       setSelectedKbType(initialKbType)
       setSummaryEnabled(true)
@@ -278,6 +274,9 @@ export function CreateKnowledgeBaseDialog({
       >
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
+          <DialogDescription>
+            {t('knowledge:document.knowledgeBase.createDialogDescription')}
+          </DialogDescription>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-3 [scrollbar-gutter:stable]">
           <KnowledgeBaseForm
@@ -371,6 +370,8 @@ export function CreateKnowledgeBaseDialog({
             description={description}
             onNameChange={value => setName(value)}
             onDescriptionChange={value => setDescription(value)}
+            directAccessRequirement={directAccessRequirement}
+            onDirectAccessRequirementChange={setDirectAccessRequirement}
             summaryEnabled={summaryEnabled}
             onSummaryEnabledChange={checked => {
               setSummaryEnabled(checked)

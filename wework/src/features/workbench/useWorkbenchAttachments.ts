@@ -134,12 +134,20 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
   const removeAttachment = useCallback(
     async (attachmentId: number) => {
       const attachment = state.attachments.find(item => item.id === attachmentId)
-      if (attachment) releaseAttachmentPreview(attachment)
+      const attachmentsToRemove = attachment?.ui_group_id
+        ? state.attachments.filter(item => item.ui_group_id === attachment.ui_group_id)
+        : attachment
+          ? [attachment]
+          : []
+      attachmentsToRemove.forEach(releaseAttachmentPreview)
+      const idsToRemove = new Set(attachmentsToRemove.map(item => item.id))
       updateScopeState(current => ({
         ...current,
-        attachments: current.attachments.filter(attachment => attachment.id !== attachmentId),
+        attachments: current.attachments.filter(attachment => !idsToRemove.has(attachment.id)),
       }))
-      await deleteAttachment(attachmentId)
+      await Promise.all(
+        attachmentsToRemove.filter(item => item.id > 0).map(item => deleteAttachment(item.id))
+      )
     },
     [deleteAttachment, state.attachments, updateScopeState]
   )

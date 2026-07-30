@@ -122,6 +122,16 @@ export function useWorkbenchSkills({
     [locked, scopeKey]
   )
 
+  const setSelectedSkillsForScope = useCallback(
+    (targetScopeKey: string, nextSkills: SkillRef[]) => {
+      setSelectedSkillsByScope(current => ({
+        ...current,
+        [targetScopeKey]: nextSkills,
+      }))
+    },
+    []
+  )
+
   const toggleSkill = useCallback(
     (skill: SkillRef) => {
       if (locked) return
@@ -149,6 +159,7 @@ export function useWorkbenchSkills({
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,
+    setSelectedSkillsForScope,
     toggleSkill,
     isLoading: isLoading || isTeamSkillsLoading,
     error,

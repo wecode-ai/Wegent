@@ -589,6 +589,44 @@ async def send_runtime_message(
     return _runtime_send_response(result, address.local_task_id)
 
 
+async def interrupt_and_send_runtime_message(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeSendRequest,
+) -> RuntimeSendResponse:
+    """Interrupt the active turn and immediately continue the same LocalTask."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    payload = {
+        **_runtime_task_address_payload(address),
+        "message": request.message,
+    }
+    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if attachments:
+        payload["attachments"] = attachments
+    if request.source:
+        payload["source"] = request.source.model_dump()
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.interrupt_and_send",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_send_response(result, address.local_task_id)
+
+
 async def send_runtime_guidance(
     *,
     db: Session,
@@ -3435,7 +3473,9 @@ def _build_runtime_execution_request(
         task=task,
         user=user,
         team=team,
-        message=request.message,
+        message=_message_with_application_context(
+            request.message, request.additional_context
+        ),
         preload_skills=request.additional_skills,
         override_model_name=override_model_name,
         force_override=force_override,
@@ -3445,7 +3485,46 @@ def _build_runtime_execution_request(
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_model_options(db, execution_request, user, payload)
     _apply_runtime_attachments(db, execution_request, user_id, request.attachment_ids)
+    from app.schemas.base_role import BaseRole
+    from app.services.cloud_projects.access import require_cloud_project_role
+    from app.services.delivery import delivery_service
+
+    if request.delivery_id:
+        delivery_service.get_delivery(db, request.delivery_id, user_id)
+    if request.cloud_project_id:
+        require_cloud_project_role(
+            db, request.cloud_project_id, user_id, BaseRole.Reporter
+        )
     return execution_request
+
+
+def _message_with_application_context(
+    message: str, context: Optional[dict[str, dict[str, Any]]]
+) -> str:
+    entries: list[str] = []
+    for name, entry in (context or {}).items():
+        if entry.get("kind") != "application":
+            continue
+        value = entry.get("value")
+        if isinstance(value, str) and value.strip():
+            entries.append(f"[{name}]\n{value.strip()}")
+    if "cloud://projects" in message and "projectSpaceCapability" not in (
+        context or {}
+    ):
+        entries.append(
+            "[projectSpaceCapability]\n"
+            "Use wework_space as the only interface for WeWork project spaces, "
+            "board items, files, attachments, and deliveries.\n"
+            "Storage and task providers are internal implementation details.\n"
+            "Do not use git commands or call GitHub, GitLab, or object-storage "
+            "APIs to inspect or modify project-space data.\n"
+            "Use list_spaces to discover spaces, get_board_item for item details, "
+            "and read_item_attachment for attachment contents."
+        )
+    if not entries:
+        return message
+    context_text = "\n\n".join(entries)
+    return f"<application_context>\n{context_text}\n</application_context>\n\n{message}"
 
 
 def _runtime_execution_ids() -> tuple[int, int]:

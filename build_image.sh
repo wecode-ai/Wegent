@@ -15,7 +15,7 @@ DEFAULT_VERSION="1.0.0"
 
 # Function to show help
 show_help() {
-    echo "Build docker images for Wegent components"
+    echo "Build docker images for Wegent components"aass
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""
@@ -75,6 +75,12 @@ if [ "$PUSH_FLAG" == "--push" ]; then
     echo "Building and pushing images with version $VERSION..."
 else
     echo "Building images with version $VERSION (use --push or -p to also push images)..."
+fi
+
+# Stage externally maintained optional plugins when their source is available.
+if ! pnpm prepare:builtin-plugins; then
+    echo "Error: failed to stage configured built-in plugins"
+    exit 1
 fi
 
 # Build backend image

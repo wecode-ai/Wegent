@@ -36,7 +36,11 @@ use crate::{
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
-const DEFAULT_HAIKU_MODEL_ENV: &str = "ANTHROPIC_DEFAULT_HAIKU_MODEL";
+const DEFAULT_CLAUDE_MODEL_ENV: &[&str] = &[
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+];
 const DEFAULT_CLAUDE_SETTINGS_ENV: &[&str] = &[
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY",
@@ -463,32 +467,34 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
         }
     }
 
-    spec = apply_default_haiku_model_environment(spec, request);
+    spec = apply_default_model_environment(spec, request);
 
     spec
 }
 
-fn apply_default_haiku_model_environment(
+fn apply_default_model_environment(
     mut spec: CommandSpec,
     request: &ExecutionRequest,
 ) -> CommandSpec {
-    if spec.envs().contains_key(DEFAULT_HAIKU_MODEL_ENV) {
-        return spec;
-    }
+    for key in DEFAULT_CLAUDE_MODEL_ENV {
+        if spec.envs().contains_key(*key) {
+            continue;
+        }
 
-    let value = model_string(request, DEFAULT_HAIKU_MODEL_ENV)
-        .or_else(process_default_haiku_model)
-        .or_else(|| model_id(request));
+        let value = model_string(request, key)
+            .or_else(|| process_model_environment(key))
+            .or_else(|| model_id(request));
 
-    if let Some(value) = value {
-        spec = spec.env(DEFAULT_HAIKU_MODEL_ENV, value);
+        if let Some(value) = value {
+            spec = spec.env(*key, value);
+        }
     }
 
     spec
 }
 
-fn process_default_haiku_model() -> Option<String> {
-    env::var(DEFAULT_HAIKU_MODEL_ENV)
+fn process_model_environment(key: &str) -> Option<String> {
+    env::var(key)
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())

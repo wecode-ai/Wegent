@@ -1,18 +1,26 @@
-import { ArrowUp, ClipboardList, Square } from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface ComposerToolbarProps {
   canSend: boolean
   disabled?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
@@ -29,15 +37,25 @@ interface ComposerToolbarProps {
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
+  projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
+  onQuickPhraseSelect: (phrase: QuickPhrase) => void
+  onSubmit: (options?: ComposerSubmitOptions) => void
+  leadingContext?: ReactNode
 }
+
+const COMPACT_TOOLBAR_WIDTH = 475
+const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
   canSend,
   disabled = false,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   contextUsage,
   onSelectModel,
@@ -54,11 +72,45 @@ export function ComposerToolbar({
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
+  projectWorkMenuContext,
+  onQuickPhraseSelect,
+  onSubmit,
+  leadingContext,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    if (!toolbar || typeof ResizeObserver === 'undefined') return
+    const updateCompact = (width: number) => setCompact(width < COMPACT_TOOLBAR_WIDTH)
+    updateCompact(toolbar.getBoundingClientRect().width)
+    const observer = new ResizeObserver(entries => {
+      const entry = entries[0]
+      if (entry) updateCompact(entry.contentRect.width)
+    })
+    observer.observe(toolbar)
+    return () => observer.disconnect()
+  }, [])
 
   return (
-    <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
+    <div
+      ref={toolbarRef}
+      data-testid="composer-toolbar"
+      data-compact={compact ? 'true' : 'false'}
+      className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
+    >
       <div className="flex min-w-0 items-center gap-2">
         <AddContextMenu
           disabled={disabled}
@@ -66,6 +118,8 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
+        <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
+        {leadingContext}
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
@@ -81,7 +135,7 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
@@ -92,17 +146,23 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
+            nextTurn={isStreaming && modelChangePending}
             openSignal={modelSelectorOpenSignal}
+            onOpenChange={onModelSelectorOpenChange}
             disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"
+            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
           />
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
+        {showWorkspaceMenu && projectWorkMenuContext ? (
+          <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
+        ) : null}
         {isStreaming && !canSend ? (
           <button
             type="button"
@@ -111,8 +171,66 @@ export function ComposerToolbar({
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
             aria-label={t('workbench.pause_response', '暂停回复')}
           >
-            <Square className="h-3.5 w-3.5 fill-current" />
+            <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
           </button>
+        ) : isStreaming && canSend ? (
+          <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
+            <button
+              type="submit"
+              data-testid="send-message-button"
+              className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
+              aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </button>
+            <ActionMenu
+              ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+              testId="send-mode-menu-button"
+              icon={ChevronDown}
+              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-white/20 hover:bg-[#333]"
+              items={[
+                {
+                  label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                  icon: Clock3,
+                  testId: 'send-after-turn-option',
+                  onSelect: () => onSubmit(),
+                  shortcut: 'Enter',
+                },
+                {
+                  label:
+                    modelChangePending && activeModelLabel
+                      ? t(
+                          'workbench.guide_current_turn_with_model',
+                          'Guide current response · {{model}}',
+                          {
+                            model: activeModelLabel,
+                          }
+                        )
+                      : t('workbench.guide_current_turn', '引导当前回复'),
+                  icon: CornerDownRight,
+                  testId: 'guide-current-turn-option',
+                  onSelect: () => onSubmit({ guideWhenBusy: true }),
+                  shortcut: 'Command+Enter',
+                },
+                {
+                  label:
+                    modelChangePending && selectedModelLabel
+                      ? t(
+                          'workbench.interrupt_and_send_with_model',
+                          'Interrupt and use {{model}}',
+                          {
+                            model: selectedModelLabel,
+                          }
+                        )
+                      : t('workbench.interrupt_and_send', '打断并立即发送'),
+                  icon: Zap,
+                  testId: 'interrupt-and-send-option',
+                  onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                  shortcut: 'Command+Shift+Enter',
+                },
+              ]}
+            />
+          </div>
         ) : (
           <button
             type="submit"

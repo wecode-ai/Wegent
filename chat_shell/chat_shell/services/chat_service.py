@@ -18,6 +18,7 @@ Architecture:
 Uses unified ResponsesAPIEmitter from shared module for event emission.
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
@@ -130,6 +131,11 @@ class ChatService(ChatInterface):
         if kb_meta_prompt and kb_meta_prompt not in parts:
             parts.append(kb_meta_prompt)
 
+        # History-backtracking nudge (only set once compaction has dropped detail).
+        backtrack_hint = getattr(ctx_result, "backtrack_hint", "")
+        if backtrack_hint:
+            parts.append(backtrack_hint)
+
         return "\n\n".join(parts) if parts else ""
 
     @trace_async(
@@ -190,9 +196,21 @@ class ChatService(ChatInterface):
             await self._process_chat(request, core, state, emitter)
             add_span_event("processing_chat_completed")
 
+        except asyncio.CancelledError:
+            # Surface cancellation (client disconnect, upstream timeout, shutdown)
+            # explicitly — the ``except Exception`` below cannot see it.
+            logger.warning(
+                "[CHAT_SERVICE] chat() cancelled: task_id=%s subtask_id=%s",
+                request.task_id,
+                request.subtask_id,
+            )
+            raise
         except Exception as e:
             add_span_event("chat_error", {"error": str(e)})
-            logger.exception("[CHAT_SERVICE] Exception in chat(): %s", e)
+            logger.exception(
+                "[CHAT_SERVICE] Exception in chat(): type=%s",
+                type(e).__name__,
+            )
             await core.handle_error(e)
         finally:
             add_span_event("releasing_resources")
@@ -257,7 +275,6 @@ class ChatService(ChatInterface):
                 workspace_root=settings.WORKSPACE_ROOT,
                 enable_skills=settings.ENABLE_SKILLS,
                 enable_web_search=False,
-                enable_checkpointing=settings.ENABLE_CHECKPOINTING,
             )
 
             add_span_event(
@@ -338,6 +355,7 @@ class ChatService(ChatInterface):
                         "model": guard_model_type or "openai",
                     },
                     streaming=False,
+                    request_timeout=240,
                 )
                 context_config = get_model_context_config(
                     guard_model_id,
@@ -350,7 +368,8 @@ class ChatService(ChatInterface):
                         DEFAULT_RECENT_USER_TOKEN_LIMIT,
                         max(1, int(context_config.target_limit * 0.5)),
                     ),
-                    max_compact_input_tokens=context_config.available_tokens,
+                    max_compact_input_tokens=context_config.target_limit,
+                    request_timeout=240,
                 )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,

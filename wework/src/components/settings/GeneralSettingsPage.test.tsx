@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
@@ -7,9 +7,12 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -18,6 +21,10 @@ const defaultPreferences: AppPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
+  popoutWindowShortcut: 'Alt+Shift+Space',
+  popoutWindowProjectlessDefaultEnabled: false,
+  quickPhrases: [],
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -36,9 +43,12 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    experimentalFeaturesEnabled: false,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -47,6 +57,10 @@ vi.mock('@/tauri/appPreferences', () => ({
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
     browserAskBeforeDownload: false,
+    appshotsPlaySound: true,
+    popoutWindowShortcut: 'Alt+Shift+Space',
+    popoutWindowProjectlessDefaultEnabled: false,
+    quickPhrases: [],
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
@@ -122,6 +136,107 @@ describe('GeneralSettingsPage', () => {
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
   })
 
+  test('keeps experimental features off by default and persists enabling them', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-experimental-features-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
+    })
+  })
+
+  test('enables the system drag panel by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-system-drag-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ systemDragEnabled: false })
+    })
+  })
+
+  test('prevents sleep during tasks by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        preventSleepWhileTasksRunning: false,
+      })
+    })
+  })
+
+  test('groups task runtime controls separately and spaces later sections', async () => {
+    render(<GeneralSettingsPage />)
+
+    const basicSection = screen.getByTestId('general-settings-basic-section')
+    const runtimeSection = screen.getByTestId('general-settings-runtime-section')
+    const popoutSection = screen.getByTestId('general-settings-popout-section')
+
+    expect(runtimeSection).toHaveClass('mt-12')
+    expect(popoutSection).toHaveClass('mt-12')
+    expect(within(runtimeSection).getByTestId('general-close-to-tray-toggle')).toBeInTheDocument()
+    expect(
+      within(runtimeSection).getByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    ).toBeInTheDocument()
+    expect(
+      within(runtimeSection).getByTestId('general-task-completion-notifications-toggle')
+    ).toBeInTheDocument()
+    expect(within(runtimeSection).getByTestId('general-tray-running-toggle')).toBeInTheDocument()
+    expect(
+      within(basicSection).queryByTestId('general-close-to-tray-toggle')
+    ).not.toBeInTheDocument()
+    expect(within(basicSection).queryByTestId('general-system-drag-toggle')).not.toBeInTheDocument()
+    expect(within(popoutSection).getByTestId('general-system-drag-toggle')).toBeInTheDocument()
+    expect(
+      within(popoutSection).getByTestId('general-popout-shortcut-record-button')
+    ).toBeInTheDocument()
+  })
+
+  test('records, clears, and persists the Popout Window shortcut', async () => {
+    render(<GeneralSettingsPage />)
+
+    const recordButton = await screen.findByTestId('general-popout-shortcut-record-button')
+    await waitFor(() => expect(recordButton).toBeEnabled())
+    await userEvent.click(recordButton)
+    fireEvent.keyDown(window, { key: 'Alt', altKey: true })
+    fireEvent.keyDown(window, {
+      key: '',
+      code: 'ShiftLeft',
+      altKey: true,
+      shiftKey: true,
+    })
+
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { key: ' ', altKey: true, shiftKey: true })
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        popoutWindowShortcut: 'Alt+Shift+Space',
+      })
+    })
+
+    await userEvent.click(screen.getByTestId('general-popout-shortcut-clear-button'))
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ popoutWindowShortcut: null })
+    })
+  })
+
   test('rolls back language selection when saving fails', async () => {
     getAppPreferencesMock.mockResolvedValue({ ...defaultPreferences, language: 'zh-CN' })
     updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
@@ -158,6 +273,7 @@ describe('GeneralSettingsPage', () => {
       'true'
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
 
     await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))

@@ -9,8 +9,7 @@ Provides internal API for chat_shell's RemoteStore to access chat history.
 These endpoints are intended for service-to-service communication, not user access.
 
 Authentication:
-- Uses Internal Service Token (X-Service-Name header)
-- In production, should be protected by network-level security
+- Uses Internal Service Token in the Authorization header
 """
 
 import json
@@ -33,16 +32,30 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.schemas.subtask_history import (
+    SubtaskListResponse,
+    SubtaskRecordResponse,
+    SubtaskSummary,
+)
+from app.services.auth.internal_service_token import verify_internal_service_token
+from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.subtask_history import (
+    list_subtask_summaries,
+    read_subtask_record,
+)
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
-from app.services.task_fork_history import task_fork_history_resolver
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
-from shared.telemetry.decorators import trace_sync
+from shared.telemetry.decorators import trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["internal-chat"])
+router = APIRouter(
+    prefix="/chat",
+    tags=["internal-chat"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 # Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
@@ -111,6 +124,9 @@ class MessageResponse(BaseModel):
     loaded_skills: Optional[list[str]] = None  # Skills loaded in this message turn
     model_info: Optional[dict] = (
         None  # Provider/model metadata for think-block filtering
+    )
+    metadata: Optional[dict] = (
+        None  # Controlled marker whitelist (e.g. summary_compacted) for HTTP mode
     )
 
 
@@ -294,6 +310,16 @@ def subtask_to_messages(
         for idx, msg in enumerate(messages_chain):
             msg_id = f"{subtask.id}-{idx}"
             role = msg.get("role", "assistant")
+            # Forward the summary-compaction marker through a controlled metadata
+            # whitelist (the flat MessageResponse otherwise drops additional_kwargs,
+            # so a reloaded summary would look like a plain user message).
+            msg_kwargs = msg.get("additional_kwargs")
+            resp_metadata = (
+                {"summary_compacted": True}
+                if isinstance(msg_kwargs, dict)
+                and msg_kwargs.get("summary_compacted") is True
+                else None
+            )
             resp = MessageResponse(
                 id=msg_id,
                 role=role,
@@ -304,6 +330,7 @@ def subtask_to_messages(
                 reasoning_content=msg.get("reasoning_content"),
                 created_at=created_at,
                 model_info=msg.get("model_info"),
+                metadata=resp_metadata,
             )
             responses.append(resp)
         # Attach loaded_skills to the last *assistant* message in the chain,
@@ -829,6 +856,16 @@ async def expire_guidance(task_id: int, subtask_id: int):
 
 
 @router.get("/history/{session_id}", response_model=HistoryResponse)
+@trace_async(
+    "internal.chat_storage.get_history",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.from_latest_compaction": kwargs.get("from_latest_compaction", False),
+        "chat.limit": kwargs.get("limit") if kwargs.get("limit") is not None else -1,
+        "chat.is_group_chat": kwargs.get("is_group_chat", False),
+    },
+)
 async def get_chat_history(
     session_id: str,
     limit: Optional[int] = Query(
@@ -838,6 +875,10 @@ async def get_chat_history(
         None, description="Only return messages before this ID"
     ),
     is_group_chat: bool = Query(False, description="Whether this is a group chat"),
+    from_latest_compaction: bool = Query(
+        False,
+        description="Return history from the latest summary-compaction checkpoint",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -864,12 +905,14 @@ async def get_chat_history(
         )
 
     logger.info(
-        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s limit=%s is_group_chat=%s statuses=%s",
+        "get_chat_history:start session_id=%s task_id=%s before_message_id=%s "
+        "limit=%s is_group_chat=%s from_latest_compaction=%s statuses=%s",
         session_id,
         task_id,
         before_message_id,
         limit,
         is_group_chat,
+        from_latest_compaction,
         [status.value for status in history_statuses],
     )
 
@@ -877,17 +920,15 @@ async def get_chat_history(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    items = task_fork_history_resolver.resolve_for_task(
-        db,
+    subtasks = resolve_history_subtasks(
+        db=db,
         task_id=task_id,
         user_id=task.user_id,
         before_message_id=before_message_id,
+        limit=limit,
+        from_latest_compaction=from_latest_compaction,
+        statuses=history_statuses,
     )
-    subtasks = [
-        item.subtask for item in items if item.subtask.status in history_statuses
-    ]
-    if limit is not None and limit > 0:
-        subtasks = subtasks[-limit:]
 
     # Convert to message format with full context loading
     messages = [
@@ -910,6 +951,88 @@ async def get_chat_history(
     )
 
     return HistoryResponse(session_id=session_id, messages=messages)
+
+
+@router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
+@trace_async(
+    "internal.chat_storage.list_subtasks",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.offset": kwargs.get("offset", 0),
+    },
+)
+async def list_history_subtasks(
+    session_id: str,
+    limit: Optional[int] = Query(None, description="Max summaries to return"),
+    offset: int = Query(0, description="Number of summaries to skip"),
+    db: Session = Depends(get_db),
+):
+    """List the whole session's subtasks as summaries (AI history backtracking).
+
+    Unlike ``/history``, this is NOT compaction-scoped: it lists every subtask so
+    the model can page back into detail that compaction summarized away.
+    """
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result = list_subtask_summaries(
+        db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+    )
+    return SubtaskListResponse(
+        session_id=session_id,
+        subtasks=[SubtaskSummary(**s) for s in result["subtasks"]],
+        total=result["total"],
+        has_more=result["has_more"],
+    )
+
+
+@router.get(
+    "/history/{session_id}/subtasks/{subtask_id}",
+    response_model=SubtaskRecordResponse,
+)
+@trace_async(
+    "internal.chat_storage.read_subtask",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.subtask_id": kwargs.get("subtask_id", 0),
+    },
+)
+async def read_history_subtask(
+    session_id: str,
+    subtask_id: int,
+    cursor: str = Query("0:0", description="Compound cursor '<unit>:<char_off>'"),
+    max_chars: int = Query(0, description="Per-page char budget (0 = default)"),
+    db: Session = Depends(get_db),
+):
+    """Return one page of a subtask's rendered transcript (for backtracking)."""
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    record = read_subtask_record(
+        db,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=task.user_id,
+        cursor=cursor,
+        max_chars=max_chars,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Subtask not found in this session")
+    return SubtaskRecordResponse(**record)
 
 
 class AttachmentTextResponse(BaseModel):

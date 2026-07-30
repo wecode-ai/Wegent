@@ -4,6 +4,7 @@ import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+import { notifyWorkbenchModelsChanged } from './workbenchCloudDataEvents'
 import type { Attachment, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -45,6 +46,34 @@ describe('workbench project chat hooks', () => {
     )
   })
 
+  test('filters configured local models for non-local execution without hiding Codex', async () => {
+    const localModel: UnifiedModel = {
+      name: 'local-model:desktop-e2e-responses',
+      type: 'runtime',
+    }
+    const codexModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+    }
+    const cloudModel: UnifiedModel = {
+      name: 'cloud-model',
+      type: 'public',
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [localModel, codexModel, cloudModel] }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        filterModel: model => !model.name.startsWith('local-model:'),
+      })
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([codexModel, cloudModel]))
+  })
+
   test('reloads models after local model settings change', async () => {
     const codexModel: UnifiedModel = {
       name: 'codex-runtime',
@@ -77,81 +106,24 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
-  test('marks incompatible existing task model choices as disabled', async () => {
-    const currentClaudeModel: UnifiedModel = {
-      name: 'wecode-claude-sonnet-4-5',
-      type: 'public',
-      runtime: { family: 'claude.claude' },
-    }
-    const nextClaudeCompatibleModel: UnifiedModel = {
-      name: 'ali-deepseek-v4-flash',
-      type: 'public',
-      modelId: 'deepseek-v4-flash',
-      runtime: { family: 'claude.claude' },
-    }
-    const claudeCompatibleKimi: UnifiedModel = {
-      name: 'kimi-k2.5(内网)',
-      type: 'public',
-      displayName: '内网:Kimi-K2.5',
-      modelId: 'kimi-k2.5',
-      runtime: { family: 'claude.claude' },
-    }
-    const gptModel: UnifiedModel = {
-      name: 'gpt-5.5-medium',
-      type: 'user',
-      runtime: { family: 'openai.openai-responses' },
-    }
-    const unknownModel: UnifiedModel = {
-      name: 'custom-routing-model',
-      type: 'user',
-    }
+  test('reloads models after a background cloud model refresh', async () => {
+    const localModel: UnifiedModel = { name: 'local-model', type: 'runtime' }
+    const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }
     const api = {
-      listModels: vi.fn().mockResolvedValue({
-        data: [
-          currentClaudeModel,
-          nextClaudeCompatibleModel,
-          claudeCompatibleKimi,
-          gptModel,
-          unknownModel,
-        ],
-      }),
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [localModel] })
+        .mockResolvedValueOnce({ data: [localModel, cloudModel] }),
     }
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
 
-    const { result } = renderHook(() =>
-      useWorkbenchModels({
-        api,
-        locked: false,
-        selectionConfig: {
-          modelName: 'wecode-claude-sonnet-4-5',
-          modelType: 'public',
-        },
-        compatibilityConfig: {
-          modelName: 'wecode-claude-sonnet-4-5',
-          modelType: 'public',
-        },
-      })
-    )
+    await waitFor(() => expect(result.current.models).toEqual([localModel]))
+    act(() => notifyWorkbenchModelsChanged())
 
-    await waitFor(() =>
-      expect(result.current.models.map(model => model.name)).toEqual([
-        'wecode-claude-sonnet-4-5',
-        'ali-deepseek-v4-flash',
-        'kimi-k2.5(内网)',
-        'gpt-5.5-medium',
-        'custom-routing-model',
-      ])
-    )
-    expect(
-      result.current.models
-        .filter(model => model.compatibilityDisabled)
-        .map(model => [model.name, model.compatibilityDisabledReason])
-    ).toEqual([
-      ['gpt-5.5-medium', 'runtime_family_mismatch'],
-      ['custom-routing-model', 'missing_target_runtime_family'],
-    ])
+    await waitFor(() => expect(result.current.models).toEqual([localModel, cloudModel]))
   })
 
-  test('disables Claude-compatible Kimi models for an OpenAI current task', async () => {
+  test('keeps executor-backed model choices selectable across protocol families', async () => {
     const currentGptModel: UnifiedModel = {
       name: 'wecode-gpt-5.5(海外)',
       type: 'public',
@@ -189,10 +161,6 @@ describe('workbench project chat hooks', () => {
           modelName: 'wecode-gpt-5.5(海外)',
           modelType: 'public',
         },
-        compatibilityConfig: {
-          modelName: 'wecode-gpt-5.5(海外)',
-          modelType: 'public',
-        },
       })
     )
 
@@ -204,14 +172,7 @@ describe('workbench project chat hooks', () => {
         'deepseek-without-env-model',
       ])
     )
-    expect(
-      result.current.models
-        .filter(model => model.compatibilityDisabled)
-        .map(model => [model.name, model.compatibilityDisabledReason])
-    ).toEqual([
-      ['kimi-k2.5(内网)', 'runtime_family_mismatch'],
-      ['deepseek-without-env-model', 'missing_target_runtime_family'],
-    ])
+    expect(result.current.models.filter(model => model.compatibilityDisabled)).toEqual([])
   })
 
   test('restores model selection config and emits user changes', async () => {
@@ -366,7 +327,9 @@ describe('workbench project chat hooks', () => {
     rerender({ scopeKey: 'runtime:local-device:task-1' })
 
     expect(result.current.selectedModel).toEqual(customModel)
-    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+    expect(result.current.selectedModelOptions).toEqual({
+      reasoning: 'high',
+    })
   })
 
   test('waits for selection readiness before restoring configured model', async () => {
@@ -586,6 +549,40 @@ describe('workbench project chat hooks', () => {
 
     act(() => result.current.resetAttachments())
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:second-preview')
+  })
+
+  test('removes an Appshot image and its hidden text context together', async () => {
+    const appshot: Attachment = {
+      id: -10,
+      filename: 'appshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-07-15T00:00:00.000Z',
+      ui_group_id: 'appshot-capture-1',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const textContext: Attachment = {
+      ...appshot,
+      id: -11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      ui_group_role: 'companion',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useWorkbenchAttachments({ deleteAttachment: remove }))
+
+    act(() => {
+      result.current.addExistingAttachment(appshot)
+      result.current.addExistingAttachment(textContext)
+    })
+    await act(async () => result.current.removeAttachment(appshot.id))
+
+    expect(result.current.attachments).toEqual([])
+    expect(remove).not.toHaveBeenCalled()
   })
 
   test('uploads attachments without restricting file extensions', async () => {

@@ -166,7 +166,7 @@ export function ContextSettingsPage() {
             data-testid="context-wework-instructions-save-button"
             disabled={instructionsLoading || instructionsSaving || !instructionsDirty}
             onClick={() => void handleSaveInstructions()}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {instructionsSaving ? (
               <Loader2 className="h-4 w-4 animate-spin" />

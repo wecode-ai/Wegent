@@ -10,7 +10,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -31,15 +31,41 @@ import {
 } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
+import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
+import {
+  WorkbenchBackground,
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppSwitcher, type DesktopAppKey } from './DesktopAppSwitcher'
+import { WindowFrameControls } from './WindowFrameControls'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
+import { useResizableSidebar } from './useResizableSidebar'
+import { WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
+function getPermanentWorktreeError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = String(error.message).trim()
+    if (message) return message
+  }
+  return fallback
+}
+
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
+  const windowFocused = useWindowFocus()
   const { logout: onLogout } = useAuth()
   const {
     state,
@@ -49,7 +75,9 @@ export function DesktopWorkbenchLayout() {
     selectStandaloneDevice,
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
+    startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
+    createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
@@ -68,6 +96,7 @@ export function DesktopWorkbenchLayout() {
     listGitRepositories: onListGitRepositories,
     listGitBranches: onListGitBranches,
     updateProjectName: onUpdateProjectName,
+    updateLocalRuntimeProject: onUpdateLocalRuntimeProject,
     removeProject: onRemoveProject,
     reorderRuntimeProjects: onReorderRuntimeProjects,
     setRuntimeProjectPinned: onSetRuntimeProjectPinned,
@@ -87,15 +116,61 @@ export function DesktopWorkbenchLayout() {
     services,
     refreshWorkLists,
   } = useWorkbench()
-  const activeItem = 'chat'
+  const localTodoProjects = useMemo(
+    () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
+    [state.projects, state.runtimeWork]
+  )
+  const initialPath = stripAppBasePath(window.location.pathname)
+  const [currentPath, setCurrentPath] = useState(initialPath)
+  const todoOpen = currentPath === '/todo'
+  const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const createPermanentWorktree = useCallback(
+    async ({
+      deviceId,
+      sourcePath,
+      name,
+    }: {
+      deviceId: string
+      sourcePath: string
+      name: string
+    }) => {
+      const runtimeWorkApi = services?.runtimeWorkApi
+      if (!runtimeWorkApi) {
+        throw new Error(t('workbench.create_permanent_worktree_unavailable'))
+      }
+      const worktreeId = `permanent-${crypto.randomUUID()}`
+      let prepared
+      try {
+        prepared = await runtimeWorkApi.prepareWorktree({
+          deviceId,
+          sourcePath,
+          worktreeId,
+          permanent: true,
+        })
+      } catch (error) {
+        throw new Error(
+          getPermanentWorktreeError(error, t('workbench.create_permanent_worktree_failed')),
+          { cause: error }
+        )
+      }
+      const workspacePath = prepared.path ?? prepared.worktree.path
+      try {
+        await onOpenStandaloneWorkspace(deviceId, workspacePath, name)
+      } catch (error) {
+        await runtimeWorkApi
+          .deleteWorktree({ deviceId, path: workspacePath, preserveSnapshot: false })
+          .catch(() => undefined)
+        throw error
+      }
+    },
+    [onOpenStandaloneWorkspace, services?.runtimeWorkApi, t]
+  )
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    isSettingsRoute(stripAppBasePath(window.location.pathname))
-  )
+  const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -120,10 +195,27 @@ export function DesktopWorkbenchLayout() {
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
+  const platform = getPlatform()
+  const isTauri = isTauriRuntime()
+  const showWindowsTopBar = isTauri && platform === 'win' && !settingsOpen && !todoOpen
+  const activeApp: DesktopAppKey =
+    currentPath === '/todo'
+      ? 'todo'
+      : currentPath === '/app/wegent'
+        ? 'wegent'
+        : currentPath === '/apps'
+          ? 'apps'
+          : 'wework'
+
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
 
   useEffect(() => {
     const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+      const path = stripAppBasePath(window.location.pathname)
+      setCurrentPath(path)
+      setSettingsOpen(isSettingsRoute(path))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -131,6 +223,7 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (todoOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -139,7 +232,7 @@ export function DesktopWorkbenchLayout() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [todoOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -250,6 +343,11 @@ export function DesktopWorkbenchLayout() {
   const collapseSidebar = useCallback(() => {
     updateSidebarCollapsed(true)
   }, [updateSidebarCollapsed])
+
+  const { sidebarWidth, handleResizeStart: handleSidebarResizeStart } = useResizableSidebar({
+    onCollapse: collapseSidebar,
+    onResizeStateChange: setSidebarResizing,
+  })
 
   useDesktopSidebarToggleRequest(() => {
     updateSidebarCollapsed(!effectiveSidebarCollapsed)
@@ -480,14 +578,19 @@ export function DesktopWorkbenchLayout() {
       collapsed={collapsed}
       containerTestId={containerTestId}
       hideResizeHandle={hideResizeHandle}
+      sidebarWidth={sidebarWidth}
+      resizing={sidebarResizing}
+      onResizeStart={handleSidebarResizeStart}
       onResizeCollapse={collapseSidebar}
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
       onOpenWorkbench={() => navigateTo('/')}
+      onOpenTodo={() => navigateTo('/todo')}
       onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
+      onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
       onSelectProject={onSelectProject}
       onStartNewProjectChat={onStartNewProjectChat}
@@ -502,18 +605,17 @@ export function DesktopWorkbenchLayout() {
       onToggleGlobalImNotification={toggleGlobalImNotification}
       onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}
+      onOpenAutomation={() => navigateTo('/automations')}
       onRefreshDevices={onRefreshDevices}
-      onOpenBlankStandaloneProject={() => {
-        setBlankProjectDialogOpen(true)
-        setStandaloneWorkspaceDialogMode(null)
-      }}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
       }}
       onUpdateProjectName={onUpdateProjectName}
+      onUpdateLocalRuntimeProject={onUpdateLocalRuntimeProject}
       onRemoveProject={onRemoveProject}
       onReorderRuntimeProjects={onReorderRuntimeProjects}
       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
@@ -536,64 +638,171 @@ export function DesktopWorkbenchLayout() {
     />
   )
 
-  return (
-    <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-      {!settingsOpen && effectiveSidebarCollapsed && (
-        <>
-          <div
-            data-testid="desktop-sidebar-hover-edge"
-            aria-hidden="true"
-            onPointerEnter={openSidebarPreview}
-            className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
-          />
-          <div
-            data-testid="desktop-sidebar-preview"
-            aria-hidden={!sidebarPreviewOpen}
-            onPointerEnter={openSidebarPreview}
-            onPointerLeave={closeSidebarPreview}
-            className={cn(
-              'absolute left-0 top-0 z-popover h-full bg-background transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
-              sidebarPreviewOpen
-                ? 'pointer-events-auto translate-x-0 opacity-100 shadow-[6px_0_24px_rgba(15,23,42,0.10)]'
-                : 'pointer-events-none -translate-x-full opacity-100'
-            )}
-          >
-            {renderDesktopSidebar({
-              collapsed: false,
-              containerTestId: 'desktop-sidebar-preview-panel',
-              hideResizeHandle: true,
-              onPointerEnter: openSidebarPreview,
-              onPointerLeave: closeSidebarPreview,
-            })}
-          </div>
-        </>
+  const windowsTopBar = showWindowsTopBar ? (
+    <div
+      data-testid="workbench-windows-titlebar"
+      data-tauri-drag-region
+      data-window-focused={windowFocused}
+      data-sidebar-translucent={background.imagePath && background.inSidebar ? undefined : 'false'}
+      className={cn(
+        'relative z-chrome flex h-[38px] w-full shrink-0 items-center',
+        background.imagePath && background.inSidebar
+          ? 'bg-background/25'
+          : cn(
+              'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+              !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
+            )
       )}
-      {settingsOpen && (
-        <ConnectionsSettingsPage
-          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-          services={services}
-          devices={state.devices}
-          onOpenRuntimeTask={onOpenRuntimeTask}
-          onRefreshWorkLists={refreshWorkLists}
-          onBack={() => {
-            setSettingsOpen(false)
-            setAutoOpenAddCloudDeviceDialog(false)
-            navigateTo('/')
-          }}
-        />
-      )}
-      <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-        <DesktopWorkbenchMain
+    >
+      <div
+        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
+        data-tauri-drag-region={false}
+      >
+        <DesktopWindowControls
           sidebarCollapsed={effectiveSidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          onSidebarCollapsedChange={updateSidebarCollapsed}
-          activePane={{
-            currentRuntimeTask: state.currentRuntimeTask,
-            currentProject: state.currentProject,
-            standaloneChatKey: state.standaloneChatKey,
-          }}
+          onToggleSidebar={() => updateSidebarCollapsed(!effectiveSidebarCollapsed)}
+          className="gap-1"
         />
+        <DesktopAppSwitcher
+          activeApp={activeApp}
+          onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
+        />
+      </div>
+      <div
+        id={WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID}
+        data-testid="workbench-windows-titlebar-middle"
+        className={cn(
+          'absolute inset-y-0',
+          background.imagePath && background.inSidebar
+            ? 'bg-background/25'
+            : cn(
+                'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+                !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
+              )
+        )}
+        style={{
+          left: effectiveSidebarCollapsed ? 0 : sidebarWidth,
+          right: 138,
+        }}
+      />
+      <div
+        className="pointer-events-auto absolute right-0 top-0 z-chrome h-full w-[138px]"
+        data-tauri-drag-region={false}
+      >
+        <WindowFrameControls className="h-full justify-end" />
+      </div>
+    </div>
+  ) : null
+
+  return (
+    <div
+      className={cn(
+        'relative h-full overflow-hidden bg-transparent text-text-primary',
+        showWindowsTopBar ? 'flex flex-col' : 'flex'
+      )}
+    >
+      {windowsTopBar}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {!todoOpen && <WorkbenchBackground />}
+        {!settingsOpen &&
+          !todoOpen &&
+          renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+        {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
+          <>
+            <div
+              data-testid="desktop-sidebar-hover-edge"
+              aria-hidden="true"
+              onPointerEnter={openSidebarPreview}
+              className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+            />
+            <div
+              data-testid="desktop-sidebar-preview"
+              aria-hidden={!sidebarPreviewOpen}
+              onPointerEnter={openSidebarPreview}
+              onPointerLeave={closeSidebarPreview}
+              className={cn(
+                'absolute left-0 top-0 z-popover h-full overflow-hidden rounded-tl-xl transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+                sidebarPreviewOpen
+                  ? 'pointer-events-auto translate-x-0 opacity-100'
+                  : 'pointer-events-none -translate-x-full opacity-100'
+              )}
+            >
+              {renderDesktopSidebar({
+                collapsed: false,
+                containerTestId: 'desktop-sidebar-preview-panel',
+                hideResizeHandle: true,
+                onPointerEnter: openSidebarPreview,
+                onPointerLeave: closeSidebarPreview,
+              })}
+            </div>
+          </>
+        )}
+        {settingsOpen && (
+          <ConnectionsSettingsPage
+            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            services={services}
+            devices={state.devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={refreshWorkLists}
+            onBack={() => {
+              setSettingsOpen(false)
+              setAutoOpenAddCloudDeviceDialog(false)
+              navigateTo('/')
+            }}
+          />
+        )}
+        <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+          {todoOpen &&
+            (state.user && services.deliveryApi ? (
+              <CloudTodoWorkspace
+                user={state.user}
+                localProjects={localTodoProjects}
+                services={services}
+                onRunTodo={({
+                  project,
+                  message,
+                  goal,
+                  attachments,
+                  collaborationMode,
+                  deliveryId,
+                  cloudProjectId,
+                }) =>
+                  onCreateProjectRuntimeTask(message, {
+                    project,
+                    attachments,
+                    initialGoal: goal ? { objective: goal } : null,
+                    collaborationMode,
+                    deliveryId,
+                    cloudProjectId,
+                  })
+                }
+                onOpenRuntimeTask={async address => {
+                  navigateTo('/')
+                  await onOpenRuntimeTask?.(address)
+                }}
+              />
+            ) : (
+              <div
+                data-testid="cloud-board-loading"
+                className="flex h-full flex-1 items-center justify-center text-sm text-text-muted"
+              >
+                {t('workbench.cloud_board_loading', '正在加载云端看板…')}
+              </div>
+            ))}
+          <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+            <DesktopWorkbenchMain
+              visible={!settingsOpen && !todoOpen}
+              sidebarCollapsed={effectiveSidebarCollapsed}
+              sidebarResizing={sidebarResizing}
+              onSidebarCollapsedChange={updateSidebarCollapsed}
+              activePane={{
+                currentRuntimeTask: state.currentRuntimeTask,
+                currentProject: state.currentProject,
+                standaloneChatKey: state.standaloneChatKey,
+              }}
+            />
+          </div>
+        </div>
       </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}

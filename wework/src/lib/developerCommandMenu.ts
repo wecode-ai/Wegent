@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import {
-  isLocalChatStreamDebugEnabled,
-  setLocalChatStreamDebugEnabled,
-} from '@/api/local/localChatStream'
+  isRuntimeChatStreamDebugEnabled,
+  setRuntimeChatStreamDebugEnabled,
+} from '@/api/runtime/runtimeChatStream'
 import {
   clearWorkbenchDebugLogs,
   getWorkbenchDebugSnapshot,
@@ -41,6 +41,7 @@ interface CodexStreamDebugState {
 
 let codexStreamDebugEnabled: boolean | null = null
 let codexStreamDebugLoad: Promise<void> | null = null
+let collapsedDebugPanelPosition: { left: number; top: number } | null = null
 
 export function installDeveloperCommandMenu() {
   window.addEventListener(
@@ -145,7 +146,7 @@ function renderDeveloperCommandList(list: HTMLElement) {
 function getDeveloperCommands(): DeveloperCommand[] {
   const diagnosticsEnabled = isPerformanceDiagnosticsEnabled()
   const streamDebugKnown = codexStreamDebugEnabled !== null
-  const streamLogsEnabled = isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
+  const streamLogsEnabled = isRuntimeChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
   return [
     {
       id: 'open-debug-panel',
@@ -198,7 +199,7 @@ function getDeveloperCommands(): DeveloperCommand[] {
           return
         }
         await window.__WEWORK_PERF__.processSnapshot()
-        console.info('[Wework perf] snapshot', window.__WEWORK_PERF__.snapshot())
+        console.info('[Wework perf] snapshot', JSON.stringify(window.__WEWORK_PERF__.snapshot()))
       },
     },
     {
@@ -218,7 +219,7 @@ function getDeveloperCommands(): DeveloperCommand[] {
     {
       id: 'open-web-inspector',
       label: 'Open Web Inspector',
-      description: 'Open Tauri Web Inspector for heap and CPU profiling in diagnostic builds.',
+      description: 'Capture JavaScript heap snapshots and allocation profiles.',
       run: async () => {
         if (!isTauriRuntime()) {
           console.warn('[Wework dev] Web Inspector is only available in the Tauri app.')
@@ -255,9 +256,9 @@ async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
 
 async function toggleCodexStreamDebug() {
   if (!isTauriRuntime()) {
-    setLocalChatStreamDebugEnabled(!isLocalChatStreamDebugEnabled())
+    setRuntimeChatStreamDebugEnabled(!isRuntimeChatStreamDebugEnabled())
     console.info(
-      `[Wework dev] Frontend stream logs ${isLocalChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
+      `[Wework dev] Frontend stream logs ${isRuntimeChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
     )
     return
   }
@@ -265,8 +266,9 @@ async function toggleCodexStreamDebug() {
   if (codexStreamDebugEnabled === null) {
     await refreshCodexStreamDebugStatus()
   }
-  const enabled = !(isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false))
-  setLocalChatStreamDebugEnabled(enabled)
+  const frontendWasEnabled = isRuntimeChatStreamDebugEnabled()
+  const enabled = !(frontendWasEnabled || (codexStreamDebugEnabled ?? false))
+  setRuntimeChatStreamDebugEnabled(enabled)
   try {
     const state = await requestLocalExecutor<CodexStreamDebugState>(CODEX_STREAM_DEBUG_SET_METHOD, {
       enabled,
@@ -274,7 +276,7 @@ async function toggleCodexStreamDebug() {
     codexStreamDebugEnabled = state.enabled
     console.info(`[Wework dev] Stream logs ${state.enabled ? 'enabled' : 'disabled'}.`)
   } catch (error) {
-    setLocalChatStreamDebugEnabled(!enabled)
+    setRuntimeChatStreamDebugEnabled(frontendWasEnabled)
     console.error('[Wework dev] Failed to toggle Codex stream logs', error)
   }
 }
@@ -297,15 +299,19 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
   emitDebugPanelVisibility(expanded)
   const snapshot = getWorkbenchDebugSnapshot()
   root.innerHTML = ''
+  if (expanded) root.removeAttribute('style')
   root.className = expanded
     ? 'fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
-    : 'fixed bottom-4 right-4 z-[2147483647]'
+    : 'fixed z-[2147483647]'
   root.setAttribute('role', 'presentation')
 
   if (!expanded) {
+    applyCollapsedDebugPanelPosition(root)
     root.onclick = null
     root.onkeydown = null
-    root.appendChild(createCollapsedDebugPanel(snapshot, () => renderDebugPanelShell(root, true)))
+    root.appendChild(
+      createCollapsedDebugPanel(root, snapshot, () => renderDebugPanelShell(root, true))
+    )
     return
   }
 
@@ -382,14 +388,33 @@ function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSn
   )
 }
 
-function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: () => void) {
+function applyCollapsedDebugPanelPosition(root: HTMLElement) {
+  if (collapsedDebugPanelPosition) {
+    root.style.left = `${collapsedDebugPanelPosition.left}px`
+    root.style.top = `${collapsedDebugPanelPosition.top}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    return
+  }
+
+  root.style.left = 'auto'
+  root.style.top = 'auto'
+  root.style.right = '16px'
+  root.style.bottom = '16px'
+}
+
+function createCollapsedDebugPanel(
+  root: HTMLElement,
+  snapshot: WorkbenchDebugSnapshot,
+  onExpand: () => void
+) {
   const button = document.createElement('button')
   button.type = 'button'
   button.dataset.testid = 'debug-panel-collapsed'
   button.className =
-    'flex max-w-[min(420px,calc(100vw-2rem))] items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-text-primary shadow-2xl hover:bg-muted focus:bg-muted focus:outline-none'
+    'group flex h-8 max-w-[calc(100vw-2rem)] cursor-grab items-center overflow-hidden rounded-md border border-border bg-background px-[11px] text-xs font-medium text-text-primary shadow-2xl transition-[width,background-color] hover:bg-muted focus:bg-muted focus:outline-none active:cursor-grabbing'
   button.setAttribute('aria-label', 'Expand debug panel')
-  button.addEventListener('click', onExpand)
+  button.title = `Debug Panel - ${formatRunningStateLabel(snapshot)}`
 
   const dot = document.createElement('span')
   dot.className = snapshot.workbench?.runningState.activeTaskRunning
@@ -397,14 +422,48 @@ function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: (
     : 'h-2 w-2 shrink-0 rounded-full bg-border'
 
   const text = document.createElement('span')
-  text.className = 'min-w-0 truncate'
-  text.textContent = `Debug Panel collapsed - ${formatRunningStateLabel(snapshot)}`
+  text.className =
+    'max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,margin,opacity] group-hover:ml-2 group-hover:max-w-20 group-hover:opacity-100 group-focus-visible:ml-2 group-focus-visible:max-w-20 group-focus-visible:opacity-100'
+  text.textContent = 'Debug'
 
-  const hint = document.createElement('span')
-  hint.className = 'shrink-0 text-text-muted'
-  hint.textContent = 'Expand'
+  let dragged = false
+  button.addEventListener('click', event => {
+    if (dragged) {
+      event.preventDefault()
+      dragged = false
+      return
+    }
+    onExpand()
+  })
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const startRect = root.getBoundingClientRect()
 
-  button.append(dot, text, hint)
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+      if (!dragged && Math.hypot(deltaX, deltaY) < 4) return
+      dragged = true
+      const maxLeft = Math.max(0, window.innerWidth - startRect.width)
+      const maxTop = Math.max(0, window.innerHeight - startRect.height)
+      collapsedDebugPanelPosition = {
+        left: Math.min(maxLeft, Math.max(0, startRect.left + deltaX)),
+        top: Math.min(maxTop, Math.max(0, startRect.top + deltaY)),
+      }
+      applyCollapsedDebugPanelPosition(root)
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  })
+
+  button.append(dot, text)
   return button
 }
 
@@ -433,7 +492,7 @@ function createDebugPanelSection(title: string, content: string): HTMLElement {
 
   const pre = document.createElement('pre')
   pre.className =
-    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-5 text-text-primary'
+    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-text-primary'
   pre.textContent = content
 
   section.append(heading, pre)
@@ -467,7 +526,7 @@ function createMessageStyleComparisonSection(snapshot: WorkbenchDebugSnapshot): 
 
     const diff = document.createElement('pre')
     diff.className =
-      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-5 text-text-primary'
+      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-xs leading-5 text-text-primary'
     diff.textContent = JSON.stringify(
       {
         fieldDiff: comparison.fieldDiff,
@@ -504,7 +563,7 @@ function createMessageStyleSampleCard(
   }
 
   const meta = document.createElement('div')
-  meta.className = 'mt-2 grid gap-1 text-[11px] leading-5 text-text-secondary'
+  meta.className = 'mt-2 grid gap-1 text-xs leading-5 text-text-secondary'
   ;[
     `id: ${sample.id}`,
     `status: ${sample.status}`,
@@ -521,11 +580,11 @@ function createMessageStyleSampleCard(
 
   const preview = document.createElement('div')
   preview.className =
-    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-[12px] leading-5 text-text-primary'
+    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-xs leading-5 text-text-primary'
   preview.textContent = sample.contentPreview
 
   const uiList = document.createElement('ul')
-  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-[11px] leading-5 text-text-secondary'
+  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-xs leading-5 text-text-secondary'
   sample.expectedUi.forEach(rule => {
     const item = document.createElement('li')
     item.textContent = rule

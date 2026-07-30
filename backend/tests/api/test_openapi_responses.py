@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.api.endpoints.openapi_responses import (
     _create_non_streaming_response_unified,
     _filter_current_assistant_turn,
+    _iter_callback_events,
     _task_to_response_object,
 )
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -29,6 +30,31 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.mark.asyncio
+async def test_callback_event_stream_waits_for_executor_terminal_event():
+    messages = [
+        None,
+        {
+            "type": "message",
+            "data": json.dumps(
+                {"type": "block_created", "task_id": 1, "subtask_id": 2}
+            ),
+        },
+        None,
+        {
+            "type": "message",
+            "data": json.dumps({"type": "done", "task_id": 1, "subtask_id": 2}),
+        },
+    ]
+    pubsub = AsyncMock()
+    pubsub.get_message = AsyncMock(side_effect=messages)
+
+    events = [event async for event in _iter_callback_events(pubsub, asyncio.Event())]
+
+    assert [event.type for event in events] == ["block_created", "done"]
+    assert pubsub.get_message.await_count == 4
 
 
 @pytest.fixture

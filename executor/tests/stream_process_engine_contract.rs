@@ -229,11 +229,12 @@ async fn stream_process_engine_preserves_queued_non_text_events_before_success()
 }
 
 #[tokio::test]
-async fn stream_process_engine_ignores_child_agent_assistant_text() {
+async fn stream_process_engine_emits_child_agent_text_as_nested_block() {
     let child = json!({
         "type": "assistant",
         "parent_tool_use_id": "Agent_0",
         "message": {
+            "id": "msg-child-1",
             "role": "assistant",
             "content": [{"type": "text", "text": "child draft"}]
         }
@@ -274,10 +275,118 @@ async fn stream_process_engine_ignores_child_agent_assistant_text() {
         .filter_map(|event| event.data.get("delta").and_then(|value| value.as_str()))
         .collect();
     assert_eq!(streamed_text, "root final");
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.block.created"
+            && event.data["block"]["id"] == "msg-child-1:text:0"
+            && event.data["block"]["type"] == "text"
+            && event.data["block"]["parent_tool_use_id"] == "Agent_0"
+            && event.data["block"]["content"] == "child draft"
+    }));
     assert_eq!(
         outcome,
         ExecutionOutcome::Completed {
             content: "root final".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn stream_process_engine_emits_claude_subagent_lifecycle() {
+    let agent_tool = json!({
+        "type": "assistant",
+        "message": {
+            "id": "msg-root-1",
+            "role": "assistant",
+            "content": [{
+                "type": "tool_use",
+                "id": "Agent_0",
+                "name": "Agent",
+                "input": {
+                    "description": "Inspect backend",
+                    "subagent_type": "Explore"
+                }
+            }]
+        }
+    })
+    .to_string();
+    let task_started = json!({
+        "type": "system",
+        "subtype": "task_started",
+        "task_type": "local_agent",
+        "tool_use_id": "Agent_0",
+        "task_id": "agent-1"
+    })
+    .to_string();
+    let task_notification = json!({
+        "type": "system",
+        "subtype": "task_notification",
+        "status": "completed",
+        "tool_use_id": "Agent_0",
+        "task_id": "agent-1",
+        "summary": "Backend inspected"
+    })
+    .to_string();
+    let agent_result = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": "Agent_0",
+                "content": "Detailed child result"
+            }]
+        }
+    })
+    .to_string();
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("sh").arg("-c").arg(format!(
+            r#"printf '%s\n' '{}' '{}' '{}' '{}' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'"#,
+            agent_tool, task_started, task_notification, agent_result
+        )),
+        TEST_PROCESS_TIMEOUT_SECONDS,
+    );
+    let events = Arc::new(Mutex::new(Vec::new()));
+
+    let outcome = engine
+        .run_with_events(
+            ExecutionRequest::default(),
+            RecordingSlowSink {
+                delay: Duration::from_millis(1),
+                events: Arc::clone(&events),
+            },
+            ResponsesEventBuilder::new("task", "subtask", "model"),
+        )
+        .await;
+
+    let events = events.lock().await;
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.block.created"
+            && event.data["block"]["id"] == "Agent_0"
+            && event.data["block"]["type"] == "subagent"
+            && event.data["block"]["agent_type"] == "Explore"
+            && event.data["block"]["status"] == "queued"
+    }));
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.block.updated"
+            && event.data["block_id"] == "Agent_0"
+            && event.data["updates"]["status"] == "invoking"
+    }));
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.block.updated"
+            && event.data["block_id"] == "Agent_0"
+            && event.data["updates"]["summary"] == "Backend inspected"
+            && event.data["updates"]["status"] == "done"
+    }));
+    assert!(events.iter().any(|event| {
+        event.event_type == "response.block.updated"
+            && event.data["block_id"] == "Agent_0"
+            && event.data["updates"]["output"] == "Detailed child result"
+            && event.data["updates"].get("status").is_none()
+    }));
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
         }
     );
 }

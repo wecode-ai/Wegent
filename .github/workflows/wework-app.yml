@@ -12,10 +12,6 @@ on:
         type: boolean
         required: false
         default: false
-  push:
-    tags:
-      - "wework-v*"
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -328,11 +324,14 @@ jobs:
           chmod 0755 dist/wegent-executor
           dist/wegent-executor --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: ${{ matrix.rust_target }}
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Sync Wework version files
         working-directory: wework
@@ -393,9 +392,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          VITE_API_BASE_URL: https://api.wecode.ai/api
-          VITE_SOCKET_BASE_URL: https://api.wecode.ai
-          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
         run: |
           set -euo pipefail
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
@@ -413,37 +410,17 @@ jobs:
           }
           trap cleanup EXIT
           CONFIG_OVERRIDE="$config_override" \
+          BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
           VERSION="${{ needs.prepare-release.outputs.version }}" \
           UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
-          TAURI_UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
-          python3 - <<'PY'
-          import json
-          import os
-
-          config = {
-              "version": os.environ["VERSION"],
-              "bundle": {
-                  "createUpdaterArtifacts": True,
-                  "macOS": {
-                      "signingIdentity": "-",
-                      "hardenedRuntime": True,
-                  },
-              },
-              "plugins": {
-                  "updater": {
-                      "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-                      "pubkey": os.environ["TAURI_UPDATER_PUBKEY"],
-                  },
-              },
-          }
-
-          with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-              json.dump(config, handle, indent=2)
-              handle.write("\n")
-          PY
+          UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+          SIGNING_IDENTITY="-" \
+          ENABLE_INSECURE_TRANSPORT="false" \
+          node scripts/generate-release-config.mjs
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
             --bundles app,dmg \
+            --features release-devtools \
             --config "$config_override"
 
       - name: Verify and collect release assets
@@ -613,11 +590,14 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
           & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
 
-      - name: Prepare bundled Codex
+      - name: Prepare bundled sidecars
         working-directory: wework
         env:
           WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
-        run: pnpm run prepare:codex
+          WEWORK_DWS_TARGET: x86_64-pc-windows-msvc
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Build Wework app bundle
         shell: pwsh
@@ -628,9 +608,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          VITE_API_BASE_URL: https://api.wecode.ai/api
-          VITE_SOCKET_BASE_URL: https://api.wecode.ai
-          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+          VITE_WEGENT_BACKEND_URL: https://api.wecode.ai
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
@@ -652,7 +630,7 @@ jobs:
             }
           } | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
 
-          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $configPath
+          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --features release-devtools --config $configPath
 
       - name: Verify and collect release assets
         id: package

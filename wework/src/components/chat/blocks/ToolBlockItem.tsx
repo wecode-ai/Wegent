@@ -1,14 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
-import { ChevronDown, Copy, CopyCheck, FileDiff, Search } from 'lucide-react'
-import { Streamdown } from 'streamdown'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { terminalOutputToText } from '@/lib/terminal-text'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
-import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
+import { resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
-import { isWebSearchToolName } from './toolBlockActivity'
+import {
+  getToolActivityFilePaths,
+  getToolActivityKind,
+  isWebSearchToolName,
+} from './toolBlockActivity'
 import {
   getFileInputPath,
   getFileInputPaths,
@@ -17,63 +23,139 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageViewToolName,
   isFileReadToolName,
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  compact?: boolean
+  shimmer?: boolean
+  durationStartedAt?: number
+  durationEndAt?: number
+  fileEditDurations?: FileEditDurationsByBlock
   forceExpanded?: boolean
   stateKey?: string
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
+  onExpandedChange?: (expanded: boolean) => void
 }
 
 export function ToolBlockItem({
   block,
+  compact = false,
+  shimmer = false,
+  durationStartedAt,
+  durationEndAt,
+  fileEditDurations,
   forceExpanded = false,
+  stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
   loadingFullTranscript = false,
+  onExpandedChange,
 }: ToolBlockItemProps) {
-  const [userExpanded, setUserExpanded] = useState(false)
+  const { t } = useTranslation('chat')
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const duration = useToolDuration(
+    durationStartedAt ?? block.createdAt,
+    durationEndAt ?? block.completedAt,
+    isRunning
+  )
+  const hasDetail = block.type === 'tool' && hasBlockDetail(block)
+  const expanded = hasDetail && (forceExpanded || userExpanded)
+
+  useLayoutEffect(() => {
+    if (block.type === 'tool') onExpandedChange?.(expanded)
+  }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ThinkingBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'text') {
-    return <ProcessTextBlockItem block={block} isRunning={isRunning} />
+    return (
+      <ProcessTextBlockItem
+        block={block}
+        isRunning={isRunning}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    )
   }
   if (block.type === 'plan') {
     return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
   }
   if (block.type === 'file_changes') {
-    return <ProcessFileChangesBlockItem block={block} />
+    return (
+      <ProcessFileChangesBlockItem
+        block={block}
+        shimmer={shimmer}
+        fileEditDurations={fileEditDurations}
+        onExpandedChange={onExpandedChange}
+      />
+    )
   }
 
-  const { icon, label } = getBlockLabel(block)
+  if (block.toolName === 'runtime_reconnecting') {
+    return (
+      <div
+        className="min-w-0 truncate py-1 text-sm text-text-muted"
+        data-testid="runtime-reconnecting-status"
+        role="status"
+      >
+        <span className="tool-activity-shimmer">
+          {t('tool_activity.reconnecting', '连接中断，正在重连…')}
+        </span>
+      </div>
+    )
+  }
+
+  const { icon, label } = getBlockLabel(block, {
+    waitRunning: t('tool_activity.wait_running'),
+    waitDone: t('tool_activity.wait_done'),
+    waitError: t('tool_activity.wait_error'),
+    callRunning: name => t('tool_activity.call_running', { name }),
+    callDone: name => t('tool_activity.call_done', { name }),
+    callError: name => t('tool_activity.call_error', { name }),
+    fileCount: count => t('tool_activity.file_count', { count }),
+    fileFallback: t('tool_activity.file_fallback'),
+    searchRunning: t('tool_activity.search_running'),
+    searchDone: t('tool_activity.search_done'),
+    searchError: t('tool_activity.search_error'),
+    imageView: filename => t('tool_activity.image_view', { filename }),
+    imageViewFallback: t('tool_activity.image_view_fallback'),
+  })
   const workspaceFilePath = getWorkspaceFilePath(block)
-  const hasDetail = hasBlockDetail(block)
-  const expanded = hasDetail && (forceExpanded || userExpanded)
   const labelContent = (
     <>
       {icon}
-      <span className="min-w-0 truncate">{label}</span>
+      <span className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}>
+        {label}
+      </span>
       {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
     </>
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
-      <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
+    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
+      <div
+        className={`flex w-full max-w-full items-center gap-1.5 text-text-secondary ${compact ? 'min-h-8' : ''}`}
+      >
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
             type="button"
@@ -85,6 +167,8 @@ export function ToolBlockItem({
         ) : hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
+            aria-expanded={expanded}
             onClick={() => setUserExpanded(value => !value)}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
@@ -96,6 +180,7 @@ export function ToolBlockItem({
         {hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
             onClick={() => setUserExpanded(value => !value)}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={expanded ? '收起工具详情' : '展开工具详情'}
@@ -112,9 +197,10 @@ export function ToolBlockItem({
             </svg>
           </button>
         ) : null}
+        <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{duration}</span>
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-hidden">
+        <div className="mt-2 min-w-0 overflow-x-clip">
           {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
         </div>
       ) : null}
@@ -149,77 +235,89 @@ function PlanBlockItem({
 
 function ProcessFileChangesBlockItem({
   block,
+  shimmer,
+  fileEditDurations,
+  onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
+  shimmer: boolean
+  fileEditDurations?: FileEditDurationsByBlock
+  onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
   const summary = block.fileChanges
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const [expanded, setExpanded] = useState(false)
   const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    onExpandedChange?.(expandedFilePath !== null)
+  }, [expandedFilePath, onExpandedChange])
 
   if (!summary.files.length) return null
 
   return (
     <div
-      className="min-w-0 overflow-visible text-[13px]"
+      className="min-w-0 overflow-visible text-sm"
       data-processing-block-id={block.id}
       data-testid="process-file-changes-block"
     >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
-        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
-      >
-        <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t, isRunning)}</span>
-        <FileChangeLineStats summary={summary} isRunning={isRunning} />
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
-          strokeWidth={2}
-        />
-      </button>
-      {expanded ? (
-        <div className="mt-2 min-w-0 space-y-1.5">
-          {summary.files.map(file => {
-            const previewLines = fileDiffPreviewLines(file, summary)
-            const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
-            return (
-              <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
-                <button
-                  type="button"
-                  disabled={previewLines.length === 0}
-                  onClick={() =>
-                    setExpandedFilePath(current => (current === file.path ? null : file.path))
-                  }
-                  className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+      <div className="flex min-w-0 flex-col">
+        {summary.files.map(file => {
+          const previewLines = fileDiffPreviewLines(file, summary)
+          const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+          const editDuration = fileEditDurations?.get(block.id)?.get(file.path)
+          return (
+            <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
+              <button
+                type="button"
+                disabled={previewLines.length === 0}
+                aria-expanded={previewLines.length > 0 ? fileExpanded : undefined}
+                onClick={() =>
+                  setExpandedFilePath(current => (current === file.path ? null : file.path))
+                }
+                className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+              >
+                <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+                <span
+                  className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}
                 >
-                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t)}</span>
-                  {!file.binary ? (
-                    <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
-                      <span className="text-green-600">+{file.additions}</span>
-                      <span className="text-red-500">-{file.deletions}</span>
-                    </span>
-                  ) : null}
-                  {previewLines.length > 0 ? (
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
-                        fileExpanded ? '' : '-rotate-90'
-                      }`}
-                      strokeWidth={2}
-                    />
-                  ) : null}
-                </button>
-                {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
-              </div>
-            )
-          })}
-        </div>
-      ) : null}
+                  {fileChangeRowLabel(file, t, isRunning)}
+                </span>
+                {!file.binary ? (
+                  <FileChangeLineStats file={file} isRunning={isRunning} streamId={block.id} />
+                ) : null}
+                {previewLines.length > 0 ? (
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
+                      fileExpanded ? '' : '-rotate-90'
+                    }`}
+                    strokeWidth={2}
+                  />
+                ) : null}
+                <FileEditDurationText
+                  key={editDuration?.id ?? block.id}
+                  duration={editDuration}
+                  fallbackStartedAt={block.createdAt}
+                  fallbackCompletedAt={block.completedAt}
+                  isRunning={isRunning}
+                />
+              </button>
+              {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
+
+export interface FileEditDuration {
+  id: string
+  startedAt: number
+  completedAt?: number
+}
+
+export type FileEditDurationsByBlock = ReadonlyMap<string, ReadonlyMap<string, FileEditDuration>>
 
 type FileChangeStatBlock = {
   id: string
@@ -236,39 +334,43 @@ type FileChangeStatBlockStyle = CSSProperties & {
 }
 
 function FileChangeLineStats({
-  summary,
+  file,
   isRunning,
+  streamId,
 }: {
-  summary: TurnFileChangesSummary
+  file: TurnFileChangeItem
   isRunning: boolean
+  streamId: string
 }) {
   const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
-  const visibleStatBlocks =
-    isRunning && statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
   const previousRef = useRef({
-    artifactId: summary.artifact_id,
-    additions: summary.additions,
-    deletions: summary.deletions,
+    streamId,
+    additions: file.additions,
+    deletions: file.deletions,
   })
+  const visibleStatBlocks =
+    isRunning && statBlocks.length > 0
+      ? statBlocks
+      : buildStaticFileChangeStatBlocks(file, streamId)
 
   useEffect(() => {
     const previous = previousRef.current
-    if (previous.artifactId !== summary.artifact_id) {
+    if (previous.streamId !== streamId) {
       previousRef.current = {
-        artifactId: summary.artifact_id,
-        additions: summary.additions,
-        deletions: summary.deletions,
+        streamId,
+        additions: file.additions,
+        deletions: file.deletions,
       }
       setStatBlocks([])
       return
     }
 
-    const addedDelta = Math.max(0, summary.additions - previous.additions)
-    const deletedDelta = Math.max(0, summary.deletions - previous.deletions)
+    const addedDelta = Math.max(0, file.additions - previous.additions)
+    const deletedDelta = Math.max(0, file.deletions - previous.deletions)
     previousRef.current = {
-      artifactId: summary.artifact_id,
-      additions: summary.additions,
-      deletions: summary.deletions,
+      streamId,
+      additions: file.additions,
+      deletions: file.deletions,
     }
 
     if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
@@ -278,43 +380,50 @@ function FileChangeLineStats({
       [
         ...current,
         {
-          id: `${now}-${addedDelta}-${deletedDelta}`,
+          id: `${streamId}:${now}:${addedDelta}:${deletedDelta}`,
           additions: addedDelta,
           deletions: deletedDelta,
         },
       ].slice(-6)
     )
-  }, [isRunning, summary.additions, summary.artifact_id, summary.deletions])
+  }, [file.additions, file.deletions, isRunning, streamId])
 
   return (
-    <span className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums">
+    <span
+      className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums"
+      data-testid="file-change-line-stats"
+    >
       <span className="inline-flex items-center text-green-600">
-        +<AnimatedChangeNumber value={summary.additions} deltaPrefix="+" />
+        +
+        <AnimatedChangeNumber
+          key={`${streamId}:additions`}
+          value={file.additions}
+          deltaPrefix="+"
+        />
       </span>
       <span className="inline-flex items-center text-red-500">
-        -<AnimatedChangeNumber value={summary.deletions} deltaPrefix="-" />
+        -
+        <AnimatedChangeNumber
+          key={`${streamId}:deletions`}
+          value={file.deletions}
+          deltaPrefix="-"
+        />
       </span>
       {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
     </span>
   )
 }
 
-function buildStaticFileChangeStatBlocks(summary: TurnFileChangesSummary): FileChangeStatBlock[] {
-  const changedFiles = summary.files.filter(file => !file.binary)
-  if (changedFiles.length > 0) {
-    return changedFiles.slice(-6).map(file => ({
-      id: `${file.path}:${file.additions}:${file.deletions}`,
-      additions: file.additions,
-      deletions: file.deletions,
-    }))
-  }
-
-  if (summary.additions === 0 && summary.deletions === 0) return []
+function buildStaticFileChangeStatBlocks(
+  file: TurnFileChangeItem,
+  streamId: string
+): FileChangeStatBlock[] {
+  if (file.additions === 0 && file.deletions === 0) return []
   return [
     {
-      id: `${summary.artifact_id}:${summary.additions}:${summary.deletions}`,
-      additions: summary.additions,
-      deletions: summary.deletions,
+      id: `${streamId}:${file.path}:${file.additions}:${file.deletions}`,
+      additions: file.additions,
+      deletions: file.deletions,
     },
   ]
 }
@@ -395,46 +504,71 @@ function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
   )
 }
 
-function fileChangesSummaryLabel(
-  summary: TurnFileChangesSummary,
-  t: ReturnType<typeof useTranslation>['t'],
-  isRunning = false
-): string {
-  const changeType = uniformChangeType(summary.files)
-  const count = summary.file_count || summary.files.length
-  if (isRunning) {
-    if (changeType === 'created') return t('file_changes.creating_files', { count })
-    if (changeType === 'deleted') return t('file_changes.deleting_files', { count })
-    if (changeType === 'renamed') return t('file_changes.renaming_files', { count })
-    return t('file_changes.editing_files', { count })
-  }
-  if (changeType === 'created') return t('file_changes.created_files', { count })
-  if (changeType === 'deleted') return t('file_changes.deleted_files', { count })
-  if (changeType === 'renamed') return t('file_changes.renamed_files', { count })
-  return t('file_changes.edited_files', { count })
+function FileEditDurationText({
+  duration,
+  fallbackStartedAt,
+  fallbackCompletedAt,
+  isRunning,
+}: {
+  duration: FileEditDuration | undefined
+  fallbackStartedAt: number
+  fallbackCompletedAt: number | undefined
+  isRunning: boolean
+}) {
+  const durationIsRunning = duration ? duration.completedAt === undefined : isRunning
+  const text = useToolDuration(
+    duration?.startedAt ?? fallbackStartedAt,
+    duration?.completedAt ?? fallbackCompletedAt,
+    durationIsRunning
+  )
+
+  return <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{text}</span>
 }
 
-function uniformChangeType(files: TurnFileChangeItem[]): TurnFileChangeItem['change_type'] | null {
-  const first = files[0]?.change_type
-  if (!first) return null
-  return files.every(file => file.change_type === first) ? first : null
+function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  const [anchoredStartedAt] = useState(startedAt)
+  const wasRunning = useRef(isRunning)
+  const [completedAt, setCompletedAt] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!isRunning) return
+    const timer = window.setInterval(() => setNow(Date.now()), 100)
+    return () => window.clearInterval(timer)
+  }, [isRunning])
+
+  useEffect(() => {
+    if (wasRunning.current && !isRunning) setCompletedAt(Date.now())
+    wasRunning.current = isRunning
+  }, [isRunning])
+
+  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)
+  if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
+  return `${(Math.max(0, endedAt - anchoredStartedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(
   file: TurnFileChangeItem,
-  t: ReturnType<typeof useTranslation>['t']
+  t: ReturnType<typeof useTranslation>['t'],
+  isRunning = false
 ): string {
   const filename = basename(file.path)
+  if (isRunning) {
+    if (file.change_type === 'created') return t('file_changes.creating_file', { filename })
+    if (file.change_type === 'deleted') return t('file_changes.deleting_file', { filename })
+    if (file.change_type === 'renamed') return t('file_changes.renaming_file', { filename })
+    return t('file_changes.editing_file', { filename })
+  }
   switch (file.change_type) {
     case 'created':
-      return t('file_changes.created_file', { filename })
+      return t('tool_activity.created_file', { filename })
     case 'deleted':
-      return t('file_changes.deleted_file', { filename })
+      return t('tool_activity.deleted_file', { filename })
     case 'renamed':
-      return t('file_changes.renamed_file', { filename })
+      return t('tool_activity.renamed_file', { filename })
     case 'modified':
     default:
-      return t('file_changes.edited_file', { filename })
+      return t('tool_activity.edited_file', { filename })
   }
 }
 
@@ -461,7 +595,7 @@ function InlineDiffPreview({
   return (
     <div
       ref={previewRef}
-      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-[12px] leading-[18px]"
+      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-xs leading-[18px]"
       data-testid="process-file-change-diff"
       data-message-content-visibility-lock="true"
       onClick={event => event.stopPropagation()}
@@ -704,9 +838,11 @@ function basename(path: string): string {
 function ThinkingBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'thinking' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -717,7 +853,7 @@ function ThinkingBlockItem({
     const preview = buildBlockPreview(block.content)
 
     return (
-      <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
+      <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
         <div
           className="flex max-w-full items-center gap-1.5 text-text-secondary"
           role="status"
@@ -738,7 +874,7 @@ function ThinkingBlockItem({
   const detailId = `${block.id}-thinking-detail`
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
+    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
       <button
         type="button"
         data-testid="thinking-toggle-button"
@@ -761,7 +897,11 @@ function ThinkingBlockItem({
           className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
           data-testid="thinking-detail"
         >
-          <ProcessMarkdown content={block.content} />
+          <AssistantMarkdown
+            content={block.content}
+            variant="process"
+            onOpenFile={onOpenWorkspaceFile}
+          />
         </div>
       )}
     </div>
@@ -771,9 +911,11 @@ function ThinkingBlockItem({
 function ProcessTextBlockItem({
   block,
   isRunning,
+  onOpenWorkspaceFile,
 }: {
   block: Extract<ProcessingBlock, { type: 'text' }>
   isRunning: boolean
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
 
@@ -781,7 +923,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-[13px] text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm text-text-secondary"
       data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
@@ -789,89 +931,64 @@ function ProcessTextBlockItem({
       data-testid="process-text-block"
     >
       <div className="min-w-0">
-        <ProcessMarkdown content={block.content} />
+        <AssistantMarkdown
+          content={block.content}
+          isStreaming={isRunning}
+          variant="process"
+          onOpenFile={onOpenWorkspaceFile}
+        />
       </div>
     </div>
   )
 }
 
-function ProcessMarkdown({ content }: { content: string }) {
-  return (
-    <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
-      <Streamdown
-        mode="streaming"
-        controls={false}
-        lineNumbers={false}
-        urlTransform={url => url}
-        components={{
-          p: ({ children }) => <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>,
-          ul: ({ children }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
-          ol: ({ children }) => (
-            <ol className="mb-1.5 list-decimal space-y-0.5 pl-5">{children}</ol>
-          ),
-          li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children, node, ...props }) => {
-            const match = /language-(\w*)/.exec(className || '')
-            const text = reactNodeToText(children)
-            const isBlock =
-              ('data-block' in props && Boolean(props['data-block'])) ||
-              node?.properties?.dataBlock === 'true' ||
-              Boolean(match) ||
-              text.includes('\n')
-            if (isBlock) {
-              const lang = match ? match[1] || '' : ''
-              return (
-                <MarkdownCodeBlock lang={lang} compact>
-                  {text || children}
-                </MarkdownCodeBlock>
-              )
-            }
-            return (
-              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                {children}
-              </code>
-            )
-          },
-          inlineCode: ({ children }) => (
-            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-              {children}
-            </code>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
-              {children}
-            </blockquote>
-          ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              className="break-words text-primary underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {children}
-            </a>
-          ),
-        }}
-      >
-        {content}
-      </Streamdown>
-    </div>
-  )
+type GenericToolLabels = {
+  waitRunning: string
+  waitDone: string
+  waitError: string
+  callRunning: (name: string) => string
+  callDone: (name: string) => string
+  callError: (name: string) => string
+  fileCount: (count: number) => string
+  fileFallback: string
+  searchRunning: string
+  searchDone: string
+  searchError: string
+  imageView: (filename: string) => string
+  imageViewFallback: string
 }
 
-function reactNodeToText(node: ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
-  return ''
-}
-
-function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string } {
+function getBlockLabel(
+  block: ToolBlock,
+  genericLabels: GenericToolLabels
+): { icon: React.ReactNode; label: string } {
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
   if (isCommandToolName(name)) {
+    const activityKind = getToolActivityKind(block)
+    if (activityKind === 'file') {
+      const paths = getToolActivityFilePaths(block)
+      const target =
+        paths.length === 1
+          ? basename(paths[0])
+          : paths.length > 1
+            ? genericLabels.fileCount(paths.length)
+            : genericLabels.fileFallback
+      return { icon: <FileIcon />, label: `${prefix.read} ${target}` }
+    }
+    if (activityKind === 'search') {
+      const action =
+        block.status === 'error'
+          ? genericLabels.searchError
+          : block.status === 'done'
+            ? genericLabels.searchDone
+            : genericLabels.searchRunning
+      return {
+        icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
+        label: action,
+      }
+    }
     const command = getInputField(block, 'command', 'cmd', 'commandLine')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
@@ -891,10 +1008,56 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
       label: prefix.webSearch,
     }
   }
+  if (isImageViewToolName(name)) {
+    const path = getInputField(block, 'path', 'file_path', 'filePath')
+    return {
+      icon: <FileIcon />,
+      label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
+    }
+  }
   if (isGuidanceToolName(name)) {
     return { icon: <ToolIcon />, label: prefix.guidance }
   }
-  return { icon: <ToolIcon />, label: prefix.generic }
+
+  return getGenericToolLabel(block, genericLabels)
+}
+
+function getGenericToolLabel(
+  block: ToolBlock,
+  labels: GenericToolLabels
+): { icon: React.ReactNode; label: string } {
+  const name = getReadableToolName(block.toolName)
+  const normalizedName = name.toLowerCase()
+
+  if (normalizedName.includes('wait')) {
+    const label =
+      block.status === 'error'
+        ? labels.waitError
+        : block.status === 'done'
+          ? labels.waitDone
+          : labels.waitRunning
+    return {
+      icon: <Clock3 className="h-4 w-4" strokeWidth={1.7} />,
+      label,
+    }
+  }
+
+  const label =
+    block.status === 'error'
+      ? labels.callError(name)
+      : block.status === 'done'
+        ? labels.callDone(name)
+        : labels.callRunning(name)
+  return {
+    icon: <Wrench className="h-4 w-4" strokeWidth={1.7} />,
+    label,
+  }
+}
+
+function getReadableToolName(toolName: string): string {
+  const normalized = toolName.trim()
+  const leaf = normalized.split(/\.|__/).filter(Boolean).at(-1) ?? normalized
+  return leaf.replaceAll('_', ' ')
 }
 
 function getFileToolLabel(prefix: string, block: ToolBlock, action: string): string {
@@ -906,7 +1069,7 @@ function getFileToolLabel(prefix: string, block: ToolBlock, action: string): str
 
 function fileToolFallbackLabel(status: ToolBlock['status'], action: string): string {
   if (status === 'error') return `${action}文件失败`
-  if (status === 'done') return `已${action}文件`
+  if (status === 'done') return `${action}文件`
   return `正在${action}文件`
 }
 
@@ -925,13 +1088,13 @@ function getToolStatusPrefix(block: ToolBlock) {
 
   if (block.status === 'done') {
     return {
-      running: '已运行',
-      create: '已新增',
-      edit: '已编辑',
-      read: '已读取',
-      webSearch: '已搜索网页',
-      guidance: '已引导对话',
-      generic: '已执行',
+      running: '运行',
+      create: '新增',
+      edit: '编辑',
+      read: '读取',
+      webSearch: '搜索网页',
+      guidance: '引导对话',
+      generic: '执行',
     }
   }
 
@@ -1039,6 +1202,9 @@ function renderBlockDetail(
   if (isWebSearchToolName(name)) {
     return <WebSearchBlockDetail block={block} />
   }
+  if (isImageViewToolName(name)) {
+    return <ImageViewBlockDetail block={block} />
+  }
   if (isGuidanceToolName(name)) {
     return null
   }
@@ -1052,7 +1218,60 @@ function hasBlockDetail(block: ToolBlock): boolean {
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
     isFileEditToolName(name) ||
-    isWebSearchToolName(name)
+    isWebSearchToolName(name) ||
+    isImageViewToolName(name)
+  )
+}
+
+function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
+  const { t } = useTranslation('chat')
+  const source = getImageViewSource(block)
+  const resolvedSource = source ? resolveDirectMarkdownImageSrc(source) : null
+
+  if (!resolvedSource) return null
+
+  return (
+    <div
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface"
+      data-testid="image-view-block-detail"
+    >
+      <img
+        src={resolvedSource}
+        alt={t('tool_activity.image_preview_alt')}
+        className="max-h-96 w-full object-contain"
+        data-testid="image-view-preview"
+      />
+    </div>
+  )
+}
+
+function getImageViewSource(block: ToolBlock): string | undefined {
+  const output = block.toolOutput
+  if (typeof output === 'string' && isImageSource(output)) return output
+  if (isRecord(output)) {
+    const directSource = getStringField(output, 'image_url', 'imageUrl', 'url', 'path')
+    if (directSource && isImageSource(directSource)) return directSource
+
+    const nestedImageUrl = output.image_url
+    if (isRecord(nestedImageUrl)) {
+      const nestedSource = getStringField(nestedImageUrl, 'url')
+      if (nestedSource && isImageSource(nestedSource)) return nestedSource
+    }
+  }
+
+  return getInputField(block, 'path', 'file_path', 'filePath')
+}
+
+function isImageSource(value: string): boolean {
+  const source = value.trim()
+  return (
+    source.startsWith('data:image/') ||
+    source.startsWith('blob:') ||
+    source.startsWith('file://') ||
+    /^https?:\/\//i.test(source) ||
+    /^asset:/i.test(source) ||
+    source.startsWith('/') ||
+    /^[a-zA-Z]:[\\/]/.test(source)
   )
 }
 
@@ -1088,11 +1307,20 @@ function BashBlockDetail({
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
-  const outputText =
-    typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
+  const rawOutputText = useMemo(
+    () => (typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''),
+    [output]
+  )
+  const outputText = useMemo(() => terminalOutputToText(rawOutputText), [rawOutputText])
+  const outputRef = useRef<HTMLPreElement>(null)
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
+
+  useLayoutEffect(() => {
+    const outputElement = outputRef.current
+    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight
+  }, [outputText])
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(command ?? '')
@@ -1173,8 +1401,12 @@ function BashBlockDetail({
               ) : null}
             </div>
           ) : null}
-          <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
-            {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
+          <pre
+            ref={outputRef}
+            className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"
+            data-testid="shell-tool-output"
+          >
+            {outputText}
           </pre>
         </>
       )}

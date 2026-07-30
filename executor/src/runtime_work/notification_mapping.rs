@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
-    codex_phase::{codex_item_id, codex_phase_is_process, codex_phase_name, normalize_codex_phase},
+    codex_phase::{codex_item_id, codex_phase_is_final, codex_phase_name, normalize_codex_phase},
     logging::log_executor_event,
 };
 
@@ -29,6 +29,7 @@ pub(crate) enum TextChunkMapping {
         delta: String,
     },
     FinalDelta {
+        item_id: Option<String>,
         delta: String,
     },
     ProcessCompleted {
@@ -37,7 +38,10 @@ pub(crate) enum TextChunkMapping {
         item_id: Option<String>,
         text: String,
     },
-    FinalCompleted,
+    FinalCompleted {
+        item_id: Option<String>,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,7 +56,9 @@ pub(crate) fn map_text_chunk(
     resolved_phase: Option<&str>,
 ) -> Result<Option<TextChunkMapping>, &'static str> {
     match method {
-        "item/reasoning/delta" | "item/reasoningSummary/delta" => {
+        "item/reasoning/delta"
+        | "item/reasoningSummary/delta"
+        | "item/reasoning/summaryTextDelta" => {
             let delta = raw_string_field(params, "delta")
                 .or_else(|| string_field(params, "delta"))
                 .or_else(|| reasoning_content(params))
@@ -69,7 +75,7 @@ pub(crate) fn map_text_chunk(
             let delta = raw_string_field(params, "delta")
                 .filter(|delta| !delta.is_empty())
                 .ok_or("missing_agent_message_delta")?;
-            if codex_phase_is_process(resolved_phase) {
+            if !codex_phase_is_final(resolved_phase) {
                 Ok(Some(TextChunkMapping::ProcessDelta {
                     process_kind: "assistant_message",
                     block_type: "text",
@@ -77,7 +83,10 @@ pub(crate) fn map_text_chunk(
                     delta,
                 }))
             } else {
-                Ok(Some(TextChunkMapping::FinalDelta { delta }))
+                Ok(Some(TextChunkMapping::FinalDelta {
+                    item_id: notification_item_id(params),
+                    delta,
+                }))
             }
         }
         "item/completed" => {
@@ -93,7 +102,12 @@ pub(crate) fn map_text_chunk(
                         text,
                     }))
                 }
-                CompletedAssistantTextKind::Final => Ok(Some(TextChunkMapping::FinalCompleted)),
+                CompletedAssistantTextKind::Final(text) => {
+                    Ok(Some(TextChunkMapping::FinalCompleted {
+                        item_id: notification_item_id(params),
+                        text,
+                    }))
+                }
             }
         }
         _ => Ok(None),
@@ -193,28 +207,63 @@ pub(crate) fn log_text_mapping(
     params: &Value,
     text: &str,
 ) {
-    log_executor_event(
-        "codex runtime text mapping",
-        &[
-            ("local_task_id", local_task_id.to_owned()),
-            ("method", method.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            (
-                "phase",
-                codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            (
-                "item_id",
-                notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
+    let mut fields = text_mapping_log_fields(
+        local_task_id,
+        method,
+        action,
+        resolved_phase,
+        params,
+        text.len(),
     );
+    fields.push(("text_preview", truncate_log_text(text, 160)));
+    log_executor_event("codex runtime text mapping", &fields);
+}
+
+pub(crate) fn log_text_mapping_metadata(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text_len: usize,
+) {
+    let fields = text_mapping_log_fields(
+        local_task_id,
+        method,
+        action,
+        resolved_phase,
+        params,
+        text_len,
+    );
+    log_executor_event("codex runtime text mapping", &fields);
+}
+
+fn text_mapping_log_fields(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text_len: usize,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("local_task_id", local_task_id.to_owned()),
+        ("method", method.to_owned()),
+        ("action", action.to_owned()),
+        (
+            "resolved_phase",
+            resolved_phase.unwrap_or("<none>").to_owned(),
+        ),
+        (
+            "phase",
+            codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        (
+            "item_id",
+            notification_item_id(params).unwrap_or_else(|| "<none>".to_owned()),
+        ),
+        ("text_len", text_len.to_string()),
+    ]
 }
 
 pub(crate) fn log_stream_text_mapping(
@@ -261,7 +310,7 @@ fn env_bool(name: &str, default_value: bool) -> bool {
 
 enum CompletedAssistantTextKind {
     Process(String),
-    Final,
+    Final(String),
 }
 
 fn completed_assistant_text_kind(
@@ -275,10 +324,10 @@ fn completed_assistant_text_kind(
     let text = extract_text(item).filter(|content| !content.is_empty())?;
     let phase =
         assistant_message_phase_name(item).or_else(|| resolved_phase.map(normalize_codex_phase));
-    if codex_phase_is_process(phase.as_deref()) {
-        Some(CompletedAssistantTextKind::Process(text))
+    if codex_phase_is_final(phase.as_deref()) {
+        Some(CompletedAssistantTextKind::Final(text))
     } else {
-        Some(CompletedAssistantTextKind::Final)
+        Some(CompletedAssistantTextKind::Process(text))
     }
 }
 

@@ -400,7 +400,7 @@ function ProjectCreateDialogContent({
         {!canUseDevice && (
           <div
             data-testid={`project-device-unavailable-${activeDevice.device_id}`}
-            className="mt-3 rounded-lg border border-[#f0dfc7] bg-[#fff8ed] px-3 py-2 text-[13px] leading-5 text-[#7a4b16]"
+            className="mt-3 rounded-lg border border-[#f0dfc7] bg-[#fff8ed] px-3 py-2 text-sm leading-5 text-[#7a4b16]"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -464,7 +464,7 @@ function ProjectCreateDialogContent({
                 disabled={submitting}
                 onClick={() => setWorkspaceKind(value)}
                 className={[
-                  'min-h-10 rounded-lg border px-2 text-[12px] font-medium',
+                  'min-h-10 rounded-lg border px-2 text-xs font-medium',
                   workspaceKind === value
                     ? 'border-text-primary bg-text-primary text-background'
                     : 'border-[#d8d8d8] text-[#3c4043] hover:bg-[#f7f7f8]',
@@ -553,7 +553,7 @@ function ProjectCreateDialogContent({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
-            <p className="mt-2 text-[13px] leading-[18px] text-[#6b6f76]">{description}</p>
+            <p className="mt-2 text-sm leading-[18px] text-[#6b6f76]">{description}</p>
           </div>
           <button
             type="button"
@@ -588,7 +588,7 @@ function ProjectCreateDialogContent({
 
         {isEditing ? (
           <label className="mt-5 block">
-            <span className="text-[13px] font-semibold text-[#202124]">
+            <span className="text-sm font-semibold text-[#202124]">
               {t('workbench.project_name', '项目名称')}
             </span>
             <input
@@ -599,7 +599,7 @@ function ProjectCreateDialogContent({
                 setProjectName(event.target.value)
                 setProjectCreateError(null)
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
+              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60"
             />
           </label>
         ) : primaryDraft ? (
@@ -610,7 +610,7 @@ function ProjectCreateDialogContent({
                 value={projectName}
                 disabled={submitting}
                 onChange={event => setProjectName(event.target.value)}
-                className="h-9 w-full rounded-md border border-[#d8d8d8] bg-white px-2 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+                className="h-9 w-full rounded-md border border-[#d8d8d8] bg-white px-2 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
               />
             ) : (
               <div className="flex items-center justify-between gap-3">
@@ -691,7 +691,7 @@ function ProjectCreateDialogContent({
             data-testid="cancel-project-create-button"
             disabled={submitting}
             onClick={onClose}
-            className="h-10 rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-10 rounded-md border border-[#d8d8d8] px-4 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('workbench.cancel', '取消')}
           </button>
@@ -701,7 +701,7 @@ function ProjectCreateDialogContent({
             disabled={!canSubmit || submitting}
             onClick={() => void handleSubmit()}
             aria-busy={submitting}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-[13px] font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {submitting && (
               <Loader2 data-testid="project-submit-spinner" className="h-4 w-4 animate-spin" />

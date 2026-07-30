@@ -130,6 +130,10 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     namespace: str = Field(default="default", max_length=255)
+    direct_access_requirement: Literal["read", "edit"] = Field(
+        default="read",
+        description="Minimum capability required for direct knowledge base access",
+    )
     kb_type: Optional[str] = Field(
         "notebook",
         description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
@@ -198,6 +202,10 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    direct_access_requirement: Optional[Literal["read", "edit"]] = Field(
+        default=None,
+        description="Minimum capability required for direct knowledge base access",
+    )
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
         description="Retrieval configuration update (excludes retriever and embedding model)",
@@ -277,6 +285,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     description: Optional[str] = None
     user_id: int
     namespace: str
+    direct_access_requirement: Literal["read", "edit"] = "read"
     kb_type: Optional[str] = Field(
         "notebook",
         description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
@@ -371,6 +380,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             description=spec.get("description") or None,  # Convert empty string to None
             user_id=kind.user_id,
             namespace=kind.namespace,
+            direct_access_requirement=spec.get("directAccessRequirement", "read"),
             kb_type=kb_type,
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(

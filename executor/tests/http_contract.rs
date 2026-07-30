@@ -114,6 +114,26 @@ async fn responses_endpoint_accepts_openai_background_requests() {
 }
 
 #[tokio::test]
+async fn codex_router_accepts_request_bodies_larger_than_axum_default() {
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let payload = vec![b'x'; 3 * 1024 * 1024];
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/v1/codex-router/unknown/responses")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn workspace_routes_list_and_download_task_files() {
     let _lock = env_lock().lock().await;
     let workspace_root = unique_dir("executor-http-workspace");

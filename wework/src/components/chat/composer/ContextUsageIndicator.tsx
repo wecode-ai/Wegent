@@ -131,7 +131,7 @@ export function ContextUsageIndicator({
       {!confirmOpen && (
         <>
           <div className="pointer-events-auto absolute bottom-4 left-1/2 z-system-popover hidden h-3 w-24 -translate-x-1/2 cursor-default group-hover:block group-focus-within:block" />
-          <div className="pointer-events-auto absolute bottom-7 left-1/2 z-system-popover hidden w-max -translate-x-1/2 cursor-default rounded-2xl border border-border/70 bg-background px-4 py-3 text-center text-[13px] leading-5 text-text-primary shadow-[0_14px_42px_rgba(15,23,42,0.16)] group-hover:block group-focus-within:block">
+          <div className="pointer-events-auto absolute bottom-7 left-1/2 z-system-popover hidden w-max -translate-x-1/2 cursor-default rounded-2xl border border-border/70 bg-background px-4 py-3 text-center text-sm leading-5 text-text-primary shadow-[0_14px_42px_rgba(15,23,42,0.16)] group-hover:block group-focus-within:block">
             <div className="mb-1 whitespace-nowrap font-light text-text-secondary">
               {t('workbench.context_usage_title')}
             </div>
@@ -161,7 +161,7 @@ export function ContextUsageIndicator({
               top: confirmPosition?.top ?? 0,
               visibility: confirmPosition ? 'visible' : 'hidden',
             }}
-            className="pointer-events-auto fixed z-system-popover w-[13.5rem] cursor-default rounded-xl border border-border/80 bg-background p-3 text-left text-[13px] leading-5 text-text-primary shadow-[0_14px_42px_rgba(15,23,42,0.14)]"
+            className="pointer-events-auto fixed z-system-popover w-[13.5rem] cursor-default rounded-xl border border-border/80 bg-background p-3 text-left text-sm leading-5 text-text-primary shadow-[0_14px_42px_rgba(15,23,42,0.14)]"
           >
             <div className="mb-3 pr-7">
               <div className="font-medium">

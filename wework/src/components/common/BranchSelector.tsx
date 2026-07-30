@@ -222,7 +222,10 @@ export function BranchSelector({
   const branchLabel = loading ? t('common.loading', '加载中...') : currentBranch || emptyBranchLabel
 
   return (
-    <div ref={rootRef} className="relative">
+    <div
+      ref={rootRef}
+      className={cn('relative', variant === 'workbar' && 'min-w-0 max-w-[18rem] shrink')}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -230,12 +233,14 @@ export function BranchSelector({
         onClick={() => void handleToggle()}
         className={cn(
           variant === 'environment'
-            ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover'
-            : 'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover'
+            : 'flex h-9 w-full min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-normal leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          useMobileSheet && 'font-medium',
           open &&
             variant === 'workbar' &&
             'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
         )}
+        title={variant === 'workbar' ? branchLabel : undefined}
         aria-label={t('workbench.environment_branch_menu', '切换分支')}
         aria-expanded={open}
       >
@@ -262,8 +267,8 @@ export function BranchSelector({
                   ? 'right-[calc(100%-44px)] top-[38px]'
                   : 'bottom-[38px] right-[calc(100%-44px)]'
                 : desktopMenuLayout.placement === 'below'
-                  ? 'left-0 top-11'
-                  : 'bottom-11 left-0')
+                  ? 'right-0 top-11'
+                  : 'bottom-11 right-0')
           )}
           style={useMobileSheet ? undefined : { maxHeight: desktopMenuLayout.maxHeight }}
         >

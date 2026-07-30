@@ -20,7 +20,7 @@ export function CodexMemoryCitations({
   if (entries.length === 0) return null
 
   return (
-    <section className="mt-3 min-w-0 text-[13px]" data-testid="codex-memory-citations">
+    <section className="mt-3 min-w-0 text-sm" data-testid="codex-memory-citations">
       <button
         type="button"
         data-testid="codex-memory-citations-toggle"
@@ -94,7 +94,7 @@ export function CodexReferenceList({
               <ReferenceFileIcon path={reference.path} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-text-primary">
+              <span className="block truncate text-sm font-semibold text-text-primary">
                 {basename(reference.path)}
               </span>
               <span className="relative block h-5 truncate text-xs leading-5 text-text-secondary">
@@ -182,7 +182,7 @@ function MemoryCitationEntryRow({
   return (
     <button
       type="button"
-      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-[13px] leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
+      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
       data-testid="codex-memory-citation-entry"
       onClick={() => openFileWithOptionalLocation(onOpenFile, entry.path, lineStart, lineEnd)}
       disabled={!onOpenFile}
@@ -199,7 +199,7 @@ function MemoryCitationEntryRow({
       {entry.note ? <span className="block break-words text-text-muted">{entry.note}</span> : null}
       <span
         data-testid="codex-memory-citation-tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-[13px] font-normal leading-5 text-white shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-sm font-normal leading-5 text-white shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
       >
         {filename}
       </span>

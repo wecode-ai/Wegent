@@ -34,11 +34,14 @@ export function releaseAttachmentPreview(attachment: Attachment): void {
 }
 
 export function persistAttachmentReferences(attachments: Attachment[]): Attachment[] {
-  return attachments.map(attachment =>
-    isObjectUrl(attachment.local_preview_url)
-      ? { ...attachment, local_preview_url: undefined }
-      : attachment
-  )
+  return attachments.map(attachment => {
+    if (!isObjectUrl(attachment.local_preview_url)) return attachment
+
+    return {
+      ...attachment,
+      local_preview_url: attachment.local_path,
+    }
+  })
 }
 
 export function isImageAttachment(attachment: Attachment): boolean {

@@ -12,10 +12,24 @@ The legacy SharedTask, SharedTeam, and TaskMember models have been removed.
 Use ResourceMember for all resource sharing functionality.
 """
 from app.models.api_key import APIKey
+from app.models.cloud_project import (
+    CloudProject,
+    CloudProjectFile,
+    CloudProjectLocalBinding,
+    LoopItemTaskBinding,
+)
+from app.models.delivery import (
+    Delivery,
+    DeliveryAsset,
+    LoopItem,
+    LoopItemAttachment,
+    LoopItemCollaborator,
+)
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
@@ -50,6 +64,15 @@ from app.schemas.namespace import GroupRole
 
 __all__ = [
     "DingtalkSyncedNode",
+    "CloudProject",
+    "CloudProjectFile",
+    "CloudProjectLocalBinding",
+    "LoopItemTaskBinding",
+    "LoopItem",
+    "LoopItemAttachment",
+    "LoopItemCollaborator",
+    "Delivery",
+    "DeliveryAsset",
     "User",
     "Kind",
     "IMPrivateSession",
@@ -64,6 +87,7 @@ __all__ = [
     "NamespaceMember",
     "APIKey",
     "KnowledgeDocument",
+    "KnowledgeArtifactRecord",
     "Project",
     "ResourceLibraryPublication",
     "SubscriptionFollow",

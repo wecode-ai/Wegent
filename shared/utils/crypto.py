@@ -26,6 +26,10 @@ _attachment_aes_key = None
 _attachment_aes_iv = None
 
 
+class CryptoConfigurationError(RuntimeError):
+    """Raised when required crypto configuration is missing or invalid."""
+
+
 def _get_encryption_key():
     """Get or initialize encryption key and IV from environment variables"""
     global _aes_key, _aes_iv
@@ -34,9 +38,15 @@ def _get_encryption_key():
         aes_key = os.environ.get(
             "GIT_TOKEN_AES_KEY", "12345678901234567890123456789012"
         )
-        aes_iv = os.environ.get("GIT_TOKEN_AES_IV", "1234567890123456")
-        _aes_key = aes_key.encode("utf-8")
-        _aes_iv = aes_iv.encode("utf-8")
+        aes_iv = os.environ.get("GIT_TOKEN_AES_IV")
+        if aes_iv is None:
+            raise CryptoConfigurationError("GIT_TOKEN_AES_IV must be configured")
+        aes_key_bytes = aes_key.encode("utf-8")
+        aes_iv_bytes = aes_iv.encode("utf-8")
+        if len(aes_iv_bytes) != 16:
+            raise CryptoConfigurationError("GIT_TOKEN_AES_IV must be 16 UTF-8 bytes")
+        _aes_key = aes_key_bytes
+        _aes_iv = aes_iv_bytes
         logger.info("Loaded encryption keys from environment variables")
     return _aes_key, _aes_iv
 
@@ -234,6 +244,8 @@ def decrypt_sensitive_data(encrypted_text: str) -> Optional[str]:
         # Return decrypted string
         return decrypted_bytes.decode("utf-8")
     except Exception as e:
+        if isinstance(e, CryptoConfigurationError):
+            raise
         logger.warning(f"Failed to decrypt sensitive data: {str(e)}")
         # Return the original text as fallback for backward compatibility
         return encrypted_text

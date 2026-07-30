@@ -35,6 +35,44 @@ def test_list_runtime_work_endpoint_uses_current_user(
     assert "client_origin" not in service_mock.await_args.kwargs
 
 
+def test_create_runtime_task_preserves_delivery_context(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "device-1",
+            "taskId": "task-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "create_runtime_task", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/create",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "workspacePath": "/repo",
+            "teamId": 1,
+            "runtime": "codex",
+            "message": "Continue the delivery",
+            "deliveryId": "12345678-1234-1234-1234-123456789abc",
+        },
+    )
+
+    assert response.status_code == 200
+    request = service_mock.await_args.kwargs["request"]
+    assert request.delivery_id == "12345678-1234-1234-1234-123456789abc"
+
+
 def test_upsert_device_workspace_endpoint_returns_mapping(
     test_client,
     test_token,
@@ -394,6 +432,42 @@ def test_runtime_guidance_endpoint_dispatches_request(
     request = service_mock.await_args.kwargs["request"]
     assert request.address.local_task_id == "codex-1"
     assert request.client_guidance_id == "guide-1"
+
+
+def test_runtime_interrupt_and_send_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={"accepted": True, "taskId": "codex-1", "error": None}
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "interrupt_and_send_runtime_message",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/interrupt-and-send",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+                "taskId": "codex-1",
+            },
+            "message": "change direction now",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    request = service_mock.await_args.kwargs["request"]
+    assert request.address.local_task_id == "codex-1"
+    assert request.message == "change direction now"
 
 
 def test_archived_conversations_list_endpoint_dispatches_filters(

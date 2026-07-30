@@ -30,10 +30,18 @@ require_line() {
 
 require_file "$POLICY_WORKFLOW"
 require_line "$POLICY_WORKFLOW" "pull_request_target:" "trusted fork PR trigger"
+require_line "$POLICY_WORKFLOW" "merge_group:" "merge queue trigger"
+require_line "$POLICY_WORKFLOW" "checks_requested" "merge queue checks activity"
 require_line "$POLICY_WORKFLOW" "contents: read" "read-only repository permission"
 require_line "$POLICY_WORKFLOW" "path: trusted-policy" "trusted script checkout path"
 require_line "$POLICY_WORKFLOW" "path: policy-target" "PR content checkout path"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
 require_line "$POLICY_WORKFLOW" 'ref: refs/pull/${{ github.event.pull_request.number }}/merge' "PR merge ref checkout"
+require_line "$POLICY_WORKFLOW" "Checkout merge group" "merge group checkout step"
+# shellcheck disable=SC2016
+require_line "$POLICY_WORKFLOW" 'ref: ${{ github.sha }}' "merge group SHA checkout"
+require_line "$POLICY_WORKFLOW" "allow-unsafe-pr-checkout: true" "reviewed fork PR checkout opt-in"
 require_line "$POLICY_WORKFLOW" "REPOSITORY_POLICY_ROOT: \${{ github.workspace }}/policy-target" "target repository scan root"
 require_line "$POLICY_WORKFLOW" "trusted-policy/scripts/hooks/check-repository-policy.sh" "trusted policy script execution"
 

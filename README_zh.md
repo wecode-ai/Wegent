@@ -82,6 +82,8 @@ wegent-standalone stop
 
 下载并安装 Wework，打开一个本地项目即可开始 AI Coding。Wework 自带本地执行能力，也可以在设置中连接团队部署的 Wegent。
 
+任务执行期间，Wework 会持续展示最新工具调用；工具列表默认显示约 3.5 行并可滚动，当前最新一行和仍在运行的工具会以扫光效果提示，命令输出、搜索详情和文件变更可逐项展开。中间过程文本只结束当前工具段，并继续以“已调用工具”汇总显示；最终回答开始后，处理过程会收起为带分隔线的“已处理”条目，展开后仍使用相同的工具列表。
+
 **[下载 Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ### Wegent Web 部署方式
@@ -308,6 +310,13 @@ graph TB
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/kerwin612">
                     <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
                     <br />
@@ -349,13 +358,6 @@ graph TB
                     <sub><b>Fingki</b></sub>
                 </a>
             </td>
-            <td align="center">
-                <a href="https://github.com/flyhope">
-                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
-                    <br />
-                    <sub><b>李枨煊</b></sub>
-                </a>
-            </td>
 		</tr>
 		<tr>
             <td align="center">
@@ -366,24 +368,17 @@ graph TB
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/flyhope">
+                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
+                    <br />
+                    <sub><b>李枨煊</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/jolestar">
                     <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
                     <br />
                     <sub><b>Jolestar</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/code-wangdi">
-                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
-                    <br />
-                    <sub><b>Code-wangdi</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/haosenwang1018">
-                    <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
-                    <br />
-                    <sub><b>Sense_wang</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -394,10 +389,17 @@ graph TB
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                <a href="https://github.com/haosenwang1018">
+                    <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
                     <br />
-                    <sub><b>+7</b></sub>
+                    <sub><b>Sense_wang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/code-wangdi">
+                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+                    <br />
+                    <sub><b>Code-wangdi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -475,6 +477,13 @@ graph TB
 		</tr>
 		<tr>
             <td align="center">
+                <a href="https://github.com/Qinxl0921">
+                    <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
+                    <br />
+                    <sub><b>qinxll</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/salt-hai">
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
                     <br />
@@ -486,6 +495,13 @@ graph TB
                     <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
                     <br />
                     <sub><b>Wxcfox</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/earthAlone2026">
+                    <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
+                    <br />
+                    <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
 		</tr>

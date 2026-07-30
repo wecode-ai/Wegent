@@ -4,6 +4,7 @@ import {
   consumePluginTrial,
   consumePluginTrialInput,
   pluginTrialInput,
+  queuePluginReferenceTrial,
   queuePluginTrial,
 } from './pluginTrial'
 
@@ -102,10 +103,30 @@ describe('plugin trial state', () => {
     )
   })
 
+  test('uses the cloud marketplace identity from the installed plugin source', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.source.marketplace = 'wegent'
+    plugin.spec.sourcePayload = { filename: 'wegent-sites.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
     expect(consumePluginTrialInput()).toBeNull()
+  })
+
+  test('queues a canonical plugin reference without an installed plugin record', () => {
+    expect(
+      queuePluginReferenceTrial({
+        pluginName: 'sites',
+        marketplaceName: 'openai-bundled',
+        displayName: 'Sites',
+      })
+    ).toBe(true)
+    expect(consumePluginTrialInput()).toBe('[$Sites](plugin://sites@openai-bundled) ')
   })
 
   test('queues plugin templates for the trial composer', () => {

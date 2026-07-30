@@ -1,14 +1,21 @@
 import { isTauriRuntime } from './runtime-environment'
 import { navigateTo } from './navigation'
+import { getPlatform } from './platform'
 
 export const OPEN_TERMINAL_COMMAND = 'openTerminal'
 export const OPEN_SETTINGS_COMMAND = 'openSettings'
+export const OPEN_SEARCH_COMMAND = 'openSearch'
 export const GO_BACK_COMMAND = 'goBack'
 export const GO_FORWARD_COMMAND = 'goForward'
 export const TOGGLE_SIDEBAR_COMMAND = 'toggleSidebar'
 export const TOGGLE_SIDE_PANEL_COMMAND = 'toggleSidePanel'
 export const TOGGLE_MODEL_SELECTOR_COMMAND = 'toggleModelSelector'
+export const INCREASE_FONT_SIZE_COMMAND = 'increaseFontSize'
+export const DECREASE_FONT_SIZE_COMMAND = 'decreaseFontSize'
+export const RESET_FONT_SIZE_COMMAND = 'resetFontSize'
 export const WEWORK_OPEN_TERMINAL_EVENT = 'wework:open-terminal'
+export const WEWORK_STEP_FONT_SIZE_EVENT = 'wework:step-font-size'
+export const WEWORK_RESET_FONT_SIZE_EVENT = 'wework:reset-font-size'
 export const KEYBINDINGS_CHANGED_EVENT = 'wework:keybindings-changed'
 export const ACTIVE_KEYBINDINGS_CHANGED_EVENT = 'wework:active-keybindings-changed'
 export const TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID = 'toggle-bottom-workspace-panel-button'
@@ -36,6 +43,10 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
     defaultKey: 'Command+,',
   },
   {
+    command: OPEN_SEARCH_COMMAND,
+    defaultKey: 'Command+K',
+  },
+  {
     command: GO_BACK_COMMAND,
     defaultKey: 'Command+[',
     secondaryKeys: ['Mouse Back'],
@@ -57,13 +68,41 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
     command: TOGGLE_MODEL_SELECTOR_COMMAND,
     defaultKey: 'Control+Shift+M',
   },
+  {
+    command: INCREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Plus',
+  },
+  {
+    command: DECREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Minus',
+  },
+  {
+    command: RESET_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+0',
+  },
 ]
+
+const WIN_DEFAULT_KEYBINDINGS: KeybindingCommand[] = DEFAULT_KEYBINDINGS.map(item => ({
+  ...item,
+  defaultKey: item.defaultKey.replace('Command', 'Control'),
+  secondaryKeys: item.secondaryKeys,
+}))
+
+export function getDefaultKeybindings(platform = getPlatform()): KeybindingCommand[] {
+  return platform === 'win' ? WIN_DEFAULT_KEYBINDINGS : DEFAULT_KEYBINDINGS
+}
 
 let activeKeybindings = mergeKeybindings([])
 
-export function mergeKeybindings(overrides: KeybindingOverride[]): Record<string, string | null> {
+export function mergeKeybindings(
+  overrides: KeybindingOverride[],
+  platform = getPlatform()
+): Record<string, string | null> {
   const merged = new Map<string, string | null>(
-    DEFAULT_KEYBINDINGS.map(item => [item.command, normalizeKeybinding(item.defaultKey)])
+    getDefaultKeybindings(platform).map(item => [
+      item.command,
+      normalizeKeybinding(item.defaultKey),
+    ])
   )
   overrides.forEach(item => {
     if (!item.command) return
@@ -87,13 +126,19 @@ export function normalizeKeybinding(value: string): string {
 }
 
 export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
-  const key = normalizeKeyPart(event.key)
+  const key = normalizeKeyPart(
+    event.altKey ? keybindingKeyFromPhysicalCode(event.code) || event.key : event.key
+  )
+  const mainKey = key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null
+  if (!mainKey) return ''
+
+  const includeShift = event.shiftKey && key !== 'Plus' && key !== 'Minus'
   return [
     event.ctrlKey ? 'Control' : null,
     event.altKey ? 'Alt' : null,
-    event.shiftKey ? 'Shift' : null,
+    includeShift ? 'Shift' : null,
     event.metaKey ? 'Command' : null,
-    key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null,
+    mainKey,
   ]
     .filter(Boolean)
     .join('+')
@@ -179,6 +224,14 @@ export function dispatchToggleModelSelectorShortcut() {
   if (button && !button.disabled) button.click()
 }
 
+export function dispatchStepFontSizeShortcut(delta: -1 | 1) {
+  window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta } }))
+}
+
+export function dispatchResetFontSizeShortcut() {
+  window.dispatchEvent(new CustomEvent(WEWORK_RESET_FONT_SIZE_EVENT))
+}
+
 export function shortcutsAvailable(): boolean {
   return isTauriRuntime()
 }
@@ -191,6 +244,30 @@ function normalizeKeyPart(value: string): string {
   if (['shift', '⇧'].includes(lower)) return 'Shift'
   if (lower === ' ') return 'Space'
   if (lower === 'escape') return 'Esc'
+  if (lower === '+' || lower === '=' || lower === 'plus') return 'Plus'
+  if (lower === '-' || lower === '_' || lower === 'minus') return 'Minus'
   if (value.length === 1) return value.toUpperCase()
   return value
+}
+
+function keybindingKeyFromPhysicalCode(code: string): string {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3)
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5)
+
+  return (
+    {
+      Space: 'Space',
+      Equal: 'Plus',
+      Minus: 'Minus',
+      Backquote: '`',
+      BracketLeft: '[',
+      BracketRight: ']',
+      Backslash: '\\',
+      Semicolon: ';',
+      Quote: "'",
+      Comma: ',',
+      Period: '.',
+      Slash: '/',
+    }[code] ?? ''
+  )
 }

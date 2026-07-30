@@ -86,7 +86,7 @@ export function SubagentStatusIndicator({
                   <span className="block truncate text-text-primary" title={status.agentName}>
                     {status.agentName}
                   </span>
-                  <span className="block truncate text-[11px] leading-4 text-text-muted">
+                  <span className="block truncate text-xs leading-4 text-text-muted">
                     {shortSubagentId(status.agentId)}
                   </span>
                 </span>

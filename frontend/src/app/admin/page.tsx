@@ -55,6 +55,9 @@ const TemplateList = dynamic(() => import('@/features/admin/components/TemplateL
 const ApiKeyManagement = dynamic(() => import('@/features/admin/components/ApiKeyManagement'), {
   ssr: false,
 })
+const ConnectorAppList = dynamic(() => import('@/features/admin/components/ConnectorAppList'), {
+  ssr: false,
+})
 const SystemConfigPanel = dynamic(() => import('@/features/admin/components/SystemConfigPanel'), {
   ssr: false,
 })
@@ -118,6 +121,7 @@ function AdminContent() {
         'api-keys',
         'system-config',
         'im-channels',
+        'connector-apps',
         'monitor',
         'device-monitor',
       ].includes(tab)
@@ -187,6 +191,8 @@ function AdminContent() {
         return <SystemConfigPanel />
       case 'im-channels':
         return <IMChannelList />
+      case 'connector-apps':
+        return <ConnectorAppList />
       case 'monitor':
         return <BackgroundExecutionMonitorPanel />
       case 'device-monitor':

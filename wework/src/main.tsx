@@ -7,20 +7,30 @@ import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
 import { installDebugPanelLogCapture } from './lib/debugPanel'
 import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
+import { installExternalDropGuard } from './lib/external-drop-guard'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 
-installDebugPanelLogCapture()
-installAppLogging()
-installWeworkAutomationBridge()
-installDesktopExtensions()
-installExternalLinkHandler()
-installPageZoomGuard()
-installDeveloperCommandMenu()
-const performanceDiagnostics = installPerformanceDiagnostics()
+const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
+if (!isSystemDragPanel) {
+  installDebugPanelLogCapture()
+  installAppLogging()
+  installFrontendRecoveryBridge()
+  installWeworkAutomationBridge()
+  installDesktopExtensions()
+  if (isTauriRuntime()) {
+    installExternalDropGuard()
+  }
+  installExternalLinkHandler()
+  installPageZoomGuard()
+  installDeveloperCommandMenu()
+}
+const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

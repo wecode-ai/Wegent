@@ -16,6 +16,7 @@ import type {
   RuntimeCompactRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -95,6 +96,9 @@ export interface ExecutorRuntimeClient {
     data: RuntimeFileChangesRevertRequest
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
+  interruptAndSendRuntimeMessage: (
+    data: RuntimeInterruptAndSendRequest
+  ) => Promise<RuntimeSendResponse>
   rollbackRuntimeTask: (data: RuntimeRollbackRequest) => Promise<RuntimeSendResponse>
   compactRuntimeTask: (data: RuntimeCompactRequest) => Promise<RuntimeSendResponse>
   guideRuntimeTask: (data: RuntimeGuidanceRequest) => Promise<RuntimeGuidanceResponse>
@@ -102,6 +106,7 @@ export interface ExecutorRuntimeClient {
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>
   openRuntimeWorkspace: (data: RuntimeWorkspaceOpenRequest) => Promise<RuntimeWorkspaceOpenResponse>
+  upsertLocalRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['upsertLocalRuntimeProject']
   renameRuntimeWorkspace: (
     data: RuntimeWorkspaceRenameRequest
   ) => Promise<RuntimeWorkspaceOpenResponse>
@@ -113,6 +118,8 @@ export interface ExecutorRuntimeClient {
   setRuntimeProjectAppearance: ReturnType<
     typeof createRuntimeWorkApi
   >['setRuntimeProjectAppearance']
+  syncRuntimeRemoteProjects: ReturnType<typeof createRuntimeWorkApi>['syncRuntimeRemoteProjects']
+  activateRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['activateRuntimeProject']
   reorderRuntimeProjectTasks: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjectTasks']
   setRuntimeTaskPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeTaskPinned']
   archiveRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['archiveRuntimeTask']
@@ -161,13 +168,16 @@ interface ExecutorAccessApis {
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
     | 'readWorkspaceFileChunk'
-  >
+  > &
+    Pick<WorkspaceFileApi, 'writeWorkspaceTextFile'>
   runtimeWorkApi: ExecutorRuntimeClient
   reviewApi?: ExecutorReviewClient
+  resolveDevice?: (deviceId: string) => Promise<DeviceInfo | null>
 }
 
 export function createInMemoryExecutorRegistry(
-  loadEntries: () => Promise<ExecutorRegistryEntry[]>
+  loadEntries: () => Promise<ExecutorRegistryEntry[]>,
+  loadEntry?: (deviceId: string) => Promise<ExecutorRegistryEntry | null>
 ): ExecutorRegistry {
   let entries: ExecutorRegistryEntry[] = []
 
@@ -180,7 +190,14 @@ export function createInMemoryExecutorRegistry(
     if (entries.length === 0) {
       await refresh()
     }
-    const entry = entries.find(item => item.deviceId === deviceId)
+    let entry = entries.find(item => item.deviceId === deviceId)
+    if (!entry && loadEntry) {
+      const loadedEntry = await loadEntry(deviceId)
+      if (loadedEntry) {
+        entry = loadedEntry
+        entries = [...entries.filter(item => item.deviceId !== loadedEntry.deviceId), loadedEntry]
+      }
+    }
     if (!entry) {
       throw new Error(`executor-not-found:${deviceId}`)
     }
@@ -202,19 +219,29 @@ export function createExecutorClientFromApis({
   deviceApi,
   runtimeWorkApi,
   reviewApi,
+  resolveDevice,
 }: ExecutorAccessApis): ExecutorClient {
-  const registry = createInMemoryExecutorRegistry(async () => {
-    const devices = await deviceApi.listDevices()
-    return devices.map(device => ({
-      deviceId: device.device_id,
-      name: device.name,
-      status: device.status,
-      version: device.executor_version,
-      capabilities: device.capabilities ?? [],
-      transportKind,
-      device,
-    }))
+  const createRegistryEntry = (device: DeviceInfo): ExecutorRegistryEntry => ({
+    deviceId: device.device_id,
+    name: device.name,
+    status: device.status,
+    version: device.executor_version,
+    capabilities: device.capabilities ?? [],
+    transportKind,
+    device,
   })
+  const registry = createInMemoryExecutorRegistry(
+    async () => {
+      const devices = await deviceApi.listDevices()
+      return devices.map(createRegistryEntry)
+    },
+    resolveDevice
+      ? async deviceId => {
+          const device = await resolveDevice(deviceId)
+          return device ? createRegistryEntry(device) : null
+        }
+      : undefined
+  )
 
   const resolve = (deviceId: string) => registry.resolve(deviceId)
   const commands: ExecutorCommandClient = {
@@ -252,6 +279,7 @@ export function createExecutorClientFromApis({
     },
   }
 
+  const writeWorkspaceTextFile = deviceApi.writeWorkspaceTextFile
   const files: WorkspaceFileApi = {
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
       await resolve(deviceId)
@@ -276,6 +304,19 @@ export function createExecutorClientFromApis({
     async readWorkspaceFileChunk(deviceId, filePath, offset) {
       return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset)
     },
+    ...(writeWorkspaceTextFile
+      ? {
+          async writeWorkspaceTextFile(
+            deviceId: string,
+            filePath: string,
+            content: string,
+            expectedRevision: string
+          ) {
+            await resolve(deviceId)
+            return writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision)
+          },
+        }
+      : {}),
   }
 
   return {

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 
 use serde_json::Value;
 
@@ -14,6 +14,8 @@ use crate::{
 };
 
 const CLAUDE_STDOUT_MAX_BUFFER_BYTES: usize = 1024 * 1024;
+const CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+const OMITTED_IMAGE_DATA: &str = "[binary image data omitted]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeStreamSummary {
@@ -30,6 +32,7 @@ pub struct ClaudeToolUse {
     pub id: String,
     pub name: String,
     pub input: Value,
+    pub parent_tool_use_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +40,22 @@ pub struct ClaudeToolResult {
     pub tool_use_id: String,
     pub content: Option<String>,
     pub is_error: bool,
+    pub parent_tool_use_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeChildBlock {
+    pub id: String,
+    pub block_type: String,
+    pub parent_tool_use_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeSubagentUpdate {
+    pub tool_use_id: String,
+    pub status: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -95,11 +114,11 @@ impl ClaudeStdoutJsonBuffer {
         }
 
         self.buffer.push_str(line);
-        if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+        if self.buffer.len() > CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES {
             let error = ClaudeStdoutJsonError {
                 line_number,
                 message: format!(
-                    "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                    "JSON message exceeded maximum raw size of {CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES} bytes"
                 ),
                 preview: preview_stdout_line(&self.buffer),
             };
@@ -108,12 +127,84 @@ impl ClaudeStdoutJsonBuffer {
         }
 
         match serde_json::from_str::<Value>(&self.buffer) {
-            Ok(value) => {
+            Ok(mut value) => {
+                omit_inline_image_data(&mut value);
+                let normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    serde_json::to_vec(&value)
+                        .map(|serialized| serialized.len())
+                        .unwrap_or(self.buffer.len())
+                } else {
+                    self.buffer.len()
+                };
+                if normalized_size > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    let error = ClaudeStdoutJsonError {
+                        line_number,
+                        message: format!(
+                            "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                        ),
+                        preview: preview_stdout_line(&self.buffer),
+                    };
+                    self.buffer.clear();
+                    return Err(error);
+                }
                 self.buffer.clear();
                 Ok(Some(value))
             }
             Err(_) => Ok(None),
         }
+    }
+}
+
+pub fn compact_claude_stdout_line<'a>(
+    line: &'a str,
+    line_number: usize,
+) -> Result<Cow<'a, str>, ClaudeStdoutJsonError> {
+    if line.len() <= CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+        return Ok(Cow::Borrowed(line));
+    }
+
+    let mut buffer = ClaudeStdoutJsonBuffer::default();
+    let Some(value) = buffer.push_line(line, line_number)? else {
+        return Ok(Cow::Borrowed(line));
+    };
+    serde_json::to_string(&value)
+        .map(Cow::Owned)
+        .map_err(|error| ClaudeStdoutJsonError {
+            line_number,
+            message: format!("failed to serialize normalized Claude stdout JSON: {error}"),
+            preview: preview_stdout_line(line),
+        })
+}
+
+fn omit_inline_image_data(value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => {
+            let mut omitted = false;
+            for item in items {
+                omitted = omit_inline_image_data(item) || omitted;
+            }
+            omitted
+        }
+        Value::Object(object) => {
+            let is_image = object.get("type").and_then(Value::as_str) == Some("image");
+            let omitted_here = if is_image {
+                object
+                    .get_mut("source")
+                    .and_then(Value::as_object_mut)
+                    .filter(|source| source.get("type").and_then(Value::as_str) == Some("base64"))
+                    .and_then(|source| source.get_mut("data"))
+                    .map(|data| {
+                        *data = Value::String(OMITTED_IMAGE_DATA.to_owned());
+                    })
+                    .is_some()
+            } else {
+                false
+            };
+            object.values_mut().fold(omitted_here, |omitted, value| {
+                omit_inline_image_data(value) || omitted
+            })
+        }
+        _ => false,
     }
 }
 
@@ -437,9 +528,7 @@ pub fn extract_reasoning(value: &Value) -> Option<String> {
 }
 
 pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
-    if is_child_agent_event(value) {
-        return Vec::new();
-    }
+    let parent_tool_use_id = parent_tool_use_id(value);
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -471,15 +560,18 @@ pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
                 .get("input")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Default::default()));
-            Some(ClaudeToolUse { id, name, input })
+            Some(ClaudeToolUse {
+                id,
+                name,
+                input,
+                parent_tool_use_id: parent_tool_use_id.clone(),
+            })
         })
         .collect()
 }
 
 pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
-    if is_child_agent_event(value) {
-        return Vec::new();
-    }
+    let parent_tool_use_id = parent_tool_use_id(value);
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -507,9 +599,84 @@ pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
                     .get("is_error")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                parent_tool_use_id: parent_tool_use_id.clone(),
             })
         })
         .collect()
+}
+
+pub fn extract_claude_child_blocks(value: &Value) -> Vec<ClaudeChildBlock> {
+    let Some(parent_tool_use_id) = parent_tool_use_id(value) else {
+        return Vec::new();
+    };
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return Vec::new();
+    }
+    let Some(message) = value.get("message") else {
+        return Vec::new();
+    };
+    let Some(message_id) = message
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    let Some(content) = message.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    content
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let (block_type, content) = match block.get("type").and_then(Value::as_str) {
+                Some("text") => ("text", block.get("text").and_then(Value::as_str)?),
+                Some("thinking") => ("thinking", block.get("thinking").and_then(Value::as_str)?),
+                _ => return None,
+            };
+            if content.is_empty() {
+                return None;
+            }
+            Some(ClaudeChildBlock {
+                id: format!("{message_id}:{block_type}:{index}"),
+                block_type: block_type.to_owned(),
+                parent_tool_use_id: parent_tool_use_id.clone(),
+                content: content.to_owned(),
+            })
+        })
+        .collect()
+}
+
+pub fn extract_claude_subagent_update(value: &Value) -> Option<ClaudeSubagentUpdate> {
+    if value.get("type").and_then(Value::as_str) != Some("system") {
+        return None;
+    }
+    let subtype = value.get("subtype").and_then(Value::as_str)?;
+    let tool_use_id = non_empty_string_field(value, "tool_use_id")?;
+    match subtype {
+        "task_started" if value.get("task_type").and_then(Value::as_str) == Some("local_agent") => {
+            Some(ClaudeSubagentUpdate {
+                tool_use_id,
+                status: "invoking".to_owned(),
+                summary: None,
+            })
+        }
+        "task_notification" => {
+            let status = match value.get("status").and_then(Value::as_str)? {
+                "completed" | "succeeded" | "success" => "done",
+                "failed" | "error" | "cancelled" | "canceled" | "stopped" => "error",
+                _ => return None,
+            };
+            Some(ClaudeSubagentUpdate {
+                tool_use_id,
+                status: status.to_owned(),
+                summary: non_empty_string_field(value, "summary"),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {
@@ -550,12 +717,17 @@ fn is_claude_assistant_message(value: &Value) -> bool {
 }
 
 fn is_child_agent_event(value: &Value) -> bool {
+    parent_tool_use_id(value).is_some()
+}
+
+fn parent_tool_use_id(value: &Value) -> Option<String> {
     value
         .get("parent_tool_use_id")
         .or_else(|| value.get("parentToolUseId"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {

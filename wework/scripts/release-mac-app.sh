@@ -7,6 +7,8 @@ WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -24,7 +26,7 @@ APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 DEFAULT_NOTARY_PROFILE="${DEFAULT_NOTARY_PROFILE:-wework-notary}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
-RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-1}"
 
 usage() {
   cat <<EOF
@@ -42,7 +44,7 @@ Options:
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
-  --devtools                  Enable Web Inspector support in the release build.
+  --devtools                  Enable Web Inspector support (enabled by default).
   --print-next-version       Only print the next version and exit.
   -h, --help                 Show this help message.
 
@@ -52,7 +54,8 @@ Environment overrides:
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
-  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL
+  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL,
+  VITE_WEGENT_SOCKET_URL
 EOF
 }
 
@@ -500,10 +503,8 @@ require_macos_build_target
 
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
-DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
 
-export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
-export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-$DEFAULT_SOCKET_BASE_URL}"
+export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
 
 download_base_url="$LOCAL_DOWNLOAD_BASE_URL"
 dist_dir="$LOCAL_DIST_DIR"
@@ -514,7 +515,7 @@ if [ "$TARGET" = "prod" ]; then
 fi
 mkdir -p "$dist_dir"
 
-config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.XXXXXX.json")"
+config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.json.XXXXXX")"
 cleanup() {
   rm -f "$config_override"
 }
@@ -524,54 +525,10 @@ VERSION="$next_version" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
-RELEASE_DEVTOOLS="$RELEASE_DEVTOOLS" \
-BASE_TAURI_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
+BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 CONFIG_OVERRIDE="$config_override" \
-python3 - <<'PY'
-import json
-import os
-
-config = {
-    "version": os.environ["VERSION"],
-    "bundle": {
-        "createUpdaterArtifacts": True,
-    },
-    "plugins": {
-        "updater": {
-            "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-            "pubkey": os.environ["UPDATER_PUBKEY"],
-        },
-    },
-}
-
-identity = os.environ["SIGNING_IDENTITY"].strip()
-if identity:
-    config["bundle"]["macOS"] = {
-        "signingIdentity": identity,
-        "hardenedRuntime": True,
-    }
-
-if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
-    config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
-
-if os.environ["RELEASE_DEVTOOLS"] == "1":
-    with open(os.environ["BASE_TAURI_CONFIG"], "r", encoding="utf-8") as handle:
-        base_config = json.load(handle)
-    config["app"] = {
-        "windows": [
-            {
-                **window,
-                "devtools": True,
-            }
-            for window in base_config.get("app", {}).get("windows", [])
-        ],
-    }
-
-with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
+node "$SCRIPT_DIR/generate-release-config.mjs"
 
 echo "Release target: $TARGET"
 echo "Releasing version: $next_version"
@@ -588,9 +545,8 @@ if [ -n "$NOTARY_PROFILE" ]; then
 elif [ "$TARGET" = "local" ]; then
   echo "Notary profile: not set (local release will skip notarization)"
 fi
-echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
-echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
-echo "VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
+echo "VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+echo "VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"
@@ -603,6 +559,13 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
+if [ -n "$app_sign_identity" ]; then
+  wework_sign_prepared_codex_macos_binaries \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "$app_sign_identity"
+fi
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"

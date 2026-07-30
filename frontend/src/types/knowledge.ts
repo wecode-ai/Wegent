@@ -306,6 +306,7 @@ export interface SummaryModelRef {
 export type KnowledgeBaseType = 'notebook' | 'classic'
 export type KnowledgeView = 'documents' | 'notebook'
 export type RagConfigMode = 'auto' | 'disabled'
+export type DirectAccessRequirement = 'read' | 'edit'
 
 // Knowledge Base types
 export interface KnowledgeBase {
@@ -314,6 +315,7 @@ export interface KnowledgeBase {
   description: string | null
   user_id: number
   namespace: string
+  direct_access_requirement?: DirectAccessRequirement
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
@@ -352,6 +354,7 @@ export interface KnowledgeBaseCreate {
   name: string
   description?: string
   namespace?: string
+  direct_access_requirement?: DirectAccessRequirement
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
@@ -389,6 +392,7 @@ export interface RetrievalConfigUpdate {
 export interface KnowledgeBaseUpdate {
   name?: string
   description?: string
+  direct_access_requirement?: DirectAccessRequirement
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
@@ -461,6 +465,18 @@ export interface KnowledgeDocumentListResponse {
   offset: number
   has_more: boolean
   items: KnowledgeDocument[]
+}
+
+export interface DocumentContentReadResponse {
+  document_id: number
+  name: string
+  content: string
+  total_length: number
+  offset: number
+  returned_length: number
+  has_more: boolean
+  kb_id: number
+  index_status: DocumentIndexStatus
 }
 
 // Accessible Knowledge types (for AI integration)

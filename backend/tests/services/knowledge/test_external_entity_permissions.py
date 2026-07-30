@@ -26,14 +26,14 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate, ResourceScope
 from app.schemas.share import MemberRole
-from app.services.group_member_helper import get_user_groups_with_roles
-from app.services.knowledge.knowledge_service import KnowledgeService
-from app.services.share import knowledge_share_service
-from app.services.share.external_entity_resolver import (
+from app.services.external_entity_resolver import (
     IExternalEntityResolver,
     get_entity_resolver,
     register_entity_resolver,
 )
+from app.services.group_member_helper import get_user_groups_with_roles
+from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.share import knowledge_share_service
 from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 

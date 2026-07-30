@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -249,15 +249,53 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
-    # Context window and output token limits for LLM models
+    costIndex: Optional[str] = Field(
+        None,
+        coerce_numbers_to_str=True,
+        description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
+
+    # Legacy top-level token limits. New configurations should use the
+    # snake_case fields in modelConfig.
     contextWindow: Optional[int] = Field(
         None,
-        description="Maximum context window size in tokens. Used for message compression.",
+        description="Legacy maximum context window size in tokens.",
     )
     maxOutputTokens: Optional[int] = Field(
         None,
-        description="Maximum output tokens the model can generate per response.",
+        description="Legacy maximum output tokens per response.",
     )
+
+    @staticmethod
+    def _model_config_token_limit(value: Any) -> Optional[int]:
+        """Return a numeric token limit from the runtime model config."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    @field_validator("contextWindow", "maxOutputTokens", mode="before")
+    @classmethod
+    def _normalize_legacy_token_limit(cls, value: Any) -> Optional[int]:
+        """Normalize legacy token limits without Pydantic type coercion."""
+        return cls._model_config_token_limit(value)
+
+    @property
+    def context_window(self) -> Optional[int]:
+        """Return the context window, preferring the runtime model config."""
+        if "context_window" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("context_window")
+            )
+        return self._model_config_token_limit(self.contextWindow)
+
+    @property
+    def max_output_tokens(self) -> Optional[int]:
+        """Return the output limit, preferring the runtime model config."""
+        if "max_output_tokens" in self.modelConfig:
+            return self._model_config_token_limit(
+                self.modelConfig.get("max_output_tokens")
+            )
+        return self._model_config_token_limit(self.maxOutputTokens)
 
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(
@@ -294,6 +332,11 @@ class ModelSpec(BaseModel):
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
+    isWeworkAvailable: Optional[bool] = Field(
+        None,
+        description="Whether this model is available in the wework desktop client. "
+        "Only models with this field set to True are returned to wework.",
     )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
@@ -959,6 +1002,10 @@ class KnowledgeBaseSpec(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    directAccessRequirement: Literal["read", "edit"] = Field(
+        default="read",
+        description="Minimum capability required for direct knowledge base access",
+    )
     kbType: Optional[str] = Field(
         "notebook",
         description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",

@@ -114,6 +114,7 @@ export function PluginManagementPage() {
           activeItem="plugins"
           collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
+          onStartStandaloneChat={handleStartStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
@@ -133,7 +134,13 @@ export function PluginManagementPage() {
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={options => {
+            if (options?.settingsPage === 'connections') {
+              navigateTo('/settings/connections')
+              return
+            }
+            setSettingsOpen(true)
+          }}
           onLogout={logout}
         />
       )}

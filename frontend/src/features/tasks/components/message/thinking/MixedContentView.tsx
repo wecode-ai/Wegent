@@ -5,13 +5,20 @@
 'use client'
 
 import { memo, useMemo } from 'react'
-import type { ThinkingStep, MessageBlock, ToolPair } from './types'
+import { nestMessageBlocks } from '@wegent/chat-core'
+import type {
+  ThinkingStep,
+  MessageBlock,
+  SubagentBlock as SubagentBlockType,
+  ToolPair,
+} from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
+import { SubagentBlock } from './components/SubagentBlock'
+import { SubagentGroupBlock } from './components/SubagentGroupBlock'
 import { GuidanceBlock } from './components/GuidanceBlock'
 import ReasoningDisplay from './ReasoningDisplay'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { normalizeToolName, normalizeStepDetails } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
@@ -25,6 +32,7 @@ import {
   SubscriptionPreviewCard,
   type SubscriptionPreviewBlock,
 } from '../../subscription/SubscriptionPreviewCard'
+import { blockToToolPair } from './utils/blockToToolPair'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -165,7 +173,8 @@ const MixedContentView = memo(function MixedContentView({
   const mixedItems = useMemo(() => {
     // NEW: Block-based rendering (preferred)
     if (blocks && blocks.length > 0) {
-      const mapped = blocks
+      const nestedBlocks = nestMessageBlocks(blocks)
+      const mapped = nestedBlocks
         .map(block => {
           if (block.type === 'text') {
             // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
@@ -237,7 +246,17 @@ const MixedContentView = memo(function MixedContentView({
               data: block,
               blockId: block.id,
             }
+          } else if (block.type === 'subagent') {
+            return {
+              type: 'subagent' as const,
+              data: block,
+              blockId: block.id,
+            }
           } else if (block.type === 'tool') {
+            if (block.parent_tool_use_id) {
+              return null
+            }
+
             const formPayload = getRenderableInteractiveFormPayload(block.render_payload)
 
             // Only render an interactive form from the UI-only render payload.
@@ -321,57 +340,9 @@ const MixedContentView = memo(function MixedContentView({
                 render: () => customRenderer.render({ block, isLastBlock: false }),
               }
             }
-            // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
-            const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
-            const rawToolUseStep = {
-              title: `Using ${normalizedToolName}`,
-              next_action: 'continue',
-              tool_use_id: block.tool_use_id,
-              details: {
-                type: 'tool_use',
-                tool_name: normalizedToolName,
-                status: 'started',
-                input: block.tool_input,
-              },
-            }
-            const rawToolResultStep =
-              block.tool_output != null || block.status === 'error'
-                ? {
-                    title: `Result from ${normalizedToolName}`,
-                    next_action: 'continue',
-                    tool_use_id: block.tool_use_id,
-                    details: {
-                      type: 'tool_result',
-                      tool_name: normalizedToolName,
-                      status: block.status === 'error' ? 'failed' : 'completed',
-                      is_error: block.status === 'error',
-                      content: block.tool_output
-                        ? typeof block.tool_output === 'string'
-                          ? block.tool_output
-                          : JSON.stringify(block.tool_output)
-                        : undefined,
-                      output: block.tool_output,
-                    },
-                  }
-                : undefined
-            const toolPair = {
-              toolUseId: block.tool_use_id || block.id,
-              toolName: normalizedToolName,
-              displayName: block.display_name, // Pass display_name from block
-              status:
-                (block.status as
-                  | 'generating_arguments'
-                  | 'pending'
-                  | 'streaming'
-                  | 'invoking'
-                  | 'done'
-                  | 'error') || 'done',
-              toolUse: normalizeStepDetails(rawToolUseStep),
-              toolResult: rawToolResultStep ? normalizeStepDetails(rawToolResultStep) : undefined,
-            }
             return {
               type: 'tool' as const,
-              tool: toolPair,
+              tool: blockToToolPair(block),
               blockId: block.id,
             }
           }
@@ -384,7 +355,7 @@ const MixedContentView = memo(function MixedContentView({
       // 1. chat:block_created creates a tool block
       // 2. chat:chunk sends text content (accumulated in message.content)
       // 3. Without this fix, only tool blocks are rendered, text content is lost
-      const hasTextBlock = blocks.some(b => b.type === 'text')
+      const hasTextBlock = nestedBlocks.some(b => b.type === 'text')
       if (!hasTextBlock && content && content.trim()) {
         // Handle ${$$}$ separator - only show the result part (after separator)
         // This separator is used to split prompt and result in some message formats
@@ -507,7 +478,13 @@ const MixedContentView = memo(function MixedContentView({
   const mergedItems = useMemo(() => {
     type ToolItem = { type: 'tool'; tool: ToolPair; blockId: string }
     type MergedToolItem = ToolItem & { count: number; mergedTools: ToolPair[] }
-    type ResultItem = (typeof mixedItems)[number] & { count?: number; mergedTools?: ToolPair[] }
+    type MixedItem = NonNullable<(typeof mixedItems)[number]>
+    type SubagentGroupItem = {
+      type: 'subagent_group'
+      blocks: SubagentBlockType[]
+      blockId: string
+    }
+    type ResultItem = (MixedItem & { count?: number; mergedTools?: ToolPair[] }) | SubagentGroupItem
 
     const result: ResultItem[] = []
 
@@ -530,6 +507,26 @@ const MixedContentView = memo(function MixedContentView({
           // New tool or different tool name
           result.push({ ...item, count: 1, mergedTools: [item.tool] })
         }
+      } else if (item.type === 'subagent') {
+        const subagents = [item]
+        let nextIndex = i + 1
+        while (nextIndex < mixedItems.length) {
+          const nextItem = mixedItems[nextIndex]
+          if (!nextItem || nextItem.type !== 'subagent') break
+          subagents.push(nextItem)
+          nextIndex += 1
+        }
+
+        if (subagents.length > 1) {
+          result.push({
+            type: 'subagent_group',
+            blocks: subagents.map(subagent => subagent.data),
+            blockId: `subagent-group-${subagents[0].blockId}`,
+          })
+        } else {
+          result.push(item)
+        }
+        i = nextIndex - 1
       } else {
         // Non-tool items are added as-is
         result.push(item)
@@ -648,6 +645,10 @@ const MixedContentView = memo(function MixedContentView({
           )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />
+        } else if (item.type === 'subagent') {
+          return <SubagentBlock key={item.blockId} block={item.data} theme={theme} />
+        } else if (item.type === 'subagent_group') {
+          return <SubagentGroupBlock key={item.blockId} blocks={item.blocks} theme={theme} />
         } else if (item.type === 'tool') {
           const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
           const count = 'count' in item ? item.count : 1

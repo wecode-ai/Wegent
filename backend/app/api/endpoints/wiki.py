@@ -298,18 +298,32 @@ def get_wiki_projects(
 
 
 @router.get("/projects/{project_id}", response_model=WikiProjectDetail)
-def get_wiki_project(project_id: int, db: Session = Depends(get_wiki_db)):
+def get_wiki_project(
+    project_id: int,
+    current_user: User = Depends(security.get_current_user),
+    wiki_db: Session = Depends(get_wiki_db),
+    main_db: Session = Depends(get_db),
+):
     """Get wiki project detail.
 
+    Requires authentication and verifies the current user has read access to the
+    underlying repository, matching the filtering applied by the list endpoint.
     Returns project details with recent generations from system-bound user.
     When WIKI_DEFAULT_USER_ID = 0, returns all users' generations (legacy behavior).
     """
-    project = wiki_service.get_project_detail(db=db, project_id=project_id)
+    project = wiki_service.get_project_detail(db=wiki_db, project_id=project_id)
+
+    # Enforce the same repository-access check used by the project list endpoint.
+    # Get user from main_db to ensure we have the latest git_info.
+    user = main_db.query(User).filter(User.id == current_user.id).first()
+    if not wiki_service.check_user_project_access(project, user):
+        # Use 404 to avoid leaking the existence of inaccessible projects.
+        raise HTTPException(status_code=404, detail="Project not found")
 
     # Get recent generations for this project using system-bound user ID
     # When WIKI_DEFAULT_USER_ID = 0, returns all users' generations (legacy behavior)
     generations, _ = wiki_service.get_generations(
-        db=db,
+        db=wiki_db,
         user_id=wiki_settings.DEFAULT_USER_ID,  # Use system-bound user ID
         project_id=project_id,
         skip=0,

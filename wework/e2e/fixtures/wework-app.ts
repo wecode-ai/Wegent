@@ -14,11 +14,15 @@ type BridgeRuntimeConfig = {
 type TestLocalModelConnectionInput = {
   baseUrl: string
   modelId: string
+  apiFormat?: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages' | null
+  toolProfile?: 'custom' | 'function' | 'shell' | null
+  requestPath?: string | null
   apiKey?: string | null
 }
 
 type TestLocalModelConnectionResult = {
   status: number
+  toolCalling: true
 }
 
 declare global {

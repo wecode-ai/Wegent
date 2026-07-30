@@ -46,23 +46,26 @@ export function installXtermSelectionGuard({
     dispatchTerminalMouseUp(event)
   }
 
-  const clearAbandonedSelection = () => {
+  const releaseAbandonedSelection = () => {
     if (!mouseDownInTerminal) return
 
     endDrag()
+    // clearSelection only removes the highlight. xterm's drag listeners and
+    // auto-scroll loop remain active until they receive a mouseup event.
+    dispatchTerminalMouseUp(new MouseEvent('mouseup'))
     terminal.clearSelection()
   }
 
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
-      clearAbandonedSelection()
+      releaseAbandonedSelection()
     }
   }
 
   container.addEventListener('mousedown', handleMouseDown, true)
   window.addEventListener('mouseup', endDrag, true)
   window.addEventListener('mousemove', handleMouseMove, true)
-  window.addEventListener('blur', clearAbandonedSelection)
+  window.addEventListener('blur', releaseAbandonedSelection)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 
   return {
@@ -70,7 +73,7 @@ export function installXtermSelectionGuard({
       container.removeEventListener('mousedown', handleMouseDown, true)
       window.removeEventListener('mouseup', endDrag, true)
       window.removeEventListener('mousemove', handleMouseMove, true)
-      window.removeEventListener('blur', clearAbandonedSelection)
+      window.removeEventListener('blur', releaseAbandonedSelection)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     },
   }

@@ -12,6 +12,7 @@ import type {
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -47,12 +48,16 @@ import type {
   RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
+  RuntimeLocalProjectUpsertRequest,
+  RuntimeLocalProjectUpsertResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
@@ -116,6 +121,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
     },
+    interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      return client.post('/runtime-work/interrupt-and-send', data)
+    },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
     },
@@ -137,6 +147,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)
+    },
+    upsertLocalRuntimeProject(
+      data: RuntimeLocalProjectUpsertRequest
+    ): Promise<RuntimeLocalProjectUpsertResponse> {
+      return client.post('/runtime-work/projects/local', data)
     },
     renameRuntimeWorkspace(
       data: RuntimeWorkspaceRenameRequest
@@ -162,6 +177,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeProjectAppearanceRequest
     ): Promise<RuntimeSidebarMutationResponse> {
       return client.post('/runtime-work/sidebar/projects/appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/sync-remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/activate', data)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest

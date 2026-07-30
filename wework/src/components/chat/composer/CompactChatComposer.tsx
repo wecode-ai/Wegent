@@ -1,14 +1,19 @@
 import {
   ArrowUp,
   Camera,
+  ChevronDown,
   ClipboardList,
+  Clock3,
+  CornerDownRight,
   Image,
   Maximize2,
   Minimize2,
   Plus,
   Square,
   Target,
+  Zap,
 } from 'lucide-react'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ChangeEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -25,12 +30,22 @@ import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { CloudProject } from '@/api/deliveries'
+import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
@@ -41,6 +56,11 @@ interface CompactChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -53,6 +73,7 @@ interface CompactChatComposerProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   onSelectModel?: (model: UnifiedModel | null) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -66,6 +87,7 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   disabledReason,
   placeholder,
   attachments = [],
@@ -76,6 +98,11 @@ export function CompactChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  conversationMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -88,6 +115,7 @@ export function CompactChatComposer({
   onListLocalApps,
   models = [],
   selectedModel,
+  activeModel,
   selectedModelOptions = {},
   onSelectModel,
   onBlockedModelSelect,
@@ -103,8 +131,19 @@ export function CompactChatComposer({
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled &&
+    !submitDisabled
   const explicitLineCount = value.split('\n').length
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
@@ -112,6 +151,21 @@ export function CompactChatComposer({
 
     onChange(value ? `${value}\n${text}` : text)
     onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    onClearPlanMode?.()
+    onCancelGoalDraft?.()
+    if (phrase.mode === 'plan') onSetPlanMode?.()
+    if (phrase.mode === 'goal') onSetGoal?.()
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
+    if (phrase.attachmentPaths?.length && onFileSelect) {
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
+    }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
@@ -220,12 +274,13 @@ export function CompactChatComposer({
         >
           <Plus className="h-6 w-6" />
         </button>
+        <QuickPhraseMenu compact disabled={disabled} onSelect={handleQuickPhraseSelect} />
         <div
           data-testid="compact-input-pill"
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
             'z-chrome',
-            'pr-14',
+            isStreaming && canSend ? 'pr-[92px]' : 'pr-14',
           ].join(' ')}
         >
           <ComposerTextarea
@@ -240,8 +295,16 @@ export function CompactChatComposer({
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-secondary outline-none placeholder:text-text-muted"
-            skillMenuClassName="left-[-1rem] right-[-3.5rem]"
+            cloudMentionCandidates={cloudMentionCandidates}
+            conversationMentionCandidates={conversationMentionCandidates}
+            cloudProjectCandidates={cloudProjectCandidates}
+            cloudSpaceEnabled={cloudSpaceEnabled}
+            onSelectCloudProject={onSelectCloudProject}
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-primary outline-none placeholder:text-text-muted"
+            skillMenuClassName={[
+              'left-[-1rem]',
+              isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',
+            ].join(' ')}
             onListLocalSkills={onListLocalSkills}
             onListLocalApps={onListLocalApps}
             models={models}
@@ -275,6 +338,60 @@ export function CompactChatComposer({
             >
               <Square className="h-4 w-4 fill-current" />
             </button>
+          ) : isStreaming && canSend ? (
+            <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-[#242424] text-white">
+              <button
+                type="submit"
+                data-testid="send-message-button"
+                className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-[#333]"
+                aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+              >
+                <ArrowUp className="h-5 w-5" />
+              </button>
+              <ActionMenu
+                ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                testId="send-mode-menu-button"
+                icon={ChevronDown}
+                triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-white/20 hover:bg-[#333]"
+                items={[
+                  {
+                    label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                    icon: Clock3,
+                    testId: 'send-after-turn-option',
+                    onSelect: () => onSubmit(value),
+                    shortcut: 'Enter',
+                  },
+                  {
+                    label:
+                      modelChangePending && activeModelLabel
+                        ? t(
+                            'workbench.guide_current_turn_with_model',
+                            'Guide current response · {{model}}',
+                            { model: activeModelLabel }
+                          )
+                        : t('workbench.guide_current_turn', '引导当前回复'),
+                    icon: CornerDownRight,
+                    testId: 'guide-current-turn-option',
+                    onSelect: () => onSubmit(value, { guideWhenBusy: true }),
+                    shortcut: 'Command+Enter',
+                  },
+                  {
+                    label:
+                      modelChangePending && selectedModelLabel
+                        ? t(
+                            'workbench.interrupt_and_send_with_model',
+                            'Interrupt and use {{model}}',
+                            { model: selectedModelLabel }
+                          )
+                        : t('workbench.interrupt_and_send', '打断并立即发送'),
+                    icon: Zap,
+                    testId: 'interrupt-and-send-option',
+                    onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
+                    shortcut: 'Command+Shift+Enter',
+                  },
+                ]}
+              />
+            </div>
           ) : (
             <button
               type="submit"
@@ -371,7 +488,12 @@ export function CompactChatComposer({
               onOpenSkillFile={onOpenSkillFile}
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
-              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-base leading-7 text-text-secondary outline-none"
+              cloudMentionCandidates={cloudMentionCandidates}
+              conversationMentionCandidates={conversationMentionCandidates}
+              cloudProjectCandidates={cloudProjectCandidates}
+              cloudSpaceEnabled={cloudSpaceEnabled}
+              onSelectCloudProject={onSelectCloudProject}
+              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-primary outline-none"
               skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}

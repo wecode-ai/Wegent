@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -7,6 +7,7 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { notifyWorkbenchCloudArchivesChanged } from '@/features/workbench/workbenchCloudDataEvents'
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(),
@@ -150,6 +151,33 @@ describe('ArchivedConversationsSettingsPage', () => {
     await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalled())
     expect(onRefreshWorkLists).toHaveBeenCalled()
     expect(onLeaveSettings).toHaveBeenCalled()
+  })
+
+  test('refreshes when background cloud archives become available', async () => {
+    const cloudItem = archivedItemAt(2, {
+      title: 'Cloud archive',
+      source: 'cloud',
+      deviceId: 'cloud-device',
+    })
+    listArchivedConversations
+      .mockReset()
+      .mockResolvedValueOnce({ items: [archivedItem], projectGroups: [], total: 1 })
+      .mockResolvedValue({
+        items: [archivedItem, cloudItem],
+        projectGroups: [],
+        total: 2,
+      })
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Greet user')
+    expect(screen.queryByText('Cloud archive')).not.toBeInTheDocument()
+
+    act(() => {
+      notifyWorkbenchCloudArchivesChanged()
+    })
+
+    expect(await screen.findByText('Cloud archive')).toBeInTheDocument()
   })
 
   test('combines source and sort choices in a checked popup menu', async () => {
@@ -338,6 +366,7 @@ describe('ArchivedConversationsSettingsPage', () => {
   })
 
   test('deletes all archived tasks regardless of source and search filters', async () => {
+    let resolveCloudDelete: (() => void) | undefined
     const localItem = archivedItemAt(1, {
       title: 'Local target',
       projectName: 'Local project',
@@ -353,9 +382,18 @@ describe('ArchivedConversationsSettingsPage', () => {
       .mockReset()
       .mockResolvedValueOnce({ items: [localItem, cloudItem], projectGroups: [], total: 2 })
       .mockResolvedValue({ items: [], projectGroups: [], total: 0 })
-    deleteArchivedConversationsBulk.mockReset().mockResolvedValueOnce({
-      results: [localItem, cloudItem].map(item => ({ taskId: item.taskId, deleted: true })),
-    })
+    deleteArchivedConversationsBulk
+      .mockReset()
+      .mockResolvedValueOnce({
+        results: [{ taskId: localItem.taskId, deleted: true }],
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveCloudDelete = () =>
+              resolve({ results: [{ taskId: cloudItem.taskId, deleted: true }] })
+          })
+      )
 
     render(<ArchivedConversationsSettingsPage />)
 
@@ -371,19 +409,33 @@ describe('ArchivedConversationsSettingsPage', () => {
     )
     await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
 
-    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(2))
     expect(deleteArchivedConversationsBulk.mock.calls[0][0].items).toEqual([
       {
         deviceId: 'device-1',
         workspacePath: '/Users/crystal/dev/git/weekly-report',
         taskId: 'codex-1',
       },
+    ])
+    expect(deleteArchivedConversationsBulk.mock.calls[1][0].items).toEqual([
       {
         deviceId: 'cloud-device',
         workspacePath: '/Users/crystal/dev/git/weekly-report',
         taskId: 'codex-2',
       },
     ])
+    expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
+      '1 / 2'
+    )
+
+    await act(async () => {
+      resolveCloudDelete?.()
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
+        '2 / 2'
+      )
+    )
   })
 
   test('keeps background batch progress visible across remounts', async () => {

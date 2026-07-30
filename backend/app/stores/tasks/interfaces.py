@@ -387,10 +387,6 @@ class TaskStore(Protocol):
         self, db: Session, *, user_id: int
     ) -> list[TaskResource]: ...
 
-    def list_accessible_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]: ...
-
     def count_non_deleted_by_ids(
         self,
         db: Session,
@@ -582,6 +578,14 @@ class SubtaskStore(Protocol):
         role: SubtaskRole,
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
+
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]: ...
 
     def get_accessible_by_id(
         self,

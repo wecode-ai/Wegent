@@ -22,6 +22,7 @@ The knowledge MCP server uses a decorator-based auto-registration system:
 """
 
 import contextvars
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -39,12 +40,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.mcp_server.auth import (
+    MCPAuthInfo,
     TaskTokenInfo,
+    authenticate_mcp_token,
     extract_token_from_header,
     verify_task_token,
 )
 from app.mcp_server.context import (
     MCPRequestContext,
+    get_token_info_from_context,
     reset_mcp_context,
     set_mcp_context,
 )
@@ -77,6 +81,7 @@ class McpAppSpec:
     token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
     log_prefix: str
     include_root_metadata: bool = True
+    allow_user_token: bool = False
 
 
 @dataclass(frozen=True)
@@ -586,9 +591,18 @@ MCP_APP_SPECS = (
     _SUBSCRIPTION_MCP_SPEC,
 )
 
+MCP_CONTEXT_SERVER_NAMES = frozenset(
+    {
+        "knowledge",
+        "interactive_form_question",
+        "prompt_optimization",
+        "subscription",
+    }
+)
+
 
 def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
-    return {
+    metadata = {
         "service": spec.service_name,
         "transport": "streamable-http",
         "endpoints": {
@@ -596,6 +610,7 @@ def _build_root_metadata(spec: McpAppSpec) -> Dict[str, Any]:
             "health": f"{spec.mount_path}/health",
         },
     }
+    return metadata
 
 
 def _build_mcp_app(spec: McpAppSpec) -> Starlette:
@@ -645,27 +660,28 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         token = extract_token_from_header(auth_header)
 
         token_info: Optional[TaskTokenInfo] = None
+        auth_info: Optional[MCPAuthInfo] = None
         mcp_ctx_token = None
 
         if token:
-            token_info = verify_task_token(token)
-            if token_info:
+            auth_info = authenticate_mcp_token(
+                token, allow_user_token=spec.allow_user_token
+            )
+            if auth_info:
                 logger.debug(
-                    "[MCP:%s] Authenticated: task=%s, subtask=%s, user=%s",
+                    "[MCP:%s] Authenticated: type=%s, task=%s, subtask=%s, user=%s",
                     spec.log_prefix,
-                    token_info.task_id,
-                    token_info.subtask_id,
-                    token_info.user_name,
+                    auth_info.auth_type,
+                    auth_info.task_id,
+                    auth_info.subtask_id,
+                    auth_info.user_name,
                 )
+                if auth_info.auth_type == "task":
+                    token_info = verify_task_token(token)
                 # Set MCPRequestContext for decorator-based tools
-                if spec.name in (
-                    "knowledge",
-                    "interactive_form_question",
-                    "prompt_optimization",
-                    "subscription",
-                ):
+                if spec.name in MCP_CONTEXT_SERVER_NAMES:
                     mcp_ctx = MCPRequestContext(
-                        token_info=token_info,
+                        token_info=auth_info,
                         tool_name="",  # Will be set by tool invocation
                         server_name=spec.name,
                     )

@@ -221,6 +221,8 @@ export interface MessageBubbleProps {
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
   onForwardClick?: (subtaskId: number) => void
+  /** Callback when user saves the displayed AI Markdown to a knowledge base. */
+  onSaveToKnowledge?: (content: string) => void
 }
 
 // Component for rendering a paragraph with hover action button
@@ -337,6 +339,18 @@ function canShowReEdit(
   return isCompleted && isNotRunning
 }
 
+function canSaveToKnowledge(
+  msg: Message,
+  onSaveToKnowledge: ((content: string) => void) | undefined,
+  content: string
+): boolean {
+  const isComplete =
+    msg.status === 'completed' ||
+    msg.subtaskStatus === 'COMPLETED' ||
+    msg.subtaskStatus === 'CANCELLED'
+  return Boolean(onSaveToKnowledge) && !msg.isIncomplete && isComplete && content.trim().length > 0
+}
+
 /**
  * Extract copyable text content from message blocks.
  * When a message uses the blocks-based rendering (MixedContentView),
@@ -349,6 +363,36 @@ function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
     .map(b => b.content)
     .join('\n\n')
     .trim()
+}
+
+function getSaveableMarkdown(
+  markdown: string,
+  annotations: GeminiAnnotation[] | undefined
+): string {
+  return processCitePatterns(markdown, annotations)
+}
+
+function getBlockRenderHash(blocks: MessageBlock[] | undefined): string {
+  return (
+    blocks
+      ?.map(block => {
+        const contentLength =
+          'content' in block && typeof block.content === 'string' ? block.content.length : 0
+        const outputLength =
+          block.type === 'tool'
+            ? typeof block.tool_output === 'string'
+              ? block.tool_output.length
+              : block.tool_output
+                ? JSON.stringify(block.tool_output).length
+                : 0
+            : block.type === 'subagent'
+              ? `${block.output?.length || 0}:${block.summary?.length || 0}:${getBlockRenderHash(block.children)}`
+              : 0
+
+        return `${block.id}:${block.status}:${block.type}:${contentLength}:${outputLength}`
+      })
+      .join('|') || ''
+  )
 }
 
 const MessageBubble = memo(
@@ -387,6 +431,7 @@ const MessageBubble = memo(
     shareToken,
     taskType,
     onForwardClick,
+    onSaveToKnowledge,
   }: MessageBubbleProps) {
     // Use trace hook for telemetry (auto-includes user and task context)
     const { trace } = useTraceAction()
@@ -519,6 +564,14 @@ const MessageBubble = memo(
     const mixedContentBlocks = React.useMemo(
       () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
       [msg.result?.blocks]
+    )
+    const blockSaveableMarkdown = React.useMemo(
+      () =>
+        getSaveableMarkdown(
+          getCopyableContentFromBlocks(msg.result?.blocks ?? []),
+          msg.result?.annotations
+        ),
+      [msg.result?.annotations, msg.result?.blocks]
     )
     const hasToolBlocks = React.useMemo(
       () => msg.result?.blocks?.some(block => block.type === 'tool') ?? false,
@@ -654,14 +707,12 @@ const MessageBubble = memo(
       const trimmed = (rawResult ?? '').trim()
       const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/)
       const rawMarkdownResult = fencedMatch ? fencedMatch[1] : trimmed
-      let normalizedResult = rawMarkdownResult
 
       // Process [cite: X, Y, Z] patterns to clickable markdown links
       // Only process when annotations are available from Gemini Deep Research
       const annotations = msg.result?.annotations
-      if (annotations && annotations.length > 0) {
-        normalizedResult = processCitePatterns(normalizedResult, annotations)
-      }
+      const normalizedResult = getSaveableMarkdown(rawMarkdownResult, annotations)
+      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)
       if (progressMatch) {
@@ -789,15 +840,17 @@ const MessageBubble = memo(
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
             <BubbleTools
-              contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${rawMarkdownResult}`}
+              contentToCopy={saveableMarkdown}
               onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+              showSaveToKnowledge={canSaveToKnowledge(msg, onSaveToKnowledge, saveableMarkdown)}
+              onSaveToKnowledge={onSaveToKnowledge}
               tools={[
                 {
                   key: 'download',
                   title: t('messages.download') || 'Download',
                   icon: <Download className="h-4 w-4 text-text-muted" />,
                   onClick: () => {
-                    const blob = new Blob([`${rawMarkdownResult}`], {
+                    const blob = new Blob([saveableMarkdown], {
                       type: 'text/plain;charset=utf-8',
                     })
                     const url = URL.createObjectURL(blob)
@@ -1521,20 +1574,23 @@ const MessageBubble = memo(
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={getCopyableContentFromBlocks(msg.result?.blocks ?? [])}
+                          contentToCopy={blockSaveableMarkdown}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
+                          showSaveToKnowledge={canSaveToKnowledge(
+                            msg,
+                            onSaveToKnowledge,
+                            blockSaveableMarkdown
+                          )}
+                          onSaveToKnowledge={onSaveToKnowledge}
                           tools={[
                             {
                               key: 'download',
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob(
-                                  [getCopyableContentFromBlocks(msg.result?.blocks ?? [])],
-                                  {
-                                    type: 'text/plain;charset=utf-8',
-                                  }
-                                )
+                                const blob = new Blob([blockSaveableMarkdown], {
+                                  type: 'text/plain;charset=utf-8',
+                                })
                                 const url = URL.createObjectURL(blob)
                                 const a = document.createElement('a')
                                 a.href = url
@@ -1680,20 +1736,8 @@ const MessageBubble = memo(
 
     // CRITICAL FIX: Compare blocks content hash (id + status + has_output)
     // Comparing only length is not enough - we need to detect when block status/content changes
-    const prevBlocksHash =
-      prevProps.msg.result?.blocks
-        ?.map(
-          b =>
-            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
-        )
-        .join('|') || ''
-    const nextBlocksHash =
-      nextProps.msg.result?.blocks
-        ?.map(
-          b =>
-            `${b.id}:${b.status}:${b.type === 'tool' ? !!b.tool_output : (b as { content?: string }).content?.length || 0}`
-        )
-        .join('|') || ''
+    const prevBlocksHash = getBlockRenderHash(prevProps.msg.result?.blocks)
+    const nextBlocksHash = getBlockRenderHash(nextProps.msg.result?.blocks)
 
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
@@ -1728,6 +1772,7 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
+      Boolean(prevProps.onSaveToKnowledge) === Boolean(nextProps.onSaveToKnowledge) &&
       prevProps.taskType === nextProps.taskType &&
       prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
       prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&

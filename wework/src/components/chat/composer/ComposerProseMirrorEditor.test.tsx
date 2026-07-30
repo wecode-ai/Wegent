@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { describe, expect, test, vi } from 'vitest'
+import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
 import {
   composerSchema,
@@ -13,7 +14,8 @@ const GMAIL_REFERENCE = '[$gmail](/tmp/gmail/SKILL.md)'
 
 function renderEditor(
   value = GMAIL_REFERENCE,
-  onBeforeInput: (event: InputEvent) => boolean = () => false
+  onBeforeInput: (event: InputEvent) => boolean = () => false,
+  onOpenMentionPlugin: (reference: PluginReference) => void = vi.fn()
 ) {
   const editorRef = createRef<ComposerEditorHandle>()
   const textareaRef = createRef<HTMLElement>()
@@ -32,6 +34,7 @@ function renderEditor(
       onCompositionEnd={vi.fn()}
       onPaste={() => false}
       onDrop={() => false}
+      onOpenMentionPlugin={onOpenMentionPlugin}
       onClick={vi.fn()}
       onFocus={vi.fn()}
       placeholder="Message"
@@ -64,6 +67,34 @@ describe('ComposerProseMirrorEditor', () => {
     expect(chip).toHaveAttribute('data-composer-skill-label', 'backend')
   })
 
+  test.each([
+    ['mouse', () => fireEvent.click(screen.getByTestId('composer-plugin-chip-wegent-sites'))],
+    [
+      'keyboard',
+      () =>
+        fireEvent.keyDown(screen.getByTestId('composer-plugin-chip-wegent-sites'), {
+          key: 'Enter',
+        }),
+    ],
+  ])('opens plugin details with the %s interaction', (_interaction, openPlugin) => {
+    const onOpenMentionPlugin = vi.fn()
+    renderEditor('[$站点](plugin://wegent-sites@wegent-bundled) ', () => false, onOpenMentionPlugin)
+
+    const chip = screen.getByTestId('composer-plugin-chip-wegent-sites')
+    expect(chip).toHaveAttribute('role', 'link')
+    expect(chip).toHaveAttribute('tabindex', '0')
+    expect(chip).toHaveAttribute('data-composer-plugin-name', 'wegent-sites')
+    expect(chip).toHaveAttribute('data-composer-plugin-marketplace', 'wegent-bundled')
+
+    openPlugin()
+
+    expect(onOpenMentionPlugin).toHaveBeenCalledOnce()
+    expect(onOpenMentionPlugin).toHaveBeenCalledWith({
+      pluginName: 'wegent-sites',
+      marketplaceName: 'wegent-bundled',
+    })
+  })
+
   test('serializes copied skill selections back to their markdown references', () => {
     const value = `before ${GMAIL_REFERENCE} after`
     const doc = createComposerDocument(value)
@@ -89,6 +120,45 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
     expect(onChange).toHaveBeenLastCalledWith('first line\nsecond line\nthird line')
+  })
+
+  test('inserts pasted text exactly once through the ProseMirror paste pipeline', () => {
+    const { editorRef, onChange } = renderEditor('existing ')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => editorRef.current?.setValue('existing ', 'existing '.length))
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'pasted text' : ''),
+        types: ['text/plain'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('existing pasted text')
+    expect(onChange).toHaveBeenCalledOnce()
+    expect(onChange).toHaveBeenLastCalledWith('existing pasted text')
+  })
+
+  test('keeps line breaks when pasting rich text', () => {
+    const { editorRef, onChange } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => {
+          if (type === 'text/plain') return 'first line\nsecond line\nthird line'
+          if (type === 'text/html') return '<p>first line</p><p>second line</p><p>third line</p>'
+          return ''
+        },
+        types: ['text/plain', 'text/html'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
+    expect(onChange).toHaveBeenCalledOnce()
   })
 
   test('keeps the caret outside the skill while repeatedly moving left', () => {
@@ -174,7 +244,52 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editorRef.current?.getSnapshot().value).toBe(value)
   })
 
-  test('keeps Command-Left at the real start of text before a skill', () => {
+  test.each(['ArrowLeft', 'ArrowRight'])(
+    'does not override modified %s visual line navigation',
+    key => {
+      const value = `first line\nsecond line with ${GMAIL_REFERENCE} content\nthird line`
+      const mentionOffset = value.indexOf(GMAIL_REFERENCE)
+      const { editorRef } = renderEditor(value)
+      const editor = screen.getByTestId('composer-editor')
+
+      act(() => {
+        editorRef.current?.setValue(value, mentionOffset)
+        editorRef.current?.focus()
+      })
+
+      expect(
+        fireEvent.keyDown(editor, {
+          key,
+          code: key,
+          keyCode: key === 'ArrowLeft' ? 37 : 39,
+          metaKey: true,
+        })
+      ).toBe(true)
+      expect(editorRef.current?.getSnapshot().selectionOffset).toBe(mentionOffset)
+    }
+  )
+
+  test.each([
+    ['a', 65],
+    ['e', 69],
+  ])('does not override macOS Control-%s visual line navigation', (key, keyCode) => {
+    const value = `first line\nsecond line with ${GMAIL_REFERENCE} content\nthird line`
+    const mentionOffset = value.indexOf(GMAIL_REFERENCE)
+    const { editorRef } = renderEditor(value)
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue(value, mentionOffset)
+      editorRef.current?.focus()
+    })
+
+    expect(
+      fireEvent.keyDown(editor, { key, code: `Key${key.toUpperCase()}`, keyCode, ctrlKey: true })
+    ).toBe(true)
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(mentionOffset)
+  })
+
+  test('keeps unmodified arrow navigation protected at a skill boundary', () => {
     const value = `DF${GMAIL_REFERENCE} `
     const { editorRef } = renderEditor(value)
     const editor = screen.getByTestId('composer-editor')
@@ -184,16 +299,10 @@ describe('ComposerProseMirrorEditor', () => {
       editorRef.current?.focus()
     })
 
-    expect(
-      fireEvent.keyDown(editor, {
-        key: 'ArrowLeft',
-        code: 'ArrowLeft',
-        keyCode: 37,
-        metaKey: true,
-      })
-    ).toBe(false)
-    fireEvent.keyUp(editor, { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37, metaKey: true })
-    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(0)
+    expect(fireEvent.keyDown(editor, { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 })).toBe(
+      false
+    )
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(2 + GMAIL_REFERENCE.length)
   })
 
   test('copies the complete markdown value after Command-A', () => {

@@ -2,15 +2,10 @@ import type {
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   RuntimeTaskAddress,
-  RuntimeWorkListResponse,
   UnifiedModel,
   User,
 } from '@/types/api'
 import type { DeviceUpgradeStatusPayload } from '@/types/device-events'
-import { findRuntimeTask } from './workbenchRuntimeHelpers'
-
-const CLAUDE_CODE_RUNTIME_FAMILY = 'claude.claude'
-const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
 
 export const DEVICE_STATUS_LABELS: Record<string, string> = {
   online: '在线',
@@ -39,6 +34,9 @@ export function getBlockedModelSelectionMessage(
   if (reason === 'unavailable') {
     return `${modelLabel} 当前不可用`
   }
+  if (reason === 'provider_boundary_mismatch') {
+    return '官方 Codex 与第三方模型不能在同一对话中切换。你可以新建会话，并通过 @ 引用当前对话继续处理。'
+  }
   return `${modelLabel} 与当前对话的模型协议不兼容，请新建对话后使用该模型`
 }
 
@@ -61,19 +59,6 @@ export function getNewChatModelSelection(user: User | null): ModelSelectionConfi
 
 export function getRuntimeTaskChatScopeKey(address: RuntimeTaskAddress): string {
   return ['runtime', address.deviceId, address.taskId].join(':')
-}
-
-function getRuntimeCompatibilityFamily(runtime?: string | null): string | null {
-  if (runtime === 'codex') return OPENAI_RESPONSES_RUNTIME_FAMILY
-  if (runtime === 'claude_code' || runtime === 'claude') return CLAUDE_CODE_RUNTIME_FAMILY
-  return null
-}
-
-export function getCurrentRuntimeTaskCompatibilityFamily(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  address: RuntimeTaskAddress | null | undefined
-): string | null {
-  return getRuntimeCompatibilityFamily(findRuntimeTask(runtimeWork, address)?.runtime)
 }
 
 export function normalizeGuidanceError(error?: string) {

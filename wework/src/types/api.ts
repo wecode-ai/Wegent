@@ -275,18 +275,33 @@ export interface RuntimeMessageSource {
   message_id?: string | null
 }
 
+export interface RuntimeMessagePresentationReference {
+  start: number
+  end: number
+  href: string
+}
+
 export interface NormalizedRuntimeMessage {
   id: string
+  clientMessageId?: string | null
+  client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  presentationReferences?: RuntimeMessagePresentationReference[] | null
+  presentation_references?: RuntimeMessagePresentationReference[] | null
   contentTruncated?: boolean | null
   content_truncated?: boolean | null
   contentOriginalChars?: number | null
   content_original_chars?: number | null
   messageIndex?: number | null
   message_index?: number | null
-  subtaskId?: string | null
+  subtaskId?: string | number | null
+  turnId?: string | null
+  turn_id?: string | null
   status?: string | null
+  error?: string | null
+  errorType?: string | null
+  error_type?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
   completed_at?: string | number | null
@@ -350,11 +365,16 @@ export interface RuntimeTaskSummary {
   runtime: RuntimeName
   createdAt?: string | number | null
   updatedAt?: string | number | null
+  completedAt?: string | number | null
   running?: boolean
+  continuable?: boolean
+  threadStatus?: 'notLoaded' | 'idle' | 'systemError' | 'active' | string
+  turnStatus?: 'inProgress' | 'completed' | 'interrupted' | 'failed' | null
   pinned?: boolean
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
@@ -411,6 +431,7 @@ export interface DeviceWorkspacePrepareResponse {
 
 export interface RuntimeProjectRef {
   key: string
+  sidebarStateKey?: string | null
   id?: number
   name: string
   description?: string | null
@@ -420,6 +441,8 @@ export interface RuntimeProjectRef {
   stateDeviceId?: string | null
   roots?: RuntimeProjectRoot[]
   pinned?: boolean
+  pinnedOrder?: number | null
+  active?: boolean
   appearance?: RuntimeProjectAppearance | null
 }
 
@@ -474,6 +497,7 @@ export interface RuntimeWorkSearchRequest {
   limit?: number
   includeArchived?: boolean
   projectId?: number
+  source?: 'all' | 'local' | 'cloud'
 }
 
 export interface RuntimeWorkSearchProjectRef {
@@ -551,6 +575,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  clientMessageId?: string
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -564,6 +589,8 @@ export interface RuntimeSendRequest {
   additionalContext?: RuntimeAdditionalContext
   additional_context?: RuntimeAdditionalContext
 }
+
+export type RuntimeInterruptAndSendRequest = RuntimeSendRequest
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
@@ -683,6 +710,24 @@ export interface RuntimeWorkspaceOpenRequest {
   label?: string | null
 }
 
+export interface RuntimeLocalProjectUpsertRequest {
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+}
+
+export interface RuntimeLocalProjectUpsertResponse {
+  accepted: boolean
+  deviceId: string
+  projectKey: string
+  name: string
+  roots: string[]
+  runtime: 'codex'
+  error?: string | null
+}
+
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
   projectKey?: string | null
@@ -731,6 +776,25 @@ export interface RuntimeProjectAppearanceRequest {
   deviceId: string
   projectKey: string
   appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeRemoteProjectRegistration {
+  id: string
+  hostId: string
+  remotePath: string
+  label?: string | null
+}
+
+export interface RuntimeRemoteProjectsSyncRequest {
+  deviceId: string
+  projects: RuntimeRemoteProjectRegistration[]
+}
+
+export interface RuntimeProjectActivateRequest {
+  deviceId: string
+  projectKey: string
+  workspacePath: string
+  remoteHostId?: string | null
 }
 
 export interface RuntimeProjectTaskReorderRequest {
@@ -837,6 +901,7 @@ export interface RuntimeManagedWorktree {
   path: string
   repositoryName: string
   sourcePath?: string | null
+  permanent?: boolean
   createdAt?: number | null
   updatedAt?: number | null
   state: 'active' | 'restorable' | 'missing' | 'deleted' | string
@@ -856,6 +921,7 @@ export interface RuntimeWorktreePrepareRequest {
   sourcePath: string
   worktreeId: string
   ref?: string | null
+  permanent?: boolean
 }
 
 export interface RuntimeWorktreeMutationResponse {
@@ -983,14 +1049,19 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
+  runtimeProjectKey?: string
+  runtimeProjectName?: string
+  runtimeWorkspaceRoots?: string[]
   taskId?: string
   teamId: number
   runtime: RuntimeName
   message: string
+  clientMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
@@ -998,6 +1069,9 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  deliveryId?: string
+  cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -1018,6 +1092,8 @@ export interface RuntimeTaskForkTarget {
 export interface RuntimeTaskForkRequest {
   source: RuntimeTaskAddress
   target: RuntimeTaskForkTarget
+  lastTurnId?: string
+  title?: string
 }
 
 export interface RuntimeTaskForkResponse {
@@ -1145,6 +1221,7 @@ export interface LocalDeviceApp {
   isEnabled?: boolean
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
+  skillPath?: string | null
 }
 
 export interface SkillDirectoryMove {
@@ -1835,8 +1912,40 @@ export interface PluginMarketplacePublishResponse {
   item: PluginMarketplaceItem
 }
 
+export interface DeviceCapabilityItemResult {
+  id?: string | number | null
+  name?: string | null
+  status: string
+  error?: string | null
+}
+
+export interface DeviceCapabilitySyncResult {
+  device_id: string
+  success: boolean
+  error?: string | null
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+}
+
+export interface DeviceCapabilitySyncResponse {
+  success: boolean
+  device_id: string
+  mode: string
+  skills: DeviceCapabilityItemResult[]
+  plugins: DeviceCapabilityItemResult[]
+  mcps: DeviceCapabilityItemResult[]
+  errors: Array<Record<string, unknown>>
+  synced: number
+  failed: number
+  skipped: number
+  results: DeviceCapabilitySyncResult[]
+}
+
 export interface PluginMarketplaceInstallResponse {
   plugin: InstalledPlugin
+  sync?: DeviceCapabilitySyncResponse | null
 }
 
 export interface InstalledPluginUpdateRequest {
@@ -1993,6 +2102,7 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
+  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {
@@ -2006,6 +2116,8 @@ export interface UnifiedModel {
   displayName?: string | null
   provider?: string | null
   modelId?: string | null
+  contextWindow?: number | null
+  maxOutputTokens?: number | null
   namespace?: string
   resourceUserId?: number
   config?: Record<string, unknown>
@@ -2061,6 +2173,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  ui_group_id?: string
+  ui_group_role?: 'primary' | 'companion'
+  ui_kind?: 'appshot'
 }
 
 export interface AttachmentUploadProgress {

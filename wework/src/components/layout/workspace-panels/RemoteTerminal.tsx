@@ -2,7 +2,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
-import { createRemoteTerminalClient, type RemoteTerminalClient } from '@/lib/remote-terminal-socket'
+import type {
+  RemoteTerminalClient,
+  RemoteTerminalClientFactory,
+} from '@/lib/remote-terminal-socket'
 import {
   applyTerminalTheme,
   createTerminalThemeScheduler,
@@ -10,12 +13,14 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface RemoteTerminalProps {
   sessionId: string
+  clientFactory: RemoteTerminalClientFactory
   active: boolean
   taskId?: string | null
   workspacePath?: string | null
@@ -24,10 +29,32 @@ interface RemoteTerminalProps {
   onExit?: () => void
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
+  showWorkbenchBackground?: boolean
+}
+
+interface RemoteTerminalResource {
+  sessionId: string
+  clientFactory: RemoteTerminalClientFactory
+  showWorkbenchBackground: boolean
+  dispose: () => void
+}
+
+function matchesRemoteTerminalResource(
+  resource: RemoteTerminalResource,
+  sessionId: string,
+  clientFactory: RemoteTerminalClientFactory,
+  showWorkbenchBackground: boolean
+): boolean {
+  return (
+    resource.sessionId === sessionId &&
+    resource.clientFactory === clientFactory &&
+    resource.showWorkbenchBackground === showWorkbenchBackground
+  )
 }
 
 export function RemoteTerminal({
   sessionId,
+  clientFactory,
   active,
   taskId,
   workspacePath,
@@ -36,7 +63,9 @@ export function RemoteTerminal({
   onExit,
   onTitleChange,
   testIdsEnabled = true,
+  showWorkbenchBackground = false,
 }: RemoteTerminalProps) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -46,6 +75,26 @@ export function RemoteTerminal({
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+  const appearanceRef = useRef(appearance)
+  const resourceRef = useRef<RemoteTerminalResource | null>(null)
+  const cleanupTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    appearanceRef.current = appearance
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal) return
+
+    terminal.options.fontFamily = appearance.codeFont
+    terminal.options.fontSize = appearance.codeFontSize
+    requestAnimationFrame(() => {
+      try {
+        fitAddon?.fit()
+      } catch (error) {
+        console.error('Failed to resize remote terminal after typography change:', error)
+      }
+    })
+  }, [appearance])
 
   useEffect(() => {
     activeRef.current = active
@@ -67,20 +116,60 @@ export function RemoteTerminal({
     const container = containerRef.current
     if (!container) return
 
+    if (cleanupTimerRef.current !== null) {
+      window.clearTimeout(cleanupTimerRef.current)
+      cleanupTimerRef.current = null
+    }
+    // StrictMode replays effects in development. Keep the live socket and xterm
+    // through that replay so initial PTY output cannot land on a discarded client.
+    const currentResource = resourceRef.current
+    if (
+      currentResource &&
+      matchesRemoteTerminalResource(
+        currentResource,
+        sessionId,
+        clientFactory,
+        showWorkbenchBackground
+      )
+    ) {
+      return () => {
+        cleanupTimerRef.current = window.setTimeout(currentResource.dispose, 0)
+      }
+    }
+    currentResource?.dispose()
+
+    const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
+      allowTransparency: showWorkbenchBackground,
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
+      fontFamily: terminalAppearance.codeFont,
+      fontSize: terminalAppearance.codeFontSize,
       lineHeight: 1.2,
       scrollback: 2000,
-      theme: getTerminalTheme(),
+      theme: getTerminalTheme(showWorkbenchBackground),
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
-    const client = createRemoteTerminalClient(sessionId)
+    const client = clientFactory(sessionId)
     let disposed = false
     let scheduleThemeSync: () => void = () => undefined
+
+    const writeTerminalOutput = (data: string) => {
+      if (disposed || !data) return
+      const context = contextRef.current
+      appendRuntimeTerminalContext({
+        sessionId,
+        taskId: context.taskId,
+        workspacePath: context.workspacePath,
+        cwd: context.cwd,
+        title: context.title,
+        kind: 'remote',
+        data,
+      })
+      terminal.write(data)
+      scheduleThemeSync()
+    }
 
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
@@ -96,18 +185,7 @@ export function RemoteTerminal({
     })
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        const context = contextRef.current
-        appendRuntimeTerminalContext({
-          sessionId,
-          taskId: context.taskId,
-          workspacePath: context.workspacePath,
-          cwd: context.cwd,
-          title: context.title,
-          kind: 'remote',
-          data: payload.data,
-        })
-        terminal.write(payload.data)
-        scheduleThemeSync()
+        writeTerminalOutput(payload.data)
       }
     })
     const titleDisposable = terminal.onTitleChange(title => {
@@ -137,10 +215,10 @@ export function RemoteTerminal({
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     clientRef.current = client
-    applyTerminalTheme(terminal, container)
-    scheduleThemeSync = createTerminalThemeScheduler(terminal, container)
+    applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
+    scheduleThemeSync = createTerminalThemeScheduler(terminal, container, showWorkbenchBackground)
     const unobserveTheme = observeTerminalTheme(theme => {
-      applyTerminalTheme(terminal, container, theme)
+      applyTerminalTheme(terminal, container, theme, showWorkbenchBackground)
     })
 
     const fitAndResize = () => {
@@ -183,28 +261,42 @@ export function RemoteTerminal({
         }
       })
 
-    return () => {
-      disposed = true
-      unobserveTheme()
-      resizeObserver.disconnect()
-      dataDisposable.dispose()
-      titleDisposable.dispose()
-      selectionGuard.dispose()
-      inputFallback.dispose()
-      unsubscribeOutput()
-      unsubscribeExit()
-      void client
-        .close()
-        .catch(() => undefined)
-        .finally(() => {
-          client.dispose()
-        })
-      terminal.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
-      clientRef.current = null
+    const resource: RemoteTerminalResource = {
+      sessionId,
+      clientFactory,
+      showWorkbenchBackground,
+      dispose: () => {
+        if (disposed) return
+        disposed = true
+        unobserveTheme()
+        resizeObserver.disconnect()
+        dataDisposable.dispose()
+        titleDisposable.dispose()
+        selectionGuard.dispose()
+        inputFallback.dispose()
+        unsubscribeOutput()
+        unsubscribeExit()
+        void client
+          .close()
+          .catch(() => undefined)
+          .finally(() => {
+            client.dispose()
+          })
+        terminal.dispose()
+        if (resourceRef.current === resource) {
+          terminalRef.current = null
+          fitAddonRef.current = null
+          clientRef.current = null
+          resourceRef.current = null
+        }
+      },
     }
-  }, [sessionId])
+    resourceRef.current = resource
+
+    return () => {
+      cleanupTimerRef.current = window.setTimeout(resource.dispose, 0)
+    }
+  }, [clientFactory, sessionId, showWorkbenchBackground])
 
   useEffect(() => {
     if (!active) return
@@ -217,7 +309,7 @@ export function RemoteTerminal({
       if (!terminal || !fitAddon || !client || !container) return
 
       try {
-        applyTerminalTheme(terminal, container)
+        applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
         terminal.focus()
       } catch (error) {
@@ -238,12 +330,14 @@ export function RemoteTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active])
+  }, [active, showWorkbenchBackground])
 
   return (
     <div
       data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
-      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 pb-4 pt-2"
+      className={`h-full min-h-0 w-full flex-1 overflow-hidden px-2 pb-4 pt-2 ${
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      }`}
       hidden={!active}
     >
       <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" />

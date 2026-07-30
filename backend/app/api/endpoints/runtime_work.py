@@ -248,6 +248,25 @@ async def send_runtime_message_endpoint(
 
 
 @router.post(
+    "/interrupt-and-send",
+    response_model=RuntimeSendResponse,
+    response_model_by_alias=True,
+)
+async def interrupt_and_send_runtime_message_endpoint(
+    request: RuntimeSendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Interrupt the active native runtime turn and immediately continue it."""
+
+    return await runtime_work_service.interrupt_and_send_runtime_message(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
     "/guidance",
     response_model=RuntimeGuidanceResponse,
     response_model_by_alias=True,

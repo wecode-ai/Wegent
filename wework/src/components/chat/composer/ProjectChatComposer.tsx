@@ -7,13 +7,7 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { DragDropEvent } from '@tauri-apps/api/webview'
-import type { Event } from '@tauri-apps/api/event'
-import type { DragEventHandler } from 'react'
-import { useEffect, useRef } from 'react'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { useMemo, useState, type DragEventHandler, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -22,18 +16,33 @@ import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { CloudProject } from '@/api/deliveries'
+import {
+  resolveDataTransferWorkspacePaths,
+  resolveStoredWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
+import { mergePopoutWorkspaceProjects } from '@/features/workbench/popoutWorkspaceContext'
+import type {
+  ComposerCloudMentionCandidate,
+  ComposerConversationMentionCandidate,
+} from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
+  onModelSelectorOpenChange?: (open: boolean) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -48,6 +57,11 @@ interface ProjectChatComposerProps {
   onOpenSkillFile?: (path: string) => void
   workspaceTarget?: WorkspaceTarget | null
   workspaceFileApi?: WorkspaceFileApi
+  cloudMentionCandidates?: ComposerCloudMentionCandidate[]
+  conversationMentionCandidates?: ComposerConversationMentionCandidate[]
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  cloudSpaceEnabled?: boolean
+  onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -63,86 +77,12 @@ interface ProjectChatComposerProps {
   showProjectWorkBar?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
+  toolbarLeadingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files')
-}
-
-interface NativeDroppedFile {
-  name: string
-  bytes: number[]
-}
-
-type NativeDropHandler = (event: Event<DragDropEvent>) => void
-
-const nativeDropHandlers = new Set<NativeDropHandler>()
-let nativeDropUnlistenPromise: Promise<() => void> | null = null
-let nativeDropUnlisten: (() => void) | null = null
-let nativeDropReleaseTimer: ReturnType<typeof setTimeout> | null = null
-
-async function readNativeDroppedFiles(paths: string[]): Promise<File[]> {
-  const droppedFiles = await invoke<NativeDroppedFile[]>('read_dropped_files', { paths })
-  return droppedFiles.map(file => new File([new Uint8Array(file.bytes)], file.name))
-}
-
-function subscribeNativeDropHandler(handler: NativeDropHandler): () => void {
-  if (nativeDropReleaseTimer !== null) {
-    clearTimeout(nativeDropReleaseTimer)
-    nativeDropReleaseTimer = null
-  }
-
-  nativeDropHandlers.add(handler)
-
-  if (!nativeDropUnlistenPromise) {
-    try {
-      nativeDropUnlistenPromise = getCurrentWindow()
-        .onDragDropEvent(event => {
-          nativeDropHandlers.forEach(currentHandler => currentHandler(event))
-        })
-        .then(unlisten => {
-          nativeDropUnlisten = unlisten
-          if (nativeDropHandlers.size === 0 && nativeDropReleaseTimer === null) {
-            nativeDropUnlisten?.()
-            nativeDropUnlisten = null
-            nativeDropUnlistenPromise = null
-          }
-          return unlisten
-        })
-        .catch(error => {
-          nativeDropUnlistenPromise = null
-          console.error('Failed to listen for native file drops:', error)
-          return () => {}
-        })
-    } catch (error) {
-      nativeDropUnlistenPromise = null
-      console.error('Failed to listen for native file drops:', error)
-    }
-  }
-
-  return () => {
-    nativeDropHandlers.delete(handler)
-    if (nativeDropHandlers.size > 0) return
-    if (nativeDropReleaseTimer !== null) return
-
-    nativeDropReleaseTimer = setTimeout(() => {
-      nativeDropReleaseTimer = null
-      if (nativeDropHandlers.size > 0) return
-
-      const currentUnlisten = nativeDropUnlisten
-      const pendingUnlisten = nativeDropUnlistenPromise
-      nativeDropUnlisten = null
-      nativeDropUnlistenPromise = null
-      if (currentUnlisten) {
-        currentUnlisten()
-        return
-      }
-
-      if (pendingUnlisten) {
-        void pendingUnlisten.then(unlisten => unlisten())
-      }
-    }, 1000)
-  }
 }
 
 export function ProjectChatComposer({
@@ -150,12 +90,15 @@ export function ProjectChatComposer({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   disabledReason,
   placeholder,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
+  onModelSelectorOpenChange,
   isModelSelectionReady,
   attachments,
   codeComments = [],
@@ -170,6 +113,11 @@ export function ProjectChatComposer({
   onOpenSkillFile,
   workspaceTarget,
   workspaceFileApi,
+  cloudMentionCandidates,
+  conversationMentionCandidates,
+  cloudProjectCandidates,
+  cloudSpaceEnabled,
+  onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -185,27 +133,38 @@ export function ProjectChatComposer({
   showProjectWorkBar = true,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
+  toolbarLeadingContext,
 }: ProjectChatComposerProps) {
-  const formRef = useRef<HTMLFormElement>(null)
-  const disabledRef = useRef(disabled)
-  const onFileSelectRef = useRef(onFileSelect)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const workspaceMenuProjects = useMemo(
+    () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
+    [projectWork.projects, projectWork.runtimeWork]
+  )
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled &&
+    !submitDisabled
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
     event.preventDefault()
     event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+    setIsDraggingFiles(!disabled)
   }
   const handleDrop: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
     event.preventDefault()
+    setIsDraggingFiles(false)
     if (disabled) return
 
-    const files = Array.from(event.dataTransfer.files)
-    if (files.length > 0) onFileSelect(files)
+    void resolveDataTransferWorkspacePaths(
+      event.dataTransfer,
+      'drop',
+      workspaceTarget?.workspaceSource
+    ).then(transfer => applyWorkspacePathTransfer(value, transfer, onChange, onFileSelect))
   }
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
@@ -215,43 +174,27 @@ export function ProjectChatComposer({
     onRemoveAttachment(attachment.id)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-
-  useEffect(() => {
-    disabledRef.current = disabled
-  }, [disabled])
-
-  useEffect(() => {
-    onFileSelectRef.current = onFileSelect
-  }, [onFileSelect])
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return
-
-    const unsubscribe = subscribeNativeDropHandler(event => {
-      const { payload } = event
-      if (
-        payload.type !== 'drop' ||
-        payload.paths.length === 0 ||
-        disabledRef.current ||
-        !formRef.current
-      ) {
-        return
-      }
-
-      void readNativeDroppedFiles(payload.paths)
-        .then(files => {
-          if (files.length > 0) onFileSelectRef.current(files)
-        })
-        .catch(error => {
-          console.error('Failed to read dropped files:', error)
-        })
-    })
-
-    return unsubscribe
-  }, [])
+  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    onClearPlanMode?.()
+    onCancelGoalDraft?.()
+    if (phrase.mode === 'plan') onSetPlanMode?.()
+    if (phrase.mode === 'goal') onSetGoal?.()
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
+    if (phrase.attachmentPaths?.length) {
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
+    }
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   return (
-    <div className="relative w-full rounded-[26px] bg-surface shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
+    <div
+      data-testid="project-chat-composer"
+      className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
+    >
       {showProjectWorkBar && (
         <ProjectWorkBar
           projects={projectWork.projects}
@@ -282,15 +225,21 @@ export function ProjectChatComposer({
           projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
           projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
           className="min-h-10 rounded-t-[26px] bg-surface px-4"
-          buttonClassName="text-[13px] leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+          buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
         />
       )}
       <form
-        ref={formRef}
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2'
+          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
+          isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
         )}
+        onDragEnter={handleDragOver}
+        onDragLeave={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setIsDraggingFiles(false)
+          }
+        }}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onSubmit={event => {
@@ -337,7 +286,12 @@ export function ProjectChatComposer({
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-[18px] text-text-secondary outline-none placeholder:text-text-muted/55"
+          cloudMentionCandidates={cloudMentionCandidates}
+          conversationMentionCandidates={conversationMentionCandidates}
+          cloudProjectCandidates={cloudProjectCandidates}
+          cloudSpaceEnabled={cloudSpaceEnabled}
+          onSelectCloudProject={onSelectCloudProject}
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}
@@ -356,8 +310,10 @@ export function ProjectChatComposer({
           disabled={disabled}
           models={models}
           selectedModel={selectedModel}
+          activeModel={activeModel}
           selectedModelOptions={selectedModelOptions}
           modelSelectorOpenSignal={modelSelectorOpenSignal}
+          onModelSelectorOpenChange={onModelSelectorOpenChange}
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
           onSelectModelAndOptions={onSelectModelAndOptions}
@@ -374,6 +330,27 @@ export function ProjectChatComposer({
           onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}
           onPause={onPause}
+          showWorkspaceMenu={showWorkspaceMenu}
+          projectWorkMenuContext={
+            showWorkspaceMenu
+              ? {
+                  branchName: projectWork.worktreeBranch ?? projectWork.branchName,
+                  currentProjectId: projectWork.currentProjectId,
+                  executionMode: projectWork.executionMode,
+                  executionModeLocked: projectWork.executionModeLocked,
+                  isGitProject: projectWork.isGitProject,
+                  projectName: projectWork.currentProject?.name,
+                  projects: workspaceMenuProjects,
+                  onCheckoutBranch: projectWork.onCheckoutBranch,
+                  onExecutionModeChange: projectWork.onExecutionModeChange,
+                  onListBranches: projectWork.onListBranches,
+                  onSelectProject: projectWork.onSelectProject,
+                }
+              : undefined
+          }
+          onQuickPhraseSelect={handleQuickPhraseSelect}
+          onSubmit={options => onSubmit(value, options)}
+          leadingContext={toolbarLeadingContext}
         />
       </form>
     </div>

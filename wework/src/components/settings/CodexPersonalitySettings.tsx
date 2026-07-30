@@ -77,7 +77,7 @@ export function CodexPersonalitySettings() {
             aria-expanded={open}
             disabled={loading || saving}
             onClick={() => setOpen(current => !current)}
-            className="inline-flex h-8 min-w-[104px] items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-muted"
+            className="inline-flex h-8 min-w-[104px] items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-muted"
           >
             <span>{t(`workbench.codex_personality_${personality}`)}</span>
             {loading || saving ? (

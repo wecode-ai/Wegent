@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CloudConnectionContext,
@@ -51,6 +52,22 @@ describe('CloudConnectionDialog', () => {
     renderDialog(cloudConnection('https://saved.example.com'))
 
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://saved.example.com')
+  })
+
+  it('keeps the optional Socket URL in collapsed advanced settings', async () => {
+    const connection = {
+      ...cloudConnection('https://saved.example.com'),
+      socketBaseUrlOverride: 'wss://socket.example.com',
+    }
+    renderDialog(connection)
+
+    const toggle = screen.getByTestId('cloud-connection-advanced-toggle')
+    expect(toggle.closest('details')).not.toHaveAttribute('open')
+
+    await userEvent.click(toggle)
+
+    expect(toggle.closest('details')).toHaveAttribute('open')
+    expect(screen.getByTestId('cloud-socket-url-input')).toHaveValue('wss://socket.example.com')
   })
 
   it('localizes an expired cloud session error', () => {

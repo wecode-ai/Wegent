@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 #[cfg(windows)]
-use std::path::Path;
 use std::{
-    collections::HashMap, env, future::Future, net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc,
+    env,
+    path::{Path, PathBuf},
 };
 
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     sync::{broadcast, mpsc},
     time::{Duration, Instant},
 };
@@ -21,9 +21,15 @@ use crate::{
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
-    local::workspace_files::{execute_workspace_file_command, is_workspace_file_command},
-    logging::{format_executor_log, write_executor_log_line},
+    local::workspace_files::{
+        execute_workspace_file_command_with_input, is_workspace_file_command,
+    },
+    logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
+    task_runtime::{
+        BinaryInput, DeliveryCreate, ProjectCreate, ProjectDescriptor, ProjectUpdate,
+        RuntimeTaskAddress, TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
+    },
     version::get_version,
 };
 
@@ -31,8 +37,6 @@ use crate::{
 use crate::local::command::build_env;
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
-const DEFAULT_APP_IPC_ADDR: &str = "127.0.0.1:0";
-const APP_IPC_ADDR_FILE_NAME: &str = "app-ipc.addr";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
@@ -207,6 +211,10 @@ pub trait RuntimeWorkHandler: Send + Sync {
     }
 }
 
+pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIpcError {
     pub code: String,
@@ -240,6 +248,7 @@ pub struct AppIpcServer {
     device_id: String,
     runtime_instance_id: Option<String>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
 }
@@ -251,6 +260,7 @@ impl Default for AppIpcServer {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
             runtime_work_handler: None,
+            backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
         }
@@ -293,6 +303,14 @@ impl AppIpcServer {
             codex_binary.into(),
             self.event_tx.clone(),
         )));
+        self
+    }
+
+    pub fn with_backend_connection_handler<H>(mut self, handler: H) -> Self
+    where
+        H: BackendConnectionHandler + 'static,
+    {
+        self.backend_connection_handler = Some(Arc::new(handler));
         self
     }
 
@@ -341,8 +359,37 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        if method == "executor.health" {
+            return Ok(json!({"status": "healthy"}));
+        }
+
+        if method == "executor.backend.configure" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.configure_backend(params).await;
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
+        }
+
+        if method.starts_with("projects.")
+            || method.starts_with("external_projects.")
+            || method.starts_with("dws.")
+            || method.starts_with("aitable.")
+            || method.starts_with("todos.")
+            || method.starts_with("external_todos.")
+            || method.starts_with("external_attachments.")
+            || method.starts_with("runtime_tasks.")
+            || method.starts_with("files.")
+            || method.starts_with("attachments.")
+            || method.starts_with("deliveries.")
+        {
+            return handle_task_runtime_request(method, params).await;
         }
 
         if method.starts_with("runtime.") {
@@ -404,37 +451,17 @@ impl AppIpcServer {
         self.event_message("executor.ready", payload)
     }
 
-    pub async fn serve_forever(&self) -> Result<(), String> {
-        let addr = local_app_ipc_addr();
-        let listener = TcpListener::bind(&addr)
-            .await
-            .map_err(|error| format!("failed to bind app IPC TCP socket {addr}: {error}"))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|error| format!("failed to read app IPC TCP local address: {error}"))?;
-        if let Err(error) = write_app_ipc_addr_file(local_addr) {
-            eprintln!("failed to write app IPC address file: {error}");
-        }
-        write_executor_log_line(&app_ipc_listening_log_line(
-            &self.device_id,
-            &local_addr.to_string(),
-        ));
-
-        loop {
-            let (stream, _) = listener.accept().await.map_err(|error| {
-                format!("failed to accept app IPC client on {local_addr}: {error}")
-            })?;
-            let server = self.clone();
-            tokio::spawn(async move {
-                if let Err(error) = server.handle_stream(stream).await {
-                    eprintln!("app IPC client error: {error}");
-                }
-            });
-        }
+    pub async fn serve_stdio(&self) -> Result<(), String> {
+        reserve_executor_stdout_for_protocol();
+        write_executor_log_line(&app_ipc_stdio_ready_log_line(&self.device_id));
+        self.serve_io(tokio::io::stdin(), tokio::io::stdout()).await
     }
 
-    async fn handle_stream(&self, stream: TcpStream) -> Result<(), String> {
-        let (reader, writer) = stream.into_split();
+    pub async fn serve_io<R, W>(&self, reader: R, writer: W) -> Result<(), String>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
         let mut writer_task = tokio::spawn(async move {
             let mut writer = writer;
@@ -468,6 +495,7 @@ impl AppIpcServer {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
+                        writer_task.abort();
                         return Ok(());
                     }
                     let server = self.clone();
@@ -595,11 +623,12 @@ impl AppIpcServer {
         let env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
-                execute_workspace_file_command(
+                execute_workspace_file_command_with_input(
                     command_key,
                     string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
                     args,
                     env,
+                    string_field(&params, "stdin"),
                 )
                 .await,
             )
@@ -645,6 +674,598 @@ impl AppIpcServer {
         serde_json::to_value(apply_post_processor(result, command.post_processor))
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()))
     }
+}
+
+async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Value, AppIpcError> {
+    let runtime = TaskRuntime::from_env().map_err(task_runtime_error)?;
+    match method {
+        "dws.auth_status" => serialize_task_value(
+            runtime
+                .dws_auth_status()
+                .await
+                .map_err(task_runtime_error)?,
+        ),
+        "dws.auth_login" => {
+            serialize_task_value(runtime.dws_auth_login().await.map_err(task_runtime_error)?)
+        }
+        "dws.auth_logout" => {
+            runtime
+                .dws_auth_logout()
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "projects.list" => {
+            serialize_task_value(runtime.list_projects().map_err(task_runtime_error)?)
+        }
+        "projects.create" => {
+            let input = serde_json::from_value::<ProjectCreate>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            serialize_task_value(runtime.create_project(input).map_err(task_runtime_error)?)
+        }
+        "projects.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = task_input::<ProjectUpdate>(&params, "project")?;
+            serialize_task_value(
+                runtime
+                    .update_project(project_id, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_projects.configure" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            serialize_task_value(
+                runtime
+                    .configure_external_project(project)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_projects.remove" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            runtime
+                .remove_external_project(project_id)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "external_projects.retain" => {
+            let project_ids = params
+                .get("project_ids")
+                .and_then(Value::as_array)
+                .ok_or_else(|| AppIpcError::new("bad_request", "project_ids must be an array"))?
+                .iter()
+                .map(|value| {
+                    value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                        AppIpcError::new("bad_request", "project_ids must contain strings")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            runtime
+                .retain_external_projects(&project_ids)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "aitable.describe" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .aitable_describe(project_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.list_records" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let query = params.get("query").and_then(Value::as_str);
+            let cursor = params.get("cursor").and_then(Value::as_str);
+            let limit = params.get("limit").and_then(Value::as_i64).unwrap_or(100);
+            serialize_task_value(
+                runtime
+                    .aitable_list_records(project_id, query, limit, cursor)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.get_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            serialize_task_value(
+                runtime
+                    .aitable_get_record(project_id, record_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.create_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let cells = params
+                .get("cells")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "cells must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_create_record(project_id, cells)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.update_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            let cells = params
+                .get("cells")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "cells must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_update_record(project_id, record_id, cells)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.delete_record" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let record_id = required_task_string(&params, "record_id")?;
+            runtime
+                .aitable_delete_record(project_id, record_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "aitable.create_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let name = required_task_string(&params, "name")?;
+            let field_type = required_task_string(&params, "field_type")?;
+            let property = params
+                .get("config")
+                .or_else(|| params.get("property"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            serialize_task_value(
+                runtime
+                    .aitable_create_field(project_id, name, field_type, property)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.update_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let field_id = required_task_string(&params, "field_id")?;
+            let payload = params
+                .get("field")
+                .and_then(Value::as_object)
+                .cloned()
+                .ok_or_else(|| AppIpcError::new("bad_request", "field must be an object"))?;
+            serialize_task_value(
+                runtime
+                    .aitable_update_field(project_id, field_id, payload)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "aitable.delete_field" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let field_id = required_task_string(&params, "field_id")?;
+            runtime
+                .aitable_delete_field(project_id, field_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
+        "external_todos.list" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            serialize_task_value(
+                runtime
+                    .list_external_tasks(project)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_todos.get" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .get_external_task(project, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_todos.create" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let input = task_input::<TaskCreate>(&params, "todo")?;
+            serialize_task_value(
+                runtime
+                    .create_external_task(project, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_todos.update" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let input = task_input::<TaskUpdate>(&params, "todo")?;
+            serialize_task_value(
+                runtime
+                    .update_external_task(project, task_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.list" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .list_external_task_attachments(project, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.add" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .upload_external_task_attachment(project, task_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "external_attachments.access" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            Ok(json!({
+                "path": runtime
+                    .download_external_task_attachment(project, task_id, attachment_id)
+                    .await
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        "external_attachments.delete" => {
+            let project = task_input::<ProjectDescriptor>(&params, "project")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            runtime
+                .delete_external_task_attachment(project, task_id, attachment_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({"deleted": true}))
+        }
+        "todos.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_tasks(project_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.get" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .get_task(project_id, task_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = serde_json::from_value::<TaskCreate>(
+                params
+                    .get("todo")
+                    .cloned()
+                    .unwrap_or_else(|| params.clone()),
+            )
+            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            serialize_task_value(
+                runtime
+                    .create_task(project_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.update" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let input = serde_json::from_value::<TaskUpdate>(
+                params
+                    .get("todo")
+                    .cloned()
+                    .unwrap_or_else(|| params.clone()),
+            )
+            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            serialize_task_value(
+                runtime
+                    .update_task(project_id, task_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.comment" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let body = required_task_string(&params, "body")?;
+            serialize_task_value(
+                runtime
+                    .add_comment(project_id, task_id, body)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.reorder" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let input = serde_json::from_value::<TaskReorder>(
+                params
+                    .get("reorder")
+                    .cloned()
+                    .unwrap_or_else(|| params.clone()),
+            )
+            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            serialize_task_value(
+                runtime
+                    .reorder_tasks(project_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.bindings" => {
+            let task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .list_task_bindings(task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.bind" | "projects.bind_task" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = params.get("item_id").and_then(Value::as_str);
+            let input = serde_json::from_value::<RuntimeTaskAddress>(
+                params
+                    .get("task")
+                    .cloned()
+                    .unwrap_or_else(|| params.clone()),
+            )
+            .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            serialize_task_value(
+                runtime
+                    .bind_task(project_id, item_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.context" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            serialize_task_value(
+                runtime
+                    .find_task_binding(device_id, runtime_task_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "runtime_tasks.unbind" => {
+            let device_id = required_task_string(&params, "device_id")?;
+            let runtime_task_id = required_task_string(&params, "task_id")?;
+            runtime
+                .unbind_task(device_id, runtime_task_id)
+                .map_err(task_runtime_error)?;
+            Ok(json!({"unbound": true}))
+        }
+        "files.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            serialize_task_value(
+                runtime
+                    .list_project_files(project_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "files.create_folder" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let path = required_task_string(&params, "path")?;
+            serialize_task_value(
+                runtime
+                    .create_project_folder(project_id, path)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "files.upload" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let path = params.get("path").and_then(Value::as_str);
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .upload_project_file(project_id, path, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "files.access" => {
+            let file_id = required_task_string(&params, "file_id")?;
+            Ok(json!({
+                "path": runtime
+                    .project_file_path(file_id)
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        "files.move" => {
+            let file_id = required_task_string(&params, "file_id")?;
+            let path = required_task_string(&params, "path")?;
+            let version = required_task_i64(&params, "version")?;
+            serialize_task_value(
+                runtime
+                    .move_project_file(file_id, path, version)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "files.delete" => {
+            let file_id = required_task_string(&params, "file_id")?;
+            let recursive = params
+                .get("recursive")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            runtime
+                .delete_project_file(file_id, recursive)
+                .map_err(task_runtime_error)?;
+            Ok(json!({"deleted": true}))
+        }
+        "attachments.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            serialize_task_value(
+                runtime
+                    .list_task_attachments(project_id, item_id)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "attachments.add" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .add_task_attachment(project_id, item_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "attachments.access" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            Ok(json!({
+                "path": runtime
+                    .task_attachment_path(project_id, item_id, attachment_id)
+                    .await
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        "attachments.delete" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let attachment_id = required_task_string(&params, "attachment_id")?;
+            runtime
+                .delete_task_attachment(project_id, item_id, attachment_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({"deleted": true}))
+        }
+        "deliveries.create" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let item_id = required_task_string(&params, "item_id")?;
+            let input = task_input::<DeliveryCreate>(&params, "delivery")?;
+            serialize_task_value(
+                runtime
+                    .create_delivery(project_id, item_id, input)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.add_asset" => {
+            let delivery_id = required_task_string(&params, "delivery_id")?;
+            let relative_path = required_task_string(&params, "relative_path")?;
+            let input = task_input::<BinaryInput>(&params, "file")?;
+            serialize_task_value(
+                runtime
+                    .add_delivery_asset(delivery_id, relative_path, input)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.finalize" => {
+            let item_id = required_task_string(&params, "item_id")?;
+            let delivery_id = required_task_string(&params, "delivery_id")?;
+            serialize_task_value(
+                runtime
+                    .finalize_delivery(item_id, delivery_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.discard" => {
+            let delivery_id = required_task_string(&params, "delivery_id")?;
+            runtime
+                .discard_delivery(delivery_id)
+                .map_err(task_runtime_error)?;
+            Ok(json!({"discarded": true}))
+        }
+        "deliveries.list" => {
+            let item_id = required_task_string(&params, "item_id")?;
+            serialize_task_value(
+                runtime
+                    .list_deliveries(item_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.get" => {
+            let delivery_id = required_task_string(&params, "delivery_id")?;
+            serialize_task_value(
+                runtime
+                    .delivery_detail(delivery_id)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "deliveries.access_asset" => {
+            let asset_id = required_task_string(&params, "asset_id")?;
+            Ok(json!({
+                "path": runtime
+                    .delivery_asset_path(asset_id)
+                    .map_err(task_runtime_error)?
+            }))
+        }
+        _ => Err(AppIpcError::new(
+            "unsupported_method",
+            format!("Unsupported task runtime method: {method}"),
+        )),
+    }
+}
+
+fn task_input<T: serde::de::DeserializeOwned>(
+    params: &Value,
+    nested_key: &str,
+) -> Result<T, AppIpcError> {
+    serde_json::from_value(
+        params
+            .get(nested_key)
+            .cloned()
+            .unwrap_or_else(|| params.clone()),
+    )
+    .map_err(|error| AppIpcError::new("bad_request", error.to_string()))
+}
+
+fn required_task_string<'a>(params: &'a Value, key: &str) -> Result<&'a str, AppIpcError> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
+}
+
+fn required_task_i64(params: &Value, key: &str) -> Result<i64, AppIpcError> {
+    params
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))
+}
+
+fn serialize_task_value(value: impl serde::Serialize) -> Result<Value, AppIpcError> {
+    serde_json::to_value(value)
+        .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()))
+}
+
+fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcError {
+    let code = match error {
+        crate::task_runtime::TaskRuntimeError::ProjectNotFound
+        | crate::task_runtime::TaskRuntimeError::TaskNotFound => "not_found",
+        crate::task_runtime::TaskRuntimeError::VersionConflict => "version_conflict",
+        crate::task_runtime::TaskRuntimeError::UnsupportedProvider(_) => "provider_unavailable",
+        crate::task_runtime::TaskRuntimeError::ProviderRequest(_) => "provider_request_failed",
+        crate::task_runtime::TaskRuntimeError::Invalid(_) => "bad_request",
+        _ => "task_runtime_failed",
+    };
+    AppIpcError::new(code, error.to_string())
 }
 
 #[cfg(windows)]
@@ -848,12 +1469,13 @@ fn project_workspace_root_path() -> Result<String, String> {
         .to_string())
 }
 
-pub fn app_ipc_listening_log_line(device_id: &str, addr: &str) -> String {
+pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
     format_executor_log(
-        "app IPC listening",
+        "app IPC stdio ready",
         &[
             ("device_id", device_id.to_owned()),
-            ("addr", addr.to_owned()),
+            ("transport", "stdio".to_owned()),
+            ("process_id", std::process::id().to_string()),
         ],
     )
 }
@@ -936,7 +1558,7 @@ pub async fn serve_app_ipc_sidecar(
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary());
-    server.serve_forever().await
+    server.serve_stdio().await
 }
 
 pub fn normalize_device_id(device_id: impl Into<String>) -> String {
@@ -1316,66 +1938,6 @@ fn stdout_string(result: &CommandResult) -> String {
         .as_str()
         .map(str::to_owned)
         .unwrap_or_else(|| result.stdout.to_string())
-}
-
-pub fn app_ipc_socket_path() -> PathBuf {
-    local_app_ipc_addr_file_path()
-}
-
-pub fn local_app_ipc_addr_file_path() -> PathBuf {
-    let home = env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| expand_home(&value))
-        .unwrap_or_else(|| home_dir().join(".wegent-executor"));
-    home.join(APP_IPC_ADDR_FILE_NAME)
-}
-
-fn local_app_ipc_addr() -> SocketAddr {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_APP_IPC_ADDR") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            if let Ok(addr) = trimmed.parse::<SocketAddr>() {
-                return addr;
-            }
-            if let Ok(port) = trimmed.parse::<u16>() {
-                if let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
-                    return addr;
-                }
-            }
-        }
-    }
-    DEFAULT_APP_IPC_ADDR
-        .parse()
-        .expect("default address is valid")
-}
-
-fn write_app_ipc_addr_file(addr: SocketAddr) -> std::io::Result<()> {
-    let path = local_app_ipc_addr_file_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, addr.to_string())
-}
-
-pub fn read_app_ipc_addr_file() -> Option<SocketAddr> {
-    let path = local_app_ipc_addr_file_path();
-    let content = std::fs::read_to_string(&path).ok()?;
-    content.trim().parse::<SocketAddr>().ok()
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    if path == "~" {
-        return home_dir();
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return home_dir().join(rest);
-    }
-    PathBuf::from(path)
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 async fn write_message<W>(writer: &mut W, message: &Value) -> std::io::Result<()>

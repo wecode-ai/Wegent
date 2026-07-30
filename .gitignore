@@ -80,6 +80,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 frontend/.wecoderules
+/dummy-non-existing-folder/
+/public/
+/ui-demo/
 
 
 # OS specific
@@ -109,5 +112,6 @@ executor/build/
 executor/dist/
 executor/target/
 wework/src-tauri/binaries/
+backend/init_data/plugins/wegent-sites/
 docs/superpowers/
 .worktrees/

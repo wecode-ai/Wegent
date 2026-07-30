@@ -24,6 +24,8 @@ class ResourceType(str, PyEnum):
     TEAM = "Team"
     TASK = "Task"
     KNOWLEDGE_BASE = "KnowledgeBase"
+    PROJECT = "Project"
+    CLOUD_PROJECT = "CloudProject"
 
 
 # Import BaseRole and create MemberRole alias for backward compatibility

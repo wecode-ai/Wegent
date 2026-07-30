@@ -1388,10 +1388,17 @@ fn subagent_file(bot: &Value) -> Option<(String, String)> {
         .get("system_prompt")
         .and_then(Value::as_str)
         .unwrap_or("");
+    let model = bot
+        .pointer("/agent_config/env/model_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "inherit".to_owned()))
+        .unwrap_or_else(|| "inherit".to_owned());
     Some((
         name.clone(),
         format!(
-            "---\nname: {name}\ndescription: \"{description}\"\nmodel: inherit\n---\n\n{system_prompt}\n"
+            "---\nname: {name}\ndescription: \"{description}\"\nmodel: {model}\n---\n\n{system_prompt}\n"
         ),
     ))
 }
@@ -1504,7 +1511,75 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 }
 
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
-    extract_claude_options(request, &BTreeMap::new()).mcp_servers
+    let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
+    preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers
+}
+
+fn preserve_explicit_mcp_approval_modes(
+    request: &ExecutionRequest,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    if request_mode(request).as_deref() == Some("coordinate") {
+        if let Some(bots) = request.bot.as_array() {
+            for bot in bots {
+                preserve_explicit_mcp_approval_modes_from_value(
+                    bot_mcp_servers_value(bot),
+                    servers,
+                );
+            }
+        }
+    } else if let Some(bot) = primary_bot(request) {
+        preserve_explicit_mcp_approval_modes_from_value(bot_mcp_servers_value(bot), servers);
+    }
+
+    preserve_explicit_mcp_approval_modes_from_value(
+        Some(&Value::Array(request.mcp_servers.clone())),
+        servers,
+    );
+}
+
+fn bot_mcp_servers_value(bot: &Value) -> Option<&Value> {
+    bot.get("mcp_servers").or_else(|| bot.get("mcpServers"))
+}
+
+fn preserve_explicit_mcp_approval_modes_from_value(
+    value: Option<&Value>,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    match value {
+        Some(Value::Object(object)) => {
+            for (name, server) in object {
+                preserve_explicit_mcp_approval_mode(name, server, servers);
+            }
+        }
+        Some(Value::Array(values)) => {
+            for server in values {
+                if let Some(name) = server.get("name").and_then(Value::as_str) {
+                    preserve_explicit_mcp_approval_mode(name, server, servers);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn preserve_explicit_mcp_approval_mode(
+    name: &str,
+    source: &Value,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    let Some(mode) = source
+        .get("default_tools_approval_mode")
+        .or_else(|| source.get("defaultToolsApprovalMode"))
+        .cloned()
+    else {
+        return;
+    };
+    let Some(server) = servers.get_mut(name).and_then(Value::as_object_mut) else {
+        return;
+    };
+    server.insert("default_tools_approval_mode".to_owned(), mode);
 }
 
 fn mcp_server_headers_summary(servers: &BTreeMap<String, Value>) -> String {
@@ -1645,6 +1720,7 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
                 }
             }
         }
+        append_codex_mcp_server_approval_override(&key, object, &mut overrides);
         return overrides;
     }
     let Some(url) = object
@@ -1657,6 +1733,17 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
         return Vec::new();
     };
     let mut overrides = vec![format!("{key}.url={}", toml_value(url))];
+    if let Some(headers) = object.get("headers").and_then(Value::as_object) {
+        for (header_name, header_value) in headers {
+            if let Some(header_value) = header_value.as_str() {
+                overrides.push(format!(
+                    "{key}.http_headers.{}={}",
+                    toml_key_segment(header_name),
+                    toml_value(header_value)
+                ));
+            }
+        }
+    }
     for (source_key, target_key) in [
         ("bearer_token_env_var", "bearer_token_env_var"),
         ("bearerTokenEnvVar", "bearer_token_env_var"),
@@ -1669,7 +1756,26 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
             overrides.push(format!("{key}.{target_key}={}", toml_value(value)));
         }
     }
+    append_codex_mcp_server_approval_override(&key, object, &mut overrides);
     overrides
+}
+
+fn append_codex_mcp_server_approval_override(
+    key: &str,
+    object: &Map<String, Value>,
+    overrides: &mut Vec<String>,
+) {
+    let approval_mode = object
+        .get("default_tools_approval_mode")
+        .or_else(|| object.get("defaultToolsApprovalMode"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("approve");
+    overrides.push(format!(
+        "{key}.default_tools_approval_mode={}",
+        toml_value(approval_mode)
+    ));
 }
 
 fn load_global_mcp_records() -> BTreeMap<String, Value> {
@@ -1847,6 +1953,39 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[test]
+    fn coordinate_subagent_uses_its_resolved_model() {
+        let bot = json!({
+            "id": 106,
+            "name": "glm",
+            "description": "GLM worker",
+            "system_prompt": "You are the GLM worker.",
+            "agent_config": {
+                "env": {
+                    "model_id": "weibo-glm5.2"
+                }
+            }
+        });
+
+        let (name, content) = subagent_file(&bot).unwrap();
+
+        assert_eq!(name, "glm-106");
+        assert!(content.contains("model: \"weibo-glm5.2\""));
+    }
+
+    #[test]
+    fn coordinate_subagent_inherits_when_model_is_unconfigured() {
+        let bot = json!({
+            "id": 103,
+            "name": "worker",
+            "system_prompt": "You are a worker."
+        });
+
+        let (_, content) = subagent_file(&bot).unwrap();
+
+        assert!(content.contains("model: inherit"));
+    }
 
     struct EnvGuard {
         key: &'static str,

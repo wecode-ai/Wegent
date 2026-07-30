@@ -219,9 +219,15 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public Socket.IO origin returned to Wework desktop clients.
+    WEGENT_SOCKET_URL: str = ""
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # Upstream Sites Platform base URL. Wework accesses it through Backend.
+    SITES_API_BASE_URL: str = ""
+    # Optional bearer token for the upstream Sites Platform project API.
+    SITES_API_TOKEN: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
@@ -388,6 +394,7 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
     KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+    KNOWLEDGE_ARTIFACT_STALL_SECONDS: int = 600  # 10 min
 
     # --- Document Conversion Configuration ---
 
@@ -481,6 +488,7 @@ class Settings(BaseSettings):
     INIT_DATA_FORCE: bool = (
         False  # Force re-initialize YAML resources (delete and recreate)
     )
+    BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
@@ -515,6 +523,8 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_ACCESS_KEY: str = ""
     ATTACHMENT_S3_SECRET_KEY: str = ""
     ATTACHMENT_S3_BUCKET: str = "attachments"
+    DELIVERY_S3_BUCKET: str = "wegent-deliveries"
+    DELIVERY_MAX_ASSET_SIZE_MB: int = 2048
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
@@ -646,6 +656,10 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_WEWORK: str = (
         "wegent-wework#default"  # Default team for WeWork workbench
     )
+    # Cloud project that receives authenticated Wework feedback submissions.
+    # An empty value disables the feedback channel.
+    WEWORK_FEEDBACK_PROJECT_ID: str = ""
+    WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB: int = 250
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

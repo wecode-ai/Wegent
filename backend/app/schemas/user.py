@@ -95,6 +95,12 @@ class GitInfo(BaseModel):
     )
 
 
+class GitTokenOrderUpdate(BaseModel):
+    """Ordered stable keys for the current user's Git tokens."""
+
+    ordered_keys: List[str]
+
+
 class UserBase(BaseModel):
     """User base model"""
 
@@ -217,8 +223,16 @@ class WeworkAuthSessionCreateResponse(BaseModel):
     session_id: str
     poll_token: str
     authorize_url: str
+    web_url: str
     expires_at: int
     poll_interval_seconds: int
+
+
+class WeworkWebConfigResponse(BaseModel):
+    """Web application metadata exposed to Wework desktop."""
+
+    web_url: str
+    socket_url: Optional[str] = None
 
 
 class WeworkAuthSessionPollResponse(BaseModel):

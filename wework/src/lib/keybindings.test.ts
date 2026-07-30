@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
@@ -15,9 +15,19 @@ import {
   TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID,
   WEWORK_OPEN_TERMINAL_EVENT,
   MODEL_SELECTOR_BUTTON_TEST_ID,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
 } from './keybindings'
 
 describe('keybindings', () => {
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    })
+  })
+
   it('normalizes equivalent modifier names', () => {
     expect(normalizeKeybinding('cmd+shift+j')).toBe('Shift+Command+J')
     expect(normalizeKeybinding('Ctrl+Option+`')).toBe('Control+Alt+`')
@@ -29,6 +39,9 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[TOGGLE_SIDEBAR_COMMAND]).toBe('Command+B')
     expect(mergeKeybindings([])[TOGGLE_SIDE_PANEL_COMMAND]).toBe('Alt+Command+B')
     expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
+    expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
+    expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
+    expect(mergeKeybindings([])[RESET_FONT_SIZE_COMMAND]).toBe('Command+0')
     expect(
       mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: 'Control+J' }])[
         OPEN_TERMINAL_COMMAND
@@ -60,6 +73,52 @@ describe('keybindings', () => {
         new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true })
       )
     ).toBe('Control+Shift+M')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '+', metaKey: true, shiftKey: true })
+      )
+    ).toBe('Command+Plus')
+    expect(
+      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true }))
+    ).toBe('Command+Plus')
+    expect(
+      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
+    ).toBe('Command+Minus')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'Shift', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', {
+          key: '\u00a0',
+          code: 'Space',
+          altKey: true,
+          shiftKey: true,
+        })
+      )
+    ).toBe('Alt+Shift+Space')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'å', code: 'KeyA', altKey: true })
+      )
+    ).toBe('Alt+A')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '¡', code: 'Digit1', altKey: true })
+      )
+    ).toBe('Alt+1')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '≤', code: 'Comma', altKey: true })
+      )
+    ).toBe('Alt+,')
   })
 
   it('detects editable shortcut targets', () => {

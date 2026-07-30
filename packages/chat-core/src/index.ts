@@ -8,6 +8,7 @@ export type {
   TaskDetailSubtask,
   TaskStatus,
 } from './api-types'
+export { nestMessageBlocks } from './message-blocks'
 export type { MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
   isGenericTaskStatusError,

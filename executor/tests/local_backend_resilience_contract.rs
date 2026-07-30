@@ -131,7 +131,7 @@ async fn runner_reconnects_after_two_consecutive_heartbeat_failures_to_preserve_
     config.heartbeat_timeout = Duration::from_millis(10);
     config.reconnect_delay = Duration::from_millis(1);
     config.reconnect_delay_max = Duration::from_millis(1);
-    let runner = LocalBackendRunner::new(config, transport.clone());
+    let runner = LocalBackendRunner::new(config, transport.clone()).without_session_gateway();
 
     let task = tokio::spawn(runner.run_forever());
 

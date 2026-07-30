@@ -13,6 +13,8 @@ const openNativeDirectoryPickerMock = vi.hoisted(() => vi.fn())
 const preferences: AppPreferences = vi.hoisted(() => ({
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,

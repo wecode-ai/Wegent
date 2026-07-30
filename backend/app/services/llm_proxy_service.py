@@ -7,6 +7,7 @@
 import json
 import logging
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException, Request, status
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.config.model_resolver import _extract_model_config
+from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,181 @@ logger = logging.getLogger(__name__)
 MODEL_TYPE_HEADER = "x-wegent-model-type"
 MODEL_NAMESPACE_HEADER = "x-wegent-model-namespace"
 MODEL_USER_ID_HEADER = "x-wegent-model-user-id"
+UPSTREAM_HEADER_PREFIX = "x-wegent-upstream-header-"
 SUPPORTED_MODEL_TYPES = {"public", "user", "group"}
+PROTECTED_UPSTREAM_HEADERS = {
+    "accept",
+    "authorization",
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "set-cookie",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    MODEL_TYPE_HEADER,
+    MODEL_NAMESPACE_HEADER,
+    MODEL_USER_ID_HEADER,
+}
+PROTECTED_UPSTREAM_HEADER_MARKERS = (
+    "api-key",
+    "apikey",
+    "credential",
+    "secret",
+    "token",
+)
+
+
+def _resolve_upstream_target(
+    model_name: str,
+    model_config: dict[str, Any],
+) -> tuple[str, dict[str, str]]:
+    """Choose the upstream endpoint path and auth headers from model config.
+
+    Supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages.
+    The model's DB configuration is the single source of truth; if it cannot be
+    mapped to a known upstream API, an explicit error is returned so operators
+    can fix the Model CRD instead of silently falling back to /responses.
+    """
+    api_format = str(model_config.get("api_format") or "").strip().lower()
+    protocol = str(model_config.get("protocol") or "").strip().lower()
+    wire_api = str(model_config.get("wire_api") or "").strip().lower()
+    provider_api_key = str(model_config.get("api_key") or "").strip()
+
+    is_anthropic = protocol in {"claude", "anthropic-messages"}
+    is_chat_completions = (
+        api_format == "chat/completions"
+        or protocol in {"openai", "openai-chat-completions"}
+        or wire_api == "chat/completions"
+    )
+    is_responses = (
+        api_format == "responses"
+        or protocol == "openai-responses"
+        or wire_api == "responses"
+    )
+
+    if protocol == "openai-responses" and api_format == "chat/completions":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' has conflicting protocol/apiFormat: "
+                f"protocol={protocol!r}, api_format={api_format!r}. "
+                "Use protocol 'openai-responses' with apiFormat 'responses'."
+            ),
+        )
+    if protocol in {"claude", "anthropic-messages"} and api_format == "responses":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Model '{model_name}' has conflicting protocol/apiFormat: "
+                f"protocol={protocol!r}, api_format={api_format!r}. "
+                "Anthropic Messages does not support apiFormat 'responses'."
+            ),
+        )
+
+    if is_anthropic:
+        auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
+        if provider_api_key:
+            auth_headers["x-api-key"] = provider_api_key
+        return "/v1/messages", auth_headers
+
+    if is_responses:
+        auth_headers = {}
+        if provider_api_key:
+            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+        return "/responses", auth_headers
+
+    if is_chat_completions:
+        auth_headers = {}
+        if provider_api_key:
+            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+        return "/chat/completions", auth_headers
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Model '{model_name}' has an unsupported or ambiguous protocol/apiFormat "
+            f"configuration: protocol={protocol!r}, api_format={api_format!r}, "
+            f"wire_api={wire_api!r}. "
+            "Please update the Model CRD: use protocol 'openai-responses' with "
+            "apiFormat 'responses' for OpenAI Responses, protocol 'openai' with "
+            "apiFormat 'chat/completions' for OpenAI Chat Completions, or protocol "
+            "'claude'/'anthropic-messages' for Anthropic Messages."
+        ),
+    )
+
+
+def _join_upstream_url(base_url: str, endpoint_path: str) -> str:
+    """Append an endpoint path without duplicating existing path segments."""
+    parsed = urlsplit(base_url.strip())
+    base_segments = [segment for segment in parsed.path.split("/") if segment]
+    endpoint_segments = [
+        segment for segment in endpoint_path.strip().split("/") if segment
+    ]
+
+    max_overlap = min(len(base_segments), len(endpoint_segments))
+    overlap = next(
+        (
+            size
+            for size in range(max_overlap, 0, -1)
+            if base_segments[-size:] == endpoint_segments[:size]
+        ),
+        0,
+    )
+    path_segments = [*base_segments, *endpoint_segments[overlap:]]
+    path = f"/{'/'.join(path_segments)}" if path_segments else ""
+    return urlunsplit(parsed._replace(path=path))
+
+
+def _is_protected_upstream_header(name: str) -> bool:
+    normalized = name.strip().lower().replace("_", "-")
+    parts = normalized.split("-")
+    return (
+        normalized in PROTECTED_UPSTREAM_HEADERS
+        or "auth" in parts
+        or "authentication" in parts
+        or any(marker in normalized for marker in PROTECTED_UPSTREAM_HEADER_MARKERS)
+    )
+
+
+def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
+    custom_headers: dict[str, str] = {}
+    for header_name, value in request.headers.items():
+        if not header_name.lower().startswith(UPSTREAM_HEADER_PREFIX):
+            continue
+        target_name = header_name[len(UPSTREAM_HEADER_PREFIX) :].strip()
+        if not target_name or target_name.startswith("-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid custom upstream header name",
+            )
+        if _is_protected_upstream_header(target_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Custom upstream header is protected: {target_name}",
+            )
+        custom_headers[target_name] = value
+    return custom_headers
+
+
+def _merge_headers_case_insensitive(
+    *header_sources: dict[str, str],
+) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    names_by_lowercase: dict[str, str] = {}
+    for headers in header_sources:
+        for name, value in headers.items():
+            normalized = name.lower()
+            previous_name = names_by_lowercase.get(normalized)
+            if previous_name is not None:
+                merged.pop(previous_name, None)
+            merged[name] = value
+            names_by_lowercase[normalized] = name
+    return merged
 
 
 def _required_header(request: Request, name: str) -> str:
@@ -120,7 +295,11 @@ def resolve_llm_proxy_model_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
         )
-    return _extract_model_config(kind.json.get("spec", {}))
+    return extract_and_process_model_config(
+        model_spec=kind.json.get("spec", {}),
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
@@ -165,10 +344,9 @@ async def proxy_llm_responses(
     )
 
     provider_base_url = str(model_config.get("base_url") or "").strip()
-    provider_api_key = str(model_config.get("api_key") or "").strip()
     provider_model_id = str(model_config.get("model_id") or "").strip()
     default_headers = model_config.get("default_headers") or {}
-    if not provider_base_url or not provider_api_key or not provider_model_id:
+    if not provider_base_url or not provider_model_id:
         logger.error(
             "LLM proxy model configuration incomplete for user %s model %s",
             current_user.id,
@@ -181,20 +359,30 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
-    upstream_url = f"{provider_base_url.rstrip('/')}/responses"
+    upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
+    upstream_url = _join_upstream_url(provider_base_url, upstream_path)
 
-    provider_headers = (
+    configured_headers = (
         {str(key): str(value) for key, value in default_headers.items()}
         if isinstance(default_headers, dict)
         else {}
     )
-    provider_headers["Authorization"] = f"Bearer {provider_api_key}"
+    custom_headers = _extract_custom_upstream_headers(request)
+    provider_headers = _merge_headers_case_insensitive(
+        configured_headers,
+        custom_headers,
+    )
+    protocol_headers: dict[str, str] = dict(auth_headers)
     content_type = request.headers.get("content-type")
     if content_type:
-        provider_headers["Content-Type"] = content_type
+        protocol_headers["Content-Type"] = content_type
     accept = request.headers.get("accept")
     if accept:
-        provider_headers["Accept"] = accept
+        protocol_headers["Accept"] = accept
+    provider_headers = _merge_headers_case_insensitive(
+        provider_headers,
+        protocol_headers,
+    )
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0))
     try:

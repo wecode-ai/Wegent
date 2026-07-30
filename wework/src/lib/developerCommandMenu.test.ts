@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 import { installDeveloperCommandMenu } from './developerCommandMenu'
 import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
@@ -71,7 +72,20 @@ describe('developerCommandMenu', () => {
     expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.set', {
       enabled: true,
     })
-    expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
+    expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBe('1')
+  })
+
+  test('restores the frontend stream flag when the executor toggle fails', async () => {
+    requestLocalExecutorMock
+      .mockResolvedValueOnce({ enabled: true })
+      .mockRejectedValueOnce(new Error('executor unavailable'))
+    dispatchDeveloperShortcut()
+    await flushPromises()
+
+    screenCommand('toggle-stream-logs').click()
+    await flushPromises()
+
+    expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBeNull()
   })
 
   test('dispatches an event to simulate an app update', () => {
@@ -126,13 +140,48 @@ describe('developerCommandMenu', () => {
     screenButton('Collapse').click()
 
     expect(screenCollapsedDebugPanel()).toBeInTheDocument()
-    expect(document.body).toHaveTextContent('Debug Panel collapsed')
+    expect(screenCollapsedDebugPanel()).toHaveClass('h-8', 'group')
+    expect(screenCollapsedDebugPanel()).toHaveTextContent('Debug')
+    expect(screenCollapsedDebugPanel()).toHaveAttribute(
+      'title',
+      expect.stringContaining('Debug Panel - taskKnown=true')
+    )
     expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
 
     screenCollapsedDebugPanel().click()
 
     expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
     expect(document.body).toHaveTextContent('Collapse')
+    expect(document.getElementById('wework-debug-panel')).not.toHaveAttribute('style')
+  })
+
+  test('drags the collapsed debug button without expanding it', () => {
+    dispatchDeveloperShortcut()
+    screenCommand('open-debug-panel').click()
+    screenButton('Collapse').click()
+
+    const root = document.getElementById('wework-debug-panel')
+    const button = screenCollapsedDebugPanel()
+    vi.spyOn(root!, 'getBoundingClientRect').mockReturnValue({
+      left: 900,
+      top: 700,
+      width: 32,
+      height: 32,
+      right: 932,
+      bottom: 732,
+      x: 900,
+      y: 700,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(button, { button: 0, clientX: 916, clientY: 716 })
+    fireEvent.pointerMove(window, { clientX: 816, clientY: 616 })
+    fireEvent.pointerUp(window)
+    fireEvent.click(button)
+
+    expect(root).toHaveStyle({ left: '800px', top: '600px' })
+    expect(screenCollapsedDebugPanel()).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
   })
 })
 
@@ -191,13 +240,12 @@ function createDebugSnapshot() {
         workspacePath: '/tmp/workspace',
         taskId: 'task-1',
       },
-      currentRuntimeTaskRunning: true,
+      lifecycleCurrentTaskRunning: true,
       runningState: {
         hasCurrentRuntimeTask: true,
         activeTaskKnown: true,
         activeTaskRunning: true,
         activeTaskStatus: 'running',
-        providerRunning: true,
       },
       activeTask: {
         taskId: 'task-1',
@@ -243,6 +291,7 @@ function createDebugSnapshot() {
         taskExecution: {
           known: true,
           running: true,
+          continuable: true,
           status: 'running',
         },
         isSubmitting: false,
