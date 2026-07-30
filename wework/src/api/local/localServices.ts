@@ -71,6 +71,13 @@ import type {
 } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import type {
+  Automation,
+  AutomationListResponse,
+  AutomationMutation,
+  AutomationRun,
+  AutomationRunListResponse,
+} from '@/types/automation'
+import type {
   WorkspaceFileEntry,
   WorkspaceFileChunkResponse,
   WorkspaceTextFileResponse,
@@ -2237,6 +2244,153 @@ function debugLocalRuntimeCreatePayload(
   })
 }
 
+function normalizeLocalAutomationSchedule(
+  schedule: Automation['schedule'] | { type: 'one_time'; execute_at: string }
+): Automation['schedule'] {
+  if (schedule.type !== 'one_time') return schedule
+  return {
+    type: 'one_time',
+    executeAt: 'executeAt' in schedule ? schedule.executeAt : schedule.execute_at,
+  }
+}
+
+function serializeLocalAutomationSchedule(
+  schedule: AutomationMutation['schedule']
+): AutomationMutation['schedule'] | { type: 'one_time'; execute_at: string } {
+  if (schedule.type !== 'one_time') return schedule
+  return { type: 'one_time', execute_at: schedule.executeAt }
+}
+
+function withLocalAutomationSource(automation: Automation): Automation {
+  return {
+    ...automation,
+    source: 'local',
+    schedule: normalizeLocalAutomationSchedule(
+      automation.schedule as Automation['schedule'] | { type: 'one_time'; execute_at: string }
+    ),
+  }
+}
+
+function withLocalAutomationRunSource(run: AutomationRun): AutomationRun {
+  return { ...run, source: 'local', deviceId: run.deviceId ?? LOCAL_DEVICE_ID }
+}
+
+function createLocalAutomationApi(
+  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  requestWithLocalDevice: RequestWithLocalDevice,
+  options: RuntimeWorkIpcOptions
+): NonNullable<WorkbenchServices['automationApi']> {
+  const user = options.user ?? LOCAL_USER
+  const resolveDeviceId =
+    options.resolveDeviceId ??
+    (async (data?: Record<string, unknown>) => stringValue(data?.deviceId) ?? LOCAL_DEVICE_ID)
+
+  const prepareAutomation = async (data: AutomationMutation) => {
+    const localDeviceId = await resolveDeviceId(
+      data.taskRequest as unknown as Record<string, unknown>
+    )
+    const taskPayload = await createLocalRuntimeTaskPayload(
+      data.taskRequest,
+      localDeviceId,
+      requestWithLocalDevice,
+      options.cloudModelGateway,
+      user
+    )
+    const continuationPayload =
+      data.conversationMode === 'continue_thread' && data.continuationPayload
+        ? createLocalRuntimeSendPayload(
+            data.continuationPayload as unknown as RuntimeSendRequest,
+            localDeviceId,
+            options.cloudModelGateway,
+            user
+          )
+        : null
+    return {
+      id: data.id ?? '',
+      version: data.version ?? 0,
+      name: data.name,
+      description: data.description ?? '',
+      prompt: data.prompt,
+      schedule: serializeLocalAutomationSchedule(data.schedule),
+      timezone: data.timezone,
+      enabled: data.enabled,
+      conversationMode: data.conversationMode,
+      taskPayload,
+      continuationPayload,
+    }
+  }
+
+  return {
+    async listAutomations(): Promise<AutomationListResponse> {
+      const response = await request<{ items?: Automation[] }>(
+        'runtime.automations.list',
+        {},
+        LOCAL_DEVICE_ID
+      )
+      return { items: (response.items ?? []).map(withLocalAutomationSource) }
+    },
+    async getAutomation(automationId: string) {
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.get',
+        { automationId },
+        LOCAL_DEVICE_ID
+      )
+      return { automation: withLocalAutomationSource(response.automation) }
+    },
+    async createAutomation(data: AutomationMutation) {
+      const automation = await prepareAutomation(data)
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.create',
+        { automation },
+        LOCAL_DEVICE_ID
+      )
+      return { automation: withLocalAutomationSource(response.automation) }
+    },
+    async updateAutomation(_automationId: string, data: AutomationMutation) {
+      const automation = await prepareAutomation(data)
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.update',
+        { automation },
+        LOCAL_DEVICE_ID
+      )
+      return { automation: withLocalAutomationSource(response.automation) }
+    },
+    deleteAutomation(automationId: string) {
+      return request<{ deleted: boolean }>(
+        'runtime.automations.delete',
+        { automationId },
+        LOCAL_DEVICE_ID
+      )
+    },
+    async toggleAutomation(automationId: string, enabled: boolean) {
+      const response = await request<{ automation: Automation }>(
+        'runtime.automations.toggle',
+        { automationId, enabled },
+        LOCAL_DEVICE_ID
+      )
+      return { automation: withLocalAutomationSource(response.automation) }
+    },
+    async runAutomationNow(automationId: string) {
+      const response = await request<{ run: AutomationRun | null }>(
+        'runtime.automations.run_now',
+        { automationId },
+        LOCAL_DEVICE_ID
+      )
+      return {
+        run: response.run ? withLocalAutomationRunSource(response.run) : null,
+      }
+    },
+    async listAutomationRuns(automationId?: string): Promise<AutomationRunListResponse> {
+      const response = await request<{ items?: AutomationRun[] }>(
+        'runtime.automation_runs.list',
+        automationId ? { automationId } : {},
+        LOCAL_DEVICE_ID
+      )
+      return { items: (response.items ?? []).map(withLocalAutomationRunSource) }
+    },
+  }
+}
+
 function summarizeLocalModelOptions(
   modelOptions: Record<string, unknown> | undefined
 ): Record<string, unknown> {
@@ -2419,6 +2573,14 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+  const automationApi = createLocalAutomationApi(
+    request,
+    (method, params) => request(method, params as Record<string, unknown>),
+    {
+      cloudModelGateway: deps.cloudModelGateway,
+      user: deps.user,
+    }
+  )
   const deliveryApi = createLocalDeliveryApi(request)
   const externalIssueApi = createExternalIssueApi(request)
   const aitableApi = createLocalAITableApi(request)
@@ -2484,6 +2646,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       defaultLocation: 'local',
     },
     runtimeWorkApi,
+    automationApi,
     attachmentApi: createLocalAttachmentApi(),
     executorClient: createExecutorClientFromApis({
       transportKind: 'local-ipc',

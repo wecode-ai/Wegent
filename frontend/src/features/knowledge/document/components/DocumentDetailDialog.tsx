@@ -190,7 +190,7 @@ export function DocumentDetailDialog({
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document
-    ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(knowledgeBaseNamespace, knowledgeBaseName, isOrganization, document.name)}`
+    ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(knowledgeBaseNamespace, knowledgeBaseName, isOrganization, document.name)}?documentId=${document.id}`
     : null
 
   const handleCopyLink = async () => {

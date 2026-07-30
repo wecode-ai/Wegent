@@ -340,7 +340,15 @@ function getCloudErrorMessage(error: unknown): string {
   return rawErrorMessage(error)
 }
 
-export function CloudConnectionProvider({ children }: { children: ReactNode }) {
+interface CloudConnectionProviderProps {
+  children: ReactNode
+  initializeSitesPlugin?: boolean
+}
+
+export function CloudConnectionProvider({
+  children,
+  initializeSitesPlugin = true,
+}: CloudConnectionProviderProps) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const initialRefreshStartedRef = useRef(false)
   const sitesPluginInitializationKeyRef = useRef<string | null>(null)
@@ -377,6 +385,11 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
   }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
 
   useEffect(() => {
+    if (!initializeSitesPlugin) {
+      sitesPluginInitializationKeyRef.current = null
+      return
+    }
+
     if (
       snapshot.status !== 'connected' ||
       !snapshot.backendUrl ||
@@ -402,6 +415,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       console.error('[CloudConnection] Failed to initialize the Sites plugin', error)
     })
   }, [
+    initializeSitesPlugin,
     snapshot.apiBaseUrl,
     snapshot.backendUrl,
     snapshot.socketBaseUrl,

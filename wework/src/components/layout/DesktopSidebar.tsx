@@ -1,5 +1,6 @@
 import {
   Archive,
+  AlarmClock,
   Bell,
   BellOff,
   ChevronDown,
@@ -150,7 +151,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -196,7 +197,9 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenCloudWork?: () => void
   onOpenSites?: () => void
+  onOpenAutomation?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -2516,7 +2519,9 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenCloudWork,
   onOpenSites,
+  onOpenAutomation,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -3093,6 +3098,15 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
+              {experimentalFeaturesEnabled && (
+                <SidebarButton
+                  icon={AlarmClock}
+                  label={t('workbench.automation', '已安排')}
+                  testId="automation-button"
+                  selected={activeItem === 'automation'}
+                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+                />
+              )}
               {SHOW_PLUGINS_NAVIGATION && (
                 <SidebarButton
                   icon={Sparkles}
@@ -3115,6 +3129,8 @@ export function DesktopSidebar({
                 <CloudConnectionSidebarButton
                   devices={devices}
                   cloudWorkStatus={cloudWorkStatus}
+                  selected={activeItem === 'cloud-work'}
+                  onOpenCloudWork={onOpenCloudWork ?? (() => navigateTo('/cloud-work'))}
                   onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                   onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                   onAddDevice={() => {

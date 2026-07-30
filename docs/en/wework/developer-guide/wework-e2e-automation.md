@@ -113,8 +113,12 @@ project initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
-by the complete flow. Segment commands are for fast local iteration; run the
-complete `pnpm --filter wework e2e:desktop` flow before pushing:
+by the complete flow. PR CI builds the smallest segment matrix for the changed
+feature paths. Shared desktop infrastructure, main, merge queue, scheduled
+runs, and `ci:all` still run the complete desktop suites. The mapping lives in
+`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature coverage is registered. Segment commands are also useful for focused
+local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
@@ -361,6 +365,14 @@ Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
+
+The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
+dependencies in the runner user's home directory. Cache keys rotate weekly and
+are scoped by operating system and CPU architecture. Every run still executes
+`apt-get update`; an older cache is only a restore source, and missing or
+updated packages are downloaded from the Ubuntu repositories. Installation
+uses `--no-install-recommends` plus repository retries and timeouts to reduce
+whole-job timeouts caused by transient hosted-runner mirror degradation.
 
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 

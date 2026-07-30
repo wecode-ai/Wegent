@@ -111,8 +111,10 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
-完整流程才创建的任务或 UI 状态。分段命令用于本地快速迭代，推送前仍需运行完整
-`pnpm --filter wework e2e:desktop`：
+完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
+矩阵；共享桌面基础设施、主分支、merge queue、定时任务和 `ci:all` 仍运行完整桌面
+套件。映射规则位于 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
+必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
@@ -353,6 +355,12 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
 真实 Tauri、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
+
+Linux 桌面场景会把 Tauri 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
+并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存
+只作为恢复来源，缺失或更新后的软件包会从 Ubuntu 软件源下载。安装使用
+`--no-install-recommends`，并为软件源请求设置重试和超时，降低托管 runner 镜像源
+抖动导致整个桌面 E2E job 超时的概率。
 
 内存门禁依赖 macOS 的 WebKit 进程关联和 physical footprint 采样，必须在 macOS runner 上单独运行：
 

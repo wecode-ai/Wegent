@@ -18,10 +18,12 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.exceptions import ValidationException
 from app.models.kind import Kind
 from app.models.knowledge import (
+    DocumentIndexStatus,
     DocumentStatus,
     KnowledgeDocument,
     KnowledgeFolder,
 )
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.namespace import Namespace
 from app.models.resource_member import (
     APPROVED_MEMBER_STATUS_VALUES,
@@ -83,6 +85,14 @@ from app.services.knowledge.permission_policy import (
 )
 
 batch_logger = logging.getLogger(__name__)
+
+
+class KnowledgeDocumentScopeValidationError(ValueError):
+    """Raised when a requested document scope is inaccessible or unusable."""
+
+    def __init__(self, message: str, *, knowledge_base_not_found: bool = False) -> None:
+        super().__init__(message)
+        self.knowledge_base_not_found = knowledge_base_not_found
 
 
 def _build_attachment_filename(name: str, file_extension: str) -> str:
@@ -379,6 +389,55 @@ class KnowledgeService:
             kb=kb,
         )
         return kb, meets_direct_access_requirement(kb=kb, permission=permission)
+
+    @staticmethod
+    def resolve_usable_document_ids(
+        db: Session,
+        *,
+        knowledge_base_id: int,
+        user_id: int,
+        document_ids: list[int],
+    ) -> list[int]:
+        """Validate one ordered, indexed document scope in an accessible KB."""
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db,
+            knowledge_base_id,
+            user_id,
+        )
+        if knowledge_base is None or not has_access:
+            raise KnowledgeDocumentScopeValidationError(
+                "Knowledge base not found",
+                knowledge_base_not_found=True,
+            )
+
+        if any(
+            isinstance(document_id, bool)
+            or not isinstance(document_id, int)
+            or document_id <= 0
+            for document_id in document_ids
+        ) or len(set(document_ids)) != len(document_ids):
+            raise KnowledgeDocumentScopeValidationError(
+                "Selected document IDs must be unique positive integers"
+            )
+
+        found_ids = {
+            row[0]
+            for row in (
+                db.query(KnowledgeDocument.id)
+                .filter(
+                    KnowledgeDocument.kind_id == knowledge_base_id,
+                    KnowledgeDocument.id.in_(document_ids),
+                    KnowledgeDocument.is_active.is_(True),
+                    KnowledgeDocument.index_status == DocumentIndexStatus.SUCCESS,
+                )
+                .all()
+            )
+        }
+        if found_ids != set(document_ids):
+            raise KnowledgeDocumentScopeValidationError(
+                "Selected documents must belong to the knowledge base and be indexed"
+            )
+        return document_ids
 
     @staticmethod
     def can_directly_access_knowledge_base(
@@ -926,6 +985,11 @@ class KnowledgeService:
         # Folders have no FK constraint on kind_id, so they must be cleaned up explicitly.
         db.query(KnowledgeFolder).filter(
             KnowledgeFolder.kind_id == knowledge_base_id
+        ).delete(synchronize_session=False)
+
+        # Delete Artifacts in the same transaction as their owning knowledge base.
+        db.query(KnowledgeArtifactRecord).filter(
+            KnowledgeArtifactRecord.knowledge_base_id == knowledge_base_id
         ).delete(synchronize_session=False)
 
         # Delete all members for this KB

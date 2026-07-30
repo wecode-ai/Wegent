@@ -211,6 +211,53 @@ describe('CloudConnectionProvider', () => {
     )
   })
 
+  it('does not initialize Sites from an auxiliary window', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://cloud.example.com',
+          socket_url: 'wss://backend-socket.example.com',
+        })
+      }
+      if (endpoint === '/users/me') {
+        return Promise.resolve({
+          id: 7,
+          user_name: 'alice',
+          email: 'alice@example.com',
+        })
+      }
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider initializeSitesPlugin={false}>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(httpMocks.get).toHaveBeenCalledWith('/auth/wework/config', {
+        redirectOnUnauthorized: false,
+      })
+    )
+    expect(httpMocks.get).not.toHaveBeenCalledWith('/plugins/installed')
+    expect(httpMocks.post).not.toHaveBeenCalledWith(
+      '/plugins/builtin/wegent-sites/ensure-installed',
+      {}
+    )
+  })
+
   it('keeps an installed Sites plugin when restoring a cloud connection', async () => {
     saveStoredCloudConnection({
       backendUrl: 'https://cloud.example.com',
