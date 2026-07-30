@@ -3024,6 +3024,18 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     !draftSnapshot.testIds.includes('automation-workspace-input'),
     'Automation creation should derive its working directory instead of exposing a path input'
   )
+  await control.command('click', '[data-testid="automation-source-select"]')
+  await assert.rejects(
+    control.command('click', '[data-testid="automation-source-select-option-cloud"]'),
+    /disabled/,
+    'The cloud automation source remained selectable'
+  )
+  const sourceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    sourceSnapshot.testIds.includes('automation-source-select-menu'),
+    'The automation source menu closed after clicking the disabled cloud option'
+  )
+  await control.command('click', '[data-testid="automation-source-select"]')
   await control.command('click', '[data-testid="automation-conversation-mode"]')
   await control.command(
     'click',
