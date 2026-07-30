@@ -97,6 +97,7 @@ interface KnowledgeDocumentTreeGridProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  allowDownload?: boolean
 }
 
 function formatFileSize(bytes: number) {
@@ -198,6 +199,7 @@ export function KnowledgeDocumentTreeGrid({
   includedInFolderScope,
   onSelect,
   ragConfigured = true,
+  allowDownload = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
@@ -765,7 +767,8 @@ export function KnowledgeDocumentTreeGrid({
             !!document.attachment_id &&
             !!onReanalyze &&
             !showIndexingState
-          const showDownload = document.source_type === 'file' && !!document.attachment_id
+          const showDownload =
+            allowDownload && document.source_type === 'file' && !!document.attachment_id
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
             refreshingDocId === document.id

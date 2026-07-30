@@ -17,7 +17,7 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 
 import json
 import logging
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
@@ -25,7 +25,7 @@ from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
-from app.models.knowledge import KnowledgeDocument
+from app.api.ws.events import ContextItem
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.chat.preprocessing.external_web_content import (
     build_external_web_content_images,
@@ -58,6 +58,9 @@ SPREADSHEET_FILE_EXTENSIONS = {".xls", ".xlsx", ".csv"}
 # Max characters of parsed text to include as preview when injecting
 # metadata-only prefix for large non-spreadsheet files.
 METADATA_TEXT_PREVIEW_LENGTH = 500
+
+if TYPE_CHECKING:
+    from app.models.task import TaskResource
 
 # Table context prompt template - will be dynamically generated with table info
 TABLE_PROMPT_TEMPLATE = """
@@ -797,7 +800,7 @@ def link_contexts_to_subtask(
         table_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
-    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id)
+    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id, db=db)
 
     # Combine all contexts to create
     all_contexts_to_create = (
@@ -886,6 +889,66 @@ def _filter_syncable_attachment_ids(
     )
     syncable_ids = {context_id for (context_id,) in contexts}
     return _order_attachment_ids(context_ids, syncable_ids)
+
+
+def link_selected_documents_to_subtask(
+    db: Session,
+    *,
+    subtask_id: int,
+    user_id: int,
+    knowledge_base_id: int,
+    document_ids: List[int],
+    task: Optional["TaskResource"] = None,
+) -> List[int]:
+    """Create the notebook selected-documents context without an API payload."""
+    if not document_ids:
+        return []
+
+    context = ContextItem(
+        type=ContextType.SELECTED_DOCUMENTS.value,
+        data={
+            "knowledge_base_id": knowledge_base_id,
+            "document_ids": document_ids,
+        },
+    )
+    return link_contexts_to_subtask(
+        db=db,
+        subtask_id=subtask_id,
+        user_id=user_id,
+        contexts=[context],
+        task=task,
+    )
+
+
+def _resolve_usable_selected_document_ids(
+    db: Session,
+    *,
+    user_id: int,
+    knowledge_base_id: int,
+    document_ids: List[int],
+) -> List[int]:
+    """Validate selected documents against one usable knowledge-base scope."""
+    from app.services.knowledge.knowledge_service import (
+        KnowledgeDocumentScopeValidationError,
+        KnowledgeService,
+    )
+
+    try:
+        return KnowledgeService.resolve_usable_document_ids(
+            db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            document_ids=document_ids,
+        )
+    except KnowledgeDocumentScopeValidationError as exc:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if exc.knowledge_base_not_found
+                else status.HTTP_400_BAD_REQUEST
+            ),
+            detail=str(exc),
+        ) from exc
 
 
 def _sync_kb_contexts_to_task(
@@ -1129,6 +1192,8 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
+    *,
+    db: Session | None = None,
 ) -> tuple[
     List[SubtaskContext],
     List[SubtaskContext],
@@ -1243,6 +1308,16 @@ def _prepare_contexts_for_creation(
                 document_ids = docs_data.get("document_ids", [])
 
                 if knowledge_base_id and document_ids:
+                    if db is None:
+                        raise RuntimeError(
+                            "Database session is required for selected documents"
+                        )
+                    document_ids = _resolve_usable_selected_document_ids(
+                        db,
+                        user_id=user_id,
+                        knowledge_base_id=int(knowledge_base_id),
+                        document_ids=document_ids,
+                    )
                     # Create SubtaskContext object for selected documents
                     selected_docs_context = SubtaskContext(
                         subtask_id=subtask_id,
@@ -1260,6 +1335,8 @@ def _prepare_contexts_for_creation(
                         f"Prepared selected_documents context: kb_id={knowledge_base_id}, "
                         f"doc_ids={document_ids}"
                     )
+            except (HTTPException, RuntimeError):
+                raise
             except Exception as e:
                 logger.warning(f"Failed to prepare selected_documents context: {e}")
                 continue
@@ -1599,6 +1676,32 @@ async def prepare_contexts_for_chat(
         f"selected_docs_contexts_count={len(selected_docs_contexts)}, "
         f"contexts_data={[c.type_data for c in selected_docs_contexts]}"
     )
+    selected_document_ids_by_kb: dict[int, list[int]] = {}
+    for context in selected_docs_contexts:
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        try:
+            knowledge_base_id = int(type_data.get("knowledge_base_id"))
+        except (TypeError, ValueError):
+            continue
+        document_ids = selected_document_ids_by_kb.setdefault(knowledge_base_id, [])
+        for document_id in _normalize_document_ids(type_data.get("document_ids", [])):
+            if document_id not in document_ids:
+                document_ids.append(document_id)
+
+    selected_scopes = [
+        KnowledgeBaseScope(
+            knowledge_base_id=knowledge_base_id,
+            scope_restricted=True,
+            document_ids=document_ids,
+        )
+        for knowledge_base_id, document_ids in selected_document_ids_by_kb.items()
+        if document_ids
+    ]
+    if selected_docs_contexts and not selected_scopes:
+        raise ExternalRefValidationError(
+            "Selected documents context has no valid documents"
+        )
+
     if selected_docs_contexts:
         from .selected_documents import process_selected_documents_contexts
 
@@ -1628,6 +1731,30 @@ async def prepare_contexts_for_chat(
     # with the returned table payload — if parsing fails, the flag stays False.
     has_table_context = len(parsed_tables) > 0
 
+    merged_scopes_by_kb = {
+        scope.knowledge_base_id: scope for scope in kb_result.knowledge_base_scopes
+    }
+    for selected_scope in selected_scopes:
+        # An explicit document selection deliberately narrows an unrestricted KB
+        # scope; selected-document scope takes precedence over whole-KB access.
+        existing_scope = merged_scopes_by_kb.get(selected_scope.knowledge_base_id)
+        existing_document_ids = (
+            existing_scope.document_ids if existing_scope is not None else []
+        )
+        merged_scopes_by_kb[selected_scope.knowledge_base_id] = KnowledgeBaseScope(
+            knowledge_base_id=selected_scope.knowledge_base_id,
+            scope_restricted=True,
+            document_ids=list(
+                dict.fromkeys(existing_document_ids + selected_scope.document_ids)
+            ),
+        )
+    merged_knowledge_base_ids = list(
+        dict.fromkeys(
+            kb_result.knowledge_base_ids
+            + [scope.knowledge_base_id for scope in selected_scopes]
+        )
+    )
+
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
     # and extra_tools (table prompt and selected_documents processing may have modified
     # them after kb_result was computed).
@@ -1635,10 +1762,12 @@ async def prepare_contexts_for_chat(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
         kb_meta_prompt=kb_meta_prompt,
-        knowledge_base_ids=kb_result.knowledge_base_ids,
-        is_user_selected_kb=kb_result.is_user_selected_kb,
+        knowledge_base_ids=merged_knowledge_base_ids,
+        is_user_selected_kb=(
+            True if selected_scopes else kb_result.is_user_selected_kb
+        ),
         document_ids=kb_result.document_ids,
-        knowledge_base_scopes=kb_result.knowledge_base_scopes,
+        knowledge_base_scopes=list(merged_scopes_by_kb.values()),
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(

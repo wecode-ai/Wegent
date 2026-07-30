@@ -1253,7 +1253,8 @@ describe('DesktopWorkbenchLayout', () => {
   function renderWorkspacePanelLayout({
     mainWidth,
     withAppearance = false,
-  }: { mainWidth?: number; withAppearance?: boolean } = {}) {
+    messages,
+  }: { mainWidth?: number; withAppearance?: boolean; messages?: WorkbenchMessage[] } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
@@ -1262,6 +1263,7 @@ describe('DesktopWorkbenchLayout', () => {
     const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
+        messages={messages}
         state={{
           ...baseProps.state,
           ...workspacePanelState,
@@ -4197,12 +4199,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('云桌面')).not.toBeInTheDocument()
     expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
     expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
-    expect(screen.queryByText('CPU')).not.toBeInTheDocument()
-    expect(screen.queryByText('MEM')).not.toBeInTheDocument()
-    expect(screen.queryByText('磁盘')).not.toBeInTheDocument()
-    expect(screen.queryByText('42%')).not.toBeInTheDocument()
-    expect(screen.queryByText('68%')).not.toBeInTheDocument()
-    expect(screen.queryByText('57%')).not.toBeInTheDocument()
+    expect(screen.getByText('CPU')).toBeInTheDocument()
+    expect(screen.getByText('内存')).toBeInTheDocument()
+    expect(screen.getByText('磁盘')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('connection-device-metric-cpu-24a59054-4638-4744-983d-372706c30fcd')
+    ).toHaveTextContent('42%')
+    expect(
+      screen.getByTestId('connection-device-metric-memory-24a59054-4638-4744-983d-372706c30fcd')
+    ).toHaveTextContent('68%')
+    expect(
+      screen.getByTestId('connection-device-metric-disk-24a59054-4638-4744-983d-372706c30fcd')
+    ).toHaveTextContent('57%')
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByText('说明')).not.toBeInTheDocument()
     expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
@@ -4264,6 +4272,104 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
+  test('expands the right workspace panel without the composer and restores chat', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-25T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    const content = screen.getByTestId('desktop-workbench-content')
+    const panelShell = screen.getByTestId('right-workspace-panel-shell')
+    const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
+
+    expect(expandButton).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(expandButton)
+
+    expect(content).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+    expect(panelShell).toHaveClass('absolute', 'inset-y-0', 'right-0')
+    expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass('z-critical')
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass('z-critical')
+    expect(screen.queryByTestId('project-chat-composer')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-expanded-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
+    expect(panelShell).toHaveStyle({ width: '100%' })
+
+    await userEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
+
+    await waitFor(() => {
+      expect(content).toHaveStyle({ width: '420px' })
+      expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
+    })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
+  })
+
+  test('uses the temporary chat composer as the only composer while expanded', async () => {
+    renderWorkspacePanelLayout({
+      mainWidth: 1000,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Ready',
+          status: 'done',
+          createdAt: '2026-07-26T00:00:00.000Z',
+        },
+      ],
+    })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    const temporaryChat = screen.getByTestId('right-workspace-chat-panel')
+    const composerShell = within(temporaryChat).getByTestId('right-workspace-chat-composer-shell')
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(1)
+    expect(screen.queryByTestId('desktop-floating-composer-card')).not.toBeInTheDocument()
+    expect(composerShell).toHaveClass(
+      'z-critical',
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
+    expect(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      within(temporaryChat).getByTestId('restore-conversation-from-expanded-workspace-button')
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
+    })
+    expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
+    expect(screen.getByTestId('desktop-floating-composer-card')).toBeInTheDocument()
+  })
+
   test('shows the workbench background through the right and bottom panels', async () => {
     localStorage.setItem(
       'wework.appearance',
@@ -4283,6 +4389,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('right-workspace-tabbar')).toHaveClass('bg-transparent')
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
     expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-transparent')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-expanded-button'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel-shell')).not.toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background')
+    expect(screen.getByTestId('right-workspace-panel')).not.toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
@@ -4779,6 +4892,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+    expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
@@ -5197,9 +5311,16 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
     await user.click(await screen.findByText('README.md'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('hello world'))
-    expect(getWorkspaceCodeViewText()).toContain('/workspace/project/README.md')
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(
+      '/workspace/project/README.md'
+    )
+    expect(screen.getByTestId('workspace-file-markdown-mode-button')).toHaveClass(
+      'h-11',
+      'min-w-11',
+      'md:h-8',
+      'md:min-w-0'
+    )
   })
 
   test('switches folders in the file tab for a multi-root project', async () => {
@@ -5340,8 +5461,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened from tool block'
+    )
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
       'pointer-events-none',
@@ -5529,7 +5651,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(await screen.findByTestId('local-skill-chip-gmail'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
@@ -5585,7 +5707,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
 
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('Gmail')
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
     expect(listWorkspaceEntries).toHaveBeenCalledWith(
       localDevice.device_id,
@@ -5790,8 +5912,7 @@ describe('DesktopWorkbenchLayout', () => {
         modifiedAt: null,
       })
     })
-    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('notes first'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent('notes first')
 
     await act(async () => {
       readmeFile.resolve({
@@ -5804,8 +5925,8 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    expect(getWorkspaceCodeViewText()).toContain('notes first')
-    expect(getWorkspaceCodeViewText()).not.toContain('readme stale')
+    expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('notes first')
+    expect(screen.getByTestId('workspace-markdown-preview')).not.toHaveTextContent('readme stale')
   })
 
   test('right workspace panel ignores stale directory responses', async () => {
@@ -6082,7 +6203,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('README.md'))
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('stable preview content'))
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'stable preview content'
+    )
 
     rerender(
       <FileWorkspacePanel
@@ -6096,7 +6219,7 @@ describe('DesktopWorkbenchLayout', () => {
       await Promise.resolve()
     })
 
-    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-markdown-preview')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
     expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
   })
@@ -6179,7 +6302,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
       expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
       expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
-      expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-markdown-preview')).toHaveTextContent('hello world')
     })
   })
 

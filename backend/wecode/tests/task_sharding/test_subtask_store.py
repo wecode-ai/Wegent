@@ -880,6 +880,53 @@ def test_get_by_id_and_role_filters_new_shard_role(test_db):
     )
 
 
+def test_list_by_ids_and_role_reads_legacy_and_multiple_shards(test_db):
+    legacy = legacy_subtask(
+        subtask_id=1801,
+        task_id_value=801,
+        user_id=81,
+        message_id=1,
+        role=SubtaskRole.ASSISTANT,
+    )
+    first_task_id = new_task_id(82, 1)
+    first = shard_subtask(
+        task_id_value=first_task_id,
+        user_id=82,
+        sequence=2,
+        message_id=1,
+        role=SubtaskRole.ASSISTANT,
+    )
+    second_task_id = new_task_id(83, 1)
+    second = shard_subtask(
+        task_id_value=second_task_id,
+        user_id=83,
+        sequence=2,
+        message_id=1,
+        role=SubtaskRole.ASSISTANT,
+    )
+    excluded = shard_subtask(
+        task_id_value=second_task_id,
+        user_id=83,
+        sequence=3,
+        message_id=2,
+        role=SubtaskRole.USER,
+    )
+    test_db.add_all([legacy, first, second, excluded])
+    test_db.flush()
+
+    subtasks = ShardedSubtaskStore().list_by_ids_and_role(
+        test_db,
+        subtask_ids=[legacy.id, first.id, second.id, excluded.id, first.id],
+        role=SubtaskRole.ASSISTANT,
+    )
+
+    assert {subtask.id for subtask in subtasks} == {
+        legacy.id,
+        first.id,
+        second.id,
+    }
+
+
 def test_list_assistant_by_task_reads_new_shard_only_assistant_messages(test_db):
     task_id_value = new_task_id(45, 1)
     store = ShardedSubtaskStore()

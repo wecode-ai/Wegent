@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createPluginApi } from '@/api/plugins'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
+import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -231,6 +233,38 @@ async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: strin
   )
 }
 
+async function ensureCloudSitesPlugin(
+  config: CloudConnectionRuntimeConfig,
+  token: string
+): Promise<void> {
+  const pluginApi = createPluginApi(createCloudClient(config, token))
+  const installedPlugins = await runCloudRequest(
+    '检查云端 Sites 插件',
+    config,
+    '/plugins/installed',
+    () => pluginApi.listInstalledPlugins()
+  )
+  const sitesInstalled = installedPlugins.items.some(plugin => {
+    const source = plugin.spec.source
+    return (
+      source.type === 'marketplace' &&
+      source.providerKey === 'wegent-marketplace' &&
+      source.pluginKey === WEGENT_SITES_PLUGIN_NAME &&
+      source.marketplace === 'wegent' &&
+      plugin.spec.enabled &&
+      plugin.spec.installState === 'installed'
+    )
+  })
+  if (sitesInstalled) return
+
+  await runCloudRequest(
+    '安装云端 Sites 插件',
+    config,
+    `/plugins/builtin/${WEGENT_SITES_PLUGIN_NAME}/ensure-installed`,
+    () => pluginApi.ensureBuiltinPluginInstalled(WEGENT_SITES_PLUGIN_NAME)
+  )
+}
+
 async function createWeworkAuthSession(
   config: CloudConnectionRuntimeConfig
 ): Promise<WeworkAuthSessionCreateResponse> {
@@ -306,9 +340,18 @@ function getCloudErrorMessage(error: unknown): string {
   return rawErrorMessage(error)
 }
 
-export function CloudConnectionProvider({ children }: { children: ReactNode }) {
+interface CloudConnectionProviderProps {
+  children: ReactNode
+  initializeSitesPlugin?: boolean
+}
+
+export function CloudConnectionProvider({
+  children,
+  initializeSitesPlugin = true,
+}: CloudConnectionProviderProps) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const initialRefreshStartedRef = useRef(false)
+  const sitesPluginInitializationKeyRef = useRef<string | null>(null)
 
   const applyConnectedSnapshot = useCallback((nextSnapshot: CloudConnectionSnapshot) => {
     persistSnapshot(nextSnapshot)
@@ -340,6 +383,47 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
         console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
   }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
+
+  useEffect(() => {
+    if (!initializeSitesPlugin) {
+      sitesPluginInitializationKeyRef.current = null
+      return
+    }
+
+    if (
+      snapshot.status !== 'connected' ||
+      !snapshot.backendUrl ||
+      !snapshot.apiBaseUrl ||
+      !snapshot.token ||
+      !snapshot.user
+    ) {
+      sitesPluginInitializationKeyRef.current = null
+      return
+    }
+
+    const initializationKey = `${snapshot.apiBaseUrl}:${snapshot.user.id}:${snapshot.token}`
+    if (sitesPluginInitializationKeyRef.current === initializationKey) return
+    sitesPluginInitializationKeyRef.current = initializationKey
+    const config: CloudConnectionRuntimeConfig = {
+      backendUrl: snapshot.backendUrl,
+      apiBaseUrl: snapshot.apiBaseUrl,
+      socketBaseUrl: snapshot.socketBaseUrl ?? snapshot.backendUrl,
+      socketPath: snapshot.socketPath ?? '/socket.io',
+    }
+    void ensureCloudSitesPlugin(config, snapshot.token).catch(error => {
+      sitesPluginInitializationKeyRef.current = null
+      console.error('[CloudConnection] Failed to initialize the Sites plugin', error)
+    })
+  }, [
+    initializeSitesPlugin,
+    snapshot.apiBaseUrl,
+    snapshot.backendUrl,
+    snapshot.socketBaseUrl,
+    snapshot.socketPath,
+    snapshot.status,
+    snapshot.token,
+    snapshot.user,
+  ])
 
   const connectWithAuthorization = useCallback(
     async (

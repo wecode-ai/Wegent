@@ -212,6 +212,62 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('deduplicates catalog reconciliation across local service instances', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    let resolveRestart: ((value: { restarted: boolean }) => void) | undefined
+    const restart = new Promise<{ restarted: boolean }>(resolve => {
+      resolveRestart = resolve
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return restart
+      return {}
+    })
+    const ensure = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+      version: '1.9.0',
+      runtimeInstanceId: 'runtime-1',
+    })
+    const firstServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+    const secondServices = createLocalAppServices({ ensure, request, subscribe: vi.fn() })
+
+    const firstDevices = firstServices.deviceApi.listDevices()
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
+    )
+    const secondDevices = secondServices.deviceApi.listDevices()
+    let secondResolved = false
+    void secondDevices.then(() => {
+      secondResolved = true
+    })
+    await Promise.resolve()
+
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toHaveLength(1)
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.app_server.restart')
+    ).toHaveLength(1)
+    expect(secondResolved).toBe(false)
+
+    resolveRestart?.({ restarted: true })
+    await Promise.all([firstDevices, secondDevices])
+  })
+
   test('returns Codex provider models in local model list', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.models.list') {

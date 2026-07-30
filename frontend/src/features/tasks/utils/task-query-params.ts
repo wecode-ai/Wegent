@@ -1,0 +1,26 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+type SearchParamsReader = Pick<URLSearchParams, 'get'>
+
+export const TASK_QUERY_KEYS = ['taskId', 'task_id', 'taskid'] as const
+
+export function getTaskQueryParam(searchParams: SearchParamsReader): string | null {
+  for (const key of TASK_QUERY_KEYS) {
+    const value = searchParams.get(key)
+    if (value) return value
+  }
+  return null
+}
+
+export function removeTaskQueryParams(searchParams: URLSearchParams): boolean {
+  let removed = false
+  for (const key of TASK_QUERY_KEYS) {
+    if (searchParams.has(key)) {
+      searchParams.delete(key)
+      removed = true
+    }
+  }
+  return removed
+}

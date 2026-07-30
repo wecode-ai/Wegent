@@ -395,6 +395,43 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             .first()
         )
 
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]:
+        if not subtask_ids:
+            return []
+
+        unique_ids = list(dict.fromkeys(subtask_ids))
+        legacy_ids: list[int] = []
+        shard_ids_by_model: dict[type, list[int]] = defaultdict(list)
+        for subtask_id in unique_ids:
+            if is_new_task_id(subtask_id):
+                shard_ids_by_model[subtask_model_for_subtask_id(subtask_id)].append(
+                    subtask_id
+                )
+            else:
+                legacy_ids.append(subtask_id)
+
+        subtasks = super().list_by_ids_and_role(
+            db,
+            subtask_ids=legacy_ids,
+            role=role,
+        )
+        for model, shard_ids in shard_ids_by_model.items():
+            subtasks.extend(
+                db.query(model)
+                .filter(
+                    model.id.in_(shard_ids),
+                    model.role == role,
+                )
+                .all()
+            )
+        return subtasks
+
     def get_accessible_by_id(
         self,
         db: Session,

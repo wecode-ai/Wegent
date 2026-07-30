@@ -54,7 +54,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/wegent-executor", "binaries/dws"],
-    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*"],
+    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*", "bundled-plugins/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

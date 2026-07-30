@@ -137,6 +137,7 @@ export interface ChatInputProps {
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
   toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
@@ -255,6 +256,7 @@ export function ChatInput({
   onSelectCloudProject,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
   toolbarLeadingContext,
   onCompactContext,
   goal,
@@ -521,6 +523,7 @@ export function ChatInput({
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
+          showWorkspaceMenu={showWorkspaceMenu}
           toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}

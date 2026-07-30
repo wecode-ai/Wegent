@@ -311,17 +311,26 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     .await;
     assert_eq!(ack, None);
 
-    let emits = transport.wait_for_emits(6).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    assert_eq!(emits[1].event, "response.reasoning_summary_text.delta");
-    assert_eq!(emits[1].payload["data"]["delta"], "abc");
-    assert_eq!(emits[2].event, "response.reasoning_summary_text.delta");
-    assert_eq!(emits[2].payload["data"]["delta"], "def");
-    assert_eq!(emits[3].event, "response.output_text.delta");
-    assert_eq!(emits[3].payload["data"]["delta"], "ans");
-    assert_eq!(emits[4].event, "response.output_text.delta");
-    assert_eq!(emits[4].payload["data"]["delta"], "wer");
-    assert_eq!(emits[5].event, "response.completed");
+    assert_eq!(
+        emits.last().map(|emit| emit.event.as_str()),
+        Some("response.completed")
+    );
+
+    let reasoning = emits
+        .iter()
+        .filter(|emit| emit.event == "response.reasoning_summary_text.delta")
+        .filter_map(|emit| emit.payload["data"]["delta"].as_str())
+        .collect::<String>();
+    assert_eq!(reasoning, "abcdef");
+
+    let output = emits
+        .iter()
+        .filter(|emit| emit.event == "response.output_text.delta")
+        .filter_map(|emit| emit.payload["data"]["delta"].as_str())
+        .collect::<String>();
+    assert_eq!(output, "answer");
 }
 
 #[cfg(unix)]

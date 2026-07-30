@@ -21,11 +21,16 @@ from app.schemas.installed_plugin import (
     PluginMarketplaceListResponse,
     PluginUploadInfo,
 )
-from app.services.claude_plugin_parser import claude_plugin_parser
+from app.services.builtin_plugin_registry import (
+    BUILTIN_PLUGIN_NAMES,
+    BUILTIN_PLUGIN_OWNER_ID,
+    BUILTIN_PLUGINS_BY_NAME,
+)
+from app.services.plugin_package_parser import plugin_package_parser
 
 
 class InstalledPluginService:
-    """Manage user-scoped Claude Code plugin installations."""
+    """Manage user-scoped Codex and Claude Code plugin installations."""
 
     def upload_plugin(
         self,
@@ -36,7 +41,7 @@ class InstalledPluginService:
         filename: str,
         enabled: bool = True,
     ) -> InstalledPlugin:
-        parsed = claude_plugin_parser.parse_package(package_bytes)
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
         existing = self._find_uploaded_plugin(
             db, user_id=user_id, plugin_key=parsed.name
@@ -155,7 +160,20 @@ class InstalledPluginService:
         visibility: str = "workspace",
         featured: bool = False,
     ) -> PluginMarketplaceItem:
-        parsed = claude_plugin_parser.parse_package(package_bytes)
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
+        builtin_plugin = BUILTIN_PLUGINS_BY_NAME.get(parsed.name)
+        if builtin_plugin and user_id != BUILTIN_PLUGIN_OWNER_ID:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Plugin {parsed.name!r} is managed by the Wegent Backend "
+                    "and cannot be published manually"
+                ),
+            )
+        if builtin_plugin:
+            visibility = builtin_plugin.visibility
+            featured = builtin_plugin.featured
+
         file_hash = hashlib.sha256(package_bytes).hexdigest()
         row = self._find_marketplace_item(db, user_id=user_id, plugin_key=parsed.name)
 
@@ -193,6 +211,29 @@ class InstalledPluginService:
         db.commit()
         db.refresh(row)
         return self._marketplace_row_to_item(db, row, user_id=user_id)
+
+    def deactivate_non_system_builtin_marketplace_items(self, db: Session) -> int:
+        """Deactivate legacy user-published entries that use reserved plugin names."""
+
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "PluginMarketplaceItem",
+                Kind.namespace == "default",
+                Kind.user_id != BUILTIN_PLUGIN_OWNER_ID,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        deactivated = 0
+        for row in rows:
+            if self._get_spec(row).get("name") not in BUILTIN_PLUGIN_NAMES:
+                continue
+            row.is_active = False
+            deactivated += 1
+        if deactivated:
+            db.commit()
+        return deactivated
 
     def list_marketplace_plugins(
         self,
@@ -262,6 +303,12 @@ class InstalledPluginService:
         )
         if not row or not self._can_view_marketplace_row(row, user_id=user_id):
             raise HTTPException(status_code=404, detail="Marketplace plugin not found")
+        plugin_name = self._get_spec(row).get("name")
+        if (
+            plugin_name in BUILTIN_PLUGIN_NAMES
+            and row.user_id != BUILTIN_PLUGIN_OWNER_ID
+        ):
+            raise HTTPException(status_code=404, detail="Marketplace plugin not found")
 
         package = db.query(SkillBinary).filter(SkillBinary.kind_id == row.id).first()
         if not package or not package.binary_data:
@@ -269,8 +316,10 @@ class InstalledPluginService:
                 status_code=404, detail="Marketplace plugin package not found"
             )
 
-        parsed = claude_plugin_parser.parse_package(package.binary_data)
-        file_hash = hashlib.sha256(package.binary_data).hexdigest()
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(
+            package.binary_data
+        )
+        file_hash = hashlib.sha256(package_bytes).hexdigest()
         existing = self._find_installed_plugin(
             db,
             user_id=user_id,
@@ -283,7 +332,7 @@ class InstalledPluginService:
                 db,
                 row=existing,
                 parsed=parsed,
-                package_bytes=package.binary_data,
+                package_bytes=package_bytes,
                 file_hash=file_hash,
                 enabled=enabled,
                 filename=package.file_name or f"{parsed.name}.zip",
@@ -296,13 +345,42 @@ class InstalledPluginService:
             db=db,
             user_id=user_id,
             parsed=parsed,
-            package_bytes=package.binary_data,
+            package_bytes=package_bytes,
             file_hash=file_hash,
             filename=package.file_name or f"{parsed.name}.zip",
             enabled=enabled,
             source_type="marketplace",
             provider_key="wegent-marketplace",
             marketplace_id=marketplace_id,
+        )
+
+    def install_builtin_plugin(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        plugin_key: str,
+    ) -> InstalledPlugin:
+        row = self._find_marketplace_item(
+            db,
+            user_id=BUILTIN_PLUGIN_OWNER_ID,
+            plugin_key=plugin_key,
+        )
+        if not row or not row.is_active:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Built-in plugin is unavailable: {plugin_key}",
+            )
+        spec = self._get_spec(row)
+        if spec.get("visibility") != "public":
+            raise HTTPException(
+                status_code=503,
+                detail=f"Built-in plugin is unavailable: {plugin_key}",
+            )
+        return self.install_marketplace_plugin(
+            db=db,
+            user_id=user_id,
+            marketplace_id=row.id,
         )
 
     def _reactivate_existing(

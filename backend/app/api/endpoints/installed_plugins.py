@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import (
+    BuiltinPluginInstallRequest,
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
@@ -21,9 +23,13 @@ from app.schemas.installed_plugin import (
     PluginMarketplaceListResponse,
     PluginMarketplacePublishResponse,
 )
-from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
-from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.capability_sync_service import (
+    DeviceCapabilityResolutionError,
+    DeviceCapabilitySyncError,
+    device_capability_sync_service,
+)
 from app.services.installed_plugin_service import installed_plugin_service
+from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -35,7 +41,7 @@ def list_installed_plugins(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPluginListResponse:
-    """List Claude Code plugins installed by the current user."""
+    """List plugins installed by the current user."""
     return installed_plugin_service.list_installed_plugins(
         db=db,
         user_id=current_user.id,
@@ -53,7 +59,7 @@ async def upload_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
-    """Upload and install a Claude Code plugin ZIP package."""
+    """Upload and install a Codex or Claude Code plugin ZIP package."""
     logger.info(
         "Plugin upload requested: user_id=%s filename=%s enabled=%s",
         current_user.id,
@@ -79,7 +85,7 @@ def list_marketplace_plugins(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceListResponse:
-    """List Codex-compatible plugins published to the Wegent marketplace."""
+    """List plugins published to the Wegent marketplace."""
     return installed_plugin_service.list_marketplace_plugins(
         db=db,
         user_id=current_user.id,
@@ -132,6 +138,56 @@ async def install_marketplace_plugin(
     )
     await _sync_global_capabilities(db, current_user.id)
     return PluginMarketplaceInstallResponse(plugin=plugin)
+
+
+@router.post(
+    "/builtin/{plugin_key}/ensure-installed",
+    response_model=PluginMarketplaceInstallResponse,
+)
+async def ensure_builtin_plugin_installed(
+    plugin_key: str,
+    request: BuiltinPluginInstallRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplaceInstallResponse:
+    """Install a system plugin and synchronize it to available devices."""
+    plugin = installed_plugin_service.install_builtin_plugin(
+        db=db,
+        user_id=current_user.id,
+        plugin_key=plugin_key,
+    )
+    if request.device_id is None:
+        sync = await _sync_global_capabilities(db, current_user.id)
+        return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
+
+    installed_plugin_id = _installed_plugin_id(plugin)
+    try:
+        sync = await device_capability_sync_service.sync_installed_plugin_to_device(
+            db,
+            user_id=current_user.id,
+            device_id=request.device_id,
+            installed_plugin_id=installed_plugin_id,
+        )
+    except DeviceCapabilityResolutionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except DeviceCapabilitySyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
+
+
+def _installed_plugin_id(plugin: InstalledPlugin) -> int:
+    labels = plugin.metadata.get("labels")
+    raw_id = labels.get("id") if isinstance(labels, dict) else None
+    try:
+        return int(raw_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Installed plugin identity is unavailable",
+        ) from exc
 
 
 async def _read_plugin_upload(file: UploadFile) -> bytes:
@@ -194,7 +250,7 @@ async def uninstall_installed_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
-    """Uninstall a user-scoped Claude Code plugin."""
+    """Uninstall a user-scoped plugin."""
     installed_plugin_service.uninstall_installed_plugin(
         db=db,
         user_id=current_user.id,
@@ -203,7 +259,10 @@ async def uninstall_installed_plugin(
     await _sync_global_capabilities(db, current_user.id)
 
 
-async def _sync_global_capabilities(db: Session, user_id: int) -> None:
+async def _sync_global_capabilities(
+    db: Session,
+    user_id: int,
+) -> DeviceCapabilitySyncResponse | None:
     try:
         result = await device_capability_sync_service.sync_user_global_capabilities(
             db,
@@ -216,5 +275,7 @@ async def _sync_global_capabilities(db: Session, user_id: int) -> None:
             result.failed,
             result.skipped,
         )
+        return result
     except Exception:
         logger.exception("Failed to sync global capabilities after plugin change")
+        return None

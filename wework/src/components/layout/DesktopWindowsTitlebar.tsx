@@ -31,14 +31,15 @@ export function DesktopWindowsTitlebar({
     <div
       data-testid="desktop-windows-titlebar"
       data-window-focused={windowFocused}
+      data-tauri-drag-region
       className={cn(
-        'relative z-chrome flex h-[38px] w-full shrink-0 items-center bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+        'relative z-chrome h-[38px] w-full shrink-0 bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
         !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]',
         className
       )}
     >
       <div
-        className="pointer-events-auto flex h-full items-center gap-1 px-1"
+        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
         data-tauri-drag-region={false}
       >
         <DesktopWindowControls
@@ -48,8 +49,10 @@ export function DesktopWindowsTitlebar({
         />
         <DesktopAppSwitcher activeApp={activeApp} onNavigate={onNavigate} />
       </div>
-      <div data-tauri-drag-region className="min-w-4 flex-1 self-stretch" />
-      <div className="pointer-events-auto h-full w-[138px]" data-tauri-drag-region={false}>
+      <div
+        className="pointer-events-auto absolute right-0 top-0 z-chrome h-full w-[138px]"
+        data-tauri-drag-region={false}
+      >
         <WindowFrameControls className="h-full justify-end" />
       </div>
     </div>

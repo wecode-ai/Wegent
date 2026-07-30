@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "wework-personal",
+  "description": "Plugins bundled with WeWork.",
+  "owner": {
+    "name": "WeWork"
+  },
+  "plugins": []
+}

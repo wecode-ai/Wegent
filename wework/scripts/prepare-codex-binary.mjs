@@ -12,6 +12,8 @@ const weworkDir = resolve(scriptDir, '..')
 const lockPath = join(weworkDir, 'codex-binaries.lock.json')
 const outputRoot = join(weworkDir, 'src-tauri', 'binaries', 'codex')
 const cacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
+const DOWNLOAD_ATTEMPTS = 3
+const DOWNLOAD_RETRY_DELAY_MS = 1_000
 
 const hostTargetByPlatform = {
   'darwin:arm64': 'aarch64-apple-darwin',
@@ -86,13 +88,51 @@ async function integrityFile(path) {
   return `sha512-${hash.digest('base64')}`
 }
 
-async function download(url, destination) {
-  const response = await fetch(url)
+async function download(url, destination, fetchImpl) {
+  const response = await fetchImpl(url)
   if (!response.ok || !response.body) {
     throw new Error(`Failed to download ${url}: ${response.status} ${response.statusText}`)
   }
   await mkdir(dirname(destination), { recursive: true })
   await pipeline(response.body, createWriteStream(destination))
+}
+
+function sleep(delayMs) {
+  return new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
+}
+
+export async function downloadWithRetry(
+  url,
+  destination,
+  {
+    attempts = DOWNLOAD_ATTEMPTS,
+    retryDelayMs = DOWNLOAD_RETRY_DELAY_MS,
+    fetchImpl = fetch,
+    sleepImpl = sleep,
+  } = {}
+) {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new Error('Download attempts must be a positive integer')
+  }
+
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await rm(destination, { force: true })
+    try {
+      await download(url, destination, fetchImpl)
+      return
+    } catch (error) {
+      lastError = error
+      await rm(destination, { force: true })
+      if (attempt === attempts) break
+      console.warn(
+        `Codex download attempt ${attempt}/${attempts} failed; retrying in ${retryDelayMs * attempt}ms`
+      )
+      await sleepImpl(retryDelayMs * attempt)
+    }
+  }
+
+  throw lastError
 }
 
 async function extractTarball(tarball, destination) {
@@ -113,7 +153,7 @@ async function prepareTarget(target, entry) {
 
   if (!(await pathExists(tarballPath))) {
     console.log(`Downloading Codex ${entry.version} for ${target}`)
-    await download(entry.tarball, tarballPath)
+    await downloadWithRetry(entry.tarball, tarballPath)
   }
 
   const actualIntegrity = await integrityFile(tarballPath)
@@ -198,7 +238,9 @@ async function main() {
   await copyLegalFiles()
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}

@@ -178,12 +178,14 @@ fn build_pending_bundle(
             super::app_log_directory(app),
             super::local_executor::local_executor_log_dir_path(),
         ];
-        let mut seen = HashSet::new();
+        let mut seen_paths = HashSet::new();
+        let mut archive_paths = HashSet::new();
         for directory in log_directories {
             match directory {
                 Ok(directory) => collect_log_entries(
                     &directory,
-                    &mut seen,
+                    &mut seen_paths,
+                    &mut archive_paths,
                     &mut entries,
                     &mut log_files,
                     &mut warnings,
@@ -529,7 +531,8 @@ impl Drop for IncompleteArchive {
 
 fn collect_log_entries(
     directory: &Path,
-    seen: &mut HashSet<PathBuf>,
+    seen_paths: &mut HashSet<PathBuf>,
+    archive_paths: &mut HashSet<String>,
     entries: &mut Vec<PendingEntry>,
     manifest: &mut Vec<LogManifestEntry>,
     warnings: &mut Vec<String>,
@@ -547,7 +550,7 @@ fn collect_log_entries(
             continue;
         }
         let identity = path.canonicalize().unwrap_or_else(|_| path.clone());
-        if !seen.insert(identity) {
+        if !seen_paths.insert(identity) {
             continue;
         }
         let metadata = match entry.metadata() {
@@ -578,7 +581,7 @@ fn collect_log_entries(
                 } else {
                     "app"
                 };
-                let archive_path = format!("logs/{source}/{name}");
+                let archive_path = reserve_log_archive_path(source, name, archive_paths);
                 entries.push(text_entry(&archive_path, redact(&content)));
                 manifest.push(LogManifestEntry {
                     archive_path,
@@ -589,6 +592,35 @@ fn collect_log_entries(
         }
     }
     Ok(())
+}
+
+fn reserve_log_archive_path(
+    source: &str,
+    file_name: &str,
+    archive_paths: &mut HashSet<String>,
+) -> String {
+    let requested = format!("logs/{source}/{file_name}");
+    if archive_paths.insert(requested.clone()) {
+        return requested;
+    }
+
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    let extension = path.extension().and_then(|value| value.to_str());
+    for suffix in 2.. {
+        let unique_name = match extension {
+            Some(extension) => format!("{stem}-{suffix}.{extension}"),
+            None => format!("{stem}-{suffix}"),
+        };
+        let candidate = format!("logs/{source}/{unique_name}");
+        if archive_paths.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    unreachable!("a numeric suffix must eventually produce a unique archive path")
 }
 
 fn redact(content: &str) -> String {
@@ -686,7 +718,13 @@ fn write_zip_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_data_url, empty_task_context, redact, redact_home_path, redact_json_value};
+    use super::{
+        collect_log_entries, decode_data_url, empty_task_context, redact, redact_home_path,
+        redact_json_value, LogManifestEntry, PendingEntry,
+    };
+    use std::collections::HashSet;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn treats_absent_task_context_as_empty() {
@@ -751,5 +789,64 @@ mod tests {
         assert_eq!(context["authorization"], "[REDACTED]");
         assert_eq!(context["messages"][0]["content"], "Cookie: [REDACTED]");
         assert!(serde_json::to_string(&context).is_ok());
+    }
+
+    #[test]
+    fn gives_same_named_logs_unique_archive_paths() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test time must be after the Unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "wework-feedback-duplicate-log-{}-{nonce}",
+            std::process::id()
+        ));
+        let first_directory = root.join("first");
+        let second_directory = root.join("second");
+        fs::create_dir_all(&first_directory).expect("first log directory must be created");
+        fs::create_dir_all(&second_directory).expect("second log directory must be created");
+        fs::write(first_directory.join("wework-tauri-1741.log"), "first")
+            .expect("first log must be written");
+        fs::write(second_directory.join("wework-tauri-1741.log"), "second")
+            .expect("second log must be written");
+
+        let mut seen_paths = HashSet::new();
+        let mut archive_paths = HashSet::new();
+        let mut entries: Vec<PendingEntry> = Vec::new();
+        let mut manifest: Vec<LogManifestEntry> = Vec::new();
+        let mut warnings = Vec::new();
+
+        collect_log_entries(
+            &first_directory,
+            &mut seen_paths,
+            &mut archive_paths,
+            &mut entries,
+            &mut manifest,
+            &mut warnings,
+        )
+        .expect("first directory must be collected");
+        collect_log_entries(
+            &second_directory,
+            &mut seen_paths,
+            &mut archive_paths,
+            &mut entries,
+            &mut manifest,
+            &mut warnings,
+        )
+        .expect("second directory must be collected");
+
+        let collected_paths = entries
+            .iter()
+            .map(|entry| entry.archive_path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            collected_paths,
+            vec![
+                "logs/app/wework-tauri-1741.log",
+                "logs/app/wework-tauri-1741-2.log"
+            ]
+        );
+        assert!(warnings.is_empty());
+        fs::remove_dir_all(root).expect("test log directories must be removed");
     }
 }

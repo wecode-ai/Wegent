@@ -40,6 +40,9 @@ const defaultCodexPlugin: CodexPluginMock = {
   defaultPrompt: 'Draft a document outline from this chat',
 }
 
+const bundledMarketplacePath =
+  '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal'
+
 function codexPluginSummary(plugin: CodexPluginMock, installed: boolean) {
   return {
     id: plugin.id,
@@ -166,6 +169,13 @@ function mockCodexAppServerInvoke(
         shouldPromptMigration: false,
       })
     }
+    if (command === 'local_executor_initialize_bundled_plugin_marketplace') {
+      return Promise.resolve({
+        id: 'wework-personal',
+        path: bundledMarketplacePath,
+        pluginCount: 0,
+      })
+    }
     if (command === 'local_executor_ensure_started') {
       return Promise.resolve({ running: true, ready: true })
     }
@@ -181,9 +191,9 @@ function mockCodexAppServerInvoke(
     const params = request.params?.params ?? {}
     if (method === 'plugin/list') {
       return Promise.resolve({
-        marketplaces: marketplaces.map(marketplace =>
-          codexMarketplaceResponse(marketplace, installedPluginNames, false)
-        ),
+        marketplaces: marketplaces
+          .filter(marketplace => (marketplace.plugins ?? [defaultCodexPlugin]).length > 0)
+          .map(marketplace => codexMarketplaceResponse(marketplace, installedPluginNames, false)),
       })
     }
     if (method === 'plugin/installed') {
@@ -208,12 +218,21 @@ function mockCodexAppServerInvoke(
     }
     if (method === 'marketplace/add') {
       const source = String(params.source ?? '')
-      const marketplaceName =
-        source === 'https://github.com/openai/plugins' ? 'openai-official' : `local-${Date.now()}`
+      const isBundledMarketplace = source === bundledMarketplacePath
+      const marketplaceName = isBundledMarketplace
+        ? 'wework-personal'
+        : source === 'https://github.com/openai/plugins'
+          ? 'openai-official'
+          : `local-${Date.now()}`
       marketplaces.push({
         name: marketplaceName,
-        displayName: source === 'https://github.com/openai/plugins' ? 'OpenAI 官方市场' : source,
+        displayName: isBundledMarketplace
+          ? 'WeWork Personal Marketplace'
+          : source === 'https://github.com/openai/plugins'
+            ? 'OpenAI 官方市场'
+            : source,
         path: source,
+        plugins: isBundledMarketplace ? [] : undefined,
       })
       return Promise.resolve({ marketplaceName, installedRoot: '/Users/test/codex/plugins/cache' })
     }
@@ -712,6 +731,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
     window.localStorage.clear()
+    window.history.replaceState({}, '', '/')
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     mockSystemSkillsFetch()
   })
@@ -741,6 +761,16 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     expect(convertFileSrc).toHaveBeenCalledWith('/Users/test/plugins/documents/assets/logo.png')
     expect(screen.getByText('Productivity')).toBeInTheDocument()
+  })
+
+  test('shows the default plugin image when a marketplace logo fails to load', async () => {
+    render(<PluginsWorkspace />)
+
+    const logo = await screen.findByTestId('plugin-marketplace-logo-101-image')
+    fireEvent.error(logo)
+
+    expect(screen.getByTestId('plugin-marketplace-logo-101-fallback')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-marketplace-logo-101-image')).not.toBeInTheDocument()
   })
 
   test('filters the plugin marketplace from the search box', async () => {
@@ -871,6 +901,79 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('包含内容 1')).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
+  })
+
+  test('opens a plugin detail route from its plugin and marketplace identity', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'other-marketplace',
+          displayName: 'Other',
+          path: '/Users/test/plugins/other',
+        },
+        {
+          name: 'wegent-bundled',
+          displayName: 'Wegent Bundled',
+          path: '/Applications/WeWork.app/Contents/Resources/bundled-plugins/wegent-marketplace',
+          plugins: [
+            {
+              id: 'wegent-sites@wegent-bundled',
+              name: 'wegent-sites',
+              displayName: '站点',
+              description: 'Build and deploy websites with Wegent Sites',
+              category: 'Productivity',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['wegent-sites'],
+    })
+    window.history.replaceState({}, '', '/plugins?plugin=wegent-sites&marketplace=wegent-bundled')
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(
+      await screen.findByTestId('plugin-detail-toggle-wegent-sites@wegent-bundled')
+    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '站点' })).toBeInTheDocument()
+    expect(screen.getAllByText('Build and deploy websites with Wegent Sites')).not.toHaveLength(0)
+
+    await userEvent.click(screen.getByTestId('plugin-detail-back-button'))
+
+    expect(window.location.pathname).toBe('/plugins')
+    expect(window.location.search).toBe('')
+    expect(
+      await screen.findByTestId('plugin-marketplace-row-wegent-sites@wegent-bundled')
+    ).toBeInTheDocument()
+  })
+
+  test('opens a cloud marketplace plugin detail from its stable marketplace identity', async () => {
+    window.history.replaceState({}, '', '/plugins?plugin=documents&marketplace=wegent')
+
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByTestId('plugin-detail-toggle-101')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Documents' })).toBeInTheDocument()
+  })
+
+  test('loads cloud marketplace plugins with the connected Backend credentials', async () => {
+    render(
+      <PluginsWorkspace cloudApiBaseUrl="https://cloud.example.com/api" cloudToken="cloud-secret" />
+    )
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'https://cloud.example.com/api/plugins/marketplace',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
   })
 
   test('installs a marketplace plugin from the detail page with visible progress', async () => {
@@ -1020,6 +1123,71 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('hides the device-side Wegent marketplace while retaining its installed plugins', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'wegent',
+          displayName: 'Wegent internal',
+          path: 'wegent',
+          plugins: [
+            {
+              id: 'wegent-sites@wegent',
+              name: 'wegent-sites',
+              displayName: '站点',
+              description: 'Build sites',
+            },
+          ],
+        },
+        {
+          name: 'local-team',
+          displayName: 'Team 市场',
+          path: '/Users/test/team-marketplace.json',
+        },
+      ],
+      installedPluginNames: ['wegent-sites'],
+    })
+    const { createLocalCodexPluginApi } = await import('@/api/local/codexPlugins')
+
+    const state = await createLocalCodexPluginApi().readState({ refresh: true })
+
+    expect(state.marketplaces.map(marketplace => marketplace.id)).not.toContain('wegent')
+    expect(state.installedPlugins.map(plugin => plugin.spec.source.pluginKey)).toContain(
+      'wegent-sites'
+    )
+  })
+
+  test('initializes an empty WeWork personal marketplace as a fixed tab', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke()
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(await screen.findByTestId('plugins-marketplace-tab-wework-personal')).toHaveTextContent(
+      '个人市场'
+    )
+    expect(await screen.findByTestId('plugins-bundled-marketplace-empty')).toHaveTextContent(
+      '暂无 WeWork 自带插件'
+    )
+
+    await userEvent.click(screen.getByTestId('plugins-manage-marketplaces-button'))
+
+    expect(screen.getByTestId('plugins-marketplace-manager-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-edit-wework-personal')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('plugins-marketplace-delete-wework-personal')
+    ).not.toBeInTheDocument()
+  })
+
   test('shows add-marketplace state when no marketplace is configured', async () => {
     render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
 
@@ -1045,7 +1213,7 @@ describe('PluginsWorkspace', () => {
       value: {},
     })
     vi.mocked(isTauri).mockReturnValue(true)
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
       if (command === 'local_executor_codex_home_migration_status') {
         return Promise.resolve({
           weworkCodexHome: '/Users/test/.wegent-executor/codex',
@@ -1056,9 +1224,36 @@ describe('PluginsWorkspace', () => {
         })
       }
       if (command === 'local_executor_ensure_started') {
-        return Promise.resolve({ running: true, ready: true })
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          runtimeInstanceId: 'loading-runtime',
+        })
+      }
+      if (command === 'local_executor_initialize_bundled_plugin_marketplace') {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path: bundledMarketplacePath,
+          pluginCount: 0,
+        })
       }
       if (command === 'local_executor_request') {
+        const request = args as { method?: string; params?: { method?: string } } | undefined
+        if (request?.method === 'runtime.codex.runtime_config.update') {
+          return Promise.resolve({ updated: true })
+        }
+        if (
+          request?.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
+          return Promise.resolve({ marketplaces: [] })
+        }
+        if (
+          request?.method === 'codex.app_server_request' &&
+          request.params?.method === 'marketplace/add'
+        ) {
+          return Promise.resolve({ marketplaceName: 'wework-personal' })
+        }
         return new Promise(() => undefined)
       }
       return Promise.resolve(undefined)
@@ -1259,7 +1454,8 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugins-marketplace-confirm-delete-button'))
 
     expectCodexAppServerRequest('marketplace/remove', { marketplaceName: 'local-openai' })
-    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-marketplace-tab-wework-personal')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-bundled-marketplace-empty')).toBeInTheDocument()
   })
 
   test('manages local marketplaces with sort edit and delete actions', async () => {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { AppPreferences } from '@/tauri/appPreferences'
@@ -22,6 +22,9 @@ const defaultPreferences: AppPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  popoutWindowShortcut: 'Alt+Shift+Space',
+  popoutWindowProjectlessDefaultEnabled: false,
+  quickPhrases: [],
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -55,6 +58,9 @@ vi.mock('@/tauri/appPreferences', () => ({
     browserDownloadDirectory: null,
     browserAskBeforeDownload: false,
     appshotsPlaySound: true,
+    popoutWindowShortcut: 'Alt+Shift+Space',
+    popoutWindowProjectlessDefaultEnabled: false,
+    quickPhrases: [],
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
@@ -171,6 +177,63 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
         preventSleepWhileTasksRunning: false,
       })
+    })
+  })
+
+  test('groups task runtime controls separately and spaces later sections', async () => {
+    render(<GeneralSettingsPage />)
+
+    const basicSection = screen.getByTestId('general-settings-basic-section')
+    const runtimeSection = screen.getByTestId('general-settings-runtime-section')
+    const popoutSection = screen.getByTestId('general-settings-popout-section')
+
+    expect(runtimeSection).toHaveClass('mt-12')
+    expect(popoutSection).toHaveClass('mt-12')
+    expect(within(runtimeSection).getByTestId('general-close-to-tray-toggle')).toBeInTheDocument()
+    expect(
+      within(runtimeSection).getByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    ).toBeInTheDocument()
+    expect(
+      within(runtimeSection).getByTestId('general-task-completion-notifications-toggle')
+    ).toBeInTheDocument()
+    expect(within(runtimeSection).getByTestId('general-tray-running-toggle')).toBeInTheDocument()
+    expect(
+      within(basicSection).queryByTestId('general-close-to-tray-toggle')
+    ).not.toBeInTheDocument()
+    expect(within(basicSection).queryByTestId('general-system-drag-toggle')).not.toBeInTheDocument()
+    expect(within(popoutSection).getByTestId('general-system-drag-toggle')).toBeInTheDocument()
+    expect(
+      within(popoutSection).getByTestId('general-popout-shortcut-record-button')
+    ).toBeInTheDocument()
+  })
+
+  test('records, clears, and persists the Popout Window shortcut', async () => {
+    render(<GeneralSettingsPage />)
+
+    const recordButton = await screen.findByTestId('general-popout-shortcut-record-button')
+    await waitFor(() => expect(recordButton).toBeEnabled())
+    await userEvent.click(recordButton)
+    fireEvent.keyDown(window, { key: 'Alt', altKey: true })
+    fireEvent.keyDown(window, {
+      key: '',
+      code: 'ShiftLeft',
+      altKey: true,
+      shiftKey: true,
+    })
+
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(window, { key: ' ', altKey: true, shiftKey: true })
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        popoutWindowShortcut: 'Alt+Shift+Space',
+      })
+    })
+
+    await userEvent.click(screen.getByTestId('general-popout-shortcut-clear-button'))
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ popoutWindowShortcut: null })
     })
   })
 

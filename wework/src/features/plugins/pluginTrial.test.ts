@@ -103,6 +103,15 @@ describe('plugin trial state', () => {
     )
   })
 
+  test('uses the cloud marketplace identity from the installed plugin source', () => {
+    const plugin = pluginWithSkill()
+    plugin.metadata.namespace = 'default'
+    plugin.spec.source.marketplace = 'wegent'
+    plugin.spec.sourcePayload = { filename: 'wegent-sites.zip' }
+
+    expect(pluginTrialInput(plugin)).toBe('[$Documents](plugin://documents@wegent) ')
+  })
+
   test('queues and consumes plugin trial input once', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')

@@ -9,6 +9,7 @@ This directory implements the Wework desktop workbench: Tauri, Vite, React, Type
 - Follow the Codex-derived, neutral-first visual system in `DESIGN.md`: grayscale surfaces, `14px` default desktop UI text, sparse hairlines and shadows, inverse-neutral primary actions, and blue only for focus, links, or narrow selection accents. Green and teal are restricted to semantic success/addition states and must never define product chrome or default actions.
 - Use the Codex component density documented in `DESIGN.md`: `30px` sidebar rows, `28px` app-shell tabs and composer actions, `16px` standard desktop icons, and `4px–8px` action-group gaps. Reuse the shared component's established size instead of inventing a local height.
 - Use the shared typography scale and semantic `heading-*`, `text-chat`, and `text-code` roles. Never add arbitrary `text-[Npx]`, literal CSS `font-size`, or literal inline `fontSize` values; `pnpm lint` enforces this rule.
+- Preserve platform text-navigation semantics in the ProseMirror chat composer. Register only composer-specific key bindings instead of the document-level `baseKeymap`, and scope mention caret workarounds to unmodified arrow keys.
 
 ## i18n
 
@@ -24,6 +25,11 @@ pnpm --filter wework test
 pnpm --filter wework exec prettier --check <changed-files>
 pnpm --filter wework exec eslint <changed-files>
 ```
+
+Direct debug Cargo builds create marked, unavailable stubs for ignored bundled
+sidecars when their real binaries have not been prepared. Do not prepare DWS
+only to run Rust unit tests or checks. Real Tauri verification and release
+builds must still use the standard scripts that prepare the actual sidecars.
 
 E2E tests use real backend requests. Do not skip, silently fail, or replace a failing integration with frontend mocks.
 

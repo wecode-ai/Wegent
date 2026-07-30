@@ -1085,4 +1085,74 @@ describe('ComposerTextarea', () => {
       '修复登录流程'
     )
   })
+
+  test('keeps conversation and cloud candidates out of the $ skill menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const reference =
+      '[$Fix login flow](wework-conversation://%7B%22deviceId%22%3A%22local-device%22%2C%22taskId%22%3A%22source-task%22%7D)'
+    const conversationCandidates: ComposerConversationMentionCandidate[] = [
+      {
+        kind: 'conversation',
+        key: 'conversation:local-device:source-task',
+        title: 'Fix login flow',
+        description: 'Wegent',
+        metaLabel: 'Conversation',
+        testId: 'local-device-source-task',
+        enabled: true,
+        reference,
+        searchAliases: ['Fix login flow', 'Wegent'],
+        conversation: {
+          key: 'conversation:local-device:source-task',
+          title: 'Fix login flow',
+          address: { deviceId: 'local-device', taskId: 'source-task' },
+          reference,
+          testId: 'local-device-source-task',
+          projectName: 'Wegent',
+        },
+      },
+    ]
+    const cloudCandidate: ComposerCloudMentionCandidate = {
+      kind: 'cloud',
+      key: 'cloud-file:42',
+      title: 'design.md',
+      description: 'docs/design.md',
+      metaLabel: 'Cloud',
+      testId: 'cloud-file-42',
+      enabled: true,
+      reference: '[$design.md](cloud://projects/11/files/42)',
+      searchAliases: ['docs/design.md'],
+    }
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+          cloudMentionCandidates={[cloudCandidate]}
+          conversationMentionCandidates={conversationCandidates}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '$'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('local-skill-option-gmail')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('conversation-reference-option-local-device-source-task')
+    ).toBeNull()
+    expect(screen.queryByTestId('cloud-reference-option-cloud-file-42')).toBeNull()
+  })
 })

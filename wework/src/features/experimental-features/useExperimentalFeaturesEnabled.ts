@@ -5,8 +5,16 @@ import {
   type AppPreferences,
 } from '@/tauri/appPreferences'
 
-export function useExperimentalFeaturesEnabled(): boolean {
-  const [enabled, setEnabled] = useState(false)
+export interface ExperimentalFeaturesState {
+  enabled: boolean
+  loaded: boolean
+}
+
+export function useExperimentalFeaturesState(): ExperimentalFeaturesState {
+  const [state, setState] = useState<ExperimentalFeaturesState>({
+    enabled: false,
+    loaded: false,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -15,16 +23,25 @@ export function useExperimentalFeaturesEnabled(): boolean {
     void getAppPreferences()
       .then(preferences => {
         if (!cancelled && !preferenceChanged) {
-          setEnabled(preferences.experimentalFeaturesEnabled)
+          setState({
+            enabled: preferences.experimentalFeaturesEnabled,
+            loaded: true,
+          })
         }
       })
       .catch(error => {
         console.error('[Wework] Failed to load experimental feature preference', error)
+        if (!cancelled && !preferenceChanged) {
+          setState({ enabled: false, loaded: true })
+        }
       })
 
     const handlePreferencesChanged = (event: Event) => {
       preferenceChanged = true
-      setEnabled((event as CustomEvent<AppPreferences>).detail.experimentalFeaturesEnabled)
+      setState({
+        enabled: (event as CustomEvent<AppPreferences>).detail.experimentalFeaturesEnabled,
+        loaded: true,
+      })
     }
     window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
 
@@ -34,5 +51,9 @@ export function useExperimentalFeaturesEnabled(): boolean {
     }
   }, [])
 
-  return enabled
+  return state
+}
+
+export function useExperimentalFeaturesEnabled(): boolean {
+  return useExperimentalFeaturesState().enabled
 }

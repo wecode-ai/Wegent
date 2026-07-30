@@ -18,7 +18,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -53,6 +53,19 @@ UNRESOLVED_PREVIEW_TOOL_BLOCK_MESSAGE = "Tool call was not executed before the t
 UNRESOLVED_PREVIEW_TOOL_BLOCK_GENERIC_MESSAGE = (
     "Tool call preview did not complete before the turn ended."
 )
+
+
+def _normalize_streaming_timestamp(value: Any) -> Any:
+    """Normalize timezone-aware timestamps and reject ambiguous legacy values."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 class StreamContentType(str, Enum):
@@ -684,7 +697,7 @@ class SessionManager:
         """
         try:
             key = self._get_task_streaming_key(task_id)
-            now_iso = datetime.now().isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
             value = {
                 "subtask_id": subtask_id,
                 "user_id": user_id,
@@ -730,7 +743,7 @@ class SessionManager:
                 )
                 return False
 
-            status["last_activity_at"] = datetime.now().isoformat()
+            status["last_activity_at"] = datetime.now(timezone.utc).isoformat()
             return await self._cache.set(key, status, expire=STREAMING_TTL)
         except Exception as e:
             logger.error(
@@ -756,6 +769,14 @@ class SessionManager:
             )
             result = await self._cache.get(key)
             logger.info(f"[SessionManager] get_task_streaming_status result: {result}")
+            if isinstance(result, dict):
+                result = dict(result)
+                result["started_at"] = _normalize_streaming_timestamp(
+                    result.get("started_at")
+                )
+                result["last_activity_at"] = _normalize_streaming_timestamp(
+                    result.get("last_activity_at")
+                )
             return result
         except Exception as e:
             logger.error(

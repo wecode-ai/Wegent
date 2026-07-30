@@ -57,10 +57,13 @@ interface FolderTreeProps {
   reindexingDocId?: number | null
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
+  isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
+  getSelectionDisabledHint?: (doc: KnowledgeDocument) => string
   selectedIds?: Set<number>
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  allowDownload?: boolean
   nameColumnWidth?: number
   showActionsColumn?: boolean
   /** Folder CRUD handlers */
@@ -406,10 +409,13 @@ interface FolderTreeNodeProps {
   isReindexing?: (docId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
+  isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
+  getSelectionDisabledHint?: (doc: KnowledgeDocument) => string
   selected?: (docId: number) => boolean
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  allowDownload?: boolean
   nameColumnWidth?: number
   showActionsColumn?: boolean
   // Folder selection props
@@ -442,10 +448,13 @@ function FolderTreeNode({
   isReindexing,
   canManage,
   canSelect,
+  isSelectionDisabled,
+  getSelectionDisabledHint,
   selected,
   includedInFolderScope,
   onSelect,
   ragConfigured,
+  allowDownload,
   nameColumnWidth,
   showActionsColumn,
   canSelectFolders,
@@ -486,12 +495,15 @@ function FolderTreeNode({
             isReindexing={isReindexing?.(doc.id) ?? false}
             canManage={canManage?.(doc) ?? true}
             canSelect={canSelect?.(doc) ?? false}
+            selectionDisabled={isSelectionDisabled?.(doc) ?? false}
+            selectionDisabledHint={getSelectionDisabledHint?.(doc)}
             showBorder={false}
             selected={selected?.(doc.id) ?? false}
             includedInFolderScope={includedByFolder}
             onSelect={onSelect}
             compact={true}
             ragConfigured={ragConfigured}
+            allowDownload={allowDownload}
             showActionsColumn={showActionsColumn}
           />
         </div>
@@ -514,12 +526,15 @@ function FolderTreeNode({
         isReindexing={isReindexing?.(doc.id) ?? false}
         canManage={canManage?.(doc) ?? true}
         canSelect={canSelect?.(doc) ?? false}
+        selectionDisabled={isSelectionDisabled?.(doc) ?? false}
+        selectionDisabledHint={getSelectionDisabledHint?.(doc)}
         showBorder={true}
         selected={selected?.(doc.id) ?? false}
         includedInFolderScope={includedByFolder}
         onSelect={onSelect}
         compact={false}
         ragConfigured={ragConfigured}
+        allowDownload={allowDownload}
         nameColumnWidth={nameColumnWidth}
         showActionsColumn={showActionsColumn}
       />
@@ -577,10 +592,13 @@ function FolderTreeNode({
               isReindexing={isReindexing}
               canManage={canManage}
               canSelect={canSelect}
+              isSelectionDisabled={isSelectionDisabled}
+              getSelectionDisabledHint={getSelectionDisabledHint}
               selected={selected}
               includedInFolderScope={includedInFolderScope}
               onSelect={onSelect}
               ragConfigured={ragConfigured}
+              allowDownload={allowDownload}
               nameColumnWidth={nameColumnWidth}
               canSelectFolders={canSelectFolders}
               selectedFolderIds={selectedFolderIds}
@@ -615,10 +633,13 @@ export function FolderTree({
   reindexingDocId,
   canManage,
   canSelect,
+  isSelectionDisabled,
+  getSelectionDisabledHint,
   selectedIds,
   includedInFolderScope,
   onSelect,
   ragConfigured,
+  allowDownload = true,
   nameColumnWidth,
   showActionsColumn,
   onCreateFolder,
@@ -749,10 +770,13 @@ export function FolderTree({
             isReindexing={id => reindexingDocId === id}
             canManage={canManage}
             canSelect={canSelect}
+            isSelectionDisabled={isSelectionDisabled}
+            getSelectionDisabledHint={getSelectionDisabledHint}
             selected={id => selectedIds?.has(id) ?? false}
             includedInFolderScope={includedInFolderScope}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
+            allowDownload={allowDownload}
             showActionsColumn={showActionsColumn}
             canSelectFolders={canSelectFolders}
             selectedFolderIds={selectedFolderIds}
@@ -789,10 +813,13 @@ export function FolderTree({
       isReindexing={id => reindexingDocId === id}
       canManage={canManage}
       canSelect={canSelect}
+      isSelectionDisabled={isSelectionDisabled}
+      getSelectionDisabledHint={getSelectionDisabledHint}
       selected={id => selectedIds?.has(id) ?? false}
       includedInFolderScope={includedInFolderScope}
       onSelect={onSelect}
       ragConfigured={ragConfigured}
+      allowDownload={allowDownload}
       nameColumnWidth={nameColumnWidth}
       showActionsColumn={showActionsColumn}
       canSelectFolders={canSelectFolders}

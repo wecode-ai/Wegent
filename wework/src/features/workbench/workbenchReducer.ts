@@ -19,7 +19,11 @@ import {
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
-import { getRuntimeTaskWorkspacePath, removeRuntimeTasks } from './workbenchRuntimeHelpers'
+import {
+  getRuntimeTaskWorkspacePath,
+  mergeRuntimeTaskHandles,
+  removeRuntimeTasks,
+} from './workbenchRuntimeHelpers'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -615,14 +619,16 @@ function reconcileCurrentRuntimeTaskAddress(
     currentRuntimeTask.deviceId
   )
   if (hydratedCurrentDeviceTask) {
+    const runtimeHandle = mergeRuntimeTaskHandles(
+      currentRuntimeTask.runtimeHandle,
+      hydratedCurrentDeviceTask.runtimeHandle
+    )
     return {
       ...currentRuntimeTask,
       ...(hydratedCurrentDeviceTask.threadId
         ? { threadId: hydratedCurrentDeviceTask.threadId }
         : {}),
-      ...(hydratedCurrentDeviceTask.runtimeHandle
-        ? { runtimeHandle: hydratedCurrentDeviceTask.runtimeHandle }
-        : {}),
+      ...(runtimeHandle ? { runtimeHandle } : {}),
     }
   }
   if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {

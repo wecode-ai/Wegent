@@ -331,6 +331,18 @@ describe('DocumentItem table grid', () => {
     const row = screen.getByText('doc.txt').closest('.grid')
     expect(row).toHaveStyle({ gridTemplateColumns: template })
   })
+
+  it('hides download actions when original-file download is disabled', () => {
+    render(
+      <DocumentItem
+        document={createDocument({ attachment_id: 42 })}
+        compact={true}
+        allowDownload={false}
+      />
+    )
+
+    expect(screen.queryByTitle('knowledge:document.document.download')).not.toBeInTheDocument()
+  })
 })
 
 describe('DocumentList folder navigation guard helpers', () => {

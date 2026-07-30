@@ -1,11 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import { baseKeymap } from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
+import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
 import {
   composerSchema,
@@ -41,6 +41,7 @@ interface ComposerProseMirrorEditorProps {
   onPaste: (event: ClipboardEvent) => boolean
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
+  onOpenMentionPlugin?: (reference: PluginReference) => void
   onClick: () => void
   onFocus: () => void
   disabled?: boolean
@@ -115,7 +116,6 @@ export const ComposerProseMirrorEditor = forwardRef<
               return true
             },
           }),
-          keymap(baseKeymap),
         ],
       }),
       attributes: editorAttributes(initialProps),
@@ -125,8 +125,12 @@ export const ComposerProseMirrorEditor = forwardRef<
       editable: () => !callbacksRef.current.disabled,
       nodeViews: {
         composer_mention(node, view, getPos) {
-          return new ComposerMentionNodeView(node, view, getPos, path =>
-            callbacksRef.current.onOpenMentionFile?.(path)
+          return new ComposerMentionNodeView(
+            node,
+            view,
+            getPos,
+            path => callbacksRef.current.onOpenMentionFile?.(path),
+            reference => callbacksRef.current.onOpenMentionPlugin?.(reference)
           )
         },
       },
@@ -319,19 +323,13 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     event.shiftKey ||
     event.altKey ||
     event.ctrlKey ||
+    event.metaKey ||
     !view.state.selection.empty
   ) {
     return false
   }
 
   const { $head } = view.state.selection
-  if (event.metaKey) {
-    return setComposerSelection(
-      view,
-      event,
-      event.key === 'ArrowLeft' ? $head.start() : $head.end()
-    )
-  }
   if (event.key === 'ArrowLeft' && $head.pos === $head.start()) {
     return setComposerSelection(view, event, $head.pos)
   }

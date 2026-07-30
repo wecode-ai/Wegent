@@ -1,4 +1,7 @@
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,6 +16,12 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
+from app.schemas.knowledge_artifact import (
+    KnowledgeArtifact,
+    KnowledgeArtifactStatus,
+    KnowledgeArtifactType,
+)
+from app.services.knowledge.artifact_service import ArtifactService
 from wecode.task_sharding.access_store import ShardedTaskAccessStore
 from wecode.task_sharding.shard import (
     SHARD_COUNT,
@@ -201,6 +210,63 @@ def add_shard_subtask(
     test_db.add(subtask)
     test_db.flush()
     return subtask
+
+
+@pytest.mark.asyncio
+async def test_artifact_reconcile_reads_completed_subtask_from_shard(test_db):
+    owner_id = 48
+    task = add_shard_group_task(test_db, user_id=owner_id, sequence=11)
+    mind_map = {
+        "schema_version": 1,
+        "root_id": "root",
+        "nodes": [
+            {
+                "id": "root",
+                "parent_id": None,
+                "title": "Root",
+                "summary": "Summary",
+            }
+        ],
+    }
+    assistant = add_shard_subtask(
+        test_db,
+        task_id_value=task.id,
+        owner_user_id=owner_id,
+        sequence=12,
+        message_id=2,
+        parent_id=1,
+        role=SubtaskRole.ASSISTANT,
+        result={"value": json.dumps(mind_map)},
+    )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    artifact = KnowledgeArtifact(
+        artifact_id="artifact-sharded-subtask",
+        knowledge_base_id=501,
+        artifact_type=KnowledgeArtifactType.MIND_MAP,
+        title="Mind map",
+        status=KnowledgeArtifactStatus.RUNNING,
+        task_id=task.id,
+        assistant_subtask_id=assistant.id,
+        source_document_ids=[101],
+        user_id=owner_id,
+        created_at=now,
+        updated_at=now,
+    )
+    repository = MagicMock()
+    repository.update_execution.side_effect = lambda current: current
+    service = ArtifactService(
+        test_db,
+        SimpleNamespace(id=owner_id),
+        repository,
+        launcher=AsyncMock(),
+    )
+
+    reconciled = await service._reconcile_many([artifact])
+
+    assert isinstance(service.subtask_store, ShardedSubtaskStore)
+    assert reconciled[0].status == KnowledgeArtifactStatus.SUCCEEDED
+    assert json.loads(reconciled[0].content or "{}") == mind_map
+    repository.update_execution.assert_called_once_with(artifact)
 
 
 def test_task_level_knowledge_base_reads_and_updates_sharded_task(test_db):

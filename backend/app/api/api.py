@@ -30,6 +30,7 @@ from app.api.endpoints import (
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_transfer,
     knowledge_video_upload,
@@ -43,6 +44,7 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
+    runtime_automations,
     runtime_work,
     share,
     sites,
@@ -219,6 +221,11 @@ api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
 )
 api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
+)
+api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
 )
 api_router.include_router(
@@ -295,6 +302,11 @@ api_router.include_router(
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
+)
+api_router.include_router(
+    runtime_automations.router,
+    prefix="/runtime-automations",
+    tags=["runtime-automations"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

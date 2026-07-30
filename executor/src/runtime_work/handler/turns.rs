@@ -261,6 +261,23 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
+        let automation_result = match &result {
+            Ok(turn) => match &turn.outcome {
+                ExecutionOutcome::Completed { .. } => Some((AutomationRunStatus::Succeeded, None)),
+                ExecutionOutcome::WaitingForUserInput { stop_reason } => Some((
+                    AutomationRunStatus::NeedsAttention,
+                    Some(stop_reason.clone()),
+                )),
+                ExecutionOutcome::Cancelled { message } => {
+                    Some((AutomationRunStatus::Cancelled, Some(message.clone())))
+                }
+                ExecutionOutcome::Failed { message } => {
+                    Some((AutomationRunStatus::Failed, Some(message.clone())))
+                }
+                ExecutionOutcome::Running => None,
+            },
+            Err(error) => Some((AutomationRunStatus::Failed, Some(error.clone()))),
+        };
         match result {
             Ok(turn) => {
                 let status = match &turn.outcome {
@@ -355,6 +372,9 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
+        if let Some((status, error)) = automation_result {
+            self.finish_automation_run(local_task_id, status, error);
+        }
     }
 
     pub(super) fn persist_failed_assistant_message(
@@ -376,6 +396,9 @@ impl RuntimeWorkRpcHandler {
             "completedAt": timestamp,
         });
         self.store.update_task(local_task_id, |link| {
+            if link.thread_id.is_some() {
+                return;
+            }
             append_runtime_handle_message(&mut link.runtime_handle, message.clone());
             link.updated_at = timestamp;
         });

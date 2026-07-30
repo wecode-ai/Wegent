@@ -5,6 +5,7 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "lint": "pnpm -r --if-present lint",
+    "prepare:builtin-plugins": "node scripts/sync-builtin-sites-plugin.mjs",
     "test": "pnpm -r --if-present test"
   },
   "devDependencies": {

@@ -74,6 +74,28 @@ const requiredTreeGridProps = {
 }
 
 describe('KnowledgeDocumentTreeGrid', () => {
+  it('hides download actions when original-file download is disabled', () => {
+    const documents = [createDocument({ id: 13, attachment_id: 42 })]
+    const { nodes, index } = buildKnowledgeResourceTree([], documents)
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        allowDownload={false}
+      />
+    )
+
+    expect(screen.queryByTestId('download-document-13')).not.toBeInTheDocument()
+  })
+
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
     const documents = [createDocument({ id: 11, name: 'inside-folder.txt', folder_id: 1 })]

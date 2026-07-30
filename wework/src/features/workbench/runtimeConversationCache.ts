@@ -92,7 +92,7 @@ export function dispatchRuntimeConversationQueueEvent(
   cacheRuntimeConversationQueuedMessagesByKey(key, nextMessages)
 }
 
-export function settleRuntimeConversationGuidance(
+export function takeAppliedRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   payload: RuntimeGuidanceAppliedPayload
 ): RuntimePaneQueuedMessage | null {
@@ -107,43 +107,37 @@ export function settleRuntimeConversationGuidance(
     key,
     queuedMessages.filter(message => message.id !== guidanceMessage.id)
   )
-  const messages = messagesByConversation.get(key) ?? []
-  if (!messages.some(message => message.id === guidanceMessage.id)) {
-    cacheBoundedEntry(messagesByConversation, key, [
-      ...messages,
-      {
-        id: guidanceMessage.id,
-        role: 'user',
-        content: guidanceMessage.content,
-        attachments: guidanceMessage.attachments
-          ? persistAttachmentReferences(guidanceMessage.attachments)
-          : undefined,
-        status: 'done',
-        createdAt: new Date(payload.appliedAtMs).toISOString(),
-        runtimeGoalRequest: guidanceMessage.runtimeGoalRequest ? true : undefined,
-        runtimeGuidance: true,
-        codeComments: guidanceMessage.codeComments?.length
-          ? guidanceMessage.codeComments
-          : undefined,
-      },
-    ])
-  }
   return guidanceMessage
 }
 
-export function discardRuntimeConversationGuidance(
+export function settleRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
-  guidanceId: string
-) {
-  const key = runtimeConversationKey(address)
-  const messages = messagesByConversation.get(key)
-  if (!messages) return
+  payload: RuntimeGuidanceAppliedPayload
+): RuntimePaneQueuedMessage | null {
+  const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
+  if (!guidanceMessage) return null
 
-  const nextMessages = messages.filter(
-    message => message.id !== guidanceId || message.runtimeGuidance !== true
-  )
-  if (nextMessages.length === messages.length) return
-  cacheBoundedEntry(messagesByConversation, key, nextMessages)
+  const key = runtimeConversationKey(address)
+  const messages = messagesByConversation.get(key) ?? []
+  if (messages.some(message => message.id === guidanceMessage.id)) return guidanceMessage
+
+  cacheBoundedEntry(messagesByConversation, key, [
+    ...messages,
+    {
+      id: guidanceMessage.id,
+      role: 'user',
+      content: guidanceMessage.content,
+      attachments: guidanceMessage.attachments
+        ? persistAttachmentReferences(guidanceMessage.attachments)
+        : undefined,
+      status: 'done',
+      createdAt: new Date(payload.appliedAtMs).toISOString(),
+      runtimeGoalRequest: guidanceMessage.runtimeGoalRequest ? true : undefined,
+      runtimeGuidance: true,
+      codeComments: guidanceMessage.codeComments?.length ? guidanceMessage.codeComments : undefined,
+    },
+  ])
+  return guidanceMessage
 }
 
 export function reduceRuntimeConversationQueue(
