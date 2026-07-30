@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::runtime_capabilities,
+    agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
@@ -279,15 +279,25 @@ impl CodexAppServerClient {
         allow_active_turns: bool,
     ) -> Result<bool, String> {
         let runtime_proxy_env = proxy_environment(proxy_url);
-        let mut state = self.state.lock().await;
-        if state.runtime_proxy_env == runtime_proxy_env {
-            return Ok(false);
+        let process = {
+            let mut state = self.state.lock().await;
+            if state.runtime_proxy_env == runtime_proxy_env {
+                return Ok(false);
+            }
+            if !allow_active_turns && !state.active_threads.is_empty() {
+                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+            }
+            state.runtime_proxy_env = runtime_proxy_env;
+            state.process.take()
+        };
+        if let Some(process) = process {
+            fail_all_pending(
+                &process.pending,
+                "codex app-server was restarted after its runtime proxy changed".to_owned(),
+            )
+            .await;
+            drop(process);
         }
-        if !allow_active_turns && !state.active_threads.is_empty() {
-            return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
-        }
-        state.runtime_proxy_env = runtime_proxy_env;
-        state.process = None;
         Ok(true)
     }
 
@@ -321,7 +331,34 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        self.state.lock().await.process = None;
+        let process = self.state.lock().await.process.take();
+        let Some(process) = process else {
+            return;
+        };
+        fail_all_pending(
+            &process.pending,
+            "codex app-server was restarted".to_owned(),
+        )
+        .await;
+        drop(process);
+    }
+
+    pub async fn restart_if_no_pending_requests(&self) -> Result<(), usize> {
+        let process = {
+            let mut state = self.state.lock().await;
+            let Some(process) = state.process.as_ref() else {
+                return Ok(());
+            };
+            let pending_request_count = process.pending.lock().await.len();
+            if pending_request_count > 0 {
+                return Err(pending_request_count);
+            }
+            state.process.take()
+        };
+        if let Some(process) = process {
+            drop(process);
+        }
+        Ok(())
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
@@ -2006,6 +2043,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
+        .extend(task_identity_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
@@ -2125,6 +2165,19 @@ fn shell_path_config_override() -> String {
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    task_identity_env(request)
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "shell_environment_policy.set.{}={}",
+                toml_key_segment(&key),
+                toml_value(&value)
+            )
+        })
+        .collect()
 }
 
 fn codex_streaming_patch_config_overrides() -> Vec<String> {

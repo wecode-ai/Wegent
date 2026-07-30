@@ -54,7 +54,9 @@ describe('QuickPhraseMenu', () => {
 
     fireEvent.click(screen.getByTestId('quick-phrase-button'))
 
-    expect(screen.getByTestId('quick-phrase-menu')).toHaveClass('text-text-primary')
+    const menu = screen.getByTestId('quick-phrase-menu')
+    expect(menu).toHaveClass('text-text-primary')
+    expect(menu.parentElement).toBe(document.body)
     expect(screen.getByText('总结进展')).toHaveClass('font-normal')
   })
 

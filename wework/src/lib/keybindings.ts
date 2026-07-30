@@ -126,14 +126,19 @@ export function normalizeKeybinding(value: string): string {
 }
 
 export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
-  const key = normalizeKeyPart(event.key)
+  const key = normalizeKeyPart(
+    event.altKey ? keybindingKeyFromPhysicalCode(event.code) || event.key : event.key
+  )
+  const mainKey = key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null
+  if (!mainKey) return ''
+
   const includeShift = event.shiftKey && key !== 'Plus' && key !== 'Minus'
   return [
     event.ctrlKey ? 'Control' : null,
     event.altKey ? 'Alt' : null,
     includeShift ? 'Shift' : null,
     event.metaKey ? 'Command' : null,
-    key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null,
+    mainKey,
   ]
     .filter(Boolean)
     .join('+')
@@ -243,4 +248,26 @@ function normalizeKeyPart(value: string): string {
   if (lower === '-' || lower === '_' || lower === 'minus') return 'Minus'
   if (value.length === 1) return value.toUpperCase()
   return value
+}
+
+function keybindingKeyFromPhysicalCode(code: string): string {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3)
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5)
+
+  return (
+    {
+      Space: 'Space',
+      Equal: 'Plus',
+      Minus: 'Minus',
+      Backquote: '`',
+      BracketLeft: '[',
+      BracketRight: ']',
+      Backslash: '\\',
+      Semicolon: ';',
+      Quote: "'",
+      Comma: ',',
+      Period: '.',
+      Slash: '/',
+    }[code] ?? ''
+  )
 }

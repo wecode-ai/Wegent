@@ -330,17 +330,19 @@ fn deliver_drop(
     state: &SystemDragState,
     payload: SystemDragDropPayload,
 ) -> Result<(), String> {
-    let main_exists = app.get_webview_window(crate::MAIN_WINDOW_LABEL).is_some();
-    if !main_exists {
+    let popout_exists = app
+        .get_webview_window(crate::popout_window::WINDOW_LABEL)
+        .is_some();
+    if !popout_exists {
         state
             .pending
             .lock()
             .map_err(|_| "Failed to lock pending system drops".to_string())?
             .push(payload.clone());
-        crate::ensure_main_window(app, None)?;
+        crate::popout_window::show(app)?;
     } else {
-        crate::ensure_main_window(app, None)?;
-        app.emit(DROP_EVENT, payload)
+        crate::popout_window::show(app)?;
+        app.emit_to(crate::popout_window::WINDOW_LABEL, DROP_EVENT, payload)
             .map_err(|error| format!("Failed to deliver system drop: {error}"))?;
     }
     Ok(())

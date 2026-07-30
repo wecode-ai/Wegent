@@ -97,6 +97,7 @@ try {
     })
     if (result.status !== 0) throw new Error('Failed to create universal DWS binary')
   }
+  await rm(destination.replace(/(?:\.exe)?$/, '.debug-stub'), { force: true })
   if (!isWindowsTarget) await chmod(destination, 0o755)
   console.log(`Prepared DWS sidecar: ${destination}`)
 } finally {

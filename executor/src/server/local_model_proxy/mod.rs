@@ -11,6 +11,7 @@
 
 mod anthropic;
 mod chat;
+mod fork;
 mod history;
 
 use std::{
@@ -34,6 +35,7 @@ use sha2::{Digest, Sha256};
 use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
+use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
@@ -260,6 +262,7 @@ async fn handle_for_token(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
+    let forked_from_thread_id = codex_forked_from_thread_id(&headers);
     let (upstream, history, model_routing) = {
         let mut registry = registry()
             .lock()
@@ -297,18 +300,27 @@ async fn handle_for_token(
     .await?;
     let request_body =
         prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
-    log_executor_event(
-        "local model proxy request started",
-        &[
-            ("api_format", upstream.api_format.clone()),
-            ("upstream", safe_url(&request_url)),
-            ("body_bytes", request_body.len().to_string()),
+    let (request_body, stripped_encrypted_content) =
+        prepare_fork_request(request_body, forked_from_thread_id.is_some())?;
+    let mut request_log_fields = vec![
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(&request_url)),
+        ("body_bytes", request_body.len().to_string()),
+        (
+            "expanded_browser_tools",
+            expanded_browser_tools.len().to_string(),
+        ),
+    ];
+    if let Some(parent_thread_id) = forked_from_thread_id {
+        request_log_fields.extend([
+            ("forked_from_thread_id", parent_thread_id),
             (
-                "expanded_browser_tools",
-                expanded_browser_tools.len().to_string(),
+                "stripped_encrypted_content",
+                stripped_encrypted_content.to_string(),
             ),
-        ],
-    );
+        ]);
+    }
+    log_executor_event("local model proxy request started", &request_log_fields);
 
     let user_agent = headers
         .get(header::USER_AGENT)
@@ -354,6 +366,10 @@ async fn handle_for_token(
                 ("api_format", upstream.api_format),
                 ("status", status.as_u16().to_string()),
                 ("body_bytes", response_body.len().to_string()),
+                (
+                    "upstream_error_code",
+                    detect_upstream_error_code(&response_body).unwrap_or_default(),
+                ),
             ],
         );
         let mut response = Response::new(Body::from(response_body));
@@ -1074,6 +1090,18 @@ fn build_upstream_request(
     request
 }
 
+fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(response_body);
+    [
+        "invalid_encrypted_content",
+        "context_length_exceeded",
+        "rate_limit_exceeded",
+    ]
+    .into_iter()
+    .find(|code| text.contains(code))
+    .map(str::to_owned)
+}
+
 fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
     let retry_after = headers
         .get(reqwest::header::RETRY_AFTER)
@@ -1554,6 +1582,28 @@ mod tests {
     use axum::{body::to_bytes, routing::post, Json, Router};
     use serde_json::json;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn detects_known_upstream_error_codes_in_priority_order() {
+        assert_eq!(
+            detect_upstream_error_code(
+                br#"{"error":{"code":"invalid_encrypted_content","message":"invalid"}}"#
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+        assert_eq!(
+            detect_upstream_error_code(br#"{"error":{"code":"upstream_unavailable"}}"#),
+            None
+        );
+        assert_eq!(
+            detect_upstream_error_code(
+                b"rate_limit_exceeded appeared first, then invalid_encrypted_content"
+            )
+            .as_deref(),
+            Some("invalid_encrypted_content")
+        );
+    }
 
     #[test]
     fn normalizes_completed_usage_details() {
