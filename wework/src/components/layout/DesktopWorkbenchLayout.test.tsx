@@ -7938,6 +7938,61 @@ describe('DesktopWorkbenchLayout', () => {
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
   })
 
+  test('preserves the open directory when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const workspaceFileApi = {
+      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          entries: path.endsWith('/docs')
+            ? []
+            : [
+                {
+                  name: 'docs',
+                  path: `${path}/docs`,
+                  isDirectory: true,
+                  size: 0,
+                  modifiedAt: null,
+                },
+              ],
+        })
+      ),
+      readWorkspaceTextFile: vi.fn(),
+    }
+    const propsWithFiles = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      workspaceFileApi,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFiles(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-file-option'))
+    await userEvent.click(await activePane().findByText('docs'))
+
+    await waitFor(() => {
+      expect(workspaceFileApi.listWorkspaceEntries).toHaveBeenCalledWith(
+        expect.any(String),
+        '/Users/me/Wegent/.worktrees/a/docs'
+      )
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsWithFiles(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithFiles(taskA)} />)
+
+    await waitFor(() => {
+      expect(
+        workspaceFileApi.listWorkspaceEntries.mock.calls.filter(
+          ([, path]) => path === '/Users/me/Wegent/.worktrees/a/docs'
+        )
+      ).toHaveLength(2)
+      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+    })
+  })
+
   test('restores serializable right workspace state without retaining the conversation pane', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const activePane = () => within(screen.getByTestId('desktop-workbench-main'))

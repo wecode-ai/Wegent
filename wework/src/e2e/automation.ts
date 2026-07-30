@@ -24,7 +24,8 @@ import type { DesktopControlCommand } from '@/extensions/desktop-control-contrac
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
-import { LOCAL_EXECUTOR_COMMANDS, requestLocalExecutor } from '@/tauri/localExecutor'
+import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { executeVerificationControlCommand } from './verification-control'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -720,6 +721,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     })
   }
 
+  const verificationResult = await executeVerificationControlCommand(command, {
+    elementEnabled: desktopControlElementEnabled,
+  })
+  if (verificationResult.handled) return verificationResult.value
+
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
@@ -905,56 +911,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       element.click()
       return element.textContent?.trim() ?? ''
-    }
-    case 'clickAt': {
-      const coordinates = JSON.parse(command.value ?? '{}') as { x?: number; y?: number }
-      if (!Number.isFinite(coordinates.x) || !Number.isFinite(coordinates.y)) {
-        throw new Error('clickAt requires finite x and y coordinates')
-      }
-      let element = document.elementFromPoint(coordinates.x!, coordinates.y!)
-      while (element?.shadowRoot) {
-        const nested = element.shadowRoot.elementFromPoint(coordinates.x!, coordinates.y!)
-        if (!nested || nested === element) break
-        element = nested
-      }
-      const clickable = element?.closest('button') ?? element
-      if (!clickable) {
-        throw new Error(`Unable to find element at ${coordinates.x},${coordinates.y}`)
-      }
-      if (!desktopControlElementEnabled(clickable as HTMLElement)) {
-        throw new Error(`Element at ${coordinates.x},${coordinates.y} is disabled`)
-      }
-      clickable.dispatchEvent(
-        new MouseEvent('click', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          clientX: coordinates.x,
-          clientY: coordinates.y,
-        })
-      )
-      return clickable.textContent?.trim() ?? ''
-    }
-    case 'seedLocalProject': {
-      const fixture = JSON.parse(command.value ?? '{}') as {
-        name?: string
-        path?: string
-        projectKey?: string
-      }
-      if (!fixture.path?.trim()) {
-        throw new Error('seedLocalProject requires a workspace path')
-      }
-      const response = await requestLocalExecutor('runtime.projects.upsert_local', {
-        projectKey: fixture.projectKey ?? crypto.randomUUID(),
-        name: fixture.name?.trim() || 'AI Verify',
-        roots: [fixture.path.trim()],
-        runtime: 'codex',
-      })
-      return JSON.stringify(response)
-    }
-    case 'reloadApp': {
-      window.setTimeout(() => window.location.reload(), 50)
-      return ''
     }
     case 'clickThenMacrotask': {
       const element = findDesktopControlElements(command.selector)[0]

@@ -69,6 +69,13 @@ export function resolveStartupTimeout(timeout) {
   return configuredTimeout
 }
 
+export function resolveCommandTimeout(timeout) {
+  const configuredTimeout = Number(timeout)
+  return Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : defaultTimeoutMs
+}
+
 function json(response, status, value) {
   response.writeHead(status, {
     ...corsHeaders,
@@ -461,6 +468,7 @@ async function main() {
           : 'application/octet-stream'
   const previousReady =
     command === 'reload' ? await request(session, session.token, '/status') : null
+  const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
@@ -472,14 +480,14 @@ async function main() {
     text: options.text,
     visible: options.visible === 'true',
     stableMs: options.stable ? Number(options.stable) : undefined,
-    timeoutMs: options.timeout ? Number(options.timeout) : undefined,
+    timeoutMs: effectiveTimeoutMs,
   })
   if (command === 'reload') {
     await waitForFreshControlClient(
       session,
       session.token,
       previousReady?.readyInfo?.clientId,
-      options.timeout ? Number(options.timeout) : defaultTimeoutMs
+      effectiveTimeoutMs
     )
   }
   if (command === 'capture' || command === 'capture-popout') {

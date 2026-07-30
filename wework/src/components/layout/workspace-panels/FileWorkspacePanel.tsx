@@ -318,6 +318,7 @@ export function FileWorkspacePanel({
     (entry: WorkspaceFileEntry) => {
       if (!entry.isDirectory) return
       setActiveDirectoryPath(entry.path)
+      onSelectionChange?.({ path: entry.path, isDirectory: true })
       setTreeError(null)
       setTreeRetryPath(null)
 
@@ -325,7 +326,7 @@ export function FileWorkspacePanel({
         void loadTree(entry.path)
       }
     },
-    [loadTree, loadingPaths]
+    [loadTree, loadingPaths, onSelectionChange]
   )
 
   const openFile = useCallback(
