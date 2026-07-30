@@ -41,12 +41,20 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isMarkdownFile } from './workspaceFileTypes'
 
+export interface FileWorkspacePanelSelection {
+  path: string
+  isDirectory: boolean
+}
+
 interface FileWorkspacePanelProps {
   target: WorkspaceTarget | null
   workspaceTargets?: WorkspaceTarget[]
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
+  initialSelection?: FileWorkspacePanelSelection | null
   onAddCodeComment: (context: CodeCommentContext) => void
+  onDirtyChange?: (dirty: boolean) => void
+  onSelectionChange?: (selection: FileWorkspacePanelSelection) => void
   onSelectWorkspaceTarget?: (target: WorkspaceTarget) => void
 }
 
@@ -154,7 +162,10 @@ export function FileWorkspacePanel({
   workspaceTargets = [],
   workspaceFileApi,
   openFileRequest,
+  initialSelection,
   onAddCodeComment,
+  onDirtyChange,
+  onSelectionChange,
   onSelectWorkspaceTarget,
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
@@ -208,6 +219,7 @@ export function FileWorkspacePanel({
   const [workspaceTargetMenuOpen, setWorkspaceTargetMenuOpen] = useState(false)
   const [selectedApplicationPath, setSelectedApplicationPath] = useState<string | null>(null)
   const [, setFileOpenerIconCacheVersion] = useState(0)
+  const initialSelectionRef = useRef(initialSelection)
   const treeRequestSequence = useRef(0)
   const latestTreeRequestByPath = useRef(new Map<string, number>())
   const directoryLoadedAtByPath = useRef(new Map<string, number>())
@@ -323,6 +335,7 @@ export function FileWorkspacePanel({
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       setSelectedFilePath(entry.path)
+      onSelectionChange?.({ path: entry.path, isDirectory: false })
       setMarkdownMode('preview')
       setSelectedPathIsDirectory(false)
       setSelectedApplicationPath(null)
@@ -397,7 +410,14 @@ export function FileWorkspacePanel({
         }
       }
     },
-    [loadFileOpeners, readWorkspaceFileChunk, readWorkspaceTextFile, stableTarget, t]
+    [
+      loadFileOpeners,
+      onSelectionChange,
+      readWorkspaceFileChunk,
+      readWorkspaceTextFile,
+      stableTarget,
+      t,
+    ]
   )
 
   const openFilePath = useCallback(
@@ -410,6 +430,7 @@ export function FileWorkspacePanel({
         fileRequestSequence.current += 1
         fileOpenerRequestSequence.current += 1
         setSelectedFilePath(resolvedPath)
+        onSelectionChange?.({ path: resolvedPath, isDirectory: true })
         setMarkdownMode('preview')
         setSelectedPathIsDirectory(true)
         setActiveDirectoryPath(resolvedPath)
@@ -470,10 +491,21 @@ export function FileWorkspacePanel({
         openAsFile
       )
     },
-    [listWorkspaceEntries, loadTree, openFile, stableTarget]
+    [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
   )
 
   const dirty = editing && preview !== null && editedContent !== preview.content
+
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+
+  useEffect(
+    () => () => {
+      onDirtyChange?.(false)
+    },
+    [onDirtyChange]
+  )
 
   const saveFile = useCallback(async () => {
     if (!stableTarget || !preview || !writeWorkspaceTextFile || !dirty || saving) return !dirty
@@ -539,6 +571,23 @@ export function FileWorkspacePanel({
       cancelled = true
     }
   }, [loadTree, stableTarget])
+
+  useEffect(() => {
+    if (!stableTarget || openFileRequest?.path) return
+    const selection = initialSelectionRef.current
+    if (!selection?.path) return
+
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (!cancelled) {
+        initialSelectionRef.current = null
+        openFilePath(selection.path, { isDirectory: selection.isDirectory })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [openFilePath, openFileRequest?.path, stableTarget])
 
   useEffect(() => {
     if (!openFileRequest?.path) return
