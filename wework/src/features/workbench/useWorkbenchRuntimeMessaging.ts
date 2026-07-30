@@ -370,7 +370,9 @@ export function useWorkbenchRuntimeMessaging({
     (
       message: string,
       sourceAttachments?: Attachment[],
-      projectOverride?: ProjectWithTasks | null
+      projectOverride?: ProjectWithTasks | null,
+      includeSelectedSkills = !isOptionsLocked,
+      selectedSkillsOverride?: SkillRef[]
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
@@ -436,8 +438,12 @@ export function useWorkbenchRuntimeMessaging({
         payload.model_options = executionModel.modelOptions
       }
 
-      if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
-        payload.additional_skills = skillSelection.selectedSkills
+      const selectedSkills = selectedSkillsOverride ?? skillSelection.selectedSkills
+      if (
+        (selectedSkillsOverride !== undefined || includeSelectedSkills) &&
+        selectedSkills.length > 0
+      ) {
+        payload.additional_skills = selectedSkills
       }
 
       const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
@@ -870,7 +876,7 @@ export function useWorkbenchRuntimeMessaging({
         runtimeSelectedModelOptions
       )
 
-      if (state.currentRuntimeTask) {
+      if (state.currentRuntimeTask && !options?.forceNewTask) {
         if (hasCodeComments) {
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
@@ -911,7 +917,13 @@ export function useWorkbenchRuntimeMessaging({
         return sent
       }
 
-      const prepared = buildSendPayload(payloadMessage)
+      const prepared = buildSendPayload(
+        payloadMessage,
+        undefined,
+        undefined,
+        options?.forceNewTask || !isOptionsLocked,
+        options?.additionalSkills
+      )
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',
@@ -989,6 +1001,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
+      isOptionsLocked,
       lifecycleStore,
       modelSelection,
       reportSendBlocked,

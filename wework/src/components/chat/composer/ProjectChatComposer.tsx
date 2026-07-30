@@ -32,6 +32,8 @@ interface ProjectChatComposerProps {
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
+  inputTestId?: string
+  submitButtonTestId?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -87,6 +89,8 @@ export function ProjectChatComposer({
   submitDisabled = false,
   disabledReason,
   placeholder,
+  inputTestId,
+  submitButtonTestId,
   models,
   selectedModel,
   activeModel,
@@ -256,6 +260,7 @@ export function ProjectChatComposer({
           </div>
         )}
         <ComposerTextarea
+          testId={inputTestId}
           textareaRef={textareaRef}
           value={value}
           onChange={onChange}
@@ -288,6 +293,7 @@ export function ProjectChatComposer({
           isModelSelectionReady={isModelSelectionReady}
         />
         <ComposerToolbar
+          sendButtonTestId={submitButtonTestId}
           onListLocalApps={onListLocalApps}
           canSend={canSend}
           disabled={disabled}

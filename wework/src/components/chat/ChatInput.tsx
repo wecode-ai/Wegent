@@ -112,6 +112,8 @@ export interface ChatInputProps {
   error?: string | null
   disabledReason?: string
   placeholder?: string
+  inputTestId?: string
+  submitButtonTestId?: string
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
@@ -260,6 +262,8 @@ export function ChatInput({
   error,
   disabledReason,
   placeholder,
+  inputTestId,
+  submitButtonTestId,
   variant = 'compact',
   projectChat,
   projectWork,
@@ -396,6 +400,8 @@ export function ChatInput({
     submitDisabled,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
+    inputTestId,
+    submitButtonTestId,
     onOpenSkillFile,
     workspaceTarget,
     workspaceFileApi,

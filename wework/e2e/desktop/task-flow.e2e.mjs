@@ -240,6 +240,8 @@ const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
 const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
 const PLUGIN_NAME = 'desktop-e2e-plugin'
+const PLUGIN_CREATOR_PROMPT = 'Create a desktop E2E verification plugin'
+const PLUGIN_CREATOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PLUGIN_CREATOR_COMPLETE'
 const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
 
 async function createPluginMarketplaceFixture(root) {
@@ -1479,14 +1481,14 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
     'The plugin lifecycle requires an active conversation'
   )
-  const activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask.taskId
+  let activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask.taskId
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  const initialSnapshot = await waitForSnapshot(
+  await waitForSnapshot(
     control,
     snapshot =>
       snapshot.testIds.includes('plugins-search-input') ||
@@ -1496,26 +1498,56 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     'The plugin marketplace controls did not become ready'
   )
 
-  if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
-    await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
-    await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
-      value: marketplacePath,
-    })
-    await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-  } else {
-    await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
-    await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
-    await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
-      value: marketplacePath,
-    })
-    await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-  }
+  await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-create-plugin-option"]')
+  await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('project-chat-composer') &&
+      snapshot.testIds.includes('composer-toolbar') &&
+      snapshot.testIds.includes('attachment-file-input') &&
+      snapshot.testIds.includes('model-selector-button') &&
+      snapshot.testIds.includes('plugin-create-prompt-input') &&
+      snapshot.testIds.includes('plugin-create-submit-button'),
+    'The plugin creator did not reuse the complete desktop chat composer'
+  )
+  await control.command('fill', '[data-testid="plugin-create-prompt-input"]', {
+    value: PLUGIN_CREATOR_PROMPT,
+  })
+  await captureVerificationScreenshot(control, 'plugins-00-creator.png')
+  await control.command('clickWhenEnabled', '[data-testid="plugin-create-submit-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const pluginCreatorTask = await waitForWorkbenchDebugState(
+    control,
+    snapshot => {
+      const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+      return Boolean(taskId && taskId !== activeTaskId)
+    },
+    'Creating a plugin continued the existing conversation instead of opening a new task'
+  )
+  activeTaskId = pluginCreatorTask.workbench.currentRuntimeTask.taskId
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: PLUGIN_CREATOR_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="plugins-create-button"]')
+  await control.command('click', '[data-testid="plugins-add-market-option"]')
+  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+    value: marketplacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 
   const marketplaceSnapshot = await waitForSnapshot(
     control,
@@ -1539,14 +1571,17 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
     'The plugin was not shown as installed after the real app-server request'
   )
+  await control.command('click', actionsSelector)
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  await control.command('waitFor', trySelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
   assert.match(
-    await control.command('getText', installSelector),
-    /Try in chat|在对话中试用/,
+    await control.command('getText', trySelector),
+    /Try now|立即试用/,
     'The installed plugin did not expose its chat action'
   )
   await captureVerificationScreenshot(control, 'plugins-02-installed.png')
 
-  await control.command('click', installSelector)
+  await control.command('click', trySelector)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -4070,6 +4105,15 @@ class DesktopE2EServer {
 
     if (requestKind === 'prewarm') {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -6631,6 +6675,20 @@ async function main() {
 
     if (PLUGINS_ONLY) {
       phase = 'plugin-lifecycle'
+      control.setScenario('fresh_chat')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, FRESH_CHAT_PROMPT)
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+        {
+          text: FRESH_CHAT_COMPLETION_TEXT,
+          timeoutMs: UI_TIMEOUT_MS,
+        }
+      )
       await verifyPluginLifecycle(control, pluginMarketplacePath)
       console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
       return
