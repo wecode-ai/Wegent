@@ -22,8 +22,9 @@ async fn capture_webview_impl(
     use tauri::Manager;
 
     let webview = app
-        .get_webview_window(label)
+        .get_webview(label)
         .ok_or_else(|| format!("Webview {label} is unavailable"))?;
+    let window = webview.window().clone();
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
 
     webview
@@ -41,7 +42,7 @@ async fn capture_webview_impl(
     if !restore_after_capture {
         return snapshot_result;
     }
-    let restore_result = restore_webview(&webview, label);
+    let restore_result = restore_webview(&window, label);
 
     match (snapshot_result, restore_result) {
         (Ok(snapshot), Ok(())) => Ok(snapshot),
@@ -54,15 +55,15 @@ async fn capture_webview_impl(
 }
 
 #[cfg(target_os = "macos")]
-fn restore_webview(webview: &tauri::WebviewWindow, label: &str) -> Result<(), String> {
+fn restore_webview(window: &tauri::Window, label: &str) -> Result<(), String> {
     let mut errors = Vec::new();
-    if let Err(error) = webview.show() {
+    if let Err(error) = window.show() {
         errors.push(format!("Failed to show webview {label}: {error}"));
     }
-    if let Err(error) = webview.unminimize() {
+    if let Err(error) = window.unminimize() {
         errors.push(format!("Failed to unminimize webview {label}: {error}"));
     }
-    if let Err(error) = webview.set_focus() {
+    if let Err(error) = window.set_focus() {
         errors.push(format!("Failed to focus webview {label}: {error}"));
     }
 

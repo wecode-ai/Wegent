@@ -1,5 +1,3 @@
-#[cfg(target_os = "macos")]
-use std::process::Command;
 use std::{
     collections::HashMap,
     env,
@@ -14,6 +12,16 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, runtime::AnyObject};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSImage,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSDictionary, NSError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
@@ -108,6 +116,16 @@ pub struct EmbeddedBrowserPageState {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EmbeddedBrowserInvalidTlsCertificate {
+    pub(crate) native_label: String,
+    pub(crate) url: String,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,11 +324,17 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
     match url.scheme() {
         "http" | "https" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn initial_browser_webview_url() -> Result<WebviewUrl, String> {
+    browser_url("about:blank").map(WebviewUrl::External)
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -611,6 +635,12 @@ fn page_state_for_label(
 ) -> Result<EmbeddedBrowserPageState, String> {
     let entry = get_entry(state, label)?;
     Ok(EmbeddedBrowserPageState {
+        #[cfg(target_os = "macos")]
+        invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+            &entry.native_label,
+        ),
+        #[cfg(not(target_os = "macos"))]
+        invalid_tls_certificate: None,
         native_label: entry.native_label,
         title: entry.title,
         url: entry.url,
@@ -620,6 +650,8 @@ fn page_state_for_label(
 fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Result<(), String> {
     let parsed_url = browser_url(&url)?;
     let entry = get_entry(state, label)?;
+    #[cfg(target_os = "macos")]
+    crate::embedded_browser_tls::clear_invalid_tls_certificate(&entry.native_label);
     entry
         .ready_webview()?
         .navigate(parsed_url)
@@ -830,46 +862,65 @@ fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
 fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
     let webview = entry.ready_webview()?;
-    let window_position = webview
-        .window()
-        .inner_position()
-        .map_err(|error| format!("Failed to read Wework window position: {error}"))?;
-    let webview_position = webview
-        .position()
-        .map_err(|error| format!("Failed to read embedded browser position: {error}"))?;
-    let webview_size = webview
-        .size()
-        .map_err(|error| format!("Failed to read embedded browser size: {error}"))?;
-    let scale_factor = webview
-        .window()
-        .scale_factor()
-        .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
-        .max(1.0);
-    let x = ((window_position.x + webview_position.x) as f64 / scale_factor).round() as i32;
-    let y = ((window_position.y + webview_position.y) as f64 / scale_factor).round() as i32;
-    let width = (webview_size.width.max(1) as f64 / scale_factor).round() as u32;
-    let height = (webview_size.height.max(1) as f64 / scale_factor).round() as u32;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    webview
+        .with_webview(move |platform_webview| {
+            let completion = RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
+                let result = if image.is_null() {
+                    Err("WebKit returned no embedded browser snapshot".to_string())
+                } else {
+                    unsafe {
+                        let image = &*image;
+                        image
+                            .TIFFRepresentation()
+                            .ok_or_else(|| {
+                                "Failed to encode embedded browser snapshot as TIFF".to_string()
+                            })
+                            .and_then(|tiff| {
+                                NSBitmapImageRep::imageRepWithData(&tiff).ok_or_else(|| {
+                                    "Failed to create embedded browser bitmap snapshot".to_string()
+                                })
+                            })
+                            .and_then(|bitmap| {
+                                let properties = NSDictionary::<
+                                    NSBitmapImageRepPropertyKey,
+                                    AnyObject,
+                                >::dictionary();
+                                bitmap
+                                    .representationUsingType_properties(
+                                        NSBitmapImageFileType::PNG,
+                                        &properties,
+                                    )
+                                    .ok_or_else(|| {
+                                        "Failed to encode embedded browser snapshot as PNG"
+                                            .to_string()
+                                    })
+                            })
+                            .map(|png| png.as_bytes_unchecked().to_vec())
+                    }
+                };
+                let _ = sender.send(result);
+            });
+            let webview = platform_webview.inner().cast::<AnyObject>();
+            unsafe {
+                let _: () = msg_send![
+                    &*webview,
+                    takeSnapshotWithConfiguration: std::ptr::null::<AnyObject>(),
+                    completionHandler: &*completion
+                ];
+            }
+        })
+        .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
+    let png = receiver
+        .recv_timeout(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS))
+        .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())??;
     let path = screenshot_path()?;
-    let region = format!("{x},{y},{width},{height}");
-    let output = Command::new("screencapture")
-        .args(["-x", "-R", &region])
-        .arg(&path)
-        .output()
-        .map_err(|error| format!("Failed to run macOS screencapture: {error}"))?;
-    if output.status.success() {
-        return Ok(json!({
-            "path": path.to_string_lossy(),
-            "type": "png",
-            "region": { "x": x, "y": y, "width": width, "height": height },
-        }));
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(if stderr.is_empty() {
-        "Failed to capture embedded browser screenshot".to_string()
-    } else {
-        stderr
-    })
+    std::fs::write(&path, png)
+        .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
+    Ok(json!({
+        "path": path.to_string_lossy(),
+        "type": "png",
+    }))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1220,6 +1271,8 @@ pub async fn embedded_browser_open(
     if let Some(entry) = existing {
         let webview = entry.ready_webview()?;
         apply_webview_bounds(&webview, normalized_bounds)?;
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::clear_invalid_tls_certificate(&entry.native_label);
         webview
             .navigate(parsed_url)
             .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
@@ -1228,6 +1281,7 @@ pub async fn embedded_browser_open(
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
         set_entry_url(&state, &label, Some(url.clone()))?;
         return Ok(EmbeddedBrowserPageState {
+            invalid_tls_certificate: None,
             native_label: entry.native_label,
             title: entry.title,
             url: Some(url),
@@ -1259,30 +1313,38 @@ pub async fn embedded_browser_open(
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?
         .insert(label.clone(), entry);
 
-    let builder =
-        tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
-            .user_agent(EMBEDDED_BROWSER_USER_AGENT)
-            .data_directory(data_directory)
-            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
-            .devtools(true)
-            .accept_first_mouse(true)
-            .on_page_load(move |_webview, payload| {
-                if matches!(payload.event(), PageLoadEvent::Finished) {
-                    let loaded_url = payload.url().to_string();
-                    let _ = update_entry_for_native_label(
-                        &load_state_handle,
-                        &native_label_for_load,
-                        |entry| entry.url = Some(loaded_url),
-                    );
-                }
-            })
-            .on_document_title_changed(move |_webview, title| {
-                let _ = update_entry_for_native_label(
-                    &title_state_handle,
-                    &native_label_for_title,
-                    |entry| entry.title = Some(title),
+    #[cfg(target_os = "macos")]
+    let initial_url = initial_browser_webview_url()?;
+    #[cfg(not(target_os = "macos"))]
+    let initial_url = browser_webview_url(parsed_url.clone());
+    let builder = tauri::webview::WebviewBuilder::new(&native_label, initial_url)
+        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+        .data_directory(data_directory)
+        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+        .devtools(true)
+        .accept_first_mouse(true)
+        .on_page_load(move |_webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let loaded_url = payload.url().to_string();
+                #[cfg(target_os = "macos")]
+                crate::embedded_browser_tls::clear_invalid_tls_certificate_if_origin_changed(
+                    &native_label_for_load,
+                    &loaded_url,
                 );
-            });
+                let _ = update_entry_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    |entry| entry.url = Some(loaded_url),
+                );
+            }
+        })
+        .on_document_title_changed(move |_webview, title| {
+            let _ = update_entry_for_native_label(
+                &title_state_handle,
+                &native_label_for_title,
+                |entry| entry.title = Some(title),
+            );
+        });
 
     #[cfg(desktop)]
     let builder = {
@@ -1360,6 +1422,34 @@ pub async fn embedded_browser_open(
             }
         };
 
+    #[cfg(target_os = "macos")]
+    {
+        let tls_result = crate::embedded_browser_tls::register_invalid_tls_handler(
+            &webview,
+            app.clone(),
+            native_label.clone(),
+        )
+        .await
+        .and_then(|_| {
+            webview
+                .navigate(parsed_url)
+                .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
+        });
+        if let Err(error) = tls_result {
+            if let Ok(mut webviews) = state.webviews.lock() {
+                remove_logical_entry_if_native_matches(
+                    &mut webviews,
+                    &label,
+                    &native_label,
+                    |current| current.native_label.as_str(),
+                );
+            }
+            crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+            let _ = webview.close();
+            return Err(error);
+        }
+    }
+
     if let Err(error) = webview
         .show()
         .map_err(|error| format!("Failed to show embedded browser: {error}"))
@@ -1389,6 +1479,12 @@ pub async fn embedded_browser_open(
     }
 
     Ok(EmbeddedBrowserPageState {
+        #[cfg(target_os = "macos")]
+        invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+            &native_label,
+        ),
+        #[cfg(not(target_os = "macos"))]
+        invalid_tls_certificate: None,
         native_label,
         title: None,
         url: Some(url),
@@ -1513,6 +1609,7 @@ mod tests {
     #[test]
     fn page_state_serializes_native_identity() {
         let state = EmbeddedBrowserPageState {
+            invalid_tls_certificate: None,
             native_label: "workspace-browser-native-41".to_string(),
             title: Some("Example".to_string()),
             url: Some("https://example.com/".to_string()),
@@ -1879,8 +1976,10 @@ pub async fn embedded_browser_close(
         webviews.get(&label).cloned()
     };
     if let Some(entry) = entry {
-        entry
-            .ready_webview()?
+        let webview = entry.ready_webview()?;
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+        webview
             .close()
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;
         let mut webviews = state
