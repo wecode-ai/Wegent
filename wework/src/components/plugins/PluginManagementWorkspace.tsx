@@ -463,14 +463,17 @@ export function PluginManagementWorkspace({
         ) : installedPlugins.length > 0 ? (
           <div
             data-testid="plugin-management-installed-list"
-            className="overflow-hidden rounded-[12px] border border-border bg-background"
+            className="rounded-[12px] border border-border bg-background"
           >
             {installedPlugins.map(plugin => {
               const marketplaceItem = plugin.raw.spec.pluginId
                 ? marketplaceById.get(String(plugin.raw.spec.pluginId))
                 : undefined
               return (
-                <div key={plugin.id} className="border-b border-border last:border-b-0">
+                <div
+                  key={plugin.id}
+                  className="border-b border-border last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
+                >
                   <InstalledPluginRow
                     plugin={plugin}
                     marketplaceItem={marketplaceItem}

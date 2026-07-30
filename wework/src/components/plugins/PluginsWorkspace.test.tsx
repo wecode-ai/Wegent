@@ -1095,6 +1095,69 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
   })
 
+  test('tries an installed cloud Codex plugin from the row menu', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    sessionStorage.clear()
+    window.history.pushState({}, '', '/plugins')
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-try-101'))
+
+    expect(window.location.pathname).toBe('/')
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Documents](plugin://documents@default) Draft a document outline from this chat',
+        pluginName: 'Documents',
+      }
+    )
+  })
+
+  test('tries an installed cloud marketplace plugin from the installed-strip detail page', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    sessionStorage.clear()
+    window.history.pushState({}, '', '/plugins')
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugins-installed-strip-item-101'))
+    await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+
+    expect(window.location.pathname).toBe('/')
+    expect(screen.queryByText('Codex plugin is not installed')).not.toBeInTheDocument()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        pluginName: 'Documents',
+      }
+    )
+    expect(invoke).not.toHaveBeenCalledWith(
+      'local_executor_request',
+      expect.objectContaining({
+        params: expect.objectContaining({ method: 'plugin/read' }),
+      })
+    )
+  })
+
   test('does not merge a local plugin into a cloud item by display name', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,

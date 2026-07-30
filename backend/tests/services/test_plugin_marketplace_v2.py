@@ -1476,7 +1476,7 @@ def test_configure_controlled_upstream_creates_missing_plugin(test_db, monkeypat
     assert plugin.status == "draft"
     assert plugin.visibility == "public"
     assert plugin.source_type == "mirror"
-    assert plugin.source_provider == "codex"
+    assert plugin.source_provider == "wework"
     assert first.id == second.id
     assert first.syncEnabled is True
     assert first.syncPolicy == "review_required"
@@ -1531,7 +1531,7 @@ def test_configure_controlled_upstream_converts_existing_official_plugin(
 
     test_db.refresh(plugin)
     assert plugin.source_type == "mirror"
-    assert plugin.source_provider == "codex"
+    assert plugin.source_provider == "wework"
     assert plugin.display_name == "GitHub"
     assert plugin.visibility == "public"
     assert first.id == second.id
@@ -1539,6 +1539,45 @@ def test_configure_controlled_upstream_converts_existing_official_plugin(
     assert first.syncPolicy == "review_required"
     assert test_db.query(PluginUpstream).count() == 1
     assert test_db.get(PluginUpstream, first.id).sync_policy == "review_required"
+
+
+def test_configure_controlled_upstream_reclassifies_legacy_codex_mirror(
+    test_db, monkeypatch
+):
+    plugin = Plugin(
+        slug="github",
+        name="github",
+        display_name="GitHub",
+        source_type="mirror",
+        source_provider="codex",
+        keywords_json=[],
+        interface_json={},
+        visibility="public",
+        status="published",
+    )
+    test_db.add(plugin)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.validate_upstream_url",
+        lambda url: None,
+    )
+
+    PluginMarketplaceService().configure_controlled_upstream(
+        test_db,
+        slug="github",
+        display_name="GitHub",
+        marketplace_name="openai/plugins",
+        remote_plugin_id="github",
+        upstream_url="https://github.com/openai/plugins/archive/main.zip",
+        license_info="Bundled licenses",
+        visibility="public",
+        sync_policy="auto_after_scan",
+    )
+
+    test_db.refresh(plugin)
+    assert plugin.source_type == "mirror"
+    assert plugin.source_provider == "wework"
+    assert plugin.visibility == "public"
 
 
 @pytest.mark.parametrize(

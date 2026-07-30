@@ -233,7 +233,13 @@ function pluginCapabilitySummary(plugin: InstalledPluginItem): string {
     .join(', ')
   if (countSummary) return countSummary
 
-  const componentTypes = [...new Set(buildComponentItems(plugin.raw).map(item => item.type))]
+  const componentTypes = [
+    ...new Set(
+      buildComponentItems(plugin.raw)
+        .filter(item => item.type !== 'connector')
+        .map(item => item.type)
+    ),
+  ]
   return componentTypes.join(', ') || 'Plugin'
 }
 
@@ -529,6 +535,7 @@ export function PluginDetailView({
     ) : null
 
   const connectorItems = componentItems.filter(item => item.type === 'connector')
+  const capabilityItems = componentItems.filter(item => item.type !== 'connector')
   const guideTemplateSection = prompts.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
@@ -707,16 +714,16 @@ export function PluginDetailView({
           </section>
         )}
 
-        {componentItems.length > 0 && (
+        {capabilityItems.length > 0 && (
           <section className="mt-7 space-y-3">
             <h2 className="text-base font-medium leading-6 text-text-primary">
               {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
               <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
-                {componentItems.length}
+                {capabilityItems.length}
               </span>
             </h2>
             <div className="overflow-hidden rounded-xl border border-border">
-              {componentItems.map(item => {
+              {capabilityItems.map(item => {
                 const Icon = componentIcon(item.type)
                 const enabled = componentStates[item.componentKey] ?? true
                 const rowBody = (

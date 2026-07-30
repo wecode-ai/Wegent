@@ -1157,7 +1157,12 @@ describe('App plugins route', () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     renderApp()
-    await userEvent.click(await screen.findByTestId('installed-plugin-toggle-59'))
+    expect(await screen.findByTestId('plugin-management-installed-list')).not.toHaveClass(
+      'overflow-hidden'
+    )
+    await userEvent.click(screen.getByTestId('installed-plugin-actions-59'))
+    expect(screen.getByTestId('installed-plugin-actions-menu-59')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('installed-plugin-toggle-59'))
 
     await waitFor(() => expect(pluginStateChanged).toHaveBeenCalledTimes(1))
     expect(fetch).toHaveBeenCalledWith(

@@ -918,7 +918,7 @@ class PluginMarketplaceService:
                 display_name=display_name,
                 listing_type=listing_type,
                 source_type="mirror",
-                source_provider="codex",
+                source_provider="wework",
                 owner_user_id=None,
                 keywords_json=[],
                 interface_json={},
@@ -928,7 +928,13 @@ class PluginMarketplaceService:
             db.add(plugin)
             db.flush()
         else:
-            controlled_sources = {("native", "wework"), ("mirror", "codex")}
+            # Accept legacy Codex-labeled mirrors so re-bootstrap can reclassify
+            # them as Wework domestic-public adaptations.
+            controlled_sources = {
+                ("native", "wework"),
+                ("mirror", "wework"),
+                ("mirror", "codex"),
+            }
             if (
                 plugin.owner_user_id is not None
                 or (plugin.source_type, plugin.source_provider)
@@ -944,8 +950,10 @@ class PluginMarketplaceService:
                     detail="Plugin listing type cannot be changed",
                 )
 
+        # Publish identity is Wework domestic public; upstream fetch still uses
+        # the Codex/OpenAI marketplace coordinates below.
         plugin.source_type = "mirror"
-        plugin.source_provider = "codex"
+        plugin.source_provider = "wework"
         plugin.name = remote_plugin_id
         plugin.display_name = display_name
         plugin.visibility = visibility
