@@ -24,7 +24,7 @@ ENV HUSKY=0
 
 # Install workspace dependencies needed by the frontend.
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm install --frozen-lockfile --filter wecode-ai-assistant...
 
 # ---- Build Stage ----
@@ -53,7 +53,7 @@ ENV HUSKY=0
 # Build Next.js application
 WORKDIR /app/frontend
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm run build
 
 # ---- Production Stage ----

@@ -7,6 +7,7 @@ import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'
 import { installDebugPanelLogCapture } from './lib/debugPanel'
 import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
+import { installExternalDropGuard } from './lib/external-drop-guard'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
@@ -22,6 +23,9 @@ if (!isSystemDragPanel) {
   installFrontendRecoveryBridge()
   installWeworkAutomationBridge()
   installDesktopExtensions()
+  if (isTauriRuntime()) {
+    installExternalDropGuard()
+  }
   installExternalLinkHandler()
   installPageZoomGuard()
   installDeveloperCommandMenu()

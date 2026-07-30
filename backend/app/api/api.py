@@ -44,7 +44,6 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
-    runtime_automations,
     runtime_work,
     share,
     sites,
@@ -302,11 +301,6 @@ api_router.include_router(
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
-)
-api_router.include_router(
-    runtime_automations.router,
-    prefix="/runtime-automations",
-    tags=["runtime-automations"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

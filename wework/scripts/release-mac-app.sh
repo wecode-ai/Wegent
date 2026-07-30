@@ -663,9 +663,11 @@ if [ "$TARGET" = "prod" ]; then
 fi
 mkdir -p "$dist_dir"
 
+resource_config="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.resources.json.XXXXXX")"
 release_config="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.base.json.XXXXXX")"
 config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.json.XXXXXX")"
 cleanup() {
+  rm -f "$resource_config"
   rm -f "$release_config"
   rm -f "$config_override"
   rm -f "$config_override.namespace"
@@ -673,14 +675,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-VERSION="$next_version" \
 MACOS_BUILD_TARGET="$MACOS_BUILD_TARGET" \
 HOOK_RESOURCES="$(wework_code_statistics_macos_resources "$MACOS_BUILD_TARGET")" \
-UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
-UPDATER_PUBKEY="$UPDATER_PUBKEY" \
-SIGNING_IDENTITY="$app_sign_identity" \
-ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
-CONFIG_OVERRIDE="$release_config" \
+CONFIG_OVERRIDE="$resource_config" \
 python3 - <<'PY'
 import json
 import os
@@ -694,37 +691,23 @@ codex_targets = (
 resources = [
     *(f"binaries/codex/{target}/**/*" for target in codex_targets),
     "binaries/codex/legal/**/*",
+    "bundled-plugins",
     *os.environ["HOOK_RESOURCES"].splitlines(),
 ]
 
-config = {
-    "version": os.environ["VERSION"],
-    "bundle": {
-        "createUpdaterArtifacts": True,
-        "resources": resources,
-    },
-    "plugins": {
-        "updater": {
-            "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-            "pubkey": os.environ["UPDATER_PUBKEY"],
-        },
-    },
-}
-
-identity = os.environ["SIGNING_IDENTITY"].strip()
-if identity:
-    config["bundle"]["macOS"] = {
-        "signingIdentity": identity,
-        "hardenedRuntime": True,
-    }
-
-if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
-    config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
-
 with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
+    json.dump({"bundle": {"resources": resources}}, handle, indent=2)
     handle.write("\n")
 PY
+
+VERSION="$next_version" \
+UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
+UPDATER_PUBKEY="$UPDATER_PUBKEY" \
+SIGNING_IDENTITY="$app_sign_identity" \
+ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
+BASE_CONFIG="$resource_config" \
+CONFIG_OVERRIDE="$release_config" \
+node "$SCRIPT_DIR/generate-release-config.mjs"
 
 wework_prepare_brand_config \
   "$WEWORK_DIR" \
