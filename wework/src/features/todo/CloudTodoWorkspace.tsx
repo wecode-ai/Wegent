@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -35,6 +35,7 @@ import type {
   CloudProject,
   CloudProjectMember,
 } from '@/api/deliveries'
+import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -56,6 +57,7 @@ import { AITableView } from '@/features/todo/AITableView'
 import type {
   Attachment,
   ProjectWithTasks,
+  RuntimeAdditionalContext,
   RuntimeTaskAddress,
   User as UserProfile,
 } from '@/types/api'
@@ -64,8 +66,13 @@ import { CloudMyWorkView } from './CloudMyWorkView'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
+import { DingTalkProjectAssistant } from './DingTalkProjectAssistant'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
-import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
+import {
+  dingtalkAITableRuntimeContext,
+  parseDingTalkAITableLink,
+  repositoryProviderConfig,
+} from './projectProviderConfig'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
@@ -74,6 +81,105 @@ import { columnDotClasses, columns, priorityBadgeClasses, reorderLaneItems } fro
 type ProjectView = 'board' | 'table' | 'files' | 'manage'
 type RootView = 'projects' | 'my-work'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
+
+function aitableCellLabels(value: unknown): string[] {
+  if (value === null || value === undefined || value === '') return []
+  return (Array.isArray(value) ? value : [value])
+    .map(entry => {
+      if (typeof entry === 'object' && entry !== null) {
+        const object = entry as Record<string, unknown>
+        return String(object.name ?? object.title ?? object.text ?? '')
+      }
+      return String(entry)
+    })
+    .filter(Boolean)
+}
+
+function AITableGroupFieldPicker({
+  fields,
+  value,
+  onChange,
+}: {
+  fields: AITableField[]
+  value: string
+  onChange: (fieldId: string) => void
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const selected = fields.find(field => field.id === value)
+  const visibleFields = fields
+    .filter(field => `${field.name} ${field.type}`.toLowerCase().includes(query.toLowerCase()))
+    .sort((left, right) => {
+      const recommended = (field: AITableField) =>
+        /状态|负责人|优先级|所属项目/.test(field.name) ? 0 : 1
+      return recommended(left) - recommended(right)
+    })
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-testid="dingtalk-board-group-by"
+        onClick={() => setOpen(current => !current)}
+        className="flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
+        aria-expanded={open}
+      >
+        <span className="max-w-32 truncate">{selected?.name ?? '选择分组字段'}</span>
+        <ChevronDown className="h-3 w-3 shrink-0" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-9 z-40 w-64 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-lg">
+          <label className="flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+            <Search className="h-3.5 w-3.5" />
+            <input
+              autoFocus
+              data-testid="dingtalk-board-group-search"
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="搜索表格字段"
+              className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none"
+            />
+          </label>
+          <div className="mt-1 max-h-72 overflow-y-auto overscroll-contain">
+            {visibleFields.map(field => (
+              <button
+                key={field.id}
+                type="button"
+                data-testid={`dingtalk-board-group-option-${field.id}`}
+                onClick={() => {
+                  onChange(field.id)
+                  setOpen(false)
+                  setQuery('')
+                }}
+                className={cn(
+                  'flex h-9 w-full items-center rounded-lg px-2.5 text-left text-sm hover:bg-muted',
+                  field.id === value && 'bg-muted font-medium'
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate">{field.name}</span>
+                <span className="ml-2 shrink-0 text-xs text-text-muted">{field.type}</span>
+                {field.id === value ? <Check className="ml-2 h-3.5 w-3.5" /> : null}
+              </button>
+            ))}
+            {visibleFields.length === 0 ? (
+              <p className="px-3 py-6 text-center text-xs text-text-muted">没有匹配字段</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 interface LocatedCloudProject extends CloudProject {
   location: ProjectSpaceLocation
@@ -92,6 +198,7 @@ interface CloudTaskRunRequest {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
 }
 
 interface CloudTodoWorkspaceProps {
@@ -129,12 +236,19 @@ const boardCollisionDetection: CollisionDetection = args => {
   return cardCollision ? [cardCollision] : collisions.slice(0, 1)
 }
 
-function TodoCardContent({ item }: { item: CloudLoopItem }) {
+function TodoCardContent({ item, dingtalk = false }: { item: CloudLoopItem; dingtalk?: boolean }) {
   const tags = item.tags ?? []
   return (
     <>
-      <span className="font-mono text-xs text-text-muted">{item.id}</span>
-      <span className="mt-1 block text-base font-medium leading-5">{item.title}</span>
+      {!dingtalk && <span className="font-mono text-xs text-text-muted">{item.id}</span>}
+      <span className={cn('block text-base font-medium leading-5', !dingtalk && 'mt-1')}>
+        {item.title}
+      </span>
+      {dingtalk && item.description ? (
+        <span className="mt-1.5 line-clamp-2 block text-xs leading-5 text-text-muted">
+          {item.description}
+        </span>
+      ) : null}
       <span className="mt-2.5 flex items-center gap-1">
         <span
           className={cn(
@@ -153,8 +267,18 @@ function TodoCardContent({ item }: { item: CloudLoopItem }) {
           </span>
         ))}
         {tags.length > 3 && <span className="text-xs text-text-muted">+{tags.length - 3}</span>}
-        <span className="ml-auto text-xs text-text-muted">{item.updated_at.slice(5, 10)}</span>
+        <span className="ml-auto text-xs text-text-muted">
+          {(item.due_at ?? item.updated_at).slice(5, 10)}
+        </span>
       </span>
+      {dingtalk && item.assignee_name ? (
+        <span className="mt-2 flex items-center gap-1.5 text-xs text-text-secondary">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted font-medium">
+            {item.assignee_name.slice(0, 1)}
+          </span>
+          {item.assignee_name}
+        </span>
+      ) : null}
     </>
   )
 }
@@ -165,12 +289,16 @@ function DraggableTodoCard({
   onClick,
   onAddChild,
   onOpenChildren,
+  dingtalk = false,
+  dragDisabled = false,
 }: {
   item: CloudLoopItem
   childCount: number
   onClick: () => void
   onAddChild: () => void
   onOpenChildren: () => void
+  dingtalk?: boolean
+  dragDisabled?: boolean
 }) {
   const {
     attributes,
@@ -180,7 +308,7 @@ function DraggableTodoCard({
     isDragging,
   } = useDraggable({
     id: item.id,
-    disabled: item.can_edit === false,
+    disabled: item.can_edit === false || dragDisabled,
   })
   const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
   return (
@@ -206,7 +334,7 @@ function DraggableTodoCard({
         {...listeners}
         {...attributes}
       >
-        <TodoCardContent item={item} />
+        <TodoCardContent item={item} dingtalk={dingtalk} />
       </button>
       <div className="mx-3 mt-2.5 flex items-center border-t border-border py-2">
         {childCount > 0 ? (
@@ -655,27 +783,33 @@ function ProjectDialog({
 
 function StartTaskDialog({
   item,
+  projectName,
   projects,
   onClose,
   onStart,
 }: {
-  item: CloudLoopItem
+  item?: CloudLoopItem
+  projectName?: string
   projects: ProjectWithTasks[]
   onClose: () => void
   onStart: (project: ProjectWithTasks, message: string) => Promise<void>
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? 0)
-  const [message, setMessage] = useState(item.description || item.title)
+  const [message, setMessage] = useState(
+    item?.description || item?.title || `帮我查看并管理“${projectName ?? ''}”中的事项`
+  )
   const [starting, setStarting] = useState(false)
   const selected = projects.find(project => project.id === projectId)
 
   return (
-    <Modal title="开启本地任务" onClose={onClose}>
+    <Modal title={item ? '开启本地任务' : '与 AI 管理项目'} onClose={onClose}>
       <div className="space-y-4 p-5">
         <div className="flex items-center gap-2.5 rounded-xl border border-border bg-muted px-3 py-2.5">
-          <span className="shrink-0 font-mono text-xs text-text-muted">{item.id}</span>
+          {item ? (
+            <span className="shrink-0 font-mono text-xs text-text-muted">{item.id}</span>
+          ) : null}
           <span className="min-w-0 truncate text-sm font-medium text-text-primary">
-            {item.title}
+            {item?.title ?? projectName}
           </span>
         </div>
         <label className="block text-xs font-medium text-text-secondary">
@@ -702,7 +836,7 @@ function StartTaskDialog({
           />
         </label>
         <p className="text-xs text-text-muted">
-          新任务会获得当前项目空间上下文，可读取共享目录、任务和历史交付，但不会自动上传本地会话。
+          AI 会获得当前项目上下文；钉钉多维表格项目会自动使用 dws 读取和修改实时数据。
         </p>
       </div>
       <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3.5">
@@ -778,6 +912,13 @@ export function CloudTodoWorkspace({
   const [createTodoStatus, setCreateTodoStatus] = useState<CloudLoopItem['status']>('inbox')
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [startItem, setStartItem] = useState<CloudLoopItem | null>(null)
+  const [projectAssistantOpen, setProjectAssistantOpen] = useState(true)
+  const [projectAssistantBusy, setProjectAssistantBusy] = useState(false)
+  const [projectAssistantError, setProjectAssistantError] = useState<string | null>(null)
+  const [aitableFields, setAitableFields] = useState<AITableField[]>([])
+  const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
+  const [aitableGroupFilter, setAitableGroupFilter] = useState('')
+  const [aitableBoardQuery, setAitableBoardQuery] = useState('')
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
   const boardSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
@@ -844,21 +985,26 @@ export function CloudTodoWorkspace({
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
-  const usesCustomStatusLanes =
-    isAITableProject && selectedProject?.provider_config.status_mode === 'custom'
-  const customStatuses = Array.from(
+  const selectedGroupField = aitableFields.find(field => field.id === aitableGroupFieldId)
+  const configuredGroupValues = Array.isArray(selectedGroupField?.config?.options)
+    ? selectedGroupField.config.options.flatMap(option => aitableCellLabels(option))
+    : []
+  const aitableGroupValues = Array.from(
     new Set([
-      ...(selectedProject?.provider_config.custom_statuses ?? []),
-      ...items.map(item => item.source_status ?? '').filter(Boolean),
-      ...(items.some(item => !(item.source_status ?? '').trim()) ? [''] : []),
+      ...configuredGroupValues,
+      ...items.flatMap(item => aitableCellLabels(item.source_cells?.[aitableGroupFieldId])),
+      ...(items.some(item => !aitableCellLabels(item.source_cells?.[aitableGroupFieldId]).length)
+        ? ['未设置']
+        : []),
     ])
   )
-  const boardColumns = usesCustomStatusLanes
-    ? customStatuses.map((sourceStatus, index) => ({
-        key: sourceStatus || '__unset__',
-        label: sourceStatus || '未设置',
+  const boardColumns = isAITableProject
+    ? aitableGroupValues.map((groupValue, index) => ({
+        key: `field-${aitableGroupFieldId}-${groupValue}`,
+        label: groupValue,
         status: 'inbox' as CloudLoopItem['status'],
-        sourceStatus,
+        sourceStatus: null,
+        groupValue,
         dotClass: ['bg-zinc-400', 'bg-indigo-500', 'bg-amber-500', 'bg-violet-500'][index % 4],
       }))
     : columns.map(column => ({
@@ -866,9 +1012,41 @@ export function CloudTodoWorkspace({
         label: column.label,
         status: column.status,
         sourceStatus: null,
+        groupValue: null,
         dotClass: columnDotClasses[column.status],
       }))
   const aitableApi = isAITableProject ? services.aitableApi : undefined
+
+  useEffect(() => {
+    if (!isAITableProject || !selectedProject || !aitableApi) return
+    let active = true
+    void aitableApi
+      .describe(selectedProject.id)
+      .then(description => {
+        if (!active) return
+        setAitableFields(description.fields)
+        const mapping = selectedProject.provider_config.board_mapping
+        const mappedStatus =
+          typeof mapping === 'object' && mapping !== null
+            ? (mapping as Record<string, unknown>).status_field_id
+            : null
+        const defaultField =
+          description.fields.find(field => field.id === mappedStatus) ??
+          description.fields.find(field => /select|member|checkbox/i.test(field.type)) ??
+          description.fields[0]
+        setAitableGroupFieldId(current =>
+          description.fields.some(field => field.id === current)
+            ? current
+            : (defaultField?.id ?? '')
+        )
+      })
+      .catch(cause => {
+        if (active) setBoardError(cause instanceof Error ? cause.message : '读取钉钉字段失败')
+      })
+    return () => {
+      active = false
+    }
+  }, [aitableApi, isAITableProject, selectedProject])
 
   useEffect(() => {
     if (!services.aitableApi) return
@@ -892,7 +1070,7 @@ export function CloudTodoWorkspace({
       active = false
     }
   }, [projectSpaceApis.local, projects, services.aitableApi])
-  const canCreateBoardTask = selectedProject !== null && !usesCustomStatusLanes
+  const canCreateBoardTask = selectedProject !== null
   // Only render board items that belong to the selected project. On a project
   // switch this flips to the skeleton in the same render, before the fetch.
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
@@ -927,6 +1105,7 @@ export function CloudTodoWorkspace({
 
   function selectProject(projectId: string | null) {
     setSelectedProjectId(projectId)
+    setProjectView('board')
     setBoardParentId(null)
     setTagFilter(null)
     setProjectSearchOpen(false)
@@ -1066,6 +1245,7 @@ export function CloudTodoWorkspace({
 
   async function startTask(project: ProjectWithTasks, item: CloudLoopItem, message: string) {
     if (!onRunTodo) return
+    const cloudProject = projects.find(candidate => candidate.id === item.cloud_project_id)
     const address = await onRunTodo({
       project,
       message,
@@ -1073,6 +1253,7 @@ export function CloudTodoWorkspace({
       attachments: [] as Attachment[],
       collaborationMode: 'default',
       cloudProjectId: item.cloud_project_id,
+      additionalContext: cloudProject ? dingtalkAITableRuntimeContext(cloudProject) : undefined,
     })
     if (!address) return
     const itemApi = apiForProjectId(item.cloud_project_id)
@@ -1090,37 +1271,35 @@ export function CloudTodoWorkspace({
     await onOpenRuntimeTask?.(address)
   }
 
+  async function startProjectAssistant(project: ProjectWithTasks, message: string) {
+    if (!onRunTodo || !selectedProject) return
+    setProjectAssistantBusy(true)
+    setProjectAssistantError(null)
+    try {
+      const address = await onRunTodo({
+        project,
+        message,
+        goal: selectedProject.name,
+        attachments: [] as Attachment[],
+        collaborationMode: 'default',
+        cloudProjectId: selectedProject.id,
+        additionalContext: dingtalkAITableRuntimeContext(selectedProject),
+      })
+      if (!address) return
+      await onOpenRuntimeTask?.(address)
+    } catch (cause) {
+      setProjectAssistantError(cause instanceof Error ? cause.message : '启动 AI 会话失败')
+    } finally {
+      setProjectAssistantBusy(false)
+    }
+  }
+
   async function moveItem(
     itemId: string,
     status: CloudLoopItem['status'],
-    beforeItemId: string | null = null,
-    sourceStatus: string | null = null
+    beforeItemId: string | null = null
   ) {
     const item = items.find(candidate => candidate.id === itemId)
-    if (usesCustomStatusLanes && item && sourceStatus) {
-      if (item.can_edit === false || item.source_status === sourceStatus) return
-      const previousItems = items
-      setItems(current =>
-        current.map(candidate =>
-          candidate.id === item.id ? { ...candidate, source_status: sourceStatus } : candidate
-        )
-      )
-      try {
-        const itemApi = apiForProjectId(item.cloud_project_id)
-        if (!itemApi) throw new Error('项目空间当前不可用')
-        const updated = await itemApi.updateLoopItem(item.id, {
-          version: item.version,
-          status: sourceStatus as CloudLoopItem['status'],
-        })
-        setItems(current =>
-          current.map(candidate => (candidate.id === updated.id ? updated : candidate))
-        )
-      } catch (cause) {
-        setItems(previousItems)
-        setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
-      }
-      return
-    }
     const reordered = reorderLaneItems(items, itemId, status, beforeItemId)
     if (!item || item.can_edit === false || !reordered) return
     const previousItems = items
@@ -1157,19 +1336,13 @@ export function CloudTodoWorkspace({
     if (beforeCardId) {
       if (beforeCardId === activeId) return
       const target = items.find(candidate => candidate.id === beforeCardId)
-      if (target)
-        void moveItem(
-          activeId,
-          target.status,
-          beforeCardId,
-          usesCustomStatusLanes ? (target.source_status ?? null) : null
-        )
+      if (target) void moveItem(activeId, target.status, beforeCardId)
       return
     }
     const status = boardStatusFromDropId(event.over?.id)
     if (status) {
       const column = boardColumns.find(candidate => candidate.key === status)
-      if (column) void moveItem(activeId, column.status, null, column.sourceStatus)
+      if (column) void moveItem(activeId, column.status)
     }
   }
 
@@ -1462,7 +1635,7 @@ export function CloudTodoWorkspace({
                         : 'text-text-secondary hover:text-text-primary'
                     )}
                   >
-                    事项
+                    看板
                   </button>
                   {isAITableProject && aitableApi ? (
                     <button
@@ -1476,7 +1649,7 @@ export function CloudTodoWorkspace({
                           : 'text-text-secondary hover:text-text-primary'
                       )}
                     >
-                      表格
+                      数据视图
                     </button>
                   ) : null}
                   {selectedProject.access_role !== 'RestrictedAnalyst' && (
@@ -1510,6 +1683,16 @@ export function CloudTodoWorkspace({
                   )}
                 </nav>
                 <span className="flex-1" />
+                {isAITableProject && onRunTodo ? (
+                  <button
+                    type="button"
+                    data-testid="cloud-project-ask-ai"
+                    onClick={() => setProjectAssistantOpen(true)}
+                    className="relative z-10 ml-2 flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                  >
+                    {projectAssistantOpen ? '收起 AI' : '与 AI 沟通'}
+                  </button>
+                ) : null}
                 {projectView === 'board' && (
                   <>
                     <button
@@ -1597,6 +1780,49 @@ export function CloudTodoWorkspace({
                 />
               ) : (
                 <div className="flex min-h-0 flex-1 flex-col pb-6 pt-4">
+                  {isAITableProject ? (
+                    <div className="flex shrink-0 items-center gap-2 px-6 pb-3">
+                      <AITableGroupFieldPicker
+                        fields={aitableFields}
+                        value={aitableGroupFieldId}
+                        onChange={fieldId => {
+                          setAitableGroupFieldId(fieldId)
+                          setAitableGroupFilter('')
+                        }}
+                      />
+                      <span className="relative inline-flex h-8 items-center rounded-lg border border-border bg-background px-3 text-xs text-text-secondary">
+                        {aitableGroupFilter || `全部${selectedGroupField?.name ?? '记录'}`}
+                        <ChevronDown className="ml-2 h-3 w-3" />
+                        <select
+                          data-testid="dingtalk-board-assignee-filter"
+                          value={aitableGroupFilter}
+                          onChange={event => setAitableGroupFilter(event.target.value)}
+                          className="absolute inset-0 cursor-pointer opacity-0"
+                          aria-label="分组值筛选"
+                        >
+                          <option value="">全部</option>
+                          {aitableGroupValues.map(name => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                      <label className="flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+                        <Search className="h-3.5 w-3.5" />
+                        <input
+                          data-testid="dingtalk-board-search"
+                          value={aitableBoardQuery}
+                          onChange={event => setAitableBoardQuery(event.target.value)}
+                          placeholder="搜索记录"
+                          className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+                        />
+                      </label>
+                      <span className="ml-auto text-xs text-text-muted">
+                        数据由钉钉托管 · AI 可直接管理
+                      </span>
+                    </div>
+                  ) : null}
                   <nav
                     data-testid="cloud-todo-board-breadcrumb"
                     aria-label="任务层级"
@@ -1638,8 +1864,12 @@ export function CloudTodoWorkspace({
                       </>
                     ) : (
                       <div className="flex items-baseline gap-3 px-2 pb-3.5 pt-1.5">
-                        <h1 className="text-heading-sm font-semibold">顶层任务</h1>
-                        <span className="text-xs text-text-muted">{boardLayerCount} 个任务</span>
+                        <h1 className="text-heading-sm font-semibold">
+                          {isAITableProject ? '父任务' : '顶层任务'}
+                        </h1>
+                        <span className="text-xs text-text-muted">
+                          {boardLayerCount} {isAITableProject ? '条记录' : '个任务'}
+                        </span>
                       </div>
                     )}
                   </nav>
@@ -1666,10 +1896,20 @@ export function CloudTodoWorkspace({
                             const columnItems = items.filter(
                               item =>
                                 item.parent_id === boardParentId &&
-                                (column.sourceStatus !== null
-                                  ? (item.source_status ?? '') === column.sourceStatus
-                                  : item.status === column.status) &&
-                                (!tagFilter || (item.tags ?? []).includes(tagFilter))
+                                (!column.groupValue ||
+                                  (column.groupValue === '未设置'
+                                    ? !aitableCellLabels(item.source_cells?.[aitableGroupFieldId])
+                                        .length
+                                    : aitableCellLabels(
+                                        item.source_cells?.[aitableGroupFieldId]
+                                      ).includes(column.groupValue))) &&
+                                (isAITableProject || item.status === column.status) &&
+                                (!tagFilter || (item.tags ?? []).includes(tagFilter)) &&
+                                (!aitableGroupFilter || column.groupValue === aitableGroupFilter) &&
+                                (!aitableBoardQuery.trim() ||
+                                  `${item.title} ${item.description ?? ''}`
+                                    .toLowerCase()
+                                    .includes(aitableBoardQuery.trim().toLowerCase()))
                             )
                             return (
                               <section
@@ -1687,7 +1927,7 @@ export function CloudTodoWorkspace({
                                       {columnItems.length}
                                     </span>
                                   </span>
-                                  {canCreateBoardTask && (
+                                  {canCreateBoardTask && !isAITableProject && (
                                     <button
                                       type="button"
                                       data-testid={`cloud-todo-column-add-${column.key}`}
@@ -1712,6 +1952,8 @@ export function CloudTodoWorkspace({
                                       }}
                                       onAddChild={() => openTodoCreation(item)}
                                       onOpenChildren={() => setBoardParentId(item.id)}
+                                      dingtalk={isAITableProject}
+                                      dragDisabled={isAITableProject}
                                     />
                                   ))}
                                   {columnItems.length === 0 && columnEmptyHints[column.status] && (
@@ -1720,7 +1962,7 @@ export function CloudTodoWorkspace({
                                     </div>
                                   )}
                                 </TodoColumnDropzone>
-                                {canCreateBoardTask && (
+                                {canCreateBoardTask && !isAITableProject && (
                                   <div className="shrink-0 px-2 pb-2">
                                     <button
                                       type="button"
@@ -1743,6 +1985,7 @@ export function CloudTodoWorkspace({
                             <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
                               <TodoCardContent
                                 item={items.find(item => item.id === activeDragItemId)!}
+                                dingtalk={isAITableProject}
                               />
                             </div>
                           ) : null}
@@ -1755,6 +1998,15 @@ export function CloudTodoWorkspace({
             </>
           )}
         </main>
+        {selectedProject && isAITableProject && projectAssistantOpen && onRunTodo ? (
+          <DingTalkProjectAssistant
+            projects={localProjects}
+            busy={projectAssistantBusy}
+            error={projectAssistantError}
+            onClose={() => setProjectAssistantOpen(false)}
+            onSubmit={startProjectAssistant}
+          />
+        ) : null}
       </div>
 
       {globalSearchOpen && (

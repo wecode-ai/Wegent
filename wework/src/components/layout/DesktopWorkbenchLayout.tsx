@@ -765,6 +765,7 @@ export function DesktopWorkbenchLayout() {
                   collaborationMode,
                   deliveryId,
                   cloudProjectId,
+                  additionalContext,
                 }) =>
                   onCreateProjectRuntimeTask(message, {
                     project,
@@ -773,6 +774,7 @@ export function DesktopWorkbenchLayout() {
                     collaborationMode,
                     deliveryId,
                     cloudProjectId,
+                    additionalContext,
                   })
                 }
                 onOpenRuntimeTask={async address => {

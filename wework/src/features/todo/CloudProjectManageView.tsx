@@ -1,17 +1,6 @@
 import { useEffect, useState } from 'react'
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  GitBranch,
-  LockKeyhole,
-  Pencil,
-  Search,
-  Tag,
-  Trash2,
-  X,
-} from 'lucide-react'
-import type { AITableApi, AITableField } from '@/api/aitable'
+import { Check, GitBranch, LockKeyhole, Pencil, Search, Tag, Trash2, X } from 'lucide-react'
+import type { AITableApi } from '@/api/aitable'
 import type { DwsApi, DwsAuthStatus } from '@/api/dws'
 import type {
   CloudLoopItem,
@@ -40,16 +29,6 @@ function configText(project: CloudProject, key: string): string {
   const value = (project.provider_config as Record<string, unknown>)[key]
   return typeof value === 'string' ? value : ''
 }
-
-const AITABLE_BOARD_FIELDS = [
-  ['title_field_id', '标题'],
-  ['description_field_id', '描述'],
-  ['status_field_id', '状态'],
-  ['parent_field_id', '父任务'],
-  ['priority_field_id', '优先级'],
-  ['assignee_field_id', '负责人'],
-  ['due_field_id', '截止时间'],
-] as const
 
 const DWS_AUTH_POLL_INTERVAL_MS = 750
 const DWS_AUTH_POLL_ATTEMPTS = 160
@@ -105,59 +84,9 @@ export function CloudProjectManageView({
   const isAITableProvider = project.task_provider === 'dingtalk_aitable'
   const [aitableUrl, setAITableUrl] = useState(() => configText(project, 'source_url'))
   const [dwsStatus, setDwsStatus] = useState<DwsAuthStatus | null>(null)
-  const [aitableFields, setAitableFields] = useState<AITableField[]>([])
-  const [aitableMapping, setAitableMapping] = useState<Record<string, string>>(() => {
-    const mapping = project.provider_config.board_mapping
-    return typeof mapping === 'object' && mapping !== null
-      ? Object.fromEntries(
-          Object.entries(mapping).filter((entry): entry is [string, string] =>
-            Boolean(entry[0] && typeof entry[1] === 'string')
-          )
-        )
-      : {}
-  })
-  const [statusMode, setStatusMode] = useState<'mapped' | 'custom'>(
-    project.provider_config.status_mode === 'custom' ? 'custom' : 'mapped'
-  )
-  const [statusMapping, setStatusMapping] = useState<Record<string, CloudLoopItem['status']>>(
-    project.provider_config.status_mapping ?? {}
-  )
-  const [customStatusOrder, setCustomStatusOrder] = useState<string[]>(
-    project.provider_config.custom_statuses ?? []
-  )
   const [aitableBusy, setAitableBusy] = useState(false)
   const [aitableSaved, setAITableSaved] = useState(false)
   const aitableLink = parseDingTalkAITableLink(aitableUrl)
-  const statusField = aitableFields.find(field => field.id === aitableMapping.status_field_id)
-  const statusOptions = Array.from(
-    new Set([
-      ...(Array.isArray(statusField?.config?.options)
-        ? statusField.config.options
-            .map(option =>
-              typeof option === 'object' && option !== null && 'name' in option
-                ? String(option.name)
-                : ''
-            )
-            .filter(Boolean)
-        : []),
-      ...items.map(item => item.source_status ?? '').filter(Boolean),
-    ])
-  )
-  const orderedStatuses = [
-    ...customStatusOrder.filter(status => statusOptions.includes(status)),
-    ...statusOptions.filter(status => !customStatusOrder.includes(status)),
-  ]
-
-  function moveCustomStatus(status: string, offset: -1 | 1) {
-    const current = orderedStatuses
-    const index = current.indexOf(status)
-    const target = index + offset
-    if (index < 0 || target < 0 || target >= current.length) return
-    const next = [...current]
-    ;[next[index], next[target]] = [next[target], next[index]]
-    setCustomStatusOrder(next)
-    setAITableSaved(false)
-  }
 
   useEffect(() => {
     let active = true
@@ -179,8 +108,7 @@ export function CloudProjectManageView({
     let active = true
     void aitableApi
       .configureProject(project)
-      .then(() => aitableApi.describe(project.id))
-      .then(value => active && setAitableFields(value.fields))
+      .then(() => undefined)
       .catch(cause => active && setError(cause instanceof Error ? cause.message : '加载字段失败'))
     return () => {
       active = false
@@ -270,17 +198,6 @@ export function CloudProjectManageView({
           table_id: aitableLink!.tableId,
           source_url: aitableLink!.url,
           ...(aitableLink!.viewId ? { view_id: aitableLink!.viewId } : {}),
-          board_mapping: Object.fromEntries(
-            Object.entries(aitableMapping).filter(([, value]) => value)
-          ),
-          status_mode: statusMode,
-          status_mapping:
-            statusMode === 'mapped'
-              ? Object.fromEntries(
-                  statusOptions.map(option => [option, statusMapping[option] ?? 'inbox'])
-                )
-              : {},
-          custom_statuses: statusMode === 'custom' ? orderedStatuses : [],
         },
       })
       setProjectVersion(updated.version)
@@ -703,7 +620,7 @@ export function CloudProjectManageView({
           <section className="mt-10" data-testid="aitable-provider-settings">
             <h2 className="text-heading-md font-semibold">钉钉多维表格</h2>
             <p className="mt-1 text-sm text-text-muted">
-              配置数据源与看板字段映射。未映射的字段只会显示在表格视图中。
+              配置钉钉数据源。看板与数据视图会直接读取表格字段，无需额外映射。
             </p>
             <div className="mt-4 space-y-4 rounded-xl border border-border bg-background p-4 shadow-sm">
               <label className="block text-sm font-medium">
@@ -761,130 +678,6 @@ export function CloudProjectManageView({
                       : '连接钉钉'}
                 </button>
               </div>
-              <div>
-                <h3 className="text-sm font-medium">看板字段映射</h3>
-                <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                  {AITABLE_BOARD_FIELDS.map(([key, label]) => (
-                    <label key={key} className="block text-xs text-text-muted">
-                      {label}
-                      <select
-                        data-testid={`aitable-mapping-${key}`}
-                        value={aitableMapping[key] ?? ''}
-                        onChange={event => {
-                          setAitableMapping(current => ({ ...current, [key]: event.target.value }))
-                          setAITableSaved(false)
-                        }}
-                        className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-text-primary outline-none focus:border-focus"
-                      >
-                        <option value="">不映射</option>
-                        {aitableFields.map(field => (
-                          <option key={field.id} value={field.id}>
-                            {field.name} · {field.type}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-              </div>
-              {aitableMapping.status_field_id && (
-                <div>
-                  <h3 className="text-sm font-medium">状态泳道模式</h3>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    {(
-                      [
-                        ['mapped', '映射', '归并到 Wework 的五种标准状态'],
-                        ['custom', '自定义多泳道', '按钉钉状态选项原样生成泳道'],
-                      ] as const
-                    ).map(([value, label, detail]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        data-testid={`aitable-status-mode-${value}`}
-                        aria-pressed={statusMode === value}
-                        onClick={() => {
-                          setStatusMode(value)
-                          setAITableSaved(false)
-                        }}
-                        className={cn(
-                          'rounded-lg border px-3 py-2 text-left',
-                          statusMode === value
-                            ? 'border-text-primary bg-muted/70'
-                            : 'border-border hover:bg-muted/40'
-                        )}
-                      >
-                        <span className="block text-sm font-medium">{label}</span>
-                        <span className="mt-0.5 block text-xs text-text-muted">{detail}</span>
-                      </button>
-                    ))}
-                  </div>
-                  {statusMode === 'mapped' && statusOptions.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {statusOptions.map(option => (
-                        <label
-                          key={option}
-                          className="grid grid-cols-[minmax(0,1fr)_160px] items-center gap-3 text-sm"
-                        >
-                          <span className="truncate" title={option}>
-                            {option}
-                          </span>
-                          <select
-                            data-testid={`aitable-status-map-${option}`}
-                            value={statusMapping[option] ?? 'inbox'}
-                            onChange={event => {
-                              setStatusMapping(current => ({
-                                ...current,
-                                [option]: event.target.value as CloudLoopItem['status'],
-                              }))
-                              setAITableSaved(false)
-                            }}
-                            className="h-8 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-focus"
-                          >
-                            <option value="inbox">收集箱</option>
-                            <option value="pending">待开始</option>
-                            <option value="in_progress">进行中</option>
-                            <option value="in_review">待确认</option>
-                            <option value="completed">已完成</option>
-                          </select>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {statusMode === 'custom' && orderedStatuses.length > 0 && (
-                    <div className="mt-3 overflow-hidden rounded-lg border border-border">
-                      {orderedStatuses.map((status, index) => (
-                        <div
-                          key={status}
-                          data-testid={`aitable-custom-status-${status}`}
-                          className="flex h-9 items-center gap-2 border-t border-border px-3 first:border-t-0"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-sm">{status}</span>
-                          <button
-                            type="button"
-                            data-testid={`aitable-custom-status-up-${status}`}
-                            disabled={index === 0}
-                            onClick={() => moveCustomStatus(status, -1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-30"
-                            aria-label={`上移${status}`}
-                          >
-                            <ArrowUp className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            data-testid={`aitable-custom-status-down-${status}`}
-                            disabled={index === orderedStatuses.length - 1}
-                            onClick={() => moveCustomStatus(status, 1)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-30"
-                            aria-label={`下移${status}`}
-                          >
-                            <ArrowDown className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
               <div className="flex items-center justify-end gap-3">
                 {aitableSaved && <span className="text-xs text-emerald-600">已保存</span>}
                 <button
@@ -894,7 +687,7 @@ export function CloudProjectManageView({
                   onClick={() => void saveAITableConfig()}
                   className="h-9 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-80 disabled:opacity-40"
                 >
-                  {aitableBusy ? '保存中…' : '保存配置'}
+                  {aitableBusy ? '保存中…' : '保存连接'}
                 </button>
               </div>
             </div>

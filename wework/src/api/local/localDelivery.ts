@@ -226,11 +226,15 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: null,
+    assignee_name:
+      typeof record.metadata.assignee_label === 'string'
+        ? record.metadata.assignee_label || null
+        : null,
     title: record.title ?? '',
     description: record.description,
     status: (record.status ?? 'inbox') as CloudLoopItem['status'],
     priority: (record.priority ?? 'none') as CloudLoopItem['priority'],
-    due_at: null,
+    due_at: typeof record.metadata.due_at === 'string' ? record.metadata.due_at || null : null,
     tags: stringList(record.metadata.tags),
     sort_order: record.sort_order,
     current_delivery_id: record.current_delivery_id,
@@ -240,6 +244,12 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     completed_at: record.completed_at,
     source_status:
       typeof record.metadata.source_status === 'string' ? record.metadata.source_status : null,
+    source_record_id:
+      typeof record.metadata.record_id === 'string' ? record.metadata.record_id : null,
+    source_cells:
+      typeof record.metadata.source_cells === 'object' && record.metadata.source_cells !== null
+        ? (record.metadata.source_cells as Record<string, unknown>)
+        : {},
   }
 }
 

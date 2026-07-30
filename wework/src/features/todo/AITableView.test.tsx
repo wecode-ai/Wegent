@@ -68,23 +68,126 @@ describe('AITableView', () => {
 
     expect(await screen.findByText('需求名称')).toBeInTheDocument()
     expect(screen.getByText('登录优化')).toBeInTheDocument()
+    expect(screen.getByTestId('aitable-grid')).toHaveClass('h-full')
   })
 
-  it('keeps formula and unknown field types read-only', async () => {
+  it('hides DingTalk view tabs and renders a single table', async () => {
+    const api = apiWith([field({ id: 'fld_title', name: '需求名称' })], [])
+    vi.mocked(api.describe).mockResolvedValue({
+      base: {},
+      tables: [],
+      active_table: {},
+      fields: [field({ id: 'fld_title', name: '需求名称' })],
+      views: [{ viewId: 'view-grid', viewName: '全部记录', viewType: 'grid' }],
+    })
+    render(<AITableView api={api} project={project} />)
+
+    expect(await screen.findByText('需求名称')).toBeInTheDocument()
+    expect(screen.queryByText('全部记录')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('aitable-create-kanban-view')).not.toBeInTheDocument()
+  })
+
+  it('applies the selected DingTalk View query while always rendering a table', async () => {
+    const api = apiWith(
+      [
+        field({ id: 'fld_title', name: '需求名称' }),
+        field({ id: 'fld_owner', name: '负责人', type: 'user' }),
+        field({ id: 'fld_hidden', name: '内部备注' }),
+      ],
+      []
+    )
+    vi.mocked(api.describe).mockResolvedValue({
+      base: {},
+      tables: [],
+      active_table: {},
+      fields: [
+        field({ id: 'fld_title', name: '需求名称' }),
+        field({ id: 'fld_owner', name: '负责人', type: 'user' }),
+        field({ id: 'fld_hidden', name: '内部备注' }),
+      ],
+      views: [
+        { viewId: 'view-grid', viewName: '全部记录', viewType: 'Grid' },
+        {
+          viewId: 'view-kanban',
+          viewName: '负责人看板',
+          viewType: 'Kanban',
+          columns: ['fld_title', 'fld_owner', 'fld_hidden'],
+          custom: {
+            groupBase: { baseFieldId: 'fld_owner' },
+            hiddenFields: { fld_hidden: true },
+          },
+        },
+      ],
+    })
+    vi.mocked(api.listRecords).mockResolvedValue({
+      items: [
+        record('rec1', {
+          fld_title: '修复登录',
+          fld_owner: [{ name: '陈波' }],
+          fld_hidden: '不应显示',
+        }),
+      ],
+      cursor: null,
+      has_more: false,
+    })
+
+    render(
+      <AITableView
+        api={api}
+        project={{
+          ...project,
+          provider_config: { ...project.provider_config, view_id: 'view-kanban' },
+        }}
+      />
+    )
+
+    expect(await screen.findByText('修复登录')).toBeInTheDocument()
+    expect(screen.queryByTestId('aitable-kanban')).not.toBeInTheDocument()
+    expect(screen.getByText('陈波')).toBeInTheDocument()
+    expect(screen.getByText('修复登录')).toBeInTheDocument()
+    expect(screen.queryByText('内部备注')).not.toBeInTheDocument()
+    expect(screen.queryByText('不应显示')).not.toBeInTheDocument()
+    expect(api.listRecords).toHaveBeenCalledWith('7', {
+      limit: 100,
+      viewId: 'view-kanban',
+    })
+  })
+
+  it('keeps formula, user, and unknown field types read-only', async () => {
     const api = apiWith(
       [
         field({ id: 'fld_formula', name: '公式', type: 'formula' }),
+        field({ id: 'fld_owner', name: '负责人', type: 'user' }),
         field({ id: 'fld_custom', name: '未知类型', type: 'brandNewType' }),
       ],
-      [record('rec1', { fld_formula: '=A1+B1', fld_custom: '原始值' })]
+      [
+        record('rec1', {
+          fld_formula: '=A1+B1',
+          fld_owner: { uid: 'user-1', name: '陈波' },
+          fld_custom: '原始值',
+        }),
+      ]
     )
     render(<AITableView api={api} project={project} />)
 
     await screen.findByText('公式')
     // Read-only cells render as plain spans, never as editable buttons/inputs.
     expect(screen.queryByTestId('aitable-cell-edit-rec1-fld_formula')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('aitable-cell-edit-rec1-fld_owner')).not.toBeInTheDocument()
     expect(screen.queryByTestId('aitable-cell-edit-rec1-fld_custom')).not.toBeInTheDocument()
     expect(screen.getByText('原始值')).toBeInTheDocument()
+  })
+
+  it('normalizes DingTalk millisecond dates for inline editing', async () => {
+    const api = apiWith(
+      [field({ id: 'fld_due', name: '截止日期', type: 'date' })],
+      [record('rec1', { fld_due: Date.UTC(2026, 6, 31) })]
+    )
+    render(<AITableView api={api} project={project} />)
+
+    fireEvent.click(await screen.findByTestId('aitable-cell-edit-rec1-fld_due'))
+
+    expect(screen.getByTestId('aitable-cell-input-rec1-fld_due')).toHaveValue('2026-07-31')
   })
 
   it('commits only the edited cell back to the record', async () => {

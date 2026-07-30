@@ -102,6 +102,7 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
 }
 

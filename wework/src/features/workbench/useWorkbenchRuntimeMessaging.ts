@@ -1176,6 +1176,7 @@ export function useWorkbenchRuntimeMessaging({
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,
+        additionalContext: options.additionalContext,
         onError: options.onError,
         openInMainPane: false,
       })

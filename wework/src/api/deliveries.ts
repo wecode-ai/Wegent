@@ -50,6 +50,7 @@ export interface CloudLoopItem {
   can_view_detail?: boolean
   can_edit?: boolean
   assignee_user_id: number | null
+  assignee_name?: string | null
   title: string
   description: string
   status: 'inbox' | 'pending' | 'in_progress' | 'in_review' | 'completed'
@@ -63,6 +64,8 @@ export interface CloudLoopItem {
   updated_at: string
   completed_at: string | null
   source_status?: string | null
+  source_record_id?: string | null
+  source_cells?: Record<string, unknown>
 }
 
 export interface CloudLoopItemAttachment {

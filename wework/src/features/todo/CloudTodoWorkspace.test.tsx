@@ -162,6 +162,135 @@ function services(): WorkbenchServices {
 describe('CloudTodoWorkspace', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  it('starts a project-level AI conversation with DingTalk dws context', async () => {
+    const workbenchServices = services()
+    const aitableProject = {
+      ...project,
+      task_provider: 'dingtalk_aitable' as const,
+      provider_config: {
+        base_id: 'base-1',
+        table_id: 'table-1',
+        view_id: 'view-1',
+      },
+    }
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [aitableProject],
+    }))
+    const onRunTodo = vi.fn(async () => ({ taskId: 'runtime-1', deviceId: 'device-1' }))
+    const onOpenRuntimeTask = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
+        services={workbenchServices}
+        onRunTodo={onRunTodo}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('dingtalk-project-assistant')).toBeInTheDocument()
+    await userEvent.type(
+      screen.getByTestId('dingtalk-project-assistant-input'),
+      '只看本周未完成的任务'
+    )
+    await userEvent.click(screen.getByTestId('dingtalk-project-assistant-send'))
+
+    await waitFor(() => expect(onRunTodo).toHaveBeenCalledTimes(1))
+    expect(onRunTodo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: expect.objectContaining({ id: 91 }),
+        message: '只看本周未完成的任务',
+        goal: 'Wegent V4',
+        cloudProjectId: 11,
+        additionalContext: expect.objectContaining({
+          dingtalkAITableProject: expect.objectContaining({
+            kind: 'application',
+            value: expect.stringContaining('"base_id": "base-1"'),
+          }),
+        }),
+      })
+    )
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      taskId: 'runtime-1',
+      deviceId: 'device-1',
+    })
+  })
+
+  it('renders DingTalk records by live table fields without exposing provider record ids', async () => {
+    const workbenchServices = services()
+    workbenchServices.aitableApi = {
+      configureProject: vi.fn(async () => undefined),
+      describe: vi.fn(async () => ({
+        base: {},
+        tables: [],
+        active_table: {},
+        fields: [
+          { id: 'field-status', name: '天河状态', type: 'singleSelect', config: null, raw: {} },
+          { id: 'field-owner', name: '负责人', type: 'member', config: {}, raw: {} },
+        ],
+      })),
+    } as WorkbenchServices['aitableApi']
+    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
+      items: [
+        {
+          ...project,
+          task_provider: 'dingtalk_aitable' as const,
+          provider_config: { base_id: 'base-1', table_id: 'table-1' },
+        },
+      ],
+    }))
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [
+        {
+          ...item,
+          id: 'aitable:base-1:record-1',
+          title: '修复发布流程',
+          assignee_name: '陈波',
+          source_cells: { 'field-status': '进行中', 'field-owner': [{ name: '陈波' }] },
+          tags: [],
+        },
+        {
+          ...item,
+          id: 'aitable:base-1:record-2',
+          parent_id: 'aitable:base-1:record-1',
+          title: '补齐测试',
+          assignee_name: '胡春林',
+          source_cells: { 'field-status': '待处理', 'field-owner': [{ name: '胡春林' }] },
+          tags: [],
+        },
+      ],
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    expect(
+      await screen.findByTestId('cloud-todo-column-field-field-status-进行中')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-field-field-status-待处理')).toBeInTheDocument()
+    expect(screen.queryByText('aitable:base-1:record-1')).not.toBeInTheDocument()
+    expect(screen.getByText('修复发布流程')).toBeInTheDocument()
+    expect(screen.queryByText('补齐测试')).not.toBeInTheDocument()
+    expect(screen.getByText('1 个子任务')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('dingtalk-board-group-by'))
+    await userEvent.type(screen.getByTestId('dingtalk-board-group-search'), '负责人')
+    expect(screen.queryByTestId('dingtalk-board-group-option-field-status')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('dingtalk-board-group-option-field-owner'))
+    expect(
+      await screen.findByTestId('cloud-todo-column-field-field-owner-陈波')
+    ).toBeInTheDocument()
+  })
+
   it('keeps projects visible when one project issue provider fails', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => {
@@ -820,7 +949,7 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByText('已保存')).toBeInTheDocument()
   })
 
-  it('updates DingTalk table connection and board mappings from project management', async () => {
+  it('updates the DingTalk connection without exposing board mappings', async () => {
     const workbenchServices = services()
     const aitableProject = {
       ...project,
@@ -880,11 +1009,10 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
-    await userEvent.selectOptions(
-      await screen.findByTestId('aitable-mapping-status_field_id'),
-      'fld-status'
-    )
+    expect(screen.queryByText('看板字段映射')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('aitable-manage-save'))
+
+    expect(screen.queryByTestId('aitable-status-mode-custom')).not.toBeInTheDocument()
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(11, {
@@ -893,13 +1021,6 @@ describe('CloudTodoWorkspace', () => {
           base_id: 'base-1',
           table_id: 'table-1',
           source_url: 'https://alidocs.dingtalk.com/i/nodes/base-1?iframeQuery=sheetId%3Dtable-1',
-          board_mapping: {
-            title_field_id: 'fld-title',
-            status_field_id: 'fld-status',
-          },
-          status_mode: 'mapped',
-          status_mapping: {},
-          custom_statuses: [],
         },
       })
     )

@@ -215,10 +215,11 @@ impl TaskRuntime {
         query: Option<&str>,
         limit: i64,
         cursor: Option<&str>,
+        view_id: Option<&str>,
     ) -> Result<serde_json::Value, TaskRuntimeError> {
         let project = self.aitable_project(project_id)?;
         self.aitable_provider
-            .list_records(&project, query, limit, cursor)
+            .list_records(&project, query, limit, cursor, view_id)
             .await
     }
 
@@ -295,6 +296,18 @@ impl TaskRuntime {
     ) -> Result<(), TaskRuntimeError> {
         let project = self.aitable_project(project_id)?;
         self.aitable_provider.delete_field(&project, field_id).await
+    }
+
+    pub async fn aitable_create_view(
+        &self,
+        project_id: &str,
+        name: &str,
+        view_type: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .create_view(&project, name, view_type)
+            .await
     }
 
     fn aitable_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {

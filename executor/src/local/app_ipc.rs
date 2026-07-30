@@ -757,10 +757,11 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
             let project_id = required_task_string(&params, "project_id")?;
             let query = params.get("query").and_then(Value::as_str);
             let cursor = params.get("cursor").and_then(Value::as_str);
+            let view_id = params.get("view_id").and_then(Value::as_str);
             let limit = params.get("limit").and_then(Value::as_i64).unwrap_or(100);
             serialize_task_value(
                 runtime
-                    .aitable_list_records(project_id, query, limit, cursor)
+                    .aitable_list_records(project_id, query, limit, cursor, view_id)
                     .await
                     .map_err(task_runtime_error)?,
             )
@@ -852,6 +853,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 .await
                 .map_err(task_runtime_error)?;
             Ok(json!({}))
+        }
+        "aitable.create_view" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let name = required_task_string(&params, "name")?;
+            let view_type = required_task_string(&params, "view_type")?;
+            serialize_task_value(
+                runtime
+                    .aitable_create_view(project_id, name, view_type)
+                    .await
+                    .map_err(task_runtime_error)?,
+            )
         }
         "external_todos.list" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;

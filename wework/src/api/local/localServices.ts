@@ -1258,6 +1258,9 @@ function buildLocalRuntimeExecutionRequest(
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+  const requiredSkillNames = input.additionalContext?.dingtalkAITableProject ? ['dws'] : []
+  const deployedSkillNames = Array.from(new Set([...skillNames, ...requiredSkillNames]))
+  const preloadSkills = [...(input.additionalSkills ?? []), ...requiredSkillNames]
   const workspaceProject = input.workspacePath
     ? {
         source: input.workspaceSource,
@@ -1294,9 +1297,9 @@ function buildLocalRuntimeExecutionRequest(
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
     enable_deep_thinking: true,
-    skill_names: skillNames,
-    preload_skills: input.additionalSkills ?? [],
-    user_selected_skills: input.additionalSkills ?? [],
+    skill_names: deployedSkillNames,
+    preload_skills: preloadSkills,
+    user_selected_skills: preloadSkills,
     ...(workspaceProject
       ? {
           workspace: {

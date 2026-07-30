@@ -633,6 +633,12 @@ importers:
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      ag-grid-community:
+        specifier: ^36.0.2
+        version: 36.0.2
+      ag-grid-react:
+        specifier: ^36.0.2
+        version: 36.0.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -4308,8 +4314,23 @@ packages:
     resolution: {integrity: sha512-ynZ4w/nUUv5rrsR8UUGoe1VC9hZj6V5hU9Qw1HlMDJGEJw5S7TfTErWTjMys6M7vr0YWcPqs3qAr4ss0nDfP+A==}
     engines: {node: '>=0.8'}
 
+  ag-charts-types@14.0.2:
+    resolution: {integrity: sha512-F7ZG0g8Y+iKhJi50AfZRwEyUM/TBsNyh2IoXB0JaDN97lnbemIK8GE5kF1eBtXtN4mcC+lPXK9oZUeVXwO9EWA==}
+
+  ag-grid-community@36.0.2:
+    resolution: {integrity: sha512-TINZfuFvMY2nc3JfQHiUWT7dNIxI89ZxS5XkXIPi/rYICoNupRqpaM41KVzGPPfSkM0AwhuzTFxAiF08zEkV1Q==}
+
+  ag-grid-react@36.0.2:
+    resolution: {integrity: sha512-yVPmqdhx1zp06FLyZmwmIxIO57w4ko+qN64MXgPlBMJVL0MNA5hULqAY/+SoB4cd0bBHqz8okuuAbHHpu5QoHQ==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   ag-psd@30.2.0:
     resolution: {integrity: sha512-tSAWfNzLl5brFqKEer7egxASZ1a0LwHnReM/D5VVpvrgdwdsa8OVfCQpysK7tGaOuE2tPEqp3mAuH7aIvPhcig==}
+
+  ag-stack@36.0.2:
+    resolution: {integrity: sha512-YuhQExQw5YsWK0wxrksRyYBAqOU0v08lJH5uxRsKx+49ko5vkDgnJuhX4yF995BBVdLY1LKlXukLEub+olKyuA==}
 
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
@@ -12962,10 +12983,26 @@ snapshots:
 
   adler-32@1.3.1: {}
 
+  ag-charts-types@14.0.2: {}
+
+  ag-grid-community@36.0.2:
+    dependencies:
+      ag-charts-types: 14.0.2
+      ag-stack: 36.0.2
+
+  ag-grid-react@36.0.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
+    dependencies:
+      ag-grid-community: 36.0.2
+      prop-types: 15.8.1
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+
   ag-psd@30.2.0:
     dependencies:
       base64-js: 1.5.1
       pako: 2.1.0
+
+  ag-stack@36.0.2: {}
 
   agent-base@6.0.2:
     dependencies:
