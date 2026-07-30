@@ -63,7 +63,15 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
             0,
         )
     };
-    (result == 0 && value > 0).then_some(value as libc::rlim_t)
+    if result != 0 {
+        eprintln!(
+            "failed to read macOS max open files per process: {}",
+            std::io::Error::last_os_error()
+        );
+        return None;
+    }
+
+    (value > 0).then_some(value as libc::rlim_t)
 }
 
 #[cfg(not(target_os = "macos"))]
