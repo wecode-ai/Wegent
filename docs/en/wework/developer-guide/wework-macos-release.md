@@ -6,13 +6,13 @@ sidebar_position: 27
 
 English | [简体中文](../../zh/developer-guide/wework-macos-release.md)
 
-The Wework macOS app uses the Tauri updater for automatic upgrades. The release flow is handled by `wework/scripts/release-mac-app.sh`, which calculates the release version, builds the Tauri app, signs updater artifacts, handles the DMG, and uploads the release.
+The Wework macOS app uses the Tauri updater for automatic upgrades. Local or standalone releases are handled by `wework/scripts/release-mac-app.sh`, while GitHub Releases are built and published by `.github/workflows/wework-app.yml`.
 
 ## Release Model
 
 - The default build target is `universal-apple-darwin`, producing one installer that supports both Apple Silicon and Intel Macs.
 - The updater manifest includes both `darwin-aarch64` and `darwin-x86_64`; both platform entries can point to the same universal archive.
-- `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. The release script injects them through a temporary Tauri config at build time.
+- `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. Both the local release script and GitHub Actions use `wework/scripts/generate-release-config.mjs` to create a temporary Tauri config that injects release parameters while preserving the complete `bundle.resources` list from the base config. Tauri config overrides replace resource arrays as a whole, so release paths must not maintain a separate incomplete resources list.
 - Updater private keys and publish tokens are read only from environment variables or local files and must not be committed.
 - Codex CLI is not compiled locally. Before building, `wework/scripts/prepare-codex-binary.mjs` downloads the npm tarball pinned by `wework/codex-binaries.lock.json`, verifies its SHA256, and bundles it as a Tauri resource.
 
@@ -94,6 +94,8 @@ The repository includes `.github/workflows/wework-app.yml` for producing macOS D
 ```text
 https://github.com/<owner>/<repo>/releases/latest/download/latest.json
 ```
+
+The macOS CI job does not invoke `release-mac-app.sh`, but both release paths share `wework/scripts/generate-release-config.mjs`. The generator copies the complete `bundle.resources` list from `src-tauri/tauri.conf.json`, ensuring that Codex, hooks, bundled plugins, and hidden marketplace manifests are included in formal release packages. Update the base Tauri config when desktop resources change instead of duplicating the list in the workflow.
 
 The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. A formal run creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used. Preventing tag-push triggers ensures that the tag created while publishing the release cannot start a second build of the same version and overwrite signed artifacts.
 
