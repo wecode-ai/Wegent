@@ -27,7 +27,7 @@ ENV HUSKY=0
 
 # Install workspace dependencies needed by the frontend.
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm install --frozen-lockfile --filter wecode-ai-assistant...
 
 # Copy source code
@@ -46,13 +46,17 @@ ENV HUSKY=0
 # Build Next.js application
 WORKDIR /app/frontend
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm run build
 
 # ========== Stage 2: Build Wework ==========
 FROM node:22-slim AS wework-builder
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
@@ -61,7 +65,7 @@ COPY wework/package.json ./wework/package.json
 ENV HUSKY=0
 
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm install --frozen-lockfile --filter wework...
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -75,7 +79,7 @@ ENV HUSKY=0
 
 WORKDIR /app/wework
 RUN corepack enable \
-    && corepack prepare pnpm@10.34.3 --activate \
+    && corepack prepare pnpm@11.7.0 --activate \
     && pnpm run build
 
 # ========== Stage 3: Build Python Base with Tools ==========

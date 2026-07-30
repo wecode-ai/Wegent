@@ -1,6 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 
 interface TauriConfig {
   bundle: {
@@ -14,6 +16,14 @@ const packagingScripts = [
   'scripts/release-mac-app.sh',
   'scripts/build-minio-windows-release.sh',
 ]
+
+const temporaryDirectories: string[] = []
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 describe('bundled plugin resources', () => {
   test('includes both marketplace manifests in the source tree', () => {
@@ -34,5 +44,53 @@ describe('bundled plugin resources', () => {
     const script = readFileSync(resolve(process.cwd(), scriptPath), 'utf8')
 
     expect(script).toContain(`"${bundledPluginResource}",`)
+  })
+
+  test('preserves bundled plugins in the macOS release config override', () => {
+    const weworkDirectory = process.cwd()
+    const baseConfigPath = resolve(weworkDirectory, 'src-tauri/tauri.conf.json')
+    const outputDirectory = mkdtempSync(resolve(tmpdir(), 'wework-release-config-'))
+    temporaryDirectories.push(outputDirectory)
+    const outputConfigPath = resolve(outputDirectory, 'tauri.release.json')
+
+    execFileSync(
+      process.execPath,
+      [resolve(weworkDirectory, 'scripts/generate-release-config.mjs')],
+      {
+        env: {
+          ...process.env,
+          BASE_CONFIG: baseConfigPath,
+          CONFIG_OVERRIDE: outputConfigPath,
+          VERSION: '1.2.3',
+          UPDATER_ENDPOINT: 'https://updates.example.com/latest.json',
+          UPDATER_PUBKEY: 'test-pubkey',
+          SIGNING_IDENTITY: '',
+          ENABLE_INSECURE_TRANSPORT: 'false',
+        },
+      }
+    )
+
+    const baseConfig = JSON.parse(readFileSync(baseConfigPath, 'utf8')) as {
+      bundle: {
+        resources: string[]
+      }
+    }
+    const releaseConfig = JSON.parse(readFileSync(outputConfigPath, 'utf8')) as {
+      bundle: {
+        resources: string[]
+      }
+    }
+
+    expect(releaseConfig.bundle.resources).toEqual(baseConfig.bundle.resources)
+    expect(releaseConfig.bundle.resources).toContain(bundledPluginResource)
+  })
+
+  test('uses the shared release config generator in GitHub macOS releases', () => {
+    const workflow = readFileSync(
+      resolve(process.cwd(), '../.github/workflows/wework-app.yml'),
+      'utf8'
+    )
+
+    expect(workflow).toContain('node scripts/generate-release-config.mjs')
   })
 })

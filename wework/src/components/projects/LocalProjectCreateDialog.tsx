@@ -63,8 +63,8 @@ function LocalProjectCreateDialogContent({
   onCreate,
 }: Omit<LocalProjectCreateDialogProps, 'open' | 'device'> & { device: DeviceInfo }) {
   const { t } = useTranslation('common')
-  const [name, setName] = useState('')
   const [roots, setRoots] = useState(() => uniqueRoots(initialRoots))
+  const [name, setName] = useState(() => folderName(uniqueRoots(initialRoots)[0] ?? ''))
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)

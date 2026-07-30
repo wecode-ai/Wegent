@@ -18,7 +18,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
 )
 
 from app.db.base import Base
@@ -68,10 +67,6 @@ class BackgroundExecution(Base):
     trigger_reason = Column(
         String(500), nullable=False, default=""
     )  # Human-readable reason
-    scheduled_for = Column(DateTime, nullable=True, index=True)
-    source_surface = Column(String(50), nullable=False, default="wegent")
-    runtime_device_id = Column(String(255), nullable=True, index=True)
-    runtime_task_id = Column(String(255), nullable=True, index=True)
 
     # Resolved prompt (with variables substituted)
     prompt = Column(Text, nullable=False)
@@ -104,11 +99,6 @@ class BackgroundExecution(Base):
         Index("ix_bg_exec_subscription_created", "subscription_id", "created_at"),
         # Index for status filtering
         Index("ix_bg_exec_user_status", "user_id", "status"),
-        UniqueConstraint(
-            "subscription_id",
-            "scheduled_for",
-            name="uq_background_execution_subscription_scheduled_for",
-        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
