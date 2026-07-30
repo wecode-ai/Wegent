@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
-from app.models.resource_library_publication import ResourceLibraryPublication
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -105,13 +105,13 @@ class ResourceLibraryService:
             else list(RESOURCE_TYPE_BY_KIND)
         )
         published_candidates = select(
-            ResourceLibraryPublication.kind_id.label("kind_id"),
-            ResourceLibraryPublication.updated_at.label("sort_time"),
-            ResourceLibraryPublication.install_count.label("install_count"),
+            MarketplaceResource.kind_id.label("kind_id"),
+            MarketplaceResource.updated_at.label("sort_time"),
+            MarketplaceResource.install_count.label("install_count"),
         )
         if resource_type:
             published_candidates = published_candidates.where(
-                ResourceLibraryPublication.resource_type == resource_type
+                MarketplaceResource.resource_type == resource_type
             )
 
         system_kinds = kinds
@@ -1268,17 +1268,17 @@ class ResourceLibraryService:
         )
 
     def _listing_install_count(self, db: Session, source: Kind) -> int:
-        publication = db.get(ResourceLibraryPublication, source.id)
+        publication = db.get(MarketplaceResource, source.id)
         return publication.install_count if publication else 0
 
     def _increment_publication_install_count(self, db: Session, source_id: int) -> None:
         (
-            db.query(ResourceLibraryPublication)
-            .filter(ResourceLibraryPublication.kind_id == source_id)
+            db.query(MarketplaceResource)
+            .filter(MarketplaceResource.kind_id == source_id)
             .update(
                 {
-                    ResourceLibraryPublication.install_count: (
-                        ResourceLibraryPublication.install_count + 1
+                    MarketplaceResource.install_count: (
+                        MarketplaceResource.install_count + 1
                     )
                 },
                 synchronize_session="fetch",
@@ -1286,7 +1286,7 @@ class ResourceLibraryService:
         )
 
     def _sync_publication_index(self, db: Session, source: Kind) -> None:
-        publication = db.get(ResourceLibraryPublication, source.id)
+        publication = db.get(MarketplaceResource, source.id)
         should_index = source.user_id != 0 and self._is_public(source)
         if not should_index:
             if publication:
@@ -1299,7 +1299,7 @@ class ResourceLibraryService:
             publication.updated_at = now
             return
         db.add(
-            ResourceLibraryPublication(
+            MarketplaceResource(
                 kind_id=source.id,
                 resource_type=RESOURCE_TYPE_BY_KIND[source.kind],
                 install_count=0,

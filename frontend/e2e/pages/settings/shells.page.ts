@@ -36,6 +36,9 @@ export class ShellsPage extends BasePage {
       'aria-pressed',
       'true'
     )
+    await expect(this.page.locator('[data-testid="resource-library-content"]')).toBeVisible({
+      timeout: 15000,
+    })
   }
 
   // Shell list operations
@@ -46,7 +49,11 @@ export class ShellsPage extends BasePage {
   }
 
   async clickCreateShell(): Promise<void> {
-    await this.page.locator('[data-testid="create-shell-button"]').click()
+    await this.page.locator('[data-testid="new-capability-button"]').click()
+    await expect(this.page.locator('[data-testid="new-capability-menu"]')).toBeVisible({
+      timeout: 10000,
+    })
+    await this.page.locator('[data-testid="new-capability-type-shell"]').click()
     await this.waitForDialog()
   }
 

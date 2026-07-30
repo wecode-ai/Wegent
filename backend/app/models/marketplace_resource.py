@@ -10,10 +10,10 @@ from sqlalchemy.sql import func
 from app.db.base import Base
 
 
-class ResourceLibraryPublication(Base):
+class MarketplaceResource(Base):
     """Index row for one currently published Team or Skill."""
 
-    __tablename__ = "resource_library_publications"
+    __tablename__ = "marketplace_resources"
 
     kind_id = Column(
         Integer,
@@ -40,7 +40,7 @@ class ResourceLibraryPublication(Base):
         nullable=False,
         default=func.now(),
         server_default=func.now(),
-        comment="Initial publication time",
+        comment="Initial marketplace publication time",
     )
     updated_at = Column(
         DateTime,
@@ -48,18 +48,18 @@ class ResourceLibraryPublication(Base):
         default=func.now(),
         server_default=func.now(),
         onupdate=func.now(),
-        comment="Resource update time",
+        comment="Marketplace resource update time",
     )
 
     __table_args__ = (
         Index(
-            "idx_resource_library_publications_type_updated",
+            "idx_marketplace_resources_type_updated",
             "resource_type",
             "updated_at",
             "kind_id",
         ),
         Index(
-            "idx_resource_library_publications_type_installs",
+            "idx_marketplace_resources_type_installs",
             "resource_type",
             "install_count",
             "updated_at",

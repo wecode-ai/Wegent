@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""add resource library publication index
+"""add marketplace resources index
 
 Revision ID: e6f7a8b9c013
 Revises: d5e6f7a8b9c0
@@ -23,7 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.create_table(
-        "resource_library_publications",
+        "marketplace_resources",
         sa.Column(
             "kind_id",
             sa.Integer(),
@@ -50,28 +50,28 @@ def upgrade() -> None:
             sa.DateTime(),
             server_default=sa.func.now(),
             nullable=False,
-            comment="Initial publication time",
+            comment="Initial marketplace publication time",
         ),
         sa.Column(
             "updated_at",
             sa.DateTime(),
             server_default=sa.func.now(),
             nullable=False,
-            comment="Resource update time",
+            comment="Marketplace resource update time",
         ),
         sa.PrimaryKeyConstraint("kind_id"),
         mysql_engine="InnoDB",
         mysql_charset="utf8mb4",
     )
     op.create_index(
-        "idx_resource_library_publications_type_updated",
-        "resource_library_publications",
+        "idx_marketplace_resources_type_updated",
+        "marketplace_resources",
         ["resource_type", "updated_at", "kind_id"],
         unique=False,
     )
     op.create_index(
-        "idx_resource_library_publications_type_installs",
-        "resource_library_publications",
+        "idx_marketplace_resources_type_installs",
+        "marketplace_resources",
         ["resource_type", "install_count", "updated_at", "kind_id"],
         unique=False,
     )
@@ -87,7 +87,7 @@ def upgrade() -> None:
         sa.column("updated_at", sa.DateTime()),
     )
     publications = sa.table(
-        "resource_library_publications",
+        "marketplace_resources",
         sa.column("kind_id", sa.Integer()),
         sa.column("resource_type", sa.String()),
         sa.column("install_count", sa.Integer()),
@@ -187,11 +187,11 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index(
-        "idx_resource_library_publications_type_installs",
-        table_name="resource_library_publications",
+        "idx_marketplace_resources_type_installs",
+        table_name="marketplace_resources",
     )
     op.drop_index(
-        "idx_resource_library_publications_type_updated",
-        table_name="resource_library_publications",
+        "idx_marketplace_resources_type_updated",
+        table_name="marketplace_resources",
     )
-    op.drop_table("resource_library_publications")
+    op.drop_table("marketplace_resources")

@@ -10,8 +10,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
-from app.models.resource_library_publication import ResourceLibraryPublication
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
@@ -539,7 +539,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     listing = resource_library_service.publish(
         test_db, request=request, current_user=test_user
     )
-    assert test_db.get(ResourceLibraryPublication, source.id) is not None
+    assert test_db.get(MarketplaceResource, source.id) is not None
     first_install = resource_library_service.install(
         test_db,
         listing_id=source.id,
@@ -557,7 +557,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     assert listing.tags == ["docs"]
     assert first_install.id == second_install.id
     assert first_install.installed_reference["skill_id"] == source.id
-    publication = test_db.get(ResourceLibraryPublication, source.id)
+    publication = test_db.get(MarketplaceResource, source.id)
     assert publication is not None
     assert publication.install_count == 1
 
@@ -567,7 +567,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
         request=ResourceLibraryPublicationUpdateRequest(status="archived"),
         current_user=test_user,
     )
-    assert test_db.get(ResourceLibraryPublication, source.id) is None
+    assert test_db.get(MarketplaceResource, source.id) is None
     refs = skill_binding_service.list_user_default_skill_refs(test_db, consumer.id)
     assert refs == []
     assert (
