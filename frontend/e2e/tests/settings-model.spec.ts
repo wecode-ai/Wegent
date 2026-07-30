@@ -8,7 +8,7 @@ test.describe('Settings - Model Management', () => {
     await page.goto(MODEL_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
     await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
-    await expect(page.locator('[data-testid="managed-resource-model-tab"]')).toHaveAttribute(
+    await expect(page.locator('[data-testid="resource-type-model-filter"]')).toHaveAttribute(
       'aria-pressed',
       'true'
     )

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN_USER } from '../config/test-users'
 import { DataBuilders } from '../fixtures/data-builders'
@@ -18,14 +18,21 @@ interface CapabilityListingResponse {
   }>
 }
 
+async function clickListingAction(page: Page, listingId: number) {
+  await page.getByTestId(`resource-listing-card-${listingId}`).hover()
+  await page.getByTestId(`install-resource-${listingId}-button`).click()
+}
+
 test.describe('Capability Center', () => {
-  test('shows five views and system capabilities from the real backend', async ({ page }) => {
+  test('shows marketplace views and system capabilities from the real backend', async ({
+    page,
+  }) => {
     await page.goto('/resource-library?tab=discover&type=agent')
 
     await expect(page.getByTestId('resource-library-discover-tab')).toBeVisible()
     await expect(page.getByTestId('resource-library-mine-tab')).toBeVisible()
     await expect(page.getByTestId('resource-library-team-tab')).toBeVisible()
-    await expect(page.getByTestId('resource-library-system-tab')).toBeVisible()
+    await expect(page.getByTestId('resource-library-system-tab')).toHaveCount(0)
     await expect(page.getByTestId('resource-library-published-tab')).toBeVisible()
     await expect(page.getByTestId('discover-resources')).toBeVisible()
     await expect(page.locator('[data-testid^="resource-listing-card-"]').first()).toBeVisible()
@@ -37,10 +44,6 @@ test.describe('Capability Center', () => {
     await expect(
       page.getByTestId('team-capabilities').or(page.getByTestId('team-capabilities-empty'))
     ).toBeVisible()
-
-    await page.getByTestId('resource-library-system-tab').click()
-    await expect(page.getByTestId('my-resources')).toBeVisible()
-    await expect(page.locator('[data-testid^="team-card-"]').first()).toBeVisible()
 
     await page.getByTestId('resource-library-published-tab').click()
     await expect(
@@ -87,7 +90,7 @@ test.describe('Capability Center', () => {
         installRequested = true
       }
     })
-    await page.getByTestId(`install-resource-${listing!.id}-button`).click()
+    await clickListingAction(page, listing!.id)
     await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
     expect(installRequested).toBe(false)
   })
@@ -116,7 +119,9 @@ test.describe('Capability Center', () => {
 
     try {
       await page.goto('/resource-library?tab=team&type=skill')
-      await page.getByTestId(`team-capability-group-${group.name}`).click()
+      await page.getByTestId('resource-library-team-filter').click()
+      await page.getByTestId(`resource-library-team-${group.name}`).click()
+      await page.keyboard.press('Escape')
       const listingsResponse = page.waitForResponse(
         response =>
           response.url().includes('/api/resource-library/listings') &&
@@ -134,7 +139,7 @@ test.describe('Capability Center', () => {
           response.url().endsWith(`/api/resource-library/listings/${listing!.id}/install`) &&
           response.request().method() === 'POST'
       )
-      await page.getByTestId(`install-resource-${listing!.id}-button`).click()
+      await clickListingAction(page, listing!.id)
       expect((await installResponse).ok()).toBe(true)
       await expect(page).toHaveURL(/\/resource-library/)
 

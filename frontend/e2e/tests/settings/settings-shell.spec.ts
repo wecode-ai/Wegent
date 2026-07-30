@@ -31,7 +31,7 @@ test.describe('Settings - Shell Management', () => {
   test('should access shell management page', async ({ page }) => {
     expect(shellsPage.isOnResourceLibraryPage()).toBe(true)
     await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
-    await expect(page.locator('[data-testid="managed-resource-shell-tab"]')).toHaveAttribute(
+    await expect(page.locator('[data-testid="resource-type-shell-filter"]')).toHaveAttribute(
       'aria-pressed',
       'true'
     )

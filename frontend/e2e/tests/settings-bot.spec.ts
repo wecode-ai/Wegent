@@ -7,7 +7,7 @@ const TEAM_LIST_TITLE = 'h2:has-text("Team List"), h2:has-text("智能体列表"
 async function expectAgentResourcePage(page: Page) {
   await expect(page).toHaveURL(/\/resource-library/)
   await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
-  await expect(page.locator('[data-testid="managed-resource-agent-tab"]')).toHaveAttribute(
+  await expect(page.locator('[data-testid="resource-type-agent-filter"]')).toHaveAttribute(
     'aria-pressed',
     'true'
   )

@@ -32,7 +32,7 @@ export class ShellsPage extends BasePage {
     await expect(this.page.locator('[data-testid="my-resources"]')).toBeVisible({
       timeout: 15000,
     })
-    await expect(this.page.locator('[data-testid="managed-resource-shell-tab"]')).toHaveAttribute(
+    await expect(this.page.locator('[data-testid="resource-type-shell-filter"]')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
