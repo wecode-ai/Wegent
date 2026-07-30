@@ -5,6 +5,7 @@ import {
   isCloudDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
+import { raceWithTimeout } from '@/lib/promise-timeout'
 import type {
   DeviceInfo,
   DeviceRuntimeRoute,
@@ -897,11 +898,14 @@ export function nowMs(): number {
 
 export async function timedWorkbenchBootstrapRequest<T>(
   label: string,
-  request: Promise<T>
+  request: Promise<T>,
+  timeoutMs?: number
 ): Promise<PromiseSettledResult<T>> {
   const startedAt = nowMs()
   try {
-    const value = await request
+    const value = await raceWithTimeout(request, timeoutMs, timeout => {
+      return new Error(`${label} timed out after ${timeout}ms`)
+    })
     const elapsedMs = Math.round(nowMs() - startedAt)
     if (elapsedMs > 5000) {
       console.warn(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
