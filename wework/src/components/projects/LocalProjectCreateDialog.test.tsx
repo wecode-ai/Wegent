@@ -21,14 +21,30 @@ const baseProps = {
 }
 
 describe('LocalProjectCreateDialog', () => {
-  test('creates one project from the selected source folders', async () => {
+  test('uses the first source folder name by default', async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(<LocalProjectCreateDialog {...baseProps} onCreate={onCreate} />)
+
+    expect(screen.getByTestId('local-project-create-name-input')).toHaveValue('web')
+    await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
+
+    expect(onCreate).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      name: 'web',
+      roots: ['/repo/web'],
+    })
+  })
+
+  test('keeps a manually entered name when adding source folders', async () => {
     pickerMocks.open.mockResolvedValue(['/repo/api'])
     const onCreate = vi.fn().mockResolvedValue(undefined)
     render(<LocalProjectCreateDialog {...baseProps} onCreate={onCreate} />)
 
+    await userEvent.clear(screen.getByTestId('local-project-create-name-input'))
     await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
     await userEvent.click(screen.getByTestId('add-local-project-create-folders'))
     expect(await screen.findByText('api')).toBeInTheDocument()
+    expect(screen.getByTestId('local-project-create-name-input')).toHaveValue('Product')
     await userEvent.click(screen.getByTestId('confirm-local-project-create-button'))
 
     expect(onCreate).toHaveBeenCalledWith({
@@ -41,6 +57,7 @@ describe('LocalProjectCreateDialog', () => {
   test('requires a name and at least one source folder', async () => {
     render(<LocalProjectCreateDialog {...baseProps} onCreate={vi.fn()} />)
 
+    await userEvent.clear(screen.getByTestId('local-project-create-name-input'))
     expect(screen.getByTestId('confirm-local-project-create-button')).toBeDisabled()
     await userEvent.type(screen.getByTestId('local-project-create-name-input'), 'Product')
     await userEvent.click(screen.getByTestId('remove-local-project-create-root-0'))
