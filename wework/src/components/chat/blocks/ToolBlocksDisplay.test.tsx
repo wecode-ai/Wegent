@@ -492,6 +492,7 @@ describe('ToolBlocksDisplay', () => {
     const content = screen.getByText('课程标题：云端工作模式实战')
     const line = content.parentElement
 
+    expect(line?.firstElementChild).toHaveTextContent('1')
     expect(line).toHaveClass('border-green-500', 'bg-green-500/10')
     expect(line).not.toHaveClass('border-red-500', 'bg-red-500/10')
   })

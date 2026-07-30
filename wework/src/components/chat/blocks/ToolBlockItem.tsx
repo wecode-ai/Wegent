@@ -804,7 +804,7 @@ function parseDiffPreviewLines(
       previewLines.push({
         key: `addition-${index}`,
         type: diffPreviewLineType(prefix, changeType),
-        lineNumber: changeType === 'deleted' ? (oldLine ?? newLine) : (newLine ?? oldLine),
+        lineNumber: newLine ?? oldLine,
         content: rawLine.slice(1),
       })
       if (newLine !== undefined) newLine += 1
@@ -814,7 +814,7 @@ function parseDiffPreviewLines(
       previewLines.push({
         key: `deletion-${index}`,
         type: diffPreviewLineType(prefix, changeType),
-        lineNumber: changeType === 'created' ? (newLine ?? oldLine) : (oldLine ?? newLine),
+        lineNumber: oldLine ?? newLine,
         content: rawLine.slice(1),
       })
       if (oldLine !== undefined) oldLine += 1
