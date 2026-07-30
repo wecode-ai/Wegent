@@ -24,6 +24,7 @@ interface KnowledgeSourcePreviewProps {
   active: boolean
   onDownload: () => void
   allowDownload?: boolean
+  protectedKnowledgeBaseId?: number
   className?: string
 }
 
@@ -32,6 +33,7 @@ export function KnowledgeSourcePreview({
   active,
   onDownload,
   allowDownload = true,
+  protectedKnowledgeBaseId,
   className,
 }: KnowledgeSourcePreviewProps) {
   const { t } = useTranslation('knowledge')
@@ -167,6 +169,7 @@ export function KnowledgeSourcePreview({
         fileSize={file.size}
         showToolbar={false}
         onError={setRenderError}
+        protectedKnowledgeBaseId={protectedKnowledgeBaseId}
       />
     )
   } else {

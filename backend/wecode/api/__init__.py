@@ -69,6 +69,9 @@ from wecode.api.internal.attachments_video import (
     router as internal_attachments_video_router,
 )
 from wecode.api.internal.multimodal_gcs import router as internal_multimodal_gcs_router
+from wecode.api.knowledge_document_protection import (
+    router as knowledge_document_protection_router,
+)
 from wecode.api.knowledge_video_download import (
     router as knowledge_video_download_router,
 )
@@ -160,6 +163,11 @@ api_router.include_router(
     knowledge_video_download_router,
     prefix="/knowledge-documents",
     tags=["knowledge-video-download"],
+)
+api_router.include_router(
+    knowledge_document_protection_router,
+    prefix="/wecode",
+    tags=["wecode", "knowledge-document-protection"],
 )
 api_router.include_router(
     department_search_router,

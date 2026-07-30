@@ -47,6 +47,7 @@ import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
 import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
@@ -487,7 +488,7 @@ export function DocumentDetailDialog({
               isEditing && !isFullscreen && 'flex flex-col'
             )}
           >
-            {!isEditing && !isFullscreen && detail?.summary && (
+            {!isOrganization && !isEditing && !isFullscreen && detail?.summary && (
               <DocumentSummarySection
                 summary={detail.summary}
                 onRefresh={handleRefresh}
@@ -505,9 +506,10 @@ export function DocumentDetailDialog({
               <KnowledgeSourcePreview
                 key={`${document.id}:${document.attachment_id}`}
                 document={document}
-                active={open}
+                active={open && isSourceView}
                 onDownload={handleSourceDownload}
                 allowDownload={allowDownload}
+                protectedKnowledgeBaseId={isOrganization ? knowledgeBaseId : undefined}
                 className={cn(!isSourceView && 'hidden')}
               />
             )}
@@ -701,7 +703,7 @@ export function DocumentDetailDialog({
                                 )}
                               </Button>
                             )}
-                            {fullContent && (
+                            {fullContent && !isOrganization && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -742,20 +744,25 @@ export function DocumentDetailDialog({
                         />
                       </div>
                     ) : (
-                      <DocumentContentViewer
-                        content={fullContent}
-                        document={document}
+                      <DocumentProtectionBoundary
+                        enabled={isOrganization}
                         knowledgeBaseId={knowledgeBaseId}
-                        knowledgeBaseName={knowledgeBaseName}
-                        knowledgeBaseNamespace={knowledgeBaseNamespace}
-                        isOrganization={isOrganization}
-                        viewMode={viewMode}
-                        hasMoreContent={hasMoreContent}
-                        loadingMore={loadingMore}
-                        contentLength={detail?.content_length}
-                        onLoadMore={loadMore}
-                        onOpenChange={onOpenChange}
-                      />
+                      >
+                        <DocumentContentViewer
+                          content={fullContent}
+                          document={document}
+                          knowledgeBaseId={knowledgeBaseId}
+                          knowledgeBaseName={knowledgeBaseName}
+                          knowledgeBaseNamespace={knowledgeBaseNamespace}
+                          isOrganization={isOrganization}
+                          viewMode={viewMode}
+                          hasMoreContent={hasMoreContent}
+                          loadingMore={loadingMore}
+                          contentLength={detail?.content_length}
+                          onLoadMore={loadMore}
+                          onOpenChange={onOpenChange}
+                        />
+                      </DocumentProtectionBoundary>
                     )}
                   </div>
                 )}

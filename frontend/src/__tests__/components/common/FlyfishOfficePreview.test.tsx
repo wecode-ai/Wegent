@@ -51,7 +51,7 @@ describe('FlyfishOfficePreview', () => {
     expect(props.className).toContain('overflow-auto')
     expect(options.styleIsolation).toBe('scoped')
     expect(options).not.toHaveProperty('pdf')
-    const assetBase = `/file-viewer/${fileViewerPackage.version}-office-v2/`
+    const assetBase = `/file-viewer/${fileViewerPackage.version}-protected-docs-v1/`
     expect(options.docx.workerUrl).toBe(`${assetBase}vendor/docx/docx.worker.js`)
     expect(options.docx.workerJsZipUrl).toBe(`${assetBase}vendor/docx/jszip.min.js`)
     expect(options.spreadsheet.workerUrl).toBe(`${assetBase}vendor/xlsx/sheet.worker.js`)

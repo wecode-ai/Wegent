@@ -1,4 +1,9 @@
 {
+  "documentProtection": {
+    "loadFailed": "Protected document viewer failed to load",
+    "identityIncomplete": "Your name or employee ID is unavailable. Sign in again and retry.",
+    "pdfRenderFailed": "Protected PDF rendering failed"
+  },
   "cloud_device": {
     "title": "Cloud Devices",
     "description": "Cloud devices are managed VMs that run your AI agents in the cloud. No installation required — just create and start using.",
