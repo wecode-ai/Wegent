@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 const LOCAL_MODEL_SECRET_SERVICE: &str = "com.wecode.wework.local-model";
+const LOCAL_MODEL_SECRET_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn local_model_secret_entry(config_id: &str) -> Result<keyring::Entry, String> {
     let config_id = config_id.trim();
@@ -19,7 +21,7 @@ fn local_model_secret_entry(config_id: &str) -> Result<keyring::Entry, String> {
 pub async fn read_local_model_api_keys(
     config_ids: Vec<String>,
 ) -> Result<HashMap<String, String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let read = tauri::async_runtime::spawn_blocking(move || {
         let mut api_keys = HashMap::new();
         for config_id in config_ids {
             let entry = local_model_secret_entry(&config_id)?;
@@ -34,9 +36,11 @@ pub async fn read_local_model_api_keys(
             }
         }
         Ok(api_keys)
-    })
-    .await
-    .map_err(|error| format!("Failed to join local model credential read: {error}"))?
+    });
+    tokio::time::timeout(LOCAL_MODEL_SECRET_TIMEOUT, read)
+        .await
+        .map_err(|_| "Timed out reading local model credentials".to_string())?
+        .map_err(|error| format!("Failed to join local model credential read: {error}"))?
 }
 
 #[tauri::command]
@@ -44,7 +48,7 @@ pub async fn update_local_model_api_key(
     config_id: String,
     api_key: Option<String>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let update = tauri::async_runtime::spawn_blocking(move || {
         let entry = local_model_secret_entry(&config_id)?;
         match api_key.map(|value| value.trim().to_owned()) {
             Some(api_key) if !api_key.is_empty() => entry
@@ -55,9 +59,11 @@ pub async fn update_local_model_api_key(
                 Err(error) => Err(format!("Failed to delete local model credentials: {error}")),
             },
         }
-    })
-    .await
-    .map_err(|error| format!("Failed to join local model credential update: {error}"))?
+    });
+    tokio::time::timeout(LOCAL_MODEL_SECRET_TIMEOUT, update)
+        .await
+        .map_err(|_| "Timed out updating local model credentials".to_string())?
+        .map_err(|error| format!("Failed to join local model credential update: {error}"))?
 }
 
 #[cfg(test)]

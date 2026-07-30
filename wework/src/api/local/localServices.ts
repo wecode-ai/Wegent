@@ -106,6 +106,7 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
+  ensureLocalModelApiKeysHydrated,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -1842,6 +1843,7 @@ export function createRuntimeWorkApiFromIpc(
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
   const syncedModelCatalogKeys = new Set<string>()
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
+  const modelCatalogSyncQueues = new Map<string, Promise<void>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1887,8 +1889,14 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    let selectedModel = findLocalModelConfigByModelName(data.modelId)
+    try {
+      await ensureLocalModelApiKeysHydrated()
+      selectedModel = findLocalModelConfigByModelName(data.modelId)
+    } catch (error) {
+      if (selectedModel?.apiKeyConfigured && !selectedModel.apiKey) throw error
+    }
     if (!options.syncConfiguredModelCatalog) return true
-    const selectedModel = findLocalModelConfigByModelName(data.modelId)
     if (!selectedModel?.catalogEntry) return true
 
     const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
@@ -1901,45 +1909,78 @@ export function createRuntimeWorkApiFromIpc(
     if (syncedModelCatalogKeys.has(deviceCatalogKey)) return true
     const pendingSync = modelCatalogSyncInFlight.get(deviceCatalogKey)
     if (pendingSync) return pendingSync
-    const expectedModelId =
-      selectedModel.codexCatalogModelId ??
-      (typeof selectedModel.catalogEntry.slug === 'string'
-        ? selectedModel.catalogEntry.slug
-        : undefined)
+    let appliedCatalogKey = ''
     const sync = async () => {
-      await request(
-        'runtime.codex.catalog.custom.write',
-        {
-          models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
-        },
-        deviceId
+      const previousSync = modelCatalogSyncQueues.get(deviceId) ?? Promise.resolve()
+      const queuedSync = previousSync
+        .catch(() => undefined)
+        .then(async () => {
+          const currentCatalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+          const currentCatalogKey = currentCatalogModels
+            .map(model => `${model.id}:${model.updatedAt}`)
+            .sort()
+            .join('|')
+          const currentDeviceCatalogKey = `${deviceId}\0${currentCatalogKey}`
+          if (syncedModelCatalogKeys.has(currentDeviceCatalogKey)) {
+            appliedCatalogKey = currentCatalogKey
+            return
+          }
+          const currentSelectedModel = findLocalModelConfigByModelName(data.modelId)
+          const expectedModelId =
+            currentSelectedModel?.codexCatalogModelId ??
+            (typeof currentSelectedModel?.catalogEntry?.slug === 'string'
+              ? currentSelectedModel.catalogEntry.slug
+              : undefined)
+          await request(
+            'runtime.codex.catalog.custom.write',
+            {
+              models: currentCatalogModels.flatMap(model =>
+                model.catalogEntry ? [model.catalogEntry] : []
+              ),
+            },
+            deviceId
+          )
+          let restart: {
+            restarted?: boolean
+            requiresConfirmation?: boolean
+          }
+          try {
+            restart = await request('runtime.codex.app_server.restart', { ifIdle: true }, deviceId)
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('codex_catalog_not_loaded')) {
+              throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'), {
+                cause: error,
+              })
+            }
+            throw error
+          }
+          if (!restart.restarted) {
+            throw new Error(
+              restart.requiresConfirmation
+                ? i18n.t('workbench.cloud_model_catalog_sync_busy')
+                : i18n.t('workbench.cloud_model_catalog_sync_failed')
+            )
+          }
+          const models = await request<{
+            data?: Array<{ id?: string }>
+          }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
+          if (!expectedModelId || !models.data?.some(model => model.id === expectedModelId)) {
+            throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
+          }
+          appliedCatalogKey = currentCatalogKey
+          syncedModelCatalogKeys.add(currentDeviceCatalogKey)
+        })
+      const queueTail = queuedSync.then(
+        () => undefined,
+        () => undefined
       )
-      let restart: {
-        restarted?: boolean
-        requiresConfirmation?: boolean
-      }
+      modelCatalogSyncQueues.set(deviceId, queueTail)
       try {
-        restart = await request('runtime.codex.app_server.restart', { ifIdle: true }, deviceId)
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('codex_catalog_not_loaded')) {
-          throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'), {
-            cause: error,
-          })
+        await queuedSync
+      } finally {
+        if (modelCatalogSyncQueues.get(deviceId) === queueTail) {
+          modelCatalogSyncQueues.delete(deviceId)
         }
-        throw error
-      }
-      if (!restart.restarted) {
-        throw new Error(
-          restart.requiresConfirmation
-            ? i18n.t('workbench.cloud_model_catalog_sync_busy')
-            : i18n.t('workbench.cloud_model_catalog_sync_failed')
-        )
-      }
-      const models = await request<{
-        data?: Array<{ id?: string }>
-      }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
-      if (!expectedModelId || !models.data?.some(model => model.id === expectedModelId)) {
-        throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
       }
     }
 
@@ -1958,8 +1999,8 @@ export function createRuntimeWorkApiFromIpc(
         .map(model => `${model.id}:${model.updatedAt}`)
         .sort()
         .join('|')
-      if (confirmed && currentCatalogKey === catalogKey) {
-        syncedModelCatalogKeys.add(deviceCatalogKey)
+      if (confirmed && appliedCatalogKey && currentCatalogKey === appliedCatalogKey) {
+        syncedModelCatalogKeys.add(`${deviceId}\0${appliedCatalogKey}`)
       }
       return confirmed
     })

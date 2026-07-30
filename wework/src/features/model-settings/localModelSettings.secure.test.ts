@@ -44,11 +44,48 @@ describe('localModelSettings secure credentials', () => {
     vi.resetModules()
     runtimeMocks.invoke.mockResolvedValue({ 'restart-model': 'restart-secret' })
     const restartedSession = await import('./localModelSettings')
+    const changed = vi.fn()
+    window.addEventListener(restartedSession.LOCAL_MODEL_SETTINGS_CHANGED_EVENT, changed)
     await restartedSession.hydrateLocalModelApiKeys()
 
     expect(runtimeMocks.invoke).toHaveBeenCalledWith('read_local_model_api_keys', {
       configIds: ['restart-model'],
     })
+    expect(changed).toHaveBeenCalledOnce()
     expect(restartedSession.listLocalModelConfigs()[0].apiKey).toBe('restart-secret')
+    window.removeEventListener(restartedSession.LOCAL_MODEL_SETTINGS_CHANGED_EVENT, changed)
+  })
+
+  test('migrates a legacy persisted API key into the native credential store', async () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'legacy-secret',
+          displayName: 'Legacy secret',
+          modelId: 'legacy-model',
+          baseUrl: 'https://models.local/v1',
+          apiKey: 'legacy-api-key',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+    runtimeMocks.invoke.mockImplementation(async (command: string) => {
+      if (command === 'read_local_model_api_keys') return {}
+      return undefined
+    })
+    const settings = await import('./localModelSettings')
+
+    await settings.hydrateLocalModelApiKeys()
+
+    expect(runtimeMocks.invoke).toHaveBeenCalledWith('update_local_model_api_key', {
+      configId: 'legacy-secret',
+      apiKey: 'legacy-api-key',
+    })
+    expect(localStorage.getItem(settings.LOCAL_MODEL_SETTINGS_STORAGE_KEY)).not.toContain(
+      'legacy-api-key'
+    )
+    expect(settings.listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
   })
 })

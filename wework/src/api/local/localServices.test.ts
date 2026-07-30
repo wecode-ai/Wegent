@@ -1430,6 +1430,88 @@ describe('createLocalAppServices', () => {
     await expect(secondPrepare).resolves.toBe(false)
   })
 
+  test('serializes catalog writes per device and applies only the latest configuration', async () => {
+    const firstConfig = saveLocalModelConfig({
+      id: 'cloud-serialized',
+      displayName: 'Cloud Serialized v1',
+      modelId: 'serialized-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const syncRequests: Array<{
+      sync: () => Promise<void>
+      resolve: (confirmed: boolean) => void
+    }> = []
+    const requestModelCatalogSync = vi.fn(
+      ({ sync }: { sync: () => Promise<void> }) =>
+        new Promise<boolean>(resolve => {
+          syncRequests.push({ sync, resolve })
+        })
+    )
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') {
+        return { data: [{ id: 'wework-custom-cloud-serialized' }] }
+      }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+    })
+
+    const firstPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-serialized',
+    })
+    await vi.waitFor(() => expect(syncRequests).toHaveLength(1))
+    saveLocalModelConfig({
+      id: 'cloud-serialized',
+      displayName: 'Cloud Serialized v2',
+      modelId: 'serialized-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry: {
+        ...firstConfig.catalogEntry,
+        display_name: 'Cloud Serialized v2',
+      },
+      catalogReady: true,
+    })
+    const secondPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-serialized',
+    })
+    await vi.waitFor(() => expect(syncRequests).toHaveLength(2))
+
+    await syncRequests[1].sync()
+    syncRequests[1].resolve(true)
+    await expect(secondPrepare).resolves.toBe(true)
+    await syncRequests[0].sync()
+    syncRequests[0].resolve(true)
+    await expect(firstPrepare).resolves.toBe(true)
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-serialized',
+      })
+    ).resolves.toBe(true)
+    expect(requestModelCatalogSync).toHaveBeenCalledTimes(2)
+    const catalogWrites = request.mock.calls.filter(
+      ([method]) => method === 'runtime.codex.catalog.custom.write'
+    )
+    expect(catalogWrites).toHaveLength(1)
+    expect(catalogWrites[0][1]).toEqual({
+      models: [
+        expect.objectContaining({
+          slug: 'wework-custom-cloud-serialized',
+          display_name: 'Cloud Serialized v2',
+        }),
+      ],
+    })
+  })
+
   test('reports a busy cloud Codex without forcing a restart', async () => {
     saveLocalModelConfig({
       id: 'cloud-busy',

@@ -15,7 +15,7 @@ import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
-import { hydrateLocalModelApiKeys } from '@/features/model-settings/localModelSettings'
+import { ensureLocalModelApiKeysHydrated } from '@/features/model-settings/localModelSettings'
 
 const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
 if (!isSystemDragPanel) {
@@ -32,15 +32,7 @@ if (!isSystemDragPanel) {
 }
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
-async function renderApp(): Promise<void> {
-  if (!isSystemDragPanel) {
-    try {
-      await hydrateLocalModelApiKeys()
-    } catch (error) {
-      console.error('Failed to restore local model credentials', error)
-    }
-    await installWeworkAutomationBridge()
-  }
+function renderApp(): void {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       {performanceDiagnostics ? (
@@ -54,4 +46,10 @@ async function renderApp(): Promise<void> {
   )
 }
 
-void renderApp()
+renderApp()
+if (!isSystemDragPanel) {
+  const localModelApiKeyHydration = ensureLocalModelApiKeysHydrated().catch(error => {
+    console.error('Failed to restore local model credentials', error)
+  })
+  void installWeworkAutomationBridge(localModelApiKeyHydration)
+}
