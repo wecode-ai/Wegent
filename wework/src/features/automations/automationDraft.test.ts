@@ -1,0 +1,168 @@
+import { describe, expect, test } from 'vitest'
+import type { RuntimeProjectWork } from '@/types/api'
+import type { Automation } from '@/types/automation'
+import {
+  automationDraftFromAutomation,
+  buildAutomationProjectOptions,
+  buildAutomationTaskOptions,
+  emptyAutomationDraft,
+  scheduleFromAutomationDraft,
+} from './automationDraft'
+
+function project(name: string, roots: string[], workspacePaths: string[]): RuntimeProjectWork {
+  return {
+    project: {
+      key: `local:${name}`,
+      name,
+      source: 'local_project',
+      stateDeviceId: 'local-device',
+      roots: roots.map(path => ({ kind: 'local', path })),
+    },
+    deviceWorkspaces: workspacePaths.map(workspacePath => ({
+      deviceId: 'local-device',
+      available: true,
+      workspacePath,
+      tasks: [],
+    })),
+  }
+}
+
+describe('buildAutomationProjectOptions', () => {
+  test('shows one option per multi-root project and selects its primary root', () => {
+    const options = buildAutomationProjectOptions(
+      [project('wework', ['/repo/wework', '/repo/docs'], ['/repo/docs', '/repo/wework'])],
+      'local-device'
+    )
+
+    expect(options).toEqual([
+      {
+        key: 'local-device\u0000local:wework',
+        name: 'wework',
+        workspacePath: '/repo/wework',
+      },
+    ])
+  })
+
+  test('filters projects to the selected device', () => {
+    const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
+    runtimeProject.deviceWorkspaces.push({
+      deviceId: 'cloud-device',
+      available: true,
+      workspacePath: '/cloud/wework',
+      tasks: [],
+    })
+
+    expect(buildAutomationProjectOptions([runtimeProject], 'cloud-device')).toEqual([
+      {
+        key: 'local-device\u0000local:wework',
+        name: 'wework',
+        workspacePath: '/cloud/wework',
+      },
+    ])
+  })
+})
+
+describe('buildAutomationTaskOptions', () => {
+  test('only exposes pinned continuable tasks from local devices', () => {
+    const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
+    runtimeProject.deviceWorkspaces[0].tasks = [
+      {
+        taskId: 'pinned-task',
+        workspacePath: '/repo/wework',
+        title: 'Pinned task',
+        runtime: 'codex',
+        pinned: true,
+        continuable: true,
+      },
+      {
+        taskId: 'regular-task',
+        workspacePath: '/repo/wework',
+        title: 'Regular task',
+        runtime: 'codex',
+        pinned: false,
+        continuable: true,
+      },
+    ]
+    runtimeProject.deviceWorkspaces.push({
+      deviceId: 'cloud-device',
+      available: true,
+      workspacePath: '/cloud/wework',
+      tasks: [
+        {
+          taskId: 'cloud-pinned-task',
+          workspacePath: '/cloud/wework',
+          title: 'Cloud pinned task',
+          runtime: 'codex',
+          pinned: true,
+          continuable: true,
+        },
+      ],
+    })
+
+    expect(
+      buildAutomationTaskOptions(
+        { projects: [runtimeProject], chats: [], totalTasks: 3 },
+        new Set(['local-device'])
+      )
+    ).toEqual([
+      {
+        key: 'local-device:pinned-task',
+        label: 'Pinned task · wework',
+        address: {
+          deviceId: 'local-device',
+          taskId: 'pinned-task',
+          threadId: undefined,
+          workspacePath: '/repo/wework',
+          runtimeHandle: undefined,
+        },
+      },
+    ])
+  })
+})
+
+describe('automation schedule draft conversion', () => {
+  test('saves ChatGPT-style custom weekly recurrence as a multi-day cron schedule', () => {
+    const draft = emptyAutomationDraft('local')
+    draft.cronPreset = 'custom'
+    draft.customFrequency = 'weekly'
+    draft.customInterval = '1'
+    draft.customWeekdays = ['1', '2', '4']
+    draft.cronTime = '08:15'
+
+    expect(scheduleFromAutomationDraft(draft)).toEqual({
+      type: 'cron',
+      expression: '15 8 * * 1,2,4',
+    })
+  })
+
+  test('round trips an hourly interval through the custom frequency editor', () => {
+    const automation: Automation = {
+      id: 'local:hourly',
+      version: 1,
+      source: 'local',
+      name: 'Hourly check',
+      description: '',
+      prompt: 'Check status',
+      schedule: { type: 'interval', value: 3, unit: 'hours' },
+      timezone: 'Asia/Shanghai',
+      enabled: true,
+      conversationMode: 'independent',
+      notificationPolicy: 'all_runs',
+      taskPayload: {},
+      createdAt: '2026-07-29T00:00:00Z',
+      updatedAt: '2026-07-29T00:00:00Z',
+    }
+
+    const draft = automationDraftFromAutomation(automation)
+
+    expect(draft.scheduleType).toBe('cron')
+    expect(draft.cronPreset).toBe('custom')
+    expect(draft.customFrequency).toBe('hourly')
+    expect(draft.customInterval).toBe('3')
+    expect(scheduleFromAutomationDraft(draft)).toEqual({
+      type: 'interval',
+      value: 3,
+      unit: 'hours',
+    })
+  })
+})

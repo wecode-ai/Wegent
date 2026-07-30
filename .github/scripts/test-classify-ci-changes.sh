@@ -86,9 +86,9 @@ assert_desktop_case() {
   fi
 }
 
-assert_desktop_case "conversation files select one core segment" \
+assert_desktop_case "conversation cache selects guidance and conversation segments" \
   'wework_desktop_e2e=true
-wework_desktop_e2e_matrix={"include":[{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"}]}' \
+wework_desktop_e2e_matrix={"include":[{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"}]}' \
   "wework/src/features/workbench/runtimeConversationCache.ts"
 
 assert_desktop_case "independent features select the union of minimum segments" \

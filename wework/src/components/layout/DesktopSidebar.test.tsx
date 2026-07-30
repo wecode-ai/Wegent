@@ -1050,6 +1050,19 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
+  test('shows Automations only while experimental features are enabled', () => {
+    experimentalFeatures.enabled = false
+    const { unmount } = renderSidebar()
+
+    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
+
+    unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar()
+
+    expect(screen.getByTestId('automation-button')).toBeInTheDocument()
+  })
+
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'

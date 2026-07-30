@@ -1,5 +1,6 @@
 import {
   Archive,
+  AlarmClock,
   Bell,
   BellOff,
   ChevronDown,
@@ -198,6 +199,7 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onOpenCloudWork?: () => void
   onOpenSites?: () => void
+  onOpenAutomation?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -2519,6 +2521,7 @@ export function DesktopSidebar({
   onOpenPlugins,
   onOpenCloudWork,
   onOpenSites,
+  onOpenAutomation,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -3095,6 +3098,15 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
+              {experimentalFeaturesEnabled && (
+                <SidebarButton
+                  icon={AlarmClock}
+                  label={t('workbench.automation', '已安排')}
+                  testId="automation-button"
+                  selected={activeItem === 'automation'}
+                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+                />
+              )}
               {SHOW_PLUGINS_NAVIGATION && (
                 <SidebarButton
                   icon={Sparkles}

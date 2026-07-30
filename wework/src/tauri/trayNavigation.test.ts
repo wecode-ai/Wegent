@@ -5,6 +5,7 @@ const invokeMock = vi.hoisted(() => vi.fn())
 const navigateToMock = vi.hoisted(() => vi.fn())
 const buildRuntimeTaskRouteMock = vi.hoisted(() => vi.fn())
 const isTauriRuntimeMock = vi.hoisted(() => vi.fn())
+const currentWindowLabelMock = vi.hoisted(() => ({ value: 'main' }))
 const i18nMock = vi.hoisted(() => ({
   language: 'zh-CN',
   resolvedLanguage: 'zh-CN' as string | undefined,
@@ -17,6 +18,10 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: listenMock,
+}))
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({ label: currentWindowLabelMock.value }),
 }))
 
 vi.mock('@/lib/navigation', () => ({
@@ -40,6 +45,7 @@ describe('trayNavigation', () => {
     navigateToMock.mockReset()
     buildRuntimeTaskRouteMock.mockReset()
     isTauriRuntimeMock.mockReset()
+    currentWindowLabelMock.value = 'main'
     i18nMock.on.mockReset()
     i18nMock.language = 'zh-CN'
     i18nMock.resolvedLanguage = 'zh-CN'
@@ -77,12 +83,51 @@ describe('trayNavigation', () => {
     installTraySettingsNavigation()
     installTraySettingsNavigation()
 
-    expect(listenMock).toHaveBeenCalledTimes(2)
+    expect(listenMock).toHaveBeenCalledTimes(3)
     expect(listenMock).toHaveBeenCalledWith(WEWORK_TRAY_OPEN_SETTINGS_EVENT, expect.any(Function))
 
     handlers.get(WEWORK_TRAY_OPEN_SETTINGS_EVENT)?.()
 
     expect(navigateToMock).toHaveBeenCalledWith('/settings')
+  })
+
+  test('opens a Popout Window task in the main window', async () => {
+    const handlers = new Map<
+      string,
+      (event: { payload: { deviceId: string; taskId: string } }) => void
+    >()
+    isTauriRuntimeMock.mockReturnValue(true)
+    listenMock.mockImplementation((_eventName: string, callback: unknown) => {
+      handlers.set(
+        _eventName,
+        callback as (event: { payload: { deviceId: string; taskId: string } }) => void
+      )
+      return Promise.resolve(vi.fn())
+    })
+
+    const { installTraySettingsNavigation, WEWORK_POPOUT_OPEN_TASK_EVENT } =
+      await import('./trayNavigation')
+
+    installTraySettingsNavigation()
+    handlers.get(WEWORK_POPOUT_OPEN_TASK_EVENT)?.({
+      payload: { deviceId: 'device/1', taskId: '101' },
+    })
+
+    expect(buildRuntimeTaskRouteMock).toHaveBeenCalledWith({
+      deviceId: 'device/1',
+      taskId: '101',
+    })
+    expect(navigateToMock).toHaveBeenCalledWith('/runtime-tasks?deviceId=device%2F1&taskId=101')
+  })
+
+  test('does not install main-window navigation listeners in the Popout Window', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    currentWindowLabelMock.value = 'popout-window'
+
+    const { installTraySettingsNavigation } = await import('./trayNavigation')
+    installTraySettingsNavigation()
+
+    expect(listenMock).not.toHaveBeenCalled()
   })
 
   test('opens a runtime task when the tray task event is received', async () => {
