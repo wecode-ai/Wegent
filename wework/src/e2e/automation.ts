@@ -14,6 +14,7 @@ import {
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
+  flushLocalModelSecretWrites,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
@@ -177,7 +178,7 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-function seedDesktopE2ECloudConnection() {
+async function seedDesktopE2ECloudConnection(): Promise<void> {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
   const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
@@ -245,6 +246,9 @@ function seedDesktopE2ECloudConnection() {
       enabled: true,
     })
   }
+  await flushLocalModelSecretWrites().catch(error => {
+    console.warn('Desktop E2E could not persist seeded local model credentials', error)
+  })
   saveLocalUserPreferences({
     wework_new_chat_model_selection: {
       modelName: 'gpt-5.4',
@@ -254,12 +258,12 @@ function seedDesktopE2ECloudConnection() {
   })
 }
 
-export function installWeworkAutomationBridge() {
+export async function installWeworkAutomationBridge(): Promise<void> {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
-  seedDesktopE2ECloudConnection()
+  await seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
 }

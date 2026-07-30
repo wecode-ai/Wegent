@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
@@ -73,6 +75,56 @@ export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completi
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
 
 const localModelApiKeys = new Map<string, string>()
+let localModelSecretWriteQueue: Promise<void> = Promise.resolve()
+
+function scheduleLocalModelApiKeyWrite(configId: string, apiKey?: string): void {
+  if (!isTauriRuntime()) return
+  localModelSecretWriteQueue = localModelSecretWriteQueue
+    .catch(() => undefined)
+    .then(() =>
+      invoke('update_local_model_api_key', {
+        configId,
+        apiKey: apiKey || null,
+      })
+    )
+  void localModelSecretWriteQueue.catch(error => {
+    console.error('Failed to persist local model credentials', error)
+  })
+}
+
+export function flushLocalModelSecretWrites(): Promise<void> {
+  return localModelSecretWriteQueue
+}
+
+export async function hydrateLocalModelApiKeys(): Promise<void> {
+  if (!isTauriRuntime()) return
+  const raw = globalThis.localStorage?.getItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
+  if (!raw) return
+  const parsed: unknown = JSON.parse(raw)
+  if (!Array.isArray(parsed)) return
+  const configs = parsed.filter(isLocalModelConfig)
+  const storedApiKeys = await invoke<Record<string, string>>('read_local_model_api_keys', {
+    configIds: configs.map(config => config.id),
+  })
+  localModelApiKeys.clear()
+  for (const [configId, apiKey] of Object.entries(storedApiKeys)) {
+    if (apiKey) localModelApiKeys.set(configId, apiKey)
+  }
+
+  const legacyApiKeys = configs.flatMap(config =>
+    config.apiKey ? [{ configId: config.id, apiKey: config.apiKey }] : []
+  )
+  if (legacyApiKeys.length === 0) return
+  for (const { configId, apiKey } of legacyApiKeys) {
+    localModelApiKeys.set(configId, apiKey)
+    scheduleLocalModelApiKeyWrite(configId, apiKey)
+  }
+  globalThis.localStorage?.setItem(
+    LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+    JSON.stringify(configs.map(persistableLocalModelConfig))
+  )
+  await flushLocalModelSecretWrites()
+}
 
 export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
   if (apiFormat === 'openai-chat-completions') {
@@ -125,6 +177,7 @@ function readStoredConfigs(): LocalModelConfig[] {
     for (const config of storedConfigs) {
       if (!config.apiKey) continue
       localModelApiKeys.set(config.id, config.apiKey)
+      scheduleLocalModelApiKeyWrite(config.id, config.apiKey)
       migratedLegacyApiKey = true
     }
     if (migratedLegacyApiKey) {
@@ -512,6 +565,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   } else {
     localModelApiKeys.delete(id)
   }
+  scheduleLocalModelApiKeyWrite(id, apiKey)
   const index = existing.findIndex(config => config.id === id)
   const configs =
     index >= 0 ? existing.map(config => (config.id === id ? next : config)) : [...existing, next]
@@ -555,12 +609,15 @@ export function deleteLocalModelConfig(id: string): boolean {
   const next = configs.filter(config => config.id !== id)
   if (next.length === configs.length) return false
   localModelApiKeys.delete(id)
+  scheduleLocalModelApiKeyWrite(id)
   writeStoredConfigs(next)
   return true
 }
 
 export function clearLocalModelConfigs(): void {
+  const configIds = readStoredConfigs().map(config => config.id)
   localModelApiKeys.clear()
+  for (const configId of configIds) scheduleLocalModelApiKeyWrite(configId)
   globalThis.localStorage?.removeItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
   dispatchChanged([])
 }

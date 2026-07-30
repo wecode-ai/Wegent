@@ -1420,6 +1420,7 @@
     "cloud_model_catalog_sync_title": "同步模型配置并重启云端 Codex？",
     "cloud_model_catalog_sync_description": "模型“{{model}}”的能力配置需要同步到“{{device}}”。同步会重启该设备上的 Codex，完成后将继续发送当前消息。",
     "cloud_model_catalog_sync_cancel": "取消",
+    "cloud_model_catalog_sync_cancelled": "已取消模型配置同步",
     "cloud_model_catalog_sync_confirm": "同步并重启",
     "cloud_model_catalog_sync_failed": "云端模型配置同步失败",
     "cloud_model_catalog_sync_busy": "云端 Codex 当前有任务正在运行，请等待任务结束后重试。",

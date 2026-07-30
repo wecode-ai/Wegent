@@ -1840,7 +1840,7 @@ export function createRuntimeWorkApiFromIpc(
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
-  let syncedModelCatalogKey = ''
+  const syncedModelCatalogKeys = new Set<string>()
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const normalizeRequest = async <T extends object>(
     data: T
@@ -1896,11 +1896,16 @@ export function createRuntimeWorkApiFromIpc(
       .map(model => `${model.id}:${model.updatedAt}`)
       .sort()
       .join('|')
-    if (catalogKey === syncedModelCatalogKey) return true
-    const pendingSync = modelCatalogSyncInFlight.get(catalogKey)
-    if (pendingSync) return pendingSync
-
     const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+    const deviceCatalogKey = `${deviceId}\0${catalogKey}`
+    if (syncedModelCatalogKeys.has(deviceCatalogKey)) return true
+    const pendingSync = modelCatalogSyncInFlight.get(deviceCatalogKey)
+    if (pendingSync) return pendingSync
+    const expectedModelId =
+      selectedModel.codexCatalogModelId ??
+      (typeof selectedModel.catalogEntry.slug === 'string'
+        ? selectedModel.catalogEntry.slug
+        : undefined)
     const sync = async () => {
       await request(
         'runtime.codex.catalog.custom.write',
@@ -1930,6 +1935,12 @@ export function createRuntimeWorkApiFromIpc(
             : i18n.t('workbench.cloud_model_catalog_sync_failed')
         )
       }
+      const models = await request<{
+        data?: Array<{ id?: string }>
+      }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
+      if (!expectedModelId || !models.data?.some(model => model.id === expectedModelId)) {
+        throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
+      }
     }
 
     const confirmation = options.requestModelCatalogSync
@@ -1948,19 +1959,22 @@ export function createRuntimeWorkApiFromIpc(
         .sort()
         .join('|')
       if (confirmed && currentCatalogKey === catalogKey) {
-        syncedModelCatalogKey = catalogKey
+        syncedModelCatalogKeys.add(deviceCatalogKey)
       }
       return confirmed
     })
-    modelCatalogSyncInFlight.set(catalogKey, syncPromise)
+    modelCatalogSyncInFlight.set(deviceCatalogKey, syncPromise)
     try {
       return await syncPromise
     } finally {
-      if (modelCatalogSyncInFlight.get(catalogKey) === syncPromise) {
-        modelCatalogSyncInFlight.delete(catalogKey)
+      if (modelCatalogSyncInFlight.get(deviceCatalogKey) === syncPromise) {
+        modelCatalogSyncInFlight.delete(deviceCatalogKey)
       }
     }
   }
+
+  const modelCatalogSyncCancelled = () =>
+    new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
 
   return {
     prepareRuntimeModel,
@@ -2019,7 +2033,7 @@ export function createRuntimeWorkApiFromIpc(
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
-        throw new Error('Model configuration sync was cancelled')
+        throw modelCatalogSyncCancelled()
       }
       const payload = createLocalRuntimeSendPayload(
         data,
@@ -2045,7 +2059,7 @@ export function createRuntimeWorkApiFromIpc(
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
-        throw new Error('Model configuration sync was cancelled')
+        throw modelCatalogSyncCancelled()
       }
       const payload = createLocalRuntimeSendPayload(
         data,
@@ -2106,7 +2120,7 @@ export function createRuntimeWorkApiFromIpc(
     ): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
-        throw new Error('Model configuration sync was cancelled')
+        throw modelCatalogSyncCancelled()
       }
       const payload = createLocalRuntimeSendPayload(
         data,
@@ -2275,7 +2289,7 @@ export function createRuntimeWorkApiFromIpc(
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
-        throw new Error('Model configuration sync was cancelled')
+        throw modelCatalogSyncCancelled()
       }
       const payload = await createLocalRuntimeTaskPayload(
         data,
