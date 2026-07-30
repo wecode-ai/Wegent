@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
-    sync::{Arc, Mutex as StdMutex, OnceLock},
+    sync::{Arc, Mutex as StdMutex, OnceLock, Weak},
     time::Duration,
 };
 
@@ -541,7 +541,7 @@ impl CodexAppServerClient {
     }
 
     async fn mark_thread_active(&self, thread_id: &str) {
-        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
         let generation = state.next_thread_generation;
@@ -556,7 +556,7 @@ impl CodexAppServerClient {
     }
 
     async fn mark_thread_idle(&self, thread_id: &str) -> Option<u64> {
-        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
         let active_count = state.active_threads.get_mut(thread_id)?;
@@ -568,12 +568,27 @@ impl CodexAppServerClient {
         state.thread_generations.get(thread_id).copied()
     }
 
-    async fn thread_lifecycle_gate(&self) -> Arc<Mutex<()>> {
-        Arc::clone(&self.state.lock().await.thread_lifecycle_gate)
+    async fn thread_lifecycle_gate(&self, thread_id: &str) -> Arc<Mutex<()>> {
+        let mut state = self.state.lock().await;
+        state
+            .thread_lifecycle_gates
+            .retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = state
+            .thread_lifecycle_gates
+            .get(thread_id)
+            .and_then(Weak::upgrade)
+        {
+            return gate;
+        }
+        let gate = Arc::new(Mutex::new(()));
+        state
+            .thread_lifecycle_gates
+            .insert(thread_id.to_owned(), Arc::downgrade(&gate));
+        gate
     }
 
     async fn clear_idle_thread_generation(&self, thread_id: &str, generation: u64) {
-        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
         let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
         if !state.active_threads.contains_key(thread_id)
@@ -606,7 +621,7 @@ impl CodexAppServerClient {
     ) -> Result<bool, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let response_rx = {
-            let lifecycle_gate = self.thread_lifecycle_gate().await;
+            let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
             let _lifecycle_guard = lifecycle_gate.lock().await;
             {
                 let state = self.state.lock().await;
@@ -805,7 +820,7 @@ struct CodexAppServerSharedState {
     active_threads: HashMap<String, usize>,
     thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
-    thread_lifecycle_gate: Arc<Mutex<()>>,
+    thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
     runtime_proxy_env: BTreeMap<String, String>,
 }
 
@@ -817,7 +832,7 @@ impl Default for CodexAppServerSharedState {
             active_threads: HashMap::new(),
             thread_generations: HashMap::new(),
             next_thread_generation: 1,
-            thread_lifecycle_gate: Arc::new(Mutex::new(())),
+            thread_lifecycle_gates: HashMap::new(),
             runtime_proxy_env: BTreeMap::new(),
         }
     }

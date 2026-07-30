@@ -35,6 +35,58 @@ async fn queued_unsubscribe_is_skipped_after_thread_reactivation() {
 }
 
 #[tokio::test]
+async fn thread_lifecycle_gate_does_not_block_unrelated_threads() {
+    let client = CodexAppServerClient::new("codex-lifecycle-gate-test");
+    let blocked_thread = format!("thread-blocked-{}", std::process::id());
+    let unrelated_thread = format!("thread-unrelated-{}", std::process::id());
+    let blocked_gate = client.thread_lifecycle_gate(&blocked_thread).await;
+    let blocked_guard = blocked_gate.lock().await;
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        client.mark_thread_active(&unrelated_thread),
+    )
+    .await
+    .expect("an unrelated thread should not wait for another thread's lifecycle gate");
+
+    let blocked_activation = {
+        let client = client.clone();
+        let blocked_thread = blocked_thread.clone();
+        tokio::spawn(async move {
+            client.mark_thread_active(&blocked_thread).await;
+        })
+    };
+    tokio::pin!(blocked_activation);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut blocked_activation)
+            .await
+            .is_err(),
+        "the same thread should remain serialized"
+    );
+
+    drop(blocked_guard);
+    tokio::time::timeout(Duration::from_secs(1), &mut blocked_activation)
+        .await
+        .expect("same-thread activation should continue after the lifecycle gate is released")
+        .expect("same-thread activation task should join");
+
+    let unrelated_generation = client
+        .mark_thread_idle(&unrelated_thread)
+        .await
+        .expect("unrelated thread should become idle");
+    client
+        .clear_idle_thread_generation(&unrelated_thread, unrelated_generation)
+        .await;
+    let blocked_generation = client
+        .mark_thread_idle(&blocked_thread)
+        .await
+        .expect("blocked thread should become idle");
+    client
+        .clear_idle_thread_generation(&blocked_thread, blocked_generation)
+        .await;
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);
