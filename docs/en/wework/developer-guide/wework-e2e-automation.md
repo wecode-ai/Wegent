@@ -102,8 +102,8 @@ The test does not simulate Wework, Executor, or Codex. To keep regression result
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
-- Cloud execution covers built-in Codex models and cloud Model CRDs across all three protocols, for 6 complete text and tool lifecycles.
-- Local custom models cannot run in cloud execution. The remaining 3 combinations assert that those models are absent from the cloud project's model selector.
+- Cloud execution also covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
+- The first local-custom-model-to-cloud-device combination verifies the synchronization confirmation, target Executor catalog write, and cloud Codex restart. All three local-model protocols must then complete their text and `apply_patch` tool lifecycles.
 
 Matrix submissions use a 10-second timeout. If the composer already displays a submission error, the runner throws that exact error immediately. Otherwise, a stalled protocol stage reports its current stage and captured requests instead of waiting through the general UI timeout.
 
