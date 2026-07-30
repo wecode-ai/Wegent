@@ -22,6 +22,7 @@ import {
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
+  listenEmbeddedBrowserAgentState,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowser,
@@ -35,7 +36,10 @@ import {
   readEmbeddedBrowserPageState,
   reloadEmbeddedBrowser,
   resumeEmbeddedBrowserDownload,
+  resolveEmbeddedBrowserAgentApproval,
+  setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
+  type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
@@ -89,11 +93,27 @@ interface WorkspaceBrowserPanelProps {
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
+type BrowserAgentState = EmbeddedBrowserAgentStateEvent
 type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
+type BrowserAnnotationTarget = {
+  inspectId?: string
+  ref?: string
+  index?: number
+  role?: string
+  name?: string
+  tagName?: string
+  text?: string
+  rect?: BrowserAnnotationRect
+  confidence?: number
+}
 type BrowserAnnotation = BrowserAnnotationRect & {
   id: string
   comment: string
   number: number
+  inspectId?: string
+  target?: BrowserAnnotationTarget
+  candidates?: BrowserAnnotationTarget[]
+  matchConfidence?: number
 }
 
 function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
@@ -131,6 +151,10 @@ function formatDownloadBytes(bytes: number | null) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+}
+
+function shouldShowAgentState(state: BrowserAgentState | null) {
+  return Boolean(state && state.status !== 'idle')
 }
 
 function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
@@ -277,6 +301,105 @@ export function browserAnnotationInjectionScript(uiFontSize = DEFAULT_UI_FONT_SI
       width: rect.width + 'px',
       height: rect.height + 'px',
     });
+  };
+
+  const textFor = (element, maxLength = 120) => {
+    const text = (
+      element.getAttribute?.('aria-label') ||
+      element.getAttribute?.('title') ||
+      element.getAttribute?.('placeholder') ||
+      element.innerText ||
+      element.textContent ||
+      ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.slice(0, maxLength);
+  };
+
+  const rectIntersectionArea = (a, b) => {
+    const left = Math.max(a.x, b.x);
+    const top = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+    return Math.max(0, right - left) * Math.max(0, bottom - top);
+  };
+
+  const centerDistance = (a, b) => {
+    const ax = a.x + a.width / 2;
+    const ay = a.y + a.height / 2;
+    const bx = b.x + b.width / 2;
+    const by = b.y + b.height / 2;
+    return Math.hypot(ax - bx, ay - by);
+  };
+
+  const summarizeTarget = (element, rect, extra = {}) => ({
+    ...extra,
+    tagName: element.tagName?.toLowerCase?.(),
+    name: textFor(element),
+    text: textFor(element, 240),
+    rect,
+  });
+
+  const resolveAnnotationTarget = (element, annotationRect) => {
+    const registries = window.__WEWORK_BROWSER_AGENT__?.inspectRegistries;
+    const candidates = [];
+    if (Array.isArray(registries)) {
+      registries.forEach((registry, registryRank) => {
+        Object.values(registry.refs || {}).forEach((record) => {
+          const candidateElement = record?.element;
+          if (!(candidateElement instanceof Element) || !candidateElement.isConnected) return;
+          const candidateRect = elementRect(candidateElement);
+          const targetArea = Math.max(1, annotationRect.width * annotationRect.height);
+          const candidateArea = Math.max(1, candidateRect.width * candidateRect.height);
+          const overlap = rectIntersectionArea(annotationRect, candidateRect);
+          const overlapRatio = overlap / Math.min(targetArea, candidateArea);
+          const containment =
+            candidateElement === element
+              ? 1
+              : candidateElement.contains(element)
+                ? 0.72
+                : element.contains(candidateElement)
+                  ? 0.62
+                  : 0;
+          const distancePenalty = Math.min(0.28, centerDistance(annotationRect, candidateRect) / 1600);
+          const recencyBonus = registryRank === 0 ? 0.04 : 0;
+          const confidence = Math.max(
+            0,
+            Math.min(1, Math.max(overlapRatio, containment) + recencyBonus - distancePenalty)
+          );
+          if (confidence < 0.18) return;
+          candidates.push(
+            summarizeTarget(candidateElement, candidateRect, {
+              inspectId: registry.inspectId,
+              ref: record.ref,
+              index: record.index,
+              role: record.role,
+              confidence: Number(confidence.toFixed(2)),
+            })
+          );
+        });
+      });
+    }
+
+    candidates.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+    const unique = [];
+    const seenRefs = new Set();
+    candidates.forEach((candidate) => {
+      const key = candidate.ref || [candidate.tagName, candidate.rect?.x, candidate.rect?.y].join(':');
+      if (seenRefs.has(key)) return;
+      seenRefs.add(key);
+      unique.push(candidate);
+    });
+    const topCandidates = unique.slice(0, 3);
+    const fallback = summarizeTarget(element, annotationRect, { confidence: 0.45 });
+    const target = topCandidates[0] || fallback;
+    return {
+      inspectId: target.inspectId,
+      target,
+      candidates: topCandidates,
+      matchConfidence: target.confidence || 0.45,
+    };
   };
 
   const clearHoverBox = () => {
@@ -430,6 +553,7 @@ export function browserAnnotationInjectionScript(uiFontSize = DEFAULT_UI_FONT_SI
         y: rect.y,
         width: rect.width,
         height: rect.height,
+        ...resolveAnnotationTarget(element, rect),
       };
       state.published.push(annotation);
       log('publish annotation', annotation);
@@ -557,6 +681,10 @@ function browserAnnotationContext(
           width: Math.round(annotation.width),
           height: Math.round(annotation.height),
         },
+        inspectId: annotation.inspectId,
+        target: annotation.target,
+        candidates: annotation.candidates,
+        matchConfidence: annotation.matchConfidence,
       },
       null,
       2
@@ -609,6 +737,7 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
@@ -671,12 +800,48 @@ export function WorkspaceBrowserPanel({
   }, [applyDownloadEvent])
 
   useEffect(() => {
-    const unlistenPromise = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
+    const listener = listenEmbeddedBrowserAgentState(event => {
+      if (event.label !== currentLabelRef.current) return
+      setAgentState(event)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser agent state:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
       if (!activeRef.current || certificate.nativeLabel !== nativeLabelRef.current) return
       setInvalidTlsCertificate(certificate)
     })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) {
+        nextUnlisten()
+        return
+      }
+      unlisten = nextUnlisten
+    })
     return () => {
-      void unlistenPromise?.then(unlisten => unlisten())
+      disposed = true
+      unlisten?.()
     }
   }, [])
 
@@ -1015,10 +1180,7 @@ export function WorkspaceBrowserPanel({
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
       } catch (error) {
-        console.error(
-          'Failed to open embedded browser:',
-          error instanceof Error ? error.message : String(error)
-        )
+        console.error('Failed to open embedded browser:', error)
         if (!disposed) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
           setStatus('error')
@@ -1054,6 +1216,7 @@ export function WorkspaceBrowserPanel({
         const pageState = await readEmbeddedBrowserPageState(label)
         if (disposed) return
         adoptNativeLabel(pageState.nativeLabel, label)
+        setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         if (!pageState.url) return
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
@@ -1476,6 +1639,78 @@ export function WorkspaceBrowserPanel({
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
+  const setAgentControlPaused = useCallback(
+    (paused: boolean) => {
+      void setEmbeddedBrowserAgentControlPaused(paused, label).catch(error => {
+        console.error('Failed to update embedded browser agent control:', error)
+      })
+    },
+    [label]
+  )
+
+  const resolveAgentApproval = useCallback(
+    (approvalId: string, approved: boolean) => {
+      void resolveEmbeddedBrowserAgentApproval(approvalId, approved, label).catch(error => {
+        console.error('Failed to resolve embedded browser agent approval:', error)
+      })
+    },
+    [label]
+  )
+
+  const agentActionLabel = (action: string | null) => {
+    switch (action) {
+      case 'open':
+      case 'navigate':
+        return t('workbench.browser_agent_action_open')
+      case 'inspect':
+        return t('workbench.browser_agent_action_inspect')
+      case 'waitFor':
+        return t('workbench.browser_agent_action_wait')
+      case 'click':
+        return t('workbench.browser_agent_action_click')
+      case 'typeText':
+      case 'fill':
+        return t('workbench.browser_agent_action_fill')
+      case 'hover':
+        return t('workbench.browser_agent_action_hover')
+      case 'press':
+        return t('workbench.browser_agent_action_press')
+      case 'scroll':
+      case 'scrollIntoView':
+        return t('workbench.browser_agent_action_scroll')
+      case 'screenshot':
+        return t('workbench.browser_agent_action_screenshot')
+      default:
+        return t('workbench.browser_agent_action_generic')
+    }
+  }
+
+  const agentStatusText = (state: BrowserAgentState) => {
+    if (state.approval) {
+      return t('workbench.browser_agent_approval_required', {
+        action: agentActionLabel(state.action || state.approval.actionKind),
+      })
+    }
+    if (state.status === 'running') {
+      return t('workbench.browser_agent_running', { action: agentActionLabel(state.action) })
+    }
+    if (state.status === 'paused') {
+      return t('workbench.browser_agent_paused')
+    }
+    if (state.status === 'needs_user') {
+      return t('workbench.browser_agent_needs_user')
+    }
+    if (state.status === 'error') {
+      return t('workbench.browser_agent_error')
+    }
+    return t('workbench.browser_agent_ready')
+  }
+
+  const agentApprovalReason = (state: BrowserAgentState) => {
+    if (!state.approval) return null
+    return state.approval.reason || state.message || t('workbench.browser_agent_approval_reason')
+  }
+
   return (
     <div
       data-testid="workspace-browser-panel"
@@ -1606,6 +1841,68 @@ export function WorkspaceBrowserPanel({
           </BrowserToolbarButton>
         </div>
       )}
+      {shouldShowAgentState(agentState) ? (
+        <div
+          data-testid="workspace-browser-agent-status"
+          className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 text-xs text-text-secondary"
+        >
+          {agentState?.status === 'running' ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          ) : agentState?.status === 'paused' ? (
+            <Pause className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+          ) : (
+            <CircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+          )}
+          <span className="min-w-0 flex-1 truncate">
+            {agentState ? agentStatusText(agentState) : null}
+            {agentState?.approval ? (
+              <span className="ml-1 text-text-muted">{agentApprovalReason(agentState)}</span>
+            ) : null}
+          </span>
+          {agentState?.approval ? (
+            <>
+              <button
+                type="button"
+                data-testid="workspace-browser-agent-approval-approve-button"
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
+                onClick={() => resolveAgentApproval(agentState.approval?.approvalId || '', true)}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {t('workbench.browser_agent_approval_continue')}
+              </button>
+              <button
+                type="button"
+                data-testid="workspace-browser-agent-approval-reject-button"
+                className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
+                onClick={() => resolveAgentApproval(agentState.approval?.approvalId || '', false)}
+              >
+                <X className="h-3.5 w-3.5" />
+                {t('workbench.browser_agent_approval_cancel')}
+              </button>
+            </>
+          ) : agentState?.status === 'paused' ? (
+            <button
+              type="button"
+              data-testid="workspace-browser-agent-resume-button"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
+              onClick={() => setAgentControlPaused(false)}
+            >
+              <Play className="h-3.5 w-3.5" />
+              {t('workbench.browser_agent_resume')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="workspace-browser-agent-pause-button"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
+              onClick={() => setAgentControlPaused(true)}
+            >
+              <Pause className="h-3.5 w-3.5" />
+              {t('workbench.browser_agent_take_control')}
+            </button>
+          )}
+        </div>
+      ) : null}
       {(!annotationMode || internalDesktopPage) && downloadsOpen ? (
         <div
           data-testid="workspace-browser-downloads-panel"

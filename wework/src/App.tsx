@@ -465,9 +465,14 @@ function AppShell() {
       return <div className="h-dvh bg-transparent" />
     }
     return (
-      <LocalRuntimeInitializer initialCloudConnection={initialCloudConnection} startupReady={false}>
-        <div />
-      </LocalRuntimeInitializer>
+      <CodexHomeInitializer>
+        <LocalRuntimeInitializer
+          initialCloudConnection={initialCloudConnection}
+          startupReady={false}
+        >
+          <div />
+        </LocalRuntimeInitializer>
+      </CodexHomeInitializer>
     )
   }
 

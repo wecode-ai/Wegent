@@ -301,9 +301,23 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
         .any(|line| line.starts_with("instructions =")));
     assert!(config.contains("developer_instructions"));
     assert!(config.contains("用中文回复"));
-    assert!(config.contains("browser_navigate"));
+    assert!(config.contains("Build the workflow from the user's requested outcome"));
+    assert!(config.contains("reuse all known targets across adjacent actions"));
+    assert!(config.contains("An explicit click request requires `browser_click`"));
+    assert!(config.contains("Use `browser_take_screenshot` only when"));
+    assert!(config.contains("Do not narrate plans or progress"));
     assert!(config.contains("personality = \"pragmatic\""));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strip_wework_browser_instructions_removes_unknown_generated_version() {
+    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version";
+
+    assert_eq!(
+        strip_wework_browser_instructions(instructions),
+        "用中文回复"
+    );
 }
 
 #[test]
@@ -1543,8 +1557,13 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
     let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
     let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    let old_bridge_token = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
     env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
+    env::set_var(
+        WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+        "bridge-test-token",
+    );
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
@@ -1597,6 +1616,10 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
         "workspace-browser-task-123"
     );
+    assert_eq!(
+        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"],
+        "bridge-test-token"
+    );
 
     if let Some(old_home) = old_home {
         env::set_var("WEGENT_EXECUTOR_HOME", old_home);
@@ -1607,6 +1630,11 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
     } else {
         env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    }
+    if let Some(old_bridge_token) = old_bridge_token {
+        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, old_bridge_token);
+    } else {
+        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     }
 }
 
