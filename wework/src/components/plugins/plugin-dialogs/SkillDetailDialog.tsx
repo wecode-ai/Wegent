@@ -1,7 +1,6 @@
 import { BookOpenText, Boxes, Loader2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { resolvePluginAssetUrl } from '../plugin-assets'
 
 export interface SkillDetailTarget {
   name: string
@@ -32,7 +31,7 @@ export function SkillDetailDialog({
 }: SkillDetailDialogProps) {
   const { t } = useTranslation('common')
   const closeRef = useRef<HTMLButtonElement>(null)
-  const logo = resolvePluginAssetUrl(skill.pluginLogoUrl || '')
+  const logo = skill.pluginLogoUrl?.trim() || ''
 
   useEffect(() => {
     closeRef.current?.focus()
@@ -48,7 +47,7 @@ export function SkillDetailDialog({
 
   return (
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/38 px-6"
+      className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={onClose}
     >
       <section
@@ -56,15 +55,15 @@ export function SkillDetailDialog({
         aria-modal="true"
         aria-labelledby="skill-detail-dialog-title"
         data-testid="skill-detail-dialog"
-        className="w-full max-w-[920px] rounded-2xl bg-background shadow-xl"
+        className="plugin-dialog-surface w-full max-w-[680px] overflow-hidden"
         onClick={event => event.stopPropagation()}
       >
-        <div className="flex items-start gap-3 border-b border-border px-6 py-5">
+        <div className="plugin-dialog-divider flex items-start gap-3 border-b px-6 py-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
             <BookOpenText className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="skill-detail-dialog-title" className="truncate text-base font-semibold">
+            <h2 id="skill-detail-dialog-title" className="heading-subsection truncate">
               {skill.name}
             </h2>
             <p className="text-xs text-text-muted">
@@ -78,11 +77,11 @@ export function SkillDetailDialog({
             <Boxes className="h-8 w-8 text-text-muted" />
           )}
         </div>
-        <div className="space-y-4 px-6 py-5 text-sm leading-6 text-text-secondary">
+        <div className="space-y-5 px-6 py-5 text-sm leading-5 text-text-secondary">
           <p>{skill.description}</p>
           {skill.scenarios && (
             <div>
-              <h3 className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              <h3 className="text-sm font-medium text-text-primary">
                 {t('workbench.plugins_skill_scenarios', '适用场景')}
               </h3>
               <p className="mt-1">{skill.scenarios}</p>
@@ -90,14 +89,16 @@ export function SkillDetailDialog({
           )}
           {skill.invocation && (
             <div>
-              <h3 className="text-xs font-medium uppercase tracking-wide text-text-muted">
+              <h3 className="text-sm font-medium text-text-primary">
                 {t('workbench.plugins_skill_invocation', '调用方式')}
               </h3>
-              <p className="mt-1 font-mono text-xs text-text-primary">{skill.invocation}</p>
+              <p className="mt-2 rounded-lg bg-surface px-3 py-2 font-mono text-xs text-text-primary">
+                {skill.invocation}
+              </p>
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
+        <div className="plugin-dialog-divider flex items-center justify-between border-t px-6 py-4">
           {skill.canToggle && onToggle ? (
             <button
               type="button"

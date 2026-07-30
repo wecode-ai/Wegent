@@ -463,7 +463,7 @@ export function PluginManagementWorkspace({
         ) : installedPlugins.length > 0 ? (
           <div
             data-testid="plugin-management-installed-list"
-            className="rounded-[12px] border border-border bg-background"
+            className="rounded-[12px] border border-border/30 bg-background"
           >
             {installedPlugins.map(plugin => {
               const marketplaceItem = plugin.raw.spec.pluginId
@@ -472,7 +472,7 @@ export function PluginManagementWorkspace({
               return (
                 <div
                   key={plugin.id}
-                  className="border-b border-border last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
+                  className="border-b border-border/25 last:border-b-0 first:[&_.plugin-management-row]:rounded-t-[12px] last:[&_.plugin-management-row]:rounded-b-[12px]"
                 >
                   <InstalledPluginRow
                     plugin={plugin}
@@ -499,7 +499,7 @@ export function PluginManagementWorkspace({
         ) : (
           <div
             data-testid="plugin-management-empty-state"
-            className="rounded-[14px] border border-dashed border-border bg-background px-[42px] py-[42px] text-center text-text-muted"
+            className="rounded-[14px] border border-dashed border-border/35 bg-background px-[42px] py-[42px] text-center text-text-muted"
           >
             <strong className="mb-1.5 block font-medium text-text-primary">
               {t('workbench.plugins_no_installed_plugins', '还没有安装插件')}
@@ -510,7 +510,7 @@ export function PluginManagementWorkspace({
             <button
               type="button"
               data-testid="plugin-management-browse-marketplace-button"
-              className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-semibold text-text-primary transition-colors hover:bg-muted"
+              className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={() => navigateTo('/plugins')}
             >
               {t('workbench.plugins_browse_marketplace', '浏览插件市场')}

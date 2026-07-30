@@ -68,13 +68,13 @@ export function PluginCreateMenu({
       {isOpen && (
         <div
           data-testid="plugins-create-menu"
-          className="absolute right-0 top-8 z-popover isolate w-40 overflow-hidden rounded-xl border border-border bg-[rgb(var(--color-popover))] p-1 text-text-primary shadow-2xl ring-1 ring-border"
+          className="absolute right-0 top-[calc(100%+4px)] z-popover isolate w-44 overflow-hidden rounded-xl border border-border/30 bg-popover p-1 text-text-primary shadow-lg"
         >
           {onCreatePlugin && (
             <button
               type="button"
               data-testid="plugins-create-plugin-option"
-              className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={onCreatePlugin}
             >
               <AtSign className="h-4 w-4 text-text-secondary" />
@@ -85,10 +85,10 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-add-market-option"
-              className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={onAddMarket}
             >
-              <Plus className="h-4 w-4 text-primary" />
+              <Plus className="h-4 w-4 text-text-secondary" />
               {t('workbench.plugins_add_market', '添加插件市场')}
             </button>
           )}
@@ -96,10 +96,10 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-record-skill-option"
-              className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+              className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-base font-normal text-text-primary transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={onRecordSkill}
             >
-              <Circle className="h-4 w-4 text-red-500" />
+              <Circle className="h-4 w-4 text-text-secondary" />
               {t('workbench.plugins_record_skill', '录制技能')}
             </button>
           )}

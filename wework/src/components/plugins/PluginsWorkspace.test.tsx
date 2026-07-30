@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -323,7 +323,9 @@ function mockSystemSkillsFetch(
     marketplaceDeviceState: 'installed' | 'failed' | 'pending'
     marketplaceInstallError: string
     marketplaceLogo: string
+    marketplaceBrandColor: string
     installedMarketplaceLogo: string
+    marketplaceCount: number
   }> = {}
 ) {
   let marketplaceUpdateAvailable = false
@@ -534,7 +536,7 @@ function mockSystemSkillsFetch(
       shortDescription: 'Create and edit documents',
       logo: overrides.marketplaceLogo ?? '/Users/test/plugins/documents/assets/logo.png',
       composerIcon: null,
-      brandColor: null,
+      brandColor: overrides.marketplaceBrandColor ?? null,
       category: 'Productivity',
       defaultPrompt: 'Draft a document outline from this chat',
       homepageUrl: null,
@@ -578,6 +580,31 @@ function mockSystemSkillsFetch(
         }
       : null,
   }
+  const marketplacePlugins = Array.from(
+    { length: Math.max(1, overrides.marketplaceCount ?? 1) },
+    (_, index) => {
+      if (index === 0) return marketplacePlugin
+      const sequence = index + 1
+      return {
+        ...marketplacePlugin,
+        id: 100 + sequence,
+        remotePluginId: `openai-plugin-${sequence}`,
+        name: `plugin-${sequence}`,
+        displayName: `Plugin ${sequence}`,
+        installed: false,
+        enabled: false,
+        installedPluginId: null,
+        latestReleaseId: 1000 + sequence,
+        currentDeviceInstallation: null,
+        interface: {
+          ...marketplacePlugin.interface,
+          displayName: `Plugin ${sequence}`,
+          shortDescription: `Plugin ${sequence} description`,
+          logo: `/Users/test/plugins/plugin-${sequence}/assets/logo.png`,
+        },
+      }
+    }
+  )
   const installedMarketplacePlugin = {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
@@ -746,23 +773,26 @@ function mockSystemSkillsFetch(
       }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
-        const currentMarketplacePlugin = marketplaceUpdateAvailable
-          ? {
-              ...marketplacePlugin,
-              version: '1.1.0',
-              latestReleaseId: 1002,
-              updateAvailable: true,
-            }
-          : marketplacePlugin
+        const currentMarketplacePlugins = marketplacePlugins.map((plugin, index) =>
+          marketplaceUpdateAvailable && index === 0
+            ? {
+                ...plugin,
+                version: '1.1.0',
+                latestReleaseId: 1002,
+                updateAvailable: true,
+              }
+            : plugin
+        )
         return Promise.resolve({
           ok: true,
           status: 200,
           json: () =>
             Promise.resolve({
-              items:
-                keyword && !marketplacePlugin.displayName.toLowerCase().includes(keyword)
-                  ? []
-                  : [currentMarketplacePlugin],
+              items: keyword
+                ? currentMarketplacePlugins.filter(plugin =>
+                    plugin.displayName.toLowerCase().includes(keyword)
+                  )
+                : currentMarketplacePlugins,
             }),
         })
       }
@@ -865,9 +895,13 @@ describe('PluginsWorkspace', () => {
       'aria-selected',
       'true'
     )
-    expect(screen.getByTestId('plugins-distribution-tab-official')).toHaveTextContent('Codex 官方')
+    const distributionTabs = within(screen.getByTestId('plugins-market-toolbar'))
+      .getAllByRole('tab')
+      .map(tab => tab.textContent)
+    expect(distributionTabs).toEqual(['全部', 'OpenAI官方', '国内公开', '企业内部', '个人创建'])
+    expect(screen.getByTestId('plugins-distribution-tab-official')).toHaveTextContent('OpenAI官方')
     expect(screen.getByTestId('plugins-distribution-tab-workspace')).toHaveTextContent('企业内部')
-    expect(screen.getByTestId('plugins-distribution-tab-personal')).toHaveTextContent('个人分享')
+    expect(screen.getByTestId('plugins-distribution-tab-personal')).toHaveTextContent('个人创建')
     expect(screen.getByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
@@ -883,6 +917,74 @@ describe('PluginsWorkspace', () => {
     expect(convertFileSrc).toHaveBeenCalledWith('/Users/test/plugins/documents/assets/logo.png')
     expect(screen.getByText('OpenAI')).toBeInTheDocument()
     expect(screen.queryByText('Productivity')).not.toBeInTheDocument()
+  })
+
+  test('renders provided plugin logos without a second brand-color backdrop', async () => {
+    mockSystemSkillsFetch({
+      marketplaceLogo: 'data:image/png;base64,cG5n',
+      marketplaceBrandColor: '#013B7B',
+    })
+    render(<PluginsWorkspace />)
+
+    const row = await screen.findByTestId('plugin-marketplace-row-101')
+    const logoFrame = row.querySelector('.plugin-market-card-logo')
+
+    expect(logoFrame).toHaveClass('plugin-logo-provided')
+    expect(logoFrame).not.toHaveAttribute('style')
+    expect(logoFrame?.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,cG5n')
+  })
+
+  test('keeps marketplace controls fixed above the scrollable content region', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    const scrollRegion = screen.getByTestId('plugins-market-scroll-region')
+    expect(scrollRegion).toHaveClass('overflow-y-auto')
+    expect(scrollRegion).not.toHaveClass('scrollbar-soft')
+    expect(scrollRegion).toContainElement(screen.getByTestId('plugins-installed-strip'))
+    expect(scrollRegion).toContainElement(screen.getByTestId('plugins-all-section'))
+    expect(scrollRegion).not.toContainElement(screen.getByTestId('plugins-topbar'))
+    expect(scrollRegion).not.toContainElement(screen.getByTestId('plugins-market-toolbar'))
+    expect(screen.getByTestId('plugins-installed-scroll-region')).toHaveClass(
+      'plugin-installed-icons-scroller'
+    )
+  })
+
+  test('reveals marketplace plugins six at a time and updates the next-item preview', async () => {
+    mockSystemSkillsFetch({ marketplaceCount: 20 })
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(10)
+
+    const firstReveal = screen.getByTestId('plugins-show-more-button')
+    expect(firstReveal).toHaveTextContent('查看 Plugin 11, Plugin 12，以及另外 8 个')
+    expect(firstReveal.querySelector('img')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/test/plugins/plugin-11/assets/logo.png'
+    )
+
+    await userEvent.click(firstReveal)
+
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(16)
+    const secondReveal = screen.getByTestId('plugins-show-more-button')
+    expect(secondReveal).toHaveTextContent('查看 Plugin 17, Plugin 18，以及另外 2 个')
+    expect(secondReveal.querySelector('img')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/test/plugins/plugin-17/assets/logo.png'
+    )
+
+    await userEvent.click(secondReveal)
+
+    expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(20)
+    expect(screen.queryByTestId('plugins-show-more-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+
+    await waitFor(() => expect(screen.getAllByTestId(/^plugin-marketplace-row-/)).toHaveLength(10))
+    expect(screen.getByTestId('plugins-show-more-button')).toHaveTextContent(
+      '查看 Plugin 11, Plugin 12，以及另外 8 个'
+    )
   })
 
   test('filters the plugin marketplace from the search box', async () => {
@@ -1044,7 +1146,10 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('没有匹配的插件')).toBeInTheDocument()
     expect(screen.getByText('可以清除搜索和分类后重新浏览。')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-clear-marketplace-filters'))
+    const clearFilters = screen.getByTestId('plugins-clear-marketplace-filters')
+    expect(clearFilters).toHaveClass('bg-surface', 'text-text-primary')
+    expect(clearFilters).not.toHaveClass('bg-text-primary')
+    await userEvent.click(clearFilters)
 
     expect(screen.getByTestId('plugins-search-input')).toHaveValue('')
     expect(screen.getByTestId('plugins-distribution-tab-all')).toHaveAttribute(
@@ -1275,6 +1380,40 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('Documents App')).toBeInTheDocument()
   })
 
+  test('keeps fallback plugin logos contained on the detail page', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'personal',
+          displayName: 'Personal',
+          path: '/Users/test/.codex/plugins/marketplaces/personal',
+          plugins: [
+            {
+              ...defaultCodexPlugin,
+              id: 'code-review',
+              name: 'code-review',
+              displayName: 'Code Review',
+              logo: '',
+              defaultPrompt: 'Review my current working-tree changes.',
+            },
+          ],
+        },
+      ],
+    })
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    await userEvent.click((await screen.findAllByTestId(/^plugin-marketplace-row-/))[0])
+
+    expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-fallback')
+    expect(screen.getByTestId('plugin-prompt-logo-0')).toHaveClass('plugin-logo-fallback')
+  })
+
   test('opens marketplace plugin detail from the plugin row', async () => {
     render(<PluginsWorkspace />)
 
@@ -1289,6 +1428,8 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
+    expect(screen.getByText('OpenAI官方')).toBeInTheDocument()
+    expect(screen.queryByText('OpenAI官方 · Codex 官方')).not.toBeInTheDocument()
   })
 
   test('keeps the resolved marketplace logo on installed plugin details', async () => {
@@ -1313,6 +1454,11 @@ describe('PluginsWorkspace', () => {
     const detailImages = Array.from(document.querySelectorAll('img'))
     expect(detailImages.length).toBeGreaterThan(0)
     detailImages.forEach(image => expect(image).toHaveAttribute('src', marketplaceLogo))
+    expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-provided')
+    expect(screen.getAllByTestId(/^plugin-prompt-logo-/)).not.toHaveLength(0)
+    screen
+      .getAllByTestId(/^plugin-prompt-logo-/)
+      .forEach(frame => expect(frame).toHaveClass('plugin-logo-provided'))
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
 
@@ -1328,6 +1474,12 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
     await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
+    const installDialog = await screen.findByTestId('install-plugin-dialog')
+    expect(installDialog).toHaveClass('plugin-dialog-surface', 'max-w-[600px]')
+    expect(installDialog.querySelector('img')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/test/plugins/documents/assets/logo.png'
+    )
     await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
     await waitFor(() =>
       expect(screen.getByTestId('install-plugin-dialog-done')).toBeInTheDocument()
@@ -1900,7 +2052,7 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
-    expect(screen.getByTestId('plugins-create-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-create-menu')).toHaveClass('border-border/30', 'shadow-lg')
 
     fireEvent.pointerDown(document.body)
     expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()

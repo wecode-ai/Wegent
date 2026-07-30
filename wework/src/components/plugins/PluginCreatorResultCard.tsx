@@ -25,10 +25,10 @@ export function PluginCreatorResultCard({
   return (
     <article
       data-testid="plugin-creator-result-card"
-      className="overflow-hidden rounded-xl border border-border bg-background"
+      className="overflow-hidden rounded-xl border border-border/30 bg-background"
     >
-      <div className="flex items-start gap-3 border-b border-border px-4 py-3">
-        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-start gap-3 border-b border-border/25 px-4 py-3">
+        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-surface">
           {logo ? (
             <img src={logo} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -36,7 +36,7 @@ export function PluginCreatorResultCard({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold text-text-primary">{name}</h3>
+          <h3 className="truncate text-sm font-medium text-text-primary">{name}</h3>
           <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">
             {t('workbench.plugins_creator_preview_status', '已创建预览，尚未安装')}
           </p>
@@ -46,7 +46,7 @@ export function PluginCreatorResultCard({
         </div>
       </div>
       {validationSummary ? (
-        <div className="border-b border-border px-4 py-3 text-xs leading-5 text-text-secondary">
+        <div className="border-b border-border/25 px-4 py-3 text-xs leading-5 text-text-secondary">
           {validationSummary}
         </div>
       ) : null}
@@ -55,7 +55,7 @@ export function PluginCreatorResultCard({
           <button
             type="button"
             data-testid="plugin-creator-view-plugin"
-            className="h-8 rounded-lg border border-border px-3 text-sm font-medium text-text-primary hover:bg-surface"
+            className="h-8 rounded-lg border border-border/30 px-3 text-sm font-medium text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
             onClick={onViewPlugin}
           >
             {t('workbench.plugins_creator_view_plugin', '查看插件')}
@@ -65,7 +65,7 @@ export function PluginCreatorResultCard({
           <button
             type="button"
             data-testid="plugin-creator-install-plugin"
-            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+            className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
             onClick={onInstall}
           >
             {t('workbench.plugins_install_plugin', '安装插件')}

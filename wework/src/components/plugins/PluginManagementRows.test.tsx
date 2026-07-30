@@ -66,7 +66,9 @@ describe('InstalledPluginRow', () => {
       'src',
       'data:image/png;base64,cG5n'
     )
+    expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-provided')
     expect(screen.getByTestId('installed-plugin-origin-59')).toHaveTextContent('企业内部')
+    expect(screen.getByTestId('installed-plugin-row-59')).toHaveClass('min-h-[76px]')
   })
 
   test('falls back to bundled brand icons when the plugin has no logo metadata', () => {
@@ -76,6 +78,7 @@ describe('InstalledPluginRow', () => {
       'src',
       '/plugin-icons/github.svg'
     )
+    expect(screen.getByTestId('installed-plugin-logo-frame-59')).toHaveClass('plugin-logo-fallback')
   })
 
   test('uses the Wework fallback icon when no logo metadata and no known plugin key', () => {

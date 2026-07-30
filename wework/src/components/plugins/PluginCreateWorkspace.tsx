@@ -172,7 +172,7 @@ export function PluginCreateWorkspace({
             {topBarLeftActions}
             <button
               type="button"
-              className="text-sm font-semibold text-text-muted transition-colors hover:text-text-primary"
+              className="rounded-lg px-2 py-1 text-sm font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
               onClick={() => navigateTo('/plugins')}
             >
               {t('workbench.plugins_tab', '插件')}

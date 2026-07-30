@@ -16,7 +16,7 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { resolvePluginLogoUrl } from './plugin-assets'
+import { resolvePluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
@@ -169,8 +169,8 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
   ]
 }
 
-function installedPluginLogo(plugin: InstalledPluginItem): string {
-  return resolvePluginLogoUrl({
+function installedPluginLogo(plugin: InstalledPluginItem) {
+  return resolvePluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
     logo: plugin.raw.spec.interface?.logo,
     composerIcon: plugin.raw.spec.interface?.composerIcon,
@@ -391,22 +391,27 @@ export function PluginDetailView({
   const isInstalled = raw.spec.installState === 'installed'
   const distributionLabel =
     plugin.distribution === 'official'
-      ? t('workbench.plugins_distribution_official', 'Codex 官方')
+      ? t('workbench.plugins_distribution_official', 'OpenAI官方')
       : plugin.distribution === 'workspace'
         ? t('workbench.plugins_distribution_workspace', '企业内部')
         : plugin.distribution === 'personal'
-          ? t('workbench.plugins_distribution_personal', '个人分享')
+          ? t('workbench.plugins_distribution_personal', '个人创建')
           : t('workbench.plugins_distribution_public', '国内公开')
+  const normalizedSourceLabel =
+    plugin.distribution === 'official' &&
+    /^(?:Codex|OpenAI)\s*(?:官方|official)$/i.test(plugin.sourceLabel.trim())
+      ? distributionLabel
+      : plugin.sourceLabel
   const componentItems = buildComponentItems(raw)
   const componentStates = raw.spec.componentStates || {}
   const rows = [
     {
       label: '来源',
       value:
-        plugin.sourceLabel && plugin.sourceLabel.includes(distributionLabel)
-          ? plugin.sourceLabel
-          : plugin.sourceLabel
-            ? `${distributionLabel} · ${plugin.sourceLabel}`
+        normalizedSourceLabel && normalizedSourceLabel.includes(distributionLabel)
+          ? normalizedSourceLabel
+          : normalizedSourceLabel
+            ? `${distributionLabel} · ${normalizedSourceLabel}`
             : distributionLabel,
     },
     { label: '功能', value: pluginCapabilitySummary(plugin) },
@@ -420,7 +425,7 @@ export function PluginDetailView({
     <section className="mt-7 space-y-3" data-testid="plugin-detail-access-scope">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h2 className="text-base font-medium leading-6 text-text-primary">
+          <h2 className="text-base font-medium leading-5 text-text-primary">
             {t('workbench.plugin_detail_access_scope', '可用范围')}
           </h2>
           <p className="text-xs leading-4 text-text-muted">
@@ -469,7 +474,7 @@ export function PluginDetailView({
       {isActionMenuOpen && (
         <div
           data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border bg-background p-1 shadow-xl"
+          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border/30 bg-background p-1 shadow-lg"
         >
           {onEditAction && (
             <button
@@ -543,7 +548,7 @@ export function PluginDetailView({
   const guideTemplateSection = prompts.length > 0 && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
       <div>
-        <h2 className="text-base font-medium leading-6 text-text-primary">
+        <h2 className="text-base font-medium leading-5 text-text-primary">
           {t('workbench.plugin_detail_get_started', '开始使用')}
         </h2>
         <p className="text-xs leading-4 text-text-muted">
@@ -564,19 +569,21 @@ export function PluginDetailView({
             key={prompt}
             type="button"
             data-testid={`plugin-prompt-${index}`}
-            className="overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:bg-surface/35"
+            className="group overflow-hidden rounded-xl border border-border/30 bg-background text-left transition-colors hover:border-border/50 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
             onClick={() => (onPromptSelect ? onPromptSelect(prompt) : onToggle())}
           >
-            <span className="flex min-h-20 flex-col gap-2 bg-surface p-3">
+            <span className="flex min-h-20 flex-col gap-2 bg-surface p-3 transition-colors group-hover:bg-muted">
               <span className="flex items-start justify-between">
-                <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-background">
-                  {logo ? (
-                    <img src={logo} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <Boxes className="h-4 w-4" />
-                  )}
+                <span
+                  data-testid={`plugin-prompt-logo-${index}`}
+                  className={[
+                    'plugin-detail-prompt-logo',
+                    logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+                  ].join(' ')}
+                >
+                  {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-4 w-4" />}
                 </span>
-                <ArrowRight className="h-4 w-4 text-text-muted" />
+                <ArrowRight className="h-4 w-4 text-text-muted transition-colors group-hover:text-text-secondary" />
               </span>
               <span className="text-xs font-medium text-text-secondary">
                 {t('workbench.plugin_template_prepare', '准备')}: {prompt.slice(0, 36)}
@@ -584,7 +591,7 @@ export function PluginDetailView({
               </span>
             </span>
             <span className="block px-3 py-2">
-              <strong className="line-clamp-2 text-xs font-medium leading-4">{prompt}</strong>
+              <strong className="line-clamp-2 text-sm font-medium leading-5">{prompt}</strong>
               <small className="mt-1 block text-xs text-text-muted">
                 {t('workbench.plugin_template_prefill_hint', '点击后预填，可继续修改')}
               </small>
@@ -599,7 +606,7 @@ export function PluginDetailView({
     <main className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
       <DesktopTopBar
         testId="plugin-detail-topbar"
-        className="sticky top-0 z-40 border-b border-border/75 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
+        className="sticky top-0 z-40 border-b border-border/30 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
         dragRegionClassName="hidden md:block"
         left={
           <button
@@ -614,16 +621,18 @@ export function PluginDetailView({
       />
       <div className="mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-14 pt-7 sm:px-8">
         <header className="grid gap-4 sm:grid-cols-[60px_minmax(0,1fr)_auto] sm:items-center">
-          <div className="flex h-[58px] w-[58px] items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-background text-violet-600">
-            {logo ? (
-              <img src={logo} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <Boxes className="h-7 w-7" />
-            )}
+          <div
+            data-testid="plugin-detail-logo"
+            className={[
+              'plugin-detail-header-logo',
+              logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+            ].join(' ')}
+          >
+            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-7 w-7" />}
           </div>
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
-            <p className="mt-0.5 truncate text-xs leading-4 text-text-secondary">
+            <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
               {plugin.raw.spec.interface?.category || plugin.sourceLabel} ·{' '}
               {plugin.raw.spec.interface?.developerName ||
                 plugin.raw.spec.author ||
@@ -654,7 +663,7 @@ export function PluginDetailView({
           </div>
         </header>
 
-        <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-6 text-text-secondary">
+        <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
           {description}
         </p>
 
@@ -674,13 +683,13 @@ export function PluginDetailView({
 
         {connectorItems.length > 0 && (
           <section className="mt-7 space-y-3">
-            <h2 className="text-base font-medium leading-6 text-text-primary">
+            <h2 className="text-base font-medium leading-5 text-text-primary">
               {t('workbench.plugin_detail_authorization', '应用授权')}{' '}
               <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
                 {connectorItems.length}
               </span>
             </h2>
-            <div className="overflow-hidden rounded-xl border border-border">
+            <div className="overflow-hidden rounded-xl border border-border/30">
               {connectorItems.map(item => (
                 <div
                   key={`connector-${item.key}`}
@@ -719,28 +728,28 @@ export function PluginDetailView({
         )}
 
         {capabilityItems.length > 0 && (
-          <section className="mt-7 space-y-3">
-            <h2 className="text-base font-medium leading-6 text-text-primary">
+          <section className="mt-7 space-y-3" data-testid="plugin-detail-capabilities">
+            <h2 className="text-base font-medium leading-5 text-text-primary">
               {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
               <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
                 {capabilityItems.length}
               </span>
             </h2>
-            <div className="overflow-hidden rounded-xl border border-border">
+            <div className="overflow-hidden rounded-xl border border-border/30">
               {capabilityItems.map(item => {
                 const Icon = componentIcon(item.type)
                 const enabled = componentStates[item.componentKey] ?? true
                 const rowBody = (
                   <>
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                    <div className="mt-1 flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
                       <Icon className="h-4 w-4" />
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 space-y-0.5">
                       <p className="truncate text-xs leading-4 text-text-muted">
                         {componentTypeLabel(item.type, t)}
                       </p>
                       <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
-                      <p className="line-clamp-2 text-xs leading-4 text-text-secondary">
+                      <p className="line-clamp-2 text-sm leading-5 text-text-secondary">
                         {item.description}
                       </p>
                     </div>
@@ -749,13 +758,16 @@ export function PluginDetailView({
                 return (
                   <div
                     key={item.key}
-                    className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0"
+                    className={[
+                      'grid grid-cols-[38px_minmax(0,1fr)_auto] items-start gap-3 border-b border-border/25 px-4 py-4 transition-colors last:border-b-0',
+                      item.type === 'skill' ? 'hover:bg-muted' : '',
+                    ].join(' ')}
                   >
                     {item.type === 'skill' ? (
                       <button
                         type="button"
                         data-testid={`plugin-skill-open-${item.name}`}
-                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 text-left hover:opacity-90"
+                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
                         onClick={() => setSelectedSkill(item)}
                       >
                         {rowBody}
@@ -773,7 +785,7 @@ export function PluginDetailView({
                         aria-label={item.name}
                         data-testid={`plugin-component-toggle-${item.componentKey}`}
                         className={[
-                          'relative h-[22px] w-[38px] rounded-full transition-colors',
+                          'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
                           enabled ? 'bg-emerald-500' : 'bg-border',
                         ].join(' ')}
                         onClick={() => onComponentToggle(item.componentKey, !enabled)}
@@ -793,15 +805,15 @@ export function PluginDetailView({
           </section>
         )}
 
-        <section className="mt-7 space-y-3">
-          <h2 className="text-base font-medium leading-6 text-text-primary">
+        <section className="mt-7 space-y-3" data-testid="plugin-detail-info">
+          <h2 className="text-base font-medium leading-5 text-text-primary">
             {t('workbench.plugin_detail_info', '信息')}
           </h2>
-          <dl className="border-t border-border">
+          <dl className="border-t border-border/25">
             {rows.map(row => (
               <div
                 key={row.label}
-                className="grid gap-2 border-b border-border py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
+                className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
               >
                 <dt className="font-medium text-text-muted">{row.label}</dt>
                 <dd className="min-w-0 text-text-primary">
@@ -829,7 +841,7 @@ export function PluginDetailView({
           skill={{
             name: selectedSkill.name,
             pluginName: plugin.name,
-            pluginLogoUrl: logo,
+            pluginLogoUrl: logo.url,
             description: selectedSkill.description,
             invocation: `/${selectedSkill.name}`,
             installed: isInstalled,

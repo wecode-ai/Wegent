@@ -2,7 +2,7 @@ import { Boxes, Copy, Ellipsis, MessageCirclePlus, Trash2, UserCog } from 'lucid
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { resolvePluginLogoUrl } from './plugin-assets'
+import { resolvePluginLogo } from './plugin-assets'
 import type { PluginDistribution } from './pluginDistribution'
 import { buildInstalledPluginSubtitle } from './pluginManagementSubtitle'
 
@@ -53,18 +53,18 @@ export function InstalledPluginRow({
   const toggleLabel = plugin.enabled
     ? t('workbench.plugins_disable_plugin', '停用插件')
     : t('workbench.plugins_enable_plugin', '启用插件')
-  const logo = resolvePluginLogoUrl({
+  const logo = resolvePluginLogo({
     pluginKey: plugin.raw.spec.source.pluginKey,
     logo: plugin.raw.spec.interface?.logo,
     composerIcon: plugin.raw.spec.interface?.composerIcon,
   })
   const distributionLabel =
     plugin.distribution === 'official'
-      ? t('workbench.plugins_distribution_official', 'Codex 官方')
+      ? t('workbench.plugins_distribution_official', 'OpenAI官方')
       : plugin.distribution === 'workspace'
         ? t('workbench.plugins_distribution_workspace', '企业内部')
         : plugin.distribution === 'personal'
-          ? t('workbench.plugins_distribution_personal', '个人分享')
+          ? t('workbench.plugins_distribution_personal', '个人创建')
           : t('workbench.plugins_distribution_public', '国内公开')
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
 
@@ -81,20 +81,21 @@ export function InstalledPluginRow({
 
   const mainContent = (
     <>
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[11px] border border-border bg-background p-2">
-        {logo ? (
-          <img
-            src={logo}
-            alt=""
-            data-testid={`installed-plugin-logo-${plugin.id}`}
-            className="h-full w-full object-contain"
-          />
+      <div
+        data-testid={`installed-plugin-logo-frame-${plugin.id}`}
+        className={[
+          'plugin-management-logo',
+          logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+        ].join(' ')}
+      >
+        {logo.url ? (
+          <img src={logo.url} alt="" data-testid={`installed-plugin-logo-${plugin.id}`} />
         ) : (
           <Boxes className="h-5 w-5 text-text-muted" />
         )}
       </div>
       <div className="min-w-0">
-        <strong className="block truncate text-sm font-semibold leading-[18px] text-text-primary">
+        <strong className="block truncate text-base font-medium leading-5 text-text-primary">
           {plugin.name}
           <span
             data-testid={`installed-plugin-origin-${plugin.id}`}
@@ -109,7 +110,7 @@ export function InstalledPluginRow({
             </span>
           )}
         </strong>
-        <small className="mt-0.5 block truncate text-code-sm leading-4 text-text-muted">
+        <small className="mt-0.5 block truncate text-sm leading-5 text-text-muted">
           {subtitle}
         </small>
       </div>
@@ -119,19 +120,19 @@ export function InstalledPluginRow({
   return (
     <article
       data-testid={`installed-plugin-row-${plugin.id}`}
-      className="plugin-management-row grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-[15px]"
+      className="plugin-management-row grid min-h-[76px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4"
     >
       {onOpen ? (
         <button
           type="button"
           aria-label={`${t('workbench.plugins_view_plugin_detail', '查看 {{name}} 详情', { name: plugin.name })}`}
-          className="grid min-h-[71px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
+          className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-focus/30"
           onClick={onOpen}
         >
           {mainContent}
         </button>
       ) : (
-        <div className="grid min-h-[71px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2">
+        <div className="grid min-h-[75px] grid-cols-[42px_minmax(0,1fr)] items-center gap-3 py-2">
           {mainContent}
         </div>
       )}
@@ -184,13 +185,13 @@ export function InstalledPluginRow({
         {isMenuOpen && (
           <div
             data-testid={`installed-plugin-actions-menu-${plugin.id}`}
-            className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border bg-popover p-1.5 shadow-xl"
+            className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
           >
             {onShare && (
               <button
                 type="button"
                 data-testid={`installed-plugin-share-${plugin.id}`}
-                className="flex min-h-[38px] w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-xs text-text-primary hover:bg-surface"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onShare()
@@ -204,7 +205,7 @@ export function InstalledPluginRow({
               <button
                 type="button"
                 data-testid={`installed-plugin-copy-${plugin.id}`}
-                className="flex min-h-[38px] w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-xs text-text-primary hover:bg-surface"
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
                 onClick={() => {
                   setIsMenuOpen(false)
                   onCopy()
@@ -214,11 +215,11 @@ export function InstalledPluginRow({
                 {t('workbench.plugins_copy_to_personal', '复制为个人插件')}
               </button>
             )}
-            {(onShare || onCopy) && <div className="my-1 h-px bg-border" />}
+            {(onShare || onCopy) && <div className="my-1 h-px bg-border/25" />}
             <button
               type="button"
               data-testid={`installed-plugin-uninstall-${plugin.id}`}
-              className="flex min-h-[38px] w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+              className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/20 dark:hover:bg-red-950/30"
               onClick={() => {
                 setIsMenuOpen(false)
                 onUninstall()

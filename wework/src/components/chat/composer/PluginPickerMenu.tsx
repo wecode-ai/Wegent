@@ -1,4 +1,4 @@
-import { Boxes, ExternalLink, Puzzle, Search } from 'lucide-react'
+import { Boxes, CornerDownLeft, ExternalLink, Puzzle, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import {
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
@@ -9,7 +9,6 @@ import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { appReference, displayAppName } from './composerMentionCandidates'
-import { OPEN_COMPOSER_PLUGIN_PICKER_EVENT } from './composerEvents'
 import { registerComposerMentionIcon } from './composerMentions'
 
 interface PluginPickerMenuProps {
@@ -41,15 +40,6 @@ export function PluginPickerMenu({
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open])
-
-  useEffect(() => {
-    const onOpenPicker = () => {
-      if (disabled) return
-      setOpen(true)
-    }
-    window.addEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
-    return () => window.removeEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
-  }, [disabled])
 
   useEffect(() => {
     const onSkillsChanged = () => setReloadToken(token => token + 1)
@@ -104,36 +94,46 @@ export function PluginPickerMenu({
         aria-expanded={open}
         aria-label={t('workbench.composer_plugins', '插件')}
         className={[
-          'flex h-7 items-center gap-1.5 rounded-lg text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
-          iconOnly ? 'w-7 justify-center px-0' : 'px-2',
+          'flex items-center text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40',
+          iconOnly
+            ? 'h-7 w-7 justify-center rounded-lg px-0'
+            : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
         ].join(' ')}
         onClick={() => setOpen(!open)}
       >
-        <Puzzle className="h-4 w-4" />
-        {!iconOnly && (
+        {iconOnly ? (
+          <Puzzle className="h-4 w-4" />
+        ) : (
           <>
-            <span>{t('workbench.composer_plugins', '插件')}</span>
-            {apps.slice(0, 3).map(app => {
-              const logo = resolvePluginLogoUrl({
-                pluginKey:
-                  app.source === 'installed-plugin'
-                    ? app.id.replace(/^plugin:/, '')
-                    : (app.pluginDisplayNames?.[0] ?? app.id),
-                logo: app.logoUrl,
-              })
-              return (
-                <span
-                  key={app.id}
-                  className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-md border border-border bg-background"
-                >
-                  {logo ? (
-                    <img src={logo} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <Boxes className="h-3 w-3" />
-                  )}
-                </span>
-              )
-            })}
+            <span className="font-medium">{t('workbench.composer_plugins', '插件')}</span>
+            <span
+              className="flex -space-x-1"
+              data-testid="composer-plugin-preview-icons"
+              aria-hidden="true"
+            >
+              {apps.slice(0, 3).map(app => {
+                const logo = resolvePluginLogoUrl({
+                  pluginKey:
+                    app.source === 'installed-plugin'
+                      ? app.id.replace(/^plugin:/, '')
+                      : (app.pluginDisplayNames?.[0] ?? app.id),
+                  logo: app.logoUrl,
+                })
+                return (
+                  <span
+                    key={app.id}
+                    data-testid={`composer-plugin-preview-icon-${app.id}`}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border/30 bg-background"
+                  >
+                    {logo ? (
+                      <img src={logo} alt="" className="h-full w-full object-contain" />
+                    ) : (
+                      <Boxes className="h-4 w-4" />
+                    )}
+                  </span>
+                )
+              })}
+            </span>
             {apps.length > 3 && <span className="text-xs text-text-muted">+{apps.length - 3}</span>}
           </>
         )}
@@ -142,14 +142,14 @@ export function PluginPickerMenu({
       {open && (
         <div
           data-testid="composer-plugin-picker"
-          className="absolute bottom-9 left-0 z-popover w-[min(280px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl"
+          className="absolute bottom-9 left-0 z-popover w-[min(460px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border/30 bg-popover p-2 shadow-xl"
         >
           <label className="relative mb-1 block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
             <input
               value={query}
               data-testid="composer-plugin-picker-search"
-              className="h-9 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              className="h-9 w-full rounded-lg border border-border/30 bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
               placeholder={t('workbench.composer_plugin_search', '搜索插件')}
               onChange={event => setQuery(event.target.value)}
             />
@@ -178,7 +178,8 @@ export function PluginPickerMenu({
                     key={app.id}
                     type="button"
                     data-testid={`composer-plugin-picker-item-${app.id}`}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+                    className="grid min-h-10 w-full grid-cols-[22px_auto_minmax(0,1fr)_16px] items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+                    title={app.description || undefined}
                     onClick={() => {
                       const reference = appReference(app)
                       registerComposerMentionIcon(reference, logo)
@@ -193,16 +194,23 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
+                    <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/30 bg-background">
                       {logo ? (
                         <img src={logo} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <Boxes className="h-3.5 w-3.5 text-text-muted" />
                       )}
                     </span>
-                    <span className="min-w-0 truncate text-sm font-medium">
+                    <span className="min-w-0 truncate text-base leading-5">
                       {displayAppName(app)}
                     </span>
+                    <span className="min-w-0 truncate text-base leading-5 text-text-muted">
+                      {app.description}
+                    </span>
+                    <CornerDownLeft
+                      className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                      aria-hidden="true"
+                    />
                   </button>
                 )
               })
@@ -218,7 +226,7 @@ export function PluginPickerMenu({
           <button
             type="button"
             data-testid="composer-open-plugin-marketplace"
-            className="mt-1 flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+            className="mt-1 flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
             onClick={() => {
               setOpen(false)
               navigateTo('/plugins')

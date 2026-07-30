@@ -77,7 +77,26 @@ export function resolvePluginLogoUrl(options: {
   logo?: string | null
   composerIcon?: string | null
 }): string {
+  return resolvePluginLogo(options).url
+}
+
+export function resolvePluginLogo(options: {
+  pluginKey?: string | null
+  logo?: string | null
+  composerIcon?: string | null
+}): {
+  url: string
+  source: 'provided' | 'fallback'
+} {
   const resolved = resolvePluginAssetUrl(options.logo || options.composerIcon)
-  if (resolved && isRenderablePluginLogoUrl(resolved)) return resolved
-  return fallbackPluginIconUrl(options.pluginKey)
+  if (resolved && isRenderablePluginLogoUrl(resolved)) {
+    return {
+      url: resolved,
+      source: 'provided',
+    }
+  }
+  return {
+    url: fallbackPluginIconUrl(options.pluginKey),
+    source: 'fallback',
+  }
 }

@@ -31,7 +31,7 @@ export function UninstallPluginDialog({
 
   return (
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/38 px-6"
+      className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={onCancel}
     >
       <section
@@ -39,16 +39,13 @@ export function UninstallPluginDialog({
         aria-modal="true"
         aria-labelledby="uninstall-plugin-dialog-title"
         data-testid="uninstall-plugin-dialog"
-        className="w-full max-w-[600px] rounded-2xl bg-background p-6 shadow-xl"
+        className="plugin-dialog-surface w-full max-w-[420px] p-6"
         onClick={event => event.stopPropagation()}
       >
-        <h2
-          id="uninstall-plugin-dialog-title"
-          className="text-base font-semibold text-text-primary"
-        >
+        <h2 id="uninstall-plugin-dialog-title" className="heading-subsection text-text-primary">
           {t('workbench.plugins_uninstall_plugin_title', '卸载插件？')}
         </h2>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
           {t('workbench.plugins_uninstall_plugin_description', '{{name}} 将从当前账号卸载。', {
             name: pluginName,
             defaultValue: `${pluginName} 将从当前账号卸载。`,

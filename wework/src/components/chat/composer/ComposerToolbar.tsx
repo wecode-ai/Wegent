@@ -1,12 +1,4 @@
-import {
-  ArrowUp,
-  ChevronDown,
-  ClipboardList,
-  Clock3,
-  CornerDownRight,
-  Slash,
-  Zap,
-} from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
@@ -20,7 +12,6 @@ import { PluginPickerMenu } from './PluginPickerMenu'
 import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { openComposerPluginPicker } from './composerEvents'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -132,17 +123,6 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
-        <button
-          type="button"
-          data-testid="composer-slash-button"
-          disabled={disabled}
-          aria-label={t('workbench.composer_open_plugin_picker', '选择插件')}
-          title={t('workbench.composer_open_plugin_picker', '选择插件')}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-40"
-          onClick={openComposerPluginPicker}
-        >
-          <Slash className="h-4 w-4" />
-        </button>
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu
           disabled={disabled}

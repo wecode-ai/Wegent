@@ -1,7 +1,6 @@
 import { Boxes, Loader2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { resolvePluginAssetUrl } from '../plugin-assets'
 
 export interface InstallPluginDialogTarget {
   id: string | number
@@ -31,7 +30,7 @@ export function InstallPluginDialog({
 }: InstallPluginDialogProps) {
   const { t } = useTranslation('common')
   const confirmRef = useRef<HTMLButtonElement>(null)
-  const logo = resolvePluginAssetUrl(plugin.logoUrl || '')
+  const logo = plugin.logoUrl?.trim() || ''
 
   useEffect(() => {
     confirmRef.current?.focus()
@@ -39,7 +38,7 @@ export function InstallPluginDialog({
 
   return (
     <div
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/38 px-6"
+      className="plugin-dialog-overlay fixed inset-0 z-modal flex items-center justify-center px-6"
       onClick={onCancel}
     >
       <section
@@ -47,7 +46,9 @@ export function InstallPluginDialog({
         aria-modal="true"
         aria-labelledby="install-plugin-dialog-title"
         data-testid="install-plugin-dialog"
-        className="w-full max-w-[720px] rounded-2xl bg-background shadow-xl"
+        className={`plugin-dialog-surface w-full overflow-hidden ${
+          phase === 'success' ? 'max-w-[420px]' : 'max-w-[600px]'
+        }`}
         onClick={event => event.stopPropagation()}
       >
         {phase === 'success' ? (
@@ -55,16 +56,13 @@ export function InstallPluginDialog({
             <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
               <Boxes className="h-6 w-6" />
             </div>
-            <h2
-              id="install-plugin-dialog-title"
-              className="text-base font-semibold text-text-primary"
-            >
+            <h2 id="install-plugin-dialog-title" className="heading-subsection text-text-primary">
               {t('workbench.plugins_install_success_title', '{{name}} 已安装', {
                 name: plugin.name,
                 defaultValue: `${plugin.name} 已安装`,
               })}
             </h2>
-            <p className="mt-2 text-sm leading-6 text-text-secondary">
+            <p className="mt-2 text-sm leading-5 text-text-secondary">
               {t(
                 'workbench.plugins_install_success_hint',
                 '账号授权仍独立进行，可在需要连接时单独授权。'
@@ -93,9 +91,9 @@ export function InstallPluginDialog({
           </div>
         ) : (
           <>
-            <div className="border-b border-border px-6 py-5">
+            <div className="plugin-dialog-divider border-b px-6 py-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
+                <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border/30 bg-background">
                   {logo ? (
                     <img src={logo} alt="" className="h-full w-full object-cover" />
                   ) : (
@@ -103,7 +101,7 @@ export function InstallPluginDialog({
                   )}
                 </div>
                 <div>
-                  <h2 id="install-plugin-dialog-title" className="text-base font-semibold">
+                  <h2 id="install-plugin-dialog-title" className="heading-subsection">
                     {t('workbench.plugins_install_plugin', '安装插件')}
                   </h2>
                   <p className="text-sm text-text-secondary">
@@ -112,7 +110,7 @@ export function InstallPluginDialog({
                 </div>
               </div>
             </div>
-            <div className="space-y-3 px-6 py-5 text-sm leading-6 text-text-secondary">
+            <div className="space-y-3 px-6 py-5 text-sm leading-5 text-text-secondary">
               <p>
                 <strong className="text-text-primary">{plugin.name}</strong>
                 {(plugin.publisher || plugin.version) && (
@@ -136,7 +134,7 @@ export function InstallPluginDialog({
                 <li>{t('workbench.plugins_install_gain_auth_separate', '外部账号按需另行授权')}</li>
               </ul>
             </div>
-            <div className="flex justify-end gap-2 border-t border-border px-6 py-4">
+            <div className="plugin-dialog-divider flex justify-end gap-2 border-t px-6 py-4">
               <button
                 type="button"
                 data-testid="install-plugin-dialog-cancel"

@@ -73,13 +73,13 @@ export function PluginShareDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-modal flex items-end justify-center bg-black/35 p-0 sm:items-center sm:p-4">
+    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center p-0 sm:items-center sm:p-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="plugin-share-title"
         data-testid="plugin-share-dialog"
-        className="w-full max-w-lg rounded-t-2xl border border-border bg-background p-5 shadow-xl sm:rounded-2xl"
+        className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
       >
         <header className="flex items-start justify-between gap-4">
           <div>
@@ -92,7 +92,7 @@ export function PluginShareDialog({
             type="button"
             data-testid="plugin-share-close"
             aria-label={t('common.close', '关闭')}
-            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface sm:h-8 sm:w-8"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 sm:h-8 sm:w-8"
             onClick={onClose}
           >
             <X className="h-4 w-4" />
@@ -104,7 +104,9 @@ export function PluginShareDialog({
             type="button"
             data-testid="plugin-share-scope-private"
             className={`h-10 rounded-lg text-sm ${
-              scope === 'private' ? 'bg-background font-medium shadow-sm' : 'text-text-secondary'
+              scope === 'private'
+                ? 'bg-background font-medium shadow-sm'
+                : 'text-text-secondary hover:bg-background/60'
             }`}
             onClick={() => {
               setScope('private')
@@ -118,7 +120,9 @@ export function PluginShareDialog({
             type="button"
             data-testid="plugin-share-scope-restricted"
             className={`h-10 rounded-lg text-sm ${
-              scope === 'restricted' ? 'bg-background font-medium shadow-sm' : 'text-text-secondary'
+              scope === 'restricted'
+                ? 'bg-background font-medium shadow-sm'
+                : 'text-text-secondary hover:bg-background/60'
             }`}
             onClick={() => setScope('restricted')}
           >
@@ -144,7 +148,7 @@ export function PluginShareDialog({
             {query.trim() && (
               <div
                 data-testid="plugin-share-search-results"
-                className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border p-1"
+                className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border/30 p-1"
               >
                 {searching && (
                   <p className="px-3 py-2 text-sm text-text-muted">
@@ -221,7 +225,7 @@ export function PluginShareDialog({
               ))}
             </div>
 
-            <label className="mt-4 flex min-h-11 items-center justify-between gap-4 rounded-xl border border-border px-3">
+            <label className="mt-4 flex min-h-11 items-center justify-between gap-4 rounded-xl border border-border/30 px-3 transition-colors hover:bg-surface">
               <span>
                 <strong className="block text-sm font-medium">
                   {t('workbench.plugins_share_allow_copy', '允许复制')}

@@ -290,7 +290,7 @@ describe('ChatInput', () => {
     })
   })
 
-  test('opens plugin picker from the toolbar slash button', async () => {
+  test('opens plugin picker from its toolbar button without a separate slash action', async () => {
     render(
       <ChatInput
         value=""
@@ -302,7 +302,8 @@ describe('ChatInput', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('composer-slash-button'))
+    expect(screen.queryByTestId('composer-slash-button')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
     expect(await screen.findByTestId('composer-plugin-picker')).toBeInTheDocument()
   })
 
