@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceApp } from '@/types/api'
-import { INSERT_PLUGIN_REFERENCE_EVENT } from '@/features/plugins/pluginTrial'
+import { INSERT_PLUGIN_REFERENCE_EVENT, recordPluginUsage } from '@/features/plugins/pluginTrial'
 import { PluginPickerMenu } from './PluginPickerMenu'
+import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
 
 const githubApp: LocalDeviceApp = {
   id: 'github',
@@ -24,7 +25,19 @@ const superpowersApp: LocalDeviceApp = {
   skillPath: 'plugin://superpowers@openai-official',
 }
 
+const echoIdApp: LocalDeviceApp = {
+  id: 'echoid',
+  name: 'EchoID',
+  description: 'Identify speaker and save corrected transcripts locally.',
+  isAccessible: true,
+  isEnabled: true,
+}
+
 describe('PluginPickerMenu', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
     const onListLocalApps = vi
       .fn()
@@ -76,5 +89,27 @@ describe('PluginPickerMenu', () => {
     })
 
     window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
+  })
+
+  test('orders available plugins by usage count then recent selection', async () => {
+    recordPluginUsage('EchoID')
+    recordPluginUsage('EchoID')
+    recordPluginUsage('GitHub')
+    window.localStorage.setItem(RECENT_PLUGIN_APPS_KEY, JSON.stringify(['github']))
+
+    const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp, githubApp, echoIdApp])
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    const picker = await screen.findByTestId('composer-plugin-picker')
+
+    const items = within(picker)
+      .getAllByTestId(/^composer-plugin-picker-item-/)
+      .map(node => node.getAttribute('data-testid'))
+    expect(items).toEqual([
+      'composer-plugin-picker-item-echoid',
+      'composer-plugin-picker-item-github',
+      'composer-plugin-picker-item-plugin:superpowers',
+    ])
   })
 })

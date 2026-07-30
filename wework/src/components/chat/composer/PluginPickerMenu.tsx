@@ -10,14 +10,17 @@ import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { appReference, displayAppName } from './composerMentionCandidates'
 import { registerComposerMentionIcon } from './composerMentions'
+import {
+  RECENT_PLUGIN_APPS_KEY,
+  readRecentPluginAppIds,
+  sortComposerPluginsByUsage,
+} from './composerPluginSort'
 
 interface PluginPickerMenuProps {
   disabled?: boolean
   iconOnly?: boolean
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
-
-const RECENT_PLUGIN_APPS_KEY = 'wework:composer:recent-plugin-apps'
 
 export function PluginPickerMenu({
   disabled = false,
@@ -53,19 +56,11 @@ export function PluginPickerMenu({
     onListLocalApps()
       .then(items => {
         if (!current) return
-        const recentIds = new Map<string, number>(
-          JSON.parse(window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]').map(
-            (id: string, index: number) => [id, index]
-          )
-        )
         setApps(
-          items
-            .filter(app => app.isEnabled !== false && app.isAccessible !== false)
-            .sort(
-              (left, right) =>
-                (recentIds.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-                (recentIds.get(right.id) ?? Number.MAX_SAFE_INTEGER)
-            )
+          sortComposerPluginsByUsage(
+            items.filter(app => app.isEnabled !== false && app.isAccessible !== false),
+            readRecentPluginAppIds()
+          )
         )
       })
       .catch(() => {
