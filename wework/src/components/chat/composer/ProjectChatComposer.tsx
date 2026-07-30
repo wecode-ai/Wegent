@@ -329,7 +329,9 @@ export function ProjectChatComposer({
           contextUsage={contextUsage}
           onFileSelect={onFileSelect}
           planModeActive={planModeActive}
+          onSetPlanMode={onSetPlanMode}
           onClearPlanMode={onClearPlanMode}
+          onSetGoal={onSetGoal}
           onCompactContext={onCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}

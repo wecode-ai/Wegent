@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -17,16 +18,74 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import {
+  notifyLocalPluginSkillsChanged,
+  queuePluginReferenceTrial,
+  queuePluginTrial,
+} from '@/features/plugins/pluginTrial'
 import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
 import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 class SitesDeviceSyncConfirmationError extends Error {}
+
+const CODEX_SITES_PLUGIN_NAME = 'sites'
+const CODEX_SITES_MARKETPLACE = 'openai-bundled'
+
+function normalizedPluginKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+}
+
+function isEnabledCodexSitesPlugin(plugin: InstalledPlugin): boolean {
+  if (!plugin.spec.enabled || plugin.spec.installState !== 'installed') return false
+  if (normalizedPluginKey(plugin.spec.source.pluginKey) !== CODEX_SITES_PLUGIN_NAME) return false
+
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : {}
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.providerKey,
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
+  ].filter((marketplace): marketplace is string => typeof marketplace === 'string')
+  return marketplaceNames.some(
+    marketplace => normalizedPluginKey(marketplace) === CODEX_SITES_MARKETPLACE
+  )
+}
+
+function isNativeCodexSitesPluginSkill(skill: LocalDeviceSkill): boolean {
+  if (skill.source !== 'codex' || skill.name.trim().toLowerCase() !== 'sites:sites-building') {
+    return false
+  }
+  const normalizedPath = skill.path.trim().toLowerCase().replace(/\\/g, '/')
+  return normalizedPath.includes('/plugins/cache/openai-bundled/sites/')
+}
+
+function queueCodexSitesPluginReference(): boolean {
+  return queuePluginReferenceTrial({
+    pluginName: CODEX_SITES_PLUGIN_NAME,
+    marketplaceName: CODEX_SITES_MARKETPLACE,
+    displayName: 'Sites',
+  })
+}
+
+function nativeCodexSitesPluginPaths(nativeCodexHome: string): string[] {
+  const normalizedHome = nativeCodexHome.trim().replace(/[\\/]+$/, '')
+  if (!normalizedHome) return []
+  return [
+    `${normalizedHome}/plugins/cache/openai-bundled/sites`,
+    `${normalizedHome}/.tmp/bundled-marketplaces/openai-bundled/plugins/sites/.codex-plugin/plugin.json`,
+  ]
+}
 
 export function SitesPage() {
   const { t } = useTranslation('sites')
@@ -46,6 +105,7 @@ export function SitesPage() {
     cloudWorkStatus,
     selectProject,
     startNewChat,
+    startNewSkillChat,
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeTask,
@@ -93,6 +153,7 @@ export function SitesPage() {
     cloudConnection.token,
     isLocalFirst,
   ])
+  const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
       return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -145,9 +206,64 @@ export function SitesPage() {
   const handleCreate = async () => {
     if (creating) return
     setCreating(true)
+    let codexPluginLoadFailed = false
     try {
+      try {
+        const installedPlugins = await localCodexPluginApi.listInstalledPlugins()
+        const codexSitesPlugin = installedPlugins.items.find(isEnabledCodexSitesPlugin)
+        if (codexSitesPlugin && queuePluginTrial(codexSitesPlugin)) {
+          setCreateError(null)
+          navigateTo('/')
+          return
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      try {
+        const migrationStatus = await localCodexPluginApi.codexHomeMigrationStatus()
+        if (migrationStatus.nativeCodexHomeExists) {
+          for (const path of nativeCodexSitesPluginPaths(migrationStatus.nativeCodexHome)) {
+            if (await localPathExists(path)) {
+              if (queueCodexSitesPluginReference()) {
+                setCreateError(null)
+                navigateTo('/')
+                return
+              }
+              break
+            }
+          }
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      try {
+        const localSkills = await localCodexPluginApi.listSkills({ forceReload: true })
+        if (localSkills.some(isNativeCodexSitesPluginSkill) && queueCodexSitesPluginReference()) {
+          setCreateError(null)
+          navigateTo('/')
+          return
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      const startBackendSitesSkill = async () => {
+        const started = await startNewSkillChat(['sites:sites-building'], {
+          allowLocalSkills: false,
+        })
+        setCreateError(
+          started
+            ? null
+            : codexPluginLoadFailed
+              ? t('skill_load_failed', '无法读取 Codex Sites 插件')
+              : t('skill_missing', 'Sites 插件尚未安装或启用')
+        )
+      }
+
       if (!pluginApi) {
-        setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用 Sites 插件'))
+        await startBackendSitesSkill()
         return
       }
       const targetDeviceId = getPreferredStandaloneDeviceId(
@@ -155,7 +271,7 @@ export function SitesPage() {
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       )
       if (!targetDeviceId) {
-        setCreateError(t('plugin_device_unavailable', '请选择一个在线且版本兼容的设备后再创建站点'))
+        await startBackendSitesSkill()
         return
       }
 

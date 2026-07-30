@@ -7,7 +7,7 @@ import {
   Slash,
   Zap,
 } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -17,6 +17,7 @@ import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
 import { PluginPickerMenu } from './PluginPickerMenu'
+import { PopoutWorkspaceMenu } from './PopoutWorkspaceMenu'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { openComposerPluginPicker } from './composerEvents'
@@ -38,12 +39,16 @@ interface ComposerToolbarProps {
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   planModeActive?: boolean
+  onSetPlanMode?: () => void
   onClearPlanMode?: () => void
+  onSetGoal?: () => void
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
+  projectWorkMenuContext?: Omit<ComponentProps<typeof PopoutWorkspaceMenu>, 'disabled'>
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   sendButtonTestId?: string
@@ -71,12 +76,16 @@ export function ComposerToolbar({
   onBlockedModelSelect,
   onFileSelect,
   planModeActive = false,
+  onSetPlanMode,
   onClearPlanMode,
+  onSetGoal,
   onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
+  projectWorkMenuContext,
   onQuickPhraseSelect,
   onSubmit,
   sendButtonTestId = 'send-message-button',
@@ -117,7 +126,12 @@ export function ComposerToolbar({
       className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
     >
       <div className="flex min-w-0 items-center gap-2">
-        <AddContextMenu disabled={disabled} onFileSelect={onFileSelect} />
+        <AddContextMenu
+          disabled={disabled}
+          onFileSelect={onFileSelect}
+          onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
+          onSetGoal={onSetGoal}
+        />
         <button
           type="button"
           data-testid="composer-slash-button"
@@ -176,6 +190,9 @@ export function ComposerToolbar({
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
+        {showWorkspaceMenu && projectWorkMenuContext ? (
+          <PopoutWorkspaceMenu {...projectWorkMenuContext} disabled={disabled} />
+        ) : null}
         {isStreaming && !canSend ? (
           <button
             type="button"
@@ -207,6 +224,7 @@ export function ComposerToolbar({
                   icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
+                  shortcut: 'Enter',
                 },
                 {
                   label:
@@ -222,6 +240,7 @@ export function ComposerToolbar({
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
+                  shortcut: 'Command+Enter',
                 },
                 {
                   label:
@@ -237,6 +256,7 @@ export function ComposerToolbar({
                   icon: Zap,
                   testId: 'interrupt-and-send-option',
                   onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                  shortcut: 'Command+Shift+Enter',
                 },
               ]}
             />

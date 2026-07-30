@@ -144,6 +144,7 @@ export interface ChatInputProps {
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
   toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
@@ -166,6 +167,15 @@ export interface ChatSubmitOptions {
 interface PendingQueuedSend {
   valueOverride?: string
   options?: ChatSubmitOptions
+}
+
+interface PendingModelSelection {
+  model: UnifiedModel | null
+  options?: ModelOptions
+}
+
+function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
+  return left?.name === right?.name && left?.type === right?.type
 }
 
 function PluginTrialTemplateStrip({
@@ -291,6 +301,7 @@ export function ChatInput({
   onSelectCloudProject,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
   toolbarLeadingContext,
   onCompactContext,
   goal,
@@ -307,6 +318,9 @@ export function ChatInput({
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
+  const [pendingModelSelection, setPendingModelSelection] = useState<PendingModelSelection | null>(
+    null
+  )
   const displayedGoal = visibleRuntimeGoal(goal)
   const inputPlaceholder = goalDraftActive
     ? t('workbench.goal_input_placeholder', 'WeWork 应该往哪个方向努力?')
@@ -360,6 +374,34 @@ export function ChatInput({
       return
     }
     void onSubmit('/compact')
+  }
+
+  const applyModelSelection = (model: UnifiedModel | null, options?: ModelOptions) => {
+    if (options && model && controls.setSelectedModelAndOptions) {
+      controls.setSelectedModelAndOptions(model, options)
+      return
+    }
+    controls.setSelectedModel(model)
+  }
+
+  const requestModelSelection = (model: UnifiedModel | null, options?: ModelOptions) => {
+    const selectionChangesModel = !isSameModel(controls.selectedModel, model)
+    if (
+      selectionChangesModel &&
+      controls.activeModel &&
+      !isSameModel(controls.activeModel, model)
+    ) {
+      setPendingModelSelection({ model, options })
+      return
+    }
+    applyModelSelection(model, options)
+  }
+
+  const confirmModelSelection = () => {
+    if (!pendingModelSelection) return
+    const { model, options } = pendingModelSelection
+    setPendingModelSelection(null)
+    applyModelSelection(model, options)
   }
 
   const handleSubmit = (valueOverride?: string, options?: ChatSubmitOptions) => {
@@ -442,6 +484,18 @@ export function ChatInput({
       onClear={() => sendWithQueue(true)}
     />
   ) : null
+  const modelSwitchWarningDialog = pendingModelSelection ? (
+    <ModelSwitchWarningDialog
+      t={t}
+      targetModelLabel={
+        pendingModelSelection.model?.displayName ||
+        pendingModelSelection.model?.name ||
+        t('workbench.model_auto_select', 'Auto select')
+      }
+      onCancel={() => setPendingModelSelection(null)}
+      onConfirm={confirmModelSelection}
+    />
+  ) : null
 
   if (variant === 'desktop') {
     return (
@@ -479,8 +533,8 @@ export function ChatInput({
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
           contextUsage={controls.contextUsage}
-          onSelectModel={controls.setSelectedModel}
-          onSelectModelAndOptions={controls.setSelectedModelAndOptions}
+          onSelectModel={model => requestModelSelection(model)}
+          onSelectModelAndOptions={(model, options) => requestModelSelection(model, options)}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           onFileSelect={files => {
@@ -522,9 +576,11 @@ export function ChatInput({
           onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
+          showWorkspaceMenu={showWorkspaceMenu}
           toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}
+        {modelSwitchWarningDialog}
       </div>
     )
   }
@@ -575,13 +631,14 @@ export function ChatInput({
         selectedModel={controls.selectedModel}
         activeModel={controls.activeModel}
         selectedModelOptions={controls.selectedModelOptions}
-        onSelectModel={controls.setSelectedModel}
+        onSelectModel={model => requestModelSelection(model)}
         onBlockedModelSelect={controls.onBlockedModelSelect}
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
         isStreaming={isStreaming}
         onPause={onPause}
       />
       {queueResumeDialog}
+      {modelSwitchWarningDialog}
     </div>
   )
 }
@@ -672,6 +729,75 @@ function QueueResumeDialog({
             className="h-8 rounded-md border-text-primary bg-text-primary px-3 text-xs text-background hover:bg-text-primary/90 hover:text-background"
           >
             {t('queue.send_with_paused_preserve')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ModelSwitchWarningDialog({
+  t,
+  targetModelLabel,
+  onCancel,
+  onConfirm,
+}: {
+  t: ReturnType<typeof useTranslation>['t']
+  targetModelLabel: string
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div
+      data-testid="model-switch-warning-dialog-overlay"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="model-switch-warning-dialog-title"
+        aria-describedby="model-switch-warning-dialog-description"
+        data-testid="model-switch-warning-dialog"
+        className="w-full max-w-[400px] rounded-2xl border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]"
+      >
+        <h2 id="model-switch-warning-dialog-title" className="heading-small text-text-primary">
+          {t('workbench.model_switch_warning_title', 'Switch model?')}
+        </h2>
+        <p
+          id="model-switch-warning-dialog-description"
+          className="mt-2 text-sm leading-5 text-text-secondary"
+        >
+          {t(
+            'workbench.model_switch_warning_description',
+            'Switching to {{model}} may change how the existing context is understood. Tool support, response style, and task continuity may also differ.',
+            { model: targetModelLabel }
+          )}
+        </p>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          {t(
+            'workbench.model_switch_warning_effect',
+            'The new model will be used for the next message. If a response is in progress, it will continue with the current model.'
+          )}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="model-switch-warning-cancel-button"
+            onClick={onCancel}
+            className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            {t('workbench.cancel', 'Cancel')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            data-testid="model-switch-warning-confirm-button"
+            onClick={onConfirm}
+            className="h-8 rounded-lg bg-text-primary px-4 text-sm text-background hover:bg-text-primary/90"
+          >
+            {t('workbench.model_switch_warning_confirm', 'Switch model')}
           </Button>
         </div>
       </div>

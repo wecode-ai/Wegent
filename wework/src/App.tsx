@@ -89,7 +89,12 @@ const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
-  return isTauriRuntime() && getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  if (!isTauriRuntime()) return false
+  try {
+    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  } catch {
+    return false
+  }
 }
 
 function hasTauriIpc() {

@@ -149,7 +149,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       const marketplace = await invoke<BundledPluginMarketplace>(
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
-      initializedBundledPluginMarketplace = marketplace
+      if (marketplace?.path) {
+        initializedBundledPluginMarketplace = marketplace
+      }
       const migrationStatus = await invoke<CodexHomeMigrationStatus>(
         LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus
       )
@@ -161,7 +163,8 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
         !migrationStatus.shouldPromptMigration &&
         status.running &&
         status.ready !== false &&
-        !status.error
+        !status.error &&
+        marketplace?.path
       ) {
         await reconcileBundledPluginMarketplace(marketplace, status.runtimeInstanceId)
       }
