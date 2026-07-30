@@ -117,6 +117,14 @@ function getFallbackFaviconUrl(url: string) {
   }
 }
 
+function haveSameOrigin(leftUrl: string, rightUrl: string) {
+  try {
+    return new URL(leftUrl).origin === new URL(rightUrl).origin
+  } catch {
+    return false
+  }
+}
+
 function formatDownloadBytes(bytes: number | null) {
   if (bytes === null) return ''
   if (bytes < 1024) return `${bytes} B`
@@ -1403,7 +1411,9 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
-      setInvalidTlsCertificate(null)
+      setInvalidTlsCertificate(certificate =>
+        certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
+      )
       pageStateRequestGenerationRef.current += 1
 
       if (annotationMode && cloudDesktopExtension.isInternalPageUrl(nextUrl)) {

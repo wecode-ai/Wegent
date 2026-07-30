@@ -650,8 +650,6 @@ fn page_state_for_label(
 fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Result<(), String> {
     let parsed_url = browser_url(&url)?;
     let entry = get_entry(state, label)?;
-    #[cfg(target_os = "macos")]
-    crate::embedded_browser_tls::clear_invalid_tls_certificate(&entry.native_label);
     entry
         .ready_webview()?
         .navigate(parsed_url)
@@ -1300,8 +1298,6 @@ pub async fn embedded_browser_open(
     if let Some(entry) = existing {
         let webview = entry.ready_webview()?;
         apply_webview_bounds(&webview, normalized_bounds)?;
-        #[cfg(target_os = "macos")]
-        crate::embedded_browser_tls::clear_invalid_tls_certificate(&entry.native_label);
         webview
             .navigate(parsed_url)
             .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
@@ -1310,6 +1306,11 @@ pub async fn embedded_browser_open(
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
         set_entry_url(&state, &label, Some(url.clone()))?;
         return Ok(EmbeddedBrowserPageState {
+            #[cfg(target_os = "macos")]
+            invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+                &entry.native_label,
+            ),
+            #[cfg(not(target_os = "macos"))]
             invalid_tls_certificate: None,
             native_label: entry.native_label,
             title: entry.title,
@@ -1491,6 +1492,8 @@ pub async fn embedded_browser_open(
                 |current| current.native_label.as_str(),
             );
         }
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
         let _ = webview.close();
         return Err(error);
     }
@@ -1503,6 +1506,8 @@ pub async fn embedded_browser_open(
                 |current| current.native_label.as_str(),
             );
         }
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
         let _ = webview.close();
         return Err(error);
     }

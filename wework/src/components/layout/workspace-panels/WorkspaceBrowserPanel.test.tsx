@@ -196,6 +196,47 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
+  test('preserves an invalid TLS warning during same-origin navigation', async () => {
+    const invalidTlsCertificate = {
+      nativeLabel: 'workspace-browser-native-1',
+      url: 'https://internal.example.test/start',
+      host: 'internal.example.test',
+      port: 443,
+    }
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Internal service',
+      url: invalidTlsCertificate.url,
+      invalidTlsCertificate,
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Internal service',
+      url: 'https://internal.example.test/next',
+      invalidTlsCertificate,
+    })
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: invalidTlsCertificate.url } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByTestId('workspace-browser-invalid-tls-warning')
+
+    fireEvent.change(input, { target: { value: 'https://internal.example.test/next' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.navigateEmbeddedBrowser).toHaveBeenCalledWith(
+        'https://internal.example.test/next',
+        'workspace-browser'
+      )
+    })
+    expect(screen.getByTestId('workspace-browser-invalid-tls-warning')).toHaveTextContent(
+      'internal.example.test'
+    )
+  })
+
   test('hides the native browser webview before the main page reloads', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active />)
