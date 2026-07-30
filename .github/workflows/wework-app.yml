@@ -410,34 +410,13 @@ jobs:
           }
           trap cleanup EXIT
           CONFIG_OVERRIDE="$config_override" \
+          BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
           VERSION="${{ needs.prepare-release.outputs.version }}" \
           UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
-          TAURI_UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
-          python3 - <<'PY'
-          import json
-          import os
-
-          config = {
-              "version": os.environ["VERSION"],
-              "bundle": {
-                  "createUpdaterArtifacts": True,
-                  "macOS": {
-                      "signingIdentity": "-",
-                      "hardenedRuntime": True,
-                  },
-              },
-              "plugins": {
-                  "updater": {
-                      "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-                      "pubkey": os.environ["TAURI_UPDATER_PUBKEY"],
-                  },
-              },
-          }
-
-          with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-              json.dump(config, handle, indent=2)
-              handle.write("\n")
-          PY
+          UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+          SIGNING_IDENTITY="-" \
+          ENABLE_INSECURE_TRANSPORT="false" \
+          node scripts/generate-release-config.mjs
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
             --bundles app,dmg \
