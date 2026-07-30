@@ -194,6 +194,7 @@ struct AnthropicStreamState<S> {
     model: String,
     input_tokens: u64,
     output_tokens: u64,
+    output_observed: bool,
 }
 
 pub(super) fn anthropic_sse_to_responses<S, E>(
@@ -213,6 +214,7 @@ where
         model: String::new(),
         input_tokens: 0,
         output_tokens: 0,
+        output_observed: false,
     };
     chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
 }
@@ -350,6 +352,22 @@ impl<S> AnthropicStreamState<S> {
                     .and_then(Value::as_u64)
                     .unwrap_or(self.output_tokens);
                 let upstream_stop = event.pointer("/delta/stop_reason").and_then(Value::as_str);
+                if upstream_stop.is_some() && self.output_tokens > 0 && !self.output_observed {
+                    log_executor_event(
+                        "local model proxy anthropic empty response",
+                        &[
+                            ("output_tokens", self.output_tokens.to_string()),
+                            ("stop_reason", upstream_stop.unwrap_or_default().to_owned()),
+                        ],
+                    );
+                    self.emit(json!({
+                        "error": {
+                            "type": "upstream_empty_response",
+                            "message": "Anthropic upstream reported output tokens without returning content"
+                        }
+                    }));
+                    return;
+                }
                 let stop = upstream_stop.map(anthropic_finish_reason);
                 if let Some(upstream_stop) = upstream_stop {
                     log_executor_event(
@@ -378,6 +396,7 @@ impl<S> AnthropicStreamState<S> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
         let block = event.get("content_block").unwrap_or(&Value::Null);
         if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+            self.output_observed = true;
             log_executor_event(
                 "local model proxy anthropic tool use",
                 &[
@@ -405,12 +424,27 @@ impl<S> AnthropicStreamState<S> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
         let delta = event.get("delta").unwrap_or(&Value::Null);
         let chat_delta = match delta.get("type").and_then(Value::as_str) {
-            Some("text_delta") => json!({"content": delta.get("text")}),
-            Some("thinking_delta") => json!({"reasoning_content": delta.get("thinking")}),
-            Some("input_json_delta") => json!({"tool_calls": [{
-                "index": index,
-                "function": {"arguments": delta.get("partial_json")}
-            }]}),
+            Some("text_delta") => {
+                self.output_observed |= delta
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty());
+                json!({"content": delta.get("text")})
+            }
+            Some("thinking_delta") => {
+                self.output_observed |= delta
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty());
+                json!({"reasoning_content": delta.get("thinking")})
+            }
+            Some("input_json_delta") => {
+                self.output_observed = true;
+                json!({"tool_calls": [{
+                    "index": index,
+                    "function": {"arguments": delta.get("partial_json")}
+                }]})
+            }
             _ => return,
         };
         self.emit(json!({"choices": [{"delta": chat_delta}]}));
@@ -628,6 +662,57 @@ mod tests {
 
         assert!(output.contains("实现成本主要在 UI。"));
         assert!(!output.contains('\u{fffd}'));
+    }
+
+    #[tokio::test]
+    async fn fails_when_anthropic_reports_tokens_without_output() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-k2.5","usage":{"input_tokens":1}}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":157}}),
+            json!({"type":"message_stop"}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("reported output tokens without returning content"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn completes_zero_token_anthropic_response_without_output() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-k2.5","usage":{"input_tokens":1}}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}),
+            json!({"type":"message_stop"}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
     }
 
     #[tokio::test]
