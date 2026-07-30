@@ -105,6 +105,16 @@ impl LocalTaskStore {
             "project_store": ProjectStoreKind::Local,
             "task_provider": input.task_provider,
             "provider_config": provider_config,
+            "board_config": {
+                "group_by": "status",
+                "statuses": [
+                    {"id": "inbox", "name": "收集箱", "color": "gray"},
+                    {"id": "pending", "name": "待开始", "color": "blue"},
+                    {"id": "in_progress", "name": "进行中", "color": "orange"},
+                    {"id": "in_review", "name": "待确认", "color": "purple"},
+                    {"id": "completed", "name": "已完成", "color": "green"}
+                ]
+            },
             "tags": [],
         });
         let connection = self.connection()?;
@@ -283,6 +293,12 @@ impl LocalTaskStore {
                 &metadata["provider_config"],
                 provider_config,
             )?;
+        }
+        if let Some(board_config) = input.board_config {
+            metadata["board_config"] = board_config;
+        }
+        if let Some(card_display) = input.card_display {
+            metadata["card_display"] = card_display;
         }
         let connection = self.connection()?;
         let updated = connection.execute(

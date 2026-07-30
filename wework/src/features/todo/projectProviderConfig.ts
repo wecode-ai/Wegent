@@ -144,6 +144,25 @@ export function dingtalkAITableRuntimeContext(
   }
 }
 
+export function projectSpaceChatRuntimeContext(project: CloudProject): RuntimeAdditionalContext {
+  return {
+    projectSpaceChat: {
+      kind: 'application',
+      value: [
+        '<current_project_space>',
+        JSON.stringify({ id: String(project.id), name: project.name }),
+        '</current_project_space>',
+        'This is a normal chat bound to the current Wework project space, not a goal or task-mode session.',
+        'Unqualified references such as "this project", "tasks", "issues", or "how many tasks" mean the board items in this current project space.',
+        'For those requests, use the configured project task-provider tools directly. Do not ask which category of task the user means.',
+        'Use wework_space for Wework project-space data, unless another provider-specific application context directs you to its bound tool.',
+        'Only ask the user to clarify when their request is ambiguous within the current project itself.',
+      ].join('\n'),
+    },
+    ...dingtalkAITableRuntimeContext(project),
+  }
+}
+
 export function repositoryAddress(project: CloudProject): string {
   const repository = project.provider_config.repository ?? ''
   const defaultDomain = project.task_provider === 'github' ? 'github.com' : 'gitlab.com'

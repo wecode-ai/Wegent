@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kanban Item · UI Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #eeeeec;
+      --surface: #ffffff;
+      --text: #20201f;
+      --secondary: #696966;
+      --muted: #9b9a96;
+      --line: rgb(20 20 18 / 8%);
+      --line-hover: rgb(20 20 18 / 14%);
+      --hover: rgb(20 20 18 / 4%);
+      --purple-bg: #f0edf7;
+      --purple-text: #705d92;
+      --blue-bg: #eaf0f4;
+      --blue-text: #526f82;
+      --red-bg: #f8eceb;
+      --red-text: #a4534d;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 48px 24px;
+      background:
+        radial-gradient(circle at 50% 32%, rgb(255 255 255 / 82%), transparent 34%),
+        var(--canvas);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 14px;
+    }
+
+    button { font: inherit; color: inherit; cursor: pointer; }
+    .demo { width: min(760px, 100%); }
+    .eyebrow { margin-bottom: 10px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 590; letter-spacing: -.02em; }
+    .intro { margin: 5px 0 24px; color: var(--secondary); font-size: 12px; }
+
+    .stage {
+      min-height: 430px;
+      display: grid;
+      place-items: center;
+      padding: 56px;
+      border: 1px solid rgb(0 0 0 / 6%);
+      border-radius: 20px;
+      background: rgb(245 245 243 / 80%);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 80%);
+    }
+    .stage.child-mode { padding-inline: 22px; }
+
+    .column {
+      width: 340px;
+      padding: 8px;
+      border-radius: 15px;
+      background: #e8e8e6;
+    }
+    .column-head { height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 7px 5px; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #bd8948; }
+    .column-title { font-size: 12px; font-weight: 580; }
+    .column-count { color: var(--muted); font-size: 11px; }
+    .column-more { width: 24px; height: 24px; display: grid; place-items: center; margin-left: auto; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+    .column-more:hover { background: rgb(255 255 255 / 58%); color: var(--text); }
+
+    .item {
+      position: relative;
+      overflow: hidden;
+      padding: 14px 14px 0;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+      box-shadow: 0 1px 1px rgb(0 0 0 / 3%);
+      transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+    .item::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 2px;
+      opacity: 0;
+      background: #776491;
+      transition: opacity 140ms ease;
+    }
+    .item:hover {
+      border-color: var(--line-hover);
+      box-shadow: 0 3px 10px rgb(0 0 0 / 7%);
+      transform: translateY(-1px);
+    }
+    .item:hover::before { opacity: 1; }
+
+    .item-menu { width: 22px; height: 22px; display: grid; place-items: center; margin: -2px -3px -2px 0; opacity: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); transition: opacity 100ms ease, background 100ms ease; }
+    .item-menu { position: absolute; top: 8px; right: 8px; z-index: 2; margin: 0; background: rgb(255 255 255 / 94%); }
+    .item:hover .item-menu { opacity: 1; }
+    .item-menu:hover { background: var(--hover); color: var(--text); }
+
+    .item-title { padding-right: 20px; font-size: 14px; line-height: 21px; font-weight: 560; letter-spacing: -.008em; }
+    .item-description {
+      display: -webkit-box;
+      margin-top: 5px;
+      overflow: hidden;
+      color: var(--secondary);
+      font-size: 12px;
+      line-height: 18px;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .labels { display: flex; align-items: center; gap: 6px; margin-top: 12px; overflow: hidden; }
+    .label { flex: none; height: 20px; display: flex; align-items: center; padding: 0 7px; border-radius: 5px; background: #f0f0ee; color: #686864; font-size: 10px; }
+    .label.purple { background: var(--purple-bg); color: var(--purple-text); }
+    .label.blue { background: var(--blue-bg); color: var(--blue-text); }
+    .label.red { background: var(--red-bg); color: var(--red-text); }
+    .label-more { color: var(--muted); font-size: 9px; }
+
+    .subtask-entry {
+      min-width: 0;
+      flex: 1;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0;
+      padding: 0 7px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--secondary);
+      font-size: 10px;
+      text-align: left;
+    }
+    .subtask-entry:hover { background: rgb(0 0 0 / 3%); color: var(--text); }
+    .subtask-icon { width: 13px; height: 13px; color: var(--muted); }
+    .subtask-count { color: var(--muted); }
+    .subtask-chevron { margin-left: auto; color: var(--muted); transition: transform 130ms ease; }
+    .subtask-entry[aria-expanded="true"] .subtask-chevron { transform: rotate(90deg); }
+    .subtask-ticket-head { display: flex; align-items: center; gap: 4px; }
+    .subtask-quick-add { width: 27px; height: 27px; display: grid; place-items: center; flex: none; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+    .subtask-quick-add:hover { background: rgb(0 0 0 / 4%); color: var(--text); }
+    .subtask-list { display: none; margin: 6px 0 0; padding: 3px 7px 5px; border-left: 1px solid var(--line); }
+    .subtask-list.open { display: block; animation: reveal 130ms ease-out; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(-2px); } }
+    .subtask-row { min-height: 30px; display: flex; align-items: center; gap: 7px; color: var(--secondary); font-size: 10px; }
+    .subtask-row:hover { color: var(--text); }
+    .subtask-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .subtask-status { flex: none; display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 9px; }
+    .subtask-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status); }
+    .add-subtask { width: 100%; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 10px; text-align: left; }
+    .add-subtask:hover { color: var(--text); }
+    .subtask-create { display: none; margin-top: 3px; padding: 8px; border: 1px solid var(--line-hover); border-radius: 8px; background: white; box-shadow: 0 2px 8px rgb(0 0 0 / 5%); }
+    .subtask-create.open { display: block; animation: reveal 130ms ease-out; }
+    .subtask-input { width: 100%; height: 27px; padding: 0 2px; border: 0; outline: none; background: transparent; color: var(--text); font-size: 11px; }
+    .subtask-input:focus { border-color: rgb(57 119 213 / 55%); box-shadow: 0 0 0 2px rgb(57 119 213 / 10%); }
+    .subtask-input:focus { box-shadow: none; }
+    .subtask-create-footer { display: flex; align-items: center; gap: 5px; margin-top: 6px; padding-top: 7px; border-top: 1px solid rgb(0 0 0 / 5%); }
+    .subtask-default-status { height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 0; border-radius: 6px; background: #f4f4f2; color: var(--secondary); font-size: 9px; }
+    .subtask-cancel { height: 24px; margin-left: auto; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 9px; }
+    .subtask-cancel:hover { background: var(--hover); color: var(--text); }
+    .subtask-confirm { height: 24px; padding: 0 8px; border: 0; border-radius: 6px; background: #252525; color: white; font-size: 9px; }
+    .subtask-confirm:disabled { opacity: .35; cursor: default; }
+
+    .subtask-ticket {
+      position: relative;
+      margin: 13px -14px 0;
+      padding: 8px 14px 10px;
+      border-top: 1px dashed rgb(0 0 0 / 15%);
+      background: #fafaf8;
+    }
+    .subtask-ticket::before,
+    .subtask-ticket::after {
+      content: "";
+      position: absolute;
+      top: -6px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #e8e8e6;
+    }
+    .subtask-ticket::before { left: -6px; }
+    .subtask-ticket::after { right: -6px; }
+    .subtask-empty-action { display: none; width: 100%; height: 30px; align-items: center; gap: 7px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; text-align: left; }
+    .subtask-empty-action:hover { background: rgb(0 0 0 / 3%); color: var(--text); }
+    .item.no-subtasks .subtask-ticket-head,
+    .item.no-subtasks .subtask-list { display: none; }
+    .item.no-subtasks .subtask-empty-action { display: flex; }
+
+    .divider { height: 1px; margin: 13px 0 10px; background: rgb(0 0 0 / 5%); }
+    .footer { min-height: 22px; display: flex; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+    .meta { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .meta svg { width: 12px; height: 12px; }
+    .priority { display: flex; align-items: end; gap: 1px; height: 11px; }
+    .priority i { width: 2px; border-radius: 2px; background: #b36b62; }
+    .priority i:nth-child(1) { height: 4px; }
+    .priority i:nth-child(2) { height: 7px; }
+    .priority i:nth-child(3) { height: 10px; }
+    .avatar {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      margin-left: auto;
+      border: 1px solid rgb(0 0 0 / 7%);
+      border-radius: 50%;
+      background: #242423;
+      color: white;
+      font-size: 9px;
+      font-weight: 550;
+    }
+
+    .ghost-item { height: 45px; margin-top: 7px; padding: 10px; border: 1px dashed rgb(0 0 0 / 8%); border-radius: 10px; }
+    .ghost-line { width: 66%; height: 5px; border-radius: 5px; background: rgb(0 0 0 / 5%); }
+    .ghost-line.short { width: 39%; margin-top: 8px; }
+
+    .child-view { display: none; width: 100%; animation: child-in 180ms ease-out; }
+    .child-view.open { display: block; }
+    @keyframes child-in { from { opacity: 0; transform: translateX(8px); } }
+    .child-nav { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; }
+    .child-back { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: white; color: var(--secondary); box-shadow: 0 1px 2px rgb(0 0 0 / 5%); }
+    .child-back:hover { background: #f7f7f5; color: var(--text); }
+    .child-parent { min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .child-separator { color: #bbb; }
+    .child-current { flex: none; font-size: 12px; font-weight: 560; }
+    .child-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .child-column { min-height: 240px; padding: 7px; border-radius: 12px; background: #e8e8e6; }
+    .child-column-head { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 5px 5px; font-size: 10px; font-weight: 560; }
+    .child-count { color: var(--muted); font-weight: 400; }
+    .child-card { padding: 9px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: 0 1px 1px rgb(0 0 0 / 3%); }
+    .child-card + .child-card { margin-top: 7px; }
+    .child-card-title { font-size: 10px; line-height: 15px; font-weight: 520; }
+    .child-card-meta { display: flex; align-items: center; margin-top: 8px; color: var(--muted); font-size: 9px; }
+    .child-avatar { width: 17px; height: 17px; display: grid; place-items: center; margin-left: auto; border-radius: 50%; background: #292928; color: white; font-size: 7px; }
+    .child-create { display: none; margin-top: 7px; padding: 8px; border: 1px solid var(--line-hover); border-radius: 9px; background: white; }
+    .child-create.open { display: block; }
+    .child-create input { width: 100%; border: 0; outline: 0; font: inherit; font-size: 10px; }
+    .child-create-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 8px; }
+    .child-create-actions button { height: 23px; padding: 0 7px; border: 0; border-radius: 6px; background: #f1f1ef; font-size: 9px; }
+    .child-create-actions .create { background: #252525; color: white; }
+
+    .states { display: flex; justify-content: center; gap: 18px; margin-top: 17px; color: var(--muted); font-size: 11px; }
+    .state-button { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11px; }
+    .state-button i { width: 6px; height: 6px; border-radius: 50%; background: #b8b8b5; }
+    .state-button:hover { background: rgb(0 0 0 / 3%); color: var(--text); }
+    .state-button.active { border-color: var(--line); background: white; color: var(--text); }
+    .state-button.active i { background: #776491; }
+
+    @media (max-width: 600px) {
+      body { padding: 24px 14px; align-items: start; }
+      .stage { min-height: 390px; padding: 32px 12px; }
+      .column { width: min(340px, 100%); }
+      .child-board { grid-template-columns: repeat(3, 190px); overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="demo">
+    <div class="eyebrow">Item study · 01</div>
+    <h1>紧凑任务卡</h1>
+    <p class="intro">把识别信息、任务内容和执行状态分成三层；hover 时才露出操作。</p>
+
+    <section class="stage">
+      <div class="column" id="parentColumn">
+        <header class="column-head">
+          <span class="status-dot"></span>
+          <span class="column-title">进行中</span>
+          <span class="column-count">4</span>
+          <button class="column-more" aria-label="列菜单">•••</button>
+        </header>
+
+        <article class="item no-subtasks" tabindex="0">
+          <button class="item-menu" aria-label="任务菜单" title="任务菜单 · 可新建子任务">•••</button>
+          <div class="item-title">让云项目看板支持按模块划分泳道</div>
+          <div class="item-description">泳道可以折叠，并允许任务在不同模块与状态之间直接拖动。</div>
+
+          <div class="labels">
+            <span class="label purple">产品体验</span>
+            <span class="label blue">桌面端</span>
+          </div>
+
+          <div class="divider"></div>
+          <footer class="footer">
+            <span class="meta" title="高优先级"><span class="priority"><i></i><i></i><i></i></span></span>
+            <span class="meta">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M5 2v3M11 2v3M3 6.5h10"/></svg>
+              今天
+            </span>
+            <span class="meta">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3.5h10v7H7l-3 2v-2H3z"/></svg>
+              3
+            </span>
+            <span class="avatar" title="林然">林</span>
+          </footer>
+
+          <div class="subtask-ticket">
+            <button class="subtask-empty-action" id="subtaskEmptyAction" type="button">＋ 新建子任务</button>
+            <div class="subtask-ticket-head">
+              <button class="subtask-entry" id="subtaskEntry" aria-expanded="false">
+                <svg class="subtask-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="m5 8 2 2 4-4"/></svg>
+                <span>子任务</span>
+                <span class="subtask-count">3</span>
+                <span class="subtask-chevron">›</span>
+              </button>
+              <button class="subtask-quick-add" id="subtaskQuickAdd" aria-label="新建子任务">＋</button>
+            </div>
+            <div class="subtask-list" id="subtaskList">
+              <div class="subtask-row"><span class="subtask-title">确认泳道数据结构</span><span class="subtask-status"><i class="subtask-status-dot" style="--status:#668873"></i>已完成</span></div>
+              <div class="subtask-row"><span class="subtask-title">完成卡片拖拽原型</span><span class="subtask-status"><i class="subtask-status-dot" style="--status:#bd8948"></i>进行中</span></div>
+              <div class="subtask-row"><span class="subtask-title">补充折叠状态持久化</span><span class="subtask-status"><i class="subtask-status-dot" style="--status:#6e89a9"></i>待开始</span></div>
+              <button class="add-subtask" id="addSubtask">＋ 添加子任务</button>
+              <div class="subtask-create" id="subtaskCreate">
+                <input class="subtask-input" id="subtaskInput" placeholder="输入子任务标题…" />
+                <div class="subtask-create-footer">
+                  <button class="subtask-default-status" type="button"><i class="subtask-status-dot" style="--status:#969696"></i>收集箱⌄</button>
+                  <button class="subtask-cancel" id="subtaskCancel" type="button">取消</button>
+                  <button class="subtask-confirm" id="subtaskConfirm" type="button" disabled>创建</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <div class="ghost-item" aria-hidden="true"><div class="ghost-line"></div><div class="ghost-line short"></div></div>
+      </div>
+
+      <div class="child-view" id="childView">
+        <nav class="child-nav">
+          <button class="child-back" id="childBack" aria-label="返回父任务">←</button>
+          <span class="child-parent">让云项目看板支持按模块划分泳道</span>
+          <span class="child-separator">/</span>
+          <span class="child-current">子任务</span>
+        </nav>
+        <div class="child-board">
+          <section class="child-column">
+            <header class="child-column-head"><i class="subtask-status-dot" style="--status:#6e89a9"></i>待开始 <span class="child-count">1</span></header>
+            <article class="child-card"><div class="child-card-title">补充折叠状态持久化</div><div class="child-card-meta">周五<span class="child-avatar">王</span></div></article>
+            <div class="child-create" id="childCreate"><input id="childCreateInput" placeholder="输入子任务标题…" /><div class="child-create-actions"><button id="childCreateCancel">取消</button><button class="create">创建</button></div></div>
+          </section>
+          <section class="child-column">
+            <header class="child-column-head"><i class="subtask-status-dot" style="--status:#bd8948"></i>进行中 <span class="child-count">1</span></header>
+            <article class="child-card"><div class="child-card-title">完成卡片拖拽原型</div><div class="child-card-meta">今天<span class="child-avatar">林</span></div></article>
+          </section>
+          <section class="child-column">
+            <header class="child-column-head"><i class="subtask-status-dot" style="--status:#668873"></i>已完成 <span class="child-count">1</span></header>
+            <article class="child-card"><div class="child-card-title">确认泳道数据结构</div><div class="child-card-meta">昨天<span class="child-avatar">周</span></div></article>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <div class="states">
+      <button class="state-button" id="withSubtasks"><i></i>有子任务</button>
+      <button class="state-button active" id="withoutSubtasks"><i></i>无子任务</button>
+    </div>
+  </main>
+  <script>
+    const subtaskEntry = document.querySelector('#subtaskEntry')
+    const subtaskList = document.querySelector('#subtaskList')
+    const addSubtask = document.querySelector('#addSubtask')
+    const subtaskQuickAdd = document.querySelector('#subtaskQuickAdd')
+    const subtaskEmptyAction = document.querySelector('#subtaskEmptyAction')
+    const subtaskCreate = document.querySelector('#subtaskCreate')
+    const subtaskInput = document.querySelector('#subtaskInput')
+    const subtaskConfirm = document.querySelector('#subtaskConfirm')
+    const subtaskCancel = document.querySelector('#subtaskCancel')
+    const stage = document.querySelector('.stage')
+    const itemCard = document.querySelector('.item')
+    const parentColumn = document.querySelector('#parentColumn')
+    const childView = document.querySelector('#childView')
+    const childBack = document.querySelector('#childBack')
+    const childCreate = document.querySelector('#childCreate')
+    const childCreateInput = document.querySelector('#childCreateInput')
+    const childCreateCancel = document.querySelector('#childCreateCancel')
+    const withSubtasks = document.querySelector('#withSubtasks')
+    const withoutSubtasks = document.querySelector('#withoutSubtasks')
+    function openChildBoard(create = false) {
+      parentColumn.style.display = 'none'
+      childView.classList.add('open')
+      stage.classList.add('child-mode')
+      if (create) {
+        childCreate.classList.add('open')
+        childCreateInput.focus()
+      }
+    }
+    subtaskEntry.addEventListener('click', () => openChildBoard(false))
+    addSubtask.addEventListener('click', () => {
+      addSubtask.style.display = 'none'
+      subtaskCreate.classList.add('open')
+      subtaskInput.focus()
+    })
+    subtaskQuickAdd.addEventListener('click', () => openChildBoard(true))
+    subtaskEmptyAction.addEventListener('click', () => openChildBoard(true))
+    childBack.addEventListener('click', () => {
+      childView.classList.remove('open')
+      parentColumn.style.display = ''
+      stage.classList.remove('child-mode')
+      childCreate.classList.remove('open')
+    })
+    childCreateCancel.addEventListener('click', () => {
+      childCreate.classList.remove('open')
+      childCreateInput.value = ''
+    })
+    function createSubtask() {
+      const title = subtaskInput.value.trim()
+      if (!title) return
+      const row = document.createElement('div')
+      row.className = 'subtask-row'
+      row.innerHTML = `<span class="subtask-title"></span><span class="subtask-status"><i class="subtask-status-dot" style="--status:#969696"></i>收集箱</span>`
+      row.querySelector('.subtask-title').textContent = title
+      subtaskList.insertBefore(row, addSubtask)
+      subtaskInput.value = ''
+      subtaskCreate.classList.remove('open')
+      addSubtask.style.display = ''
+      subtaskConfirm.disabled = true
+      const count = subtaskList.querySelectorAll('.subtask-row').length
+      subtaskEntry.querySelector('.subtask-count').textContent = String(count)
+    }
+    subtaskConfirm.addEventListener('click', createSubtask)
+    subtaskInput.addEventListener('input', () => {
+      subtaskConfirm.disabled = !subtaskInput.value.trim()
+    })
+    function cancelSubtaskCreate() {
+      subtaskInput.value = ''
+      subtaskCreate.classList.remove('open')
+      addSubtask.style.display = ''
+      subtaskConfirm.disabled = true
+    }
+    subtaskCancel.addEventListener('click', cancelSubtaskCreate)
+    subtaskInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') createSubtask()
+      if (event.key === 'Escape') cancelSubtaskCreate()
+    })
+    withSubtasks.addEventListener('click', () => {
+      itemCard.classList.remove('no-subtasks')
+      withSubtasks.classList.add('active')
+      withoutSubtasks.classList.remove('active')
+    })
+    withoutSubtasks.addEventListener('click', () => {
+      itemCard.classList.add('no-subtasks')
+      withoutSubtasks.classList.add('active')
+      withSubtasks.classList.remove('active')
+    })
+  </script>
+</body>
+</html>

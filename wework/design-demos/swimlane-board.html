@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wework 泳道看板 · UI Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --chrome: #f7f7f6;
+      --panel: #f2f2f1;
+      --panel-hover: #eeeeec;
+      --text: #202020;
+      --secondary: #686868;
+      --muted: #999895;
+      --line: rgb(0 0 0 / 8%);
+      --line-strong: rgb(0 0 0 / 12%);
+      --focus: #3977d5;
+      --danger: #c84343;
+      --column-width: 252px;
+      --gap: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: var(--chrome);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 14px;
+    }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+
+    .app { height: 100%; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+    .sidebar { padding: 16px 10px; border-right: 1px solid var(--line); background: #f3f3f2; }
+    .brand { height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 9px; font-weight: 620; }
+    .brand-mark { width: 19px; height: 19px; display: grid; place-items: center; border-radius: 6px; background: #202020; color: white; font-size: 10px; }
+    .nav-label { margin: 22px 10px 6px; color: var(--muted); font-size: 11px; }
+    .nav-item { height: 32px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border-radius: 8px; color: var(--secondary); font-size: 13px; }
+    .nav-item.active { background: white; color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 4%); }
+    .nav-dot { width: 7px; height: 7px; border-radius: 50%; background: #929292; }
+
+    .workspace { min-width: 0; display: flex; flex-direction: column; background: white; }
+    .topbar { height: 48px; display: flex; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--line); }
+    .breadcrumbs { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; }
+    .breadcrumbs .muted { color: var(--muted); }
+    .top-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    .icon-btn, .text-btn { height: 30px; border: 0; border-radius: 8px; background: transparent; }
+    .icon-btn { width: 30px; display: grid; place-items: center; color: var(--secondary); }
+    .text-btn { padding: 0 10px; font-size: 12px; }
+    .icon-btn:hover, .text-btn:hover { background: rgb(0 0 0 / 4%); }
+    .primary { background: #202020; color: white; }
+    .primary:hover { background: #303030; }
+
+    .board-head { padding: 22px 24px 13px; }
+    .title-row { display: flex; align-items: center; gap: 12px; }
+    h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 590; letter-spacing: -.015em; }
+    .count { color: var(--muted); font-size: 12px; }
+    .view-tools { display: flex; align-items: center; gap: 5px; margin-top: 13px; }
+    .tool { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--secondary); font-size: 12px; }
+    .tool:hover { background: rgb(0 0 0 / 3%); }
+    .tool.active { border-color: var(--line-strong); background: #f1f1f0; color: var(--text); }
+    .tool-spacer { flex: 1; }
+
+    .board-scroll { min-height: 0; flex: 1; overflow: auto; scroll-padding-top: 42px; }
+    .board { width: max-content; min-width: 100%; padding-bottom: 80px; }
+    .column-grid { display: grid; grid-template-columns: repeat(5, var(--column-width)); gap: var(--gap); padding-inline: 24px; }
+    .column-header-row { position: sticky; top: 0; z-index: 15; padding-block: 7px 9px; border-bottom: 1px solid var(--line); background: rgb(255 255 255 / 94%); backdrop-filter: blur(10px); }
+    .column-header { height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 9px; }
+    .status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--status); }
+    .column-name { font-size: 12px; font-weight: 560; }
+    .column-count { color: var(--muted); font-size: 11px; }
+    .column-limit { margin-left: auto; color: var(--muted); font-size: 10px; }
+
+    .lane { border-bottom: 1px solid var(--line); }
+    .lane-header { position: sticky; left: 0; z-index: 8; height: 38px; min-width: 100vw; display: flex; align-items: center; padding: 0 24px; background: #fafaf9; border-bottom: 1px solid rgb(0 0 0 / 5%); }
+    .lane-toggle { width: 25px; height: 25px; display: grid; place-items: center; margin-left: -6px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); transition: transform 120ms ease; }
+    .lane-toggle:hover { background: rgb(0 0 0 / 4%); color: var(--text); }
+    .lane.collapsed .lane-toggle { transform: rotate(-90deg); }
+    .lane-drag { margin-left: 2px; color: #b5b5b3; letter-spacing: -3px; cursor: grab; user-select: none; }
+    .lane-title { margin-left: 9px; font-size: 12px; font-weight: 580; }
+    .lane-meta { margin-left: 9px; color: var(--muted); font-size: 11px; }
+    .progress { width: 64px; height: 3px; margin-left: 12px; overflow: hidden; border-radius: 4px; background: #e4e4e2; }
+    .progress span { display: block; width: var(--progress); height: 100%; border-radius: inherit; background: #8b8b88; }
+    .lane-actions { position: sticky; right: 18px; margin-left: auto; display: flex; gap: 3px; }
+    .lane-menu { width: 25px; height: 25px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+    .lane-menu:hover { background: rgb(0 0 0 / 5%); color: var(--text); }
+
+    .lane-content { padding-block: 10px 14px; }
+    .lane.collapsed .lane-content { display: none; }
+    .cell { min-height: 100px; padding: 0 3px; border-radius: 10px; transition: background 120ms ease, box-shadow 120ms ease; }
+    .cell.drag-over { background: #edf3fc; box-shadow: inset 0 0 0 1px rgb(57 119 213 / 22%); }
+    .cards { display: flex; flex-direction: column; gap: 8px; }
+    .card { position: relative; padding: 10px 10px 9px; border: 1px solid var(--line); border-radius: 10px; background: white; box-shadow: 0 1px 1px rgb(0 0 0 / 3%); transition: border 120ms ease, box-shadow 120ms ease, transform 120ms ease, opacity 120ms ease; }
+    .card:hover { border-color: var(--line-strong); box-shadow: 0 2px 5px rgb(0 0 0 / 6%); }
+    .card.dragging { opacity: .38; transform: rotate(1deg); }
+    .card-menu { position: absolute; top: 6px; right: 6px; width: 23px; height: 23px; display: grid; place-items: center; opacity: 0; border: 0; border-radius: 6px; background: white; color: var(--muted); }
+    .card:hover .card-menu { opacity: 1; }
+    .card-menu:hover { background: var(--panel); color: var(--text); }
+    .card-key { margin-bottom: 4px; color: var(--muted); font-size: 10px; letter-spacing: .01em; }
+    .card-title { padding-right: 16px; font-size: 12px; line-height: 17px; font-weight: 520; }
+    .labels { display: flex; gap: 4px; margin-top: 8px; overflow: hidden; }
+    .label { flex: none; padding: 2px 5px; border-radius: 4px; background: #eee; color: #666; font-size: 9px; line-height: 13px; }
+    .label.bug { background: #faeeee; color: #a64b4b; }
+    .label.design { background: #f0edf7; color: #745f96; }
+    .label.backend { background: #ebf1f5; color: #547181; }
+    .meta { min-height: 18px; display: flex; align-items: center; gap: 7px; margin-top: 9px; color: var(--muted); font-size: 10px; }
+    .priority { display: flex; align-items: end; gap: 1px; }
+    .priority i { width: 2px; border-radius: 1px; background: #858582; }
+    .priority i:nth-child(1) { height: 4px; } .priority i:nth-child(2) { height: 7px; } .priority i:nth-child(3) { height: 10px; }
+    .avatar { width: 18px; height: 18px; display: grid; place-items: center; margin-left: auto; border-radius: 50%; background: #242424; color: white; font-size: 8px; }
+    .avatar.soft { background: #d9d6cf; color: #5f5b54; }
+    .subtasks { display: flex; align-items: center; gap: 3px; }
+    .empty-drop { min-height: 72px; display: grid; place-items: center; border: 1px dashed transparent; border-radius: 10px; color: transparent; font-size: 11px; }
+    .cell:hover .empty-drop { border-color: rgb(0 0 0 / 8%); color: var(--muted); }
+    .cell.drag-over .empty-drop { border-color: rgb(57 119 213 / 28%); color: #5a7eae; }
+    .add-card { width: 100%; height: 29px; display: flex; align-items: center; gap: 6px; margin-top: 7px; padding: 0 8px; opacity: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11px; }
+    .cell:hover .add-card { opacity: 1; }
+    .add-card:hover { background: var(--panel); color: var(--text); }
+
+    .floating-menu { display: none; position: fixed; z-index: 40; width: 164px; padding: 5px; border: 1px solid var(--line); border-radius: 11px; background: white; box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
+    .floating-menu.open { display: block; animation: menu-in 110ms ease-out; }
+    @keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } }
+    .menu-item { width: 100%; height: 31px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 12px; }
+    .menu-item:hover { background: var(--panel); }
+    .menu-item.danger { color: var(--danger); }
+    .menu-item.danger:hover { background: #fff0f0; }
+
+    .toast { position: fixed; right: 22px; bottom: 20px; z-index: 50; padding: 8px 11px; opacity: 0; transform: translateY(6px); border-radius: 9px; background: #252525; color: white; box-shadow: 0 7px 20px rgb(0 0 0 / 16%); font-size: 11px; pointer-events: none; transition: 160ms ease; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .board-head { padding-inline: 16px; }
+      .column-grid { padding-inline: 16px; }
+      .lane-header { padding-inline: 16px; }
+      :root { --column-width: 224px; }
+      .tool.optional { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">W</span> Wework</div>
+      <div class="nav-label">项目</div>
+      <div class="nav-item active"><span class="nav-dot"></span>产品研发</div>
+      <div class="nav-item"><span class="nav-dot"></span>桌面端体验</div>
+      <div class="nav-item"><span class="nav-dot"></span>基础设施</div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="breadcrumbs"><span class="muted">项目</span><span>›</span><span>产品研发</span></div>
+        <div class="top-actions"><button class="icon-btn" aria-label="搜索">⌕</button><button class="text-btn primary">＋ 新建任务</button></div>
+      </header>
+
+      <section class="board-head">
+        <div class="title-row"><h1>产品研发</h1><span class="count">18 个任务</span></div>
+        <div class="view-tools">
+          <button class="tool active">▦ 看板</button>
+          <button class="tool">泳道：模块⌄</button>
+          <button class="tool optional">筛选</button>
+          <button class="tool optional">排序</button>
+          <span class="tool-spacer"></span>
+          <button class="tool">显示字段⌄</button>
+          <button class="icon-btn" aria-label="更多">•••</button>
+        </div>
+      </section>
+
+      <div class="board-scroll">
+        <div class="board">
+          <div class="column-header-row">
+            <div class="column-grid">
+              <div class="column-header"><span class="status-dot" style="--status:#969696"></span><span class="column-name">收集箱</span><span class="column-count">3</span></div>
+              <div class="column-header"><span class="status-dot" style="--status:#6e89a9"></span><span class="column-name">待开始</span><span class="column-count">5</span></div>
+              <div class="column-header"><span class="status-dot" style="--status:#bd8a49"></span><span class="column-name">进行中</span><span class="column-count">6</span><span class="column-limit">4 / 6</span></div>
+              <div class="column-header"><span class="status-dot" style="--status:#806f9f"></span><span class="column-name">待确认</span><span class="column-count">2</span></div>
+              <div class="column-header"><span class="status-dot" style="--status:#668873"></span><span class="column-name">已完成</span><span class="column-count">2</span></div>
+            </div>
+          </div>
+
+          <section class="lane" data-lane="桌面端">
+            <header class="lane-header"><button class="lane-toggle" aria-label="折叠桌面端泳道">⌄</button><span class="lane-drag">⠿</span><span class="lane-title">桌面端体验</span><span class="lane-meta">7 个任务 · 2 个进行中</span><span class="progress" style="--progress:29%"><span></span></span><div class="lane-actions"><button class="lane-menu" aria-label="桌面端泳道菜单">•••</button></div></header>
+            <div class="lane-content column-grid">
+              <div class="cell" data-cell="桌面端-收集箱"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-128</div><div class="card-title">统一项目页的空状态与引导文案</div><div class="labels"><span class="label design">体验</span></div><div class="meta"><span>昨天</span><span class="avatar soft">周</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="桌面端-待开始"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-131</div><div class="card-title">看板增加泳道分组与折叠能力</div><div class="labels"><span class="label">产品需求</span><span class="label design">设计</span></div><div class="meta"><span class="priority"><i></i><i></i><i></i></span><span>今天</span><span class="subtasks">☑ 1/4</span><span class="avatar">林</span></div></article><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-124</div><div class="card-title">补全项目成员权限说明</div><div class="meta"><span>周五</span><span class="avatar soft">王</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="桌面端-进行中"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-119</div><div class="card-title">压缩任务卡元信息密度</div><div class="labels"><span class="label design">体验</span></div><div class="meta"><span class="priority"><i></i><i></i><i></i></span><span>2 条评论</span><span class="avatar">陈</span></div></article><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-117</div><div class="card-title">项目对话侧栏切换动效</div><div class="labels"><span class="label">优化</span></div><div class="meta"><span>刚刚</span><span class="avatar soft">周</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="桌面端-待确认"><div class="empty-drop">拖到这里</div></div>
+              <div class="cell" data-cell="桌面端-已完成"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">PRD-102</div><div class="card-title">统一看板状态颜色</div><div class="meta"><span>7 月 28 日</span><span class="avatar soft">王</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+            </div>
+          </section>
+
+          <section class="lane" data-lane="运行时">
+            <header class="lane-header"><button class="lane-toggle" aria-label="折叠运行时泳道">⌄</button><span class="lane-drag">⠿</span><span class="lane-title">Executor 与运行时</span><span class="lane-meta">6 个任务 · 3 个进行中</span><span class="progress" style="--progress:16%"><span></span></span><div class="lane-actions"><button class="lane-menu" aria-label="运行时泳道菜单">•••</button></div></header>
+            <div class="lane-content column-grid">
+              <div class="cell" data-cell="运行时-收集箱"><div class="empty-drop">拖到这里</div></div>
+              <div class="cell" data-cell="运行时-待开始"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">EXE-88</div><div class="card-title">任务恢复时校验项目上下文</div><div class="labels"><span class="label backend">Executor</span></div><div class="meta"><span class="priority"><i></i><i></i><i></i></span><span>明天</span><span class="avatar">赵</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="运行时-进行中"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">EXE-91</div><div class="card-title">修复云项目 MCP 路由缓存失效</div><div class="labels"><span class="label bug">缺陷</span><span class="label backend">后端</span></div><div class="meta"><span class="priority"><i></i><i></i><i></i></span><span>今天</span><span class="subtasks">☑ 3/5</span><span class="avatar">林</span></div></article><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">EXE-86</div><div class="card-title">补充 RuntimeTaskAddress 序列化测试</div><div class="labels"><span class="label backend">测试</span></div><div class="meta"><span>周四</span><span class="avatar soft">王</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="运行时-待确认"><div class="cards"><article class="card" draggable="true"><button class="card-menu">•••</button><div class="card-key">EXE-80</div><div class="card-title">本地 Executor 重连验证</div><div class="meta"><span>1 条评论</span><span class="avatar">赵</span></div></article></div><button class="add-card">＋ 添加任务</button></div>
+              <div class="cell" data-cell="运行时-已完成"><div class="empty-drop">拖到这里</div></div>
+            </div>
+          </section>
+
+          <section class="lane collapsed" data-lane="暂缓">
+            <header class="lane-header"><button class="lane-toggle" aria-label="展开暂缓泳道">⌄</button><span class="lane-drag">⠿</span><span class="lane-title">暂缓需求</span><span class="lane-meta">5 个任务</span><div class="lane-actions"><button class="lane-menu" aria-label="暂缓泳道菜单">•••</button></div></header>
+            <div class="lane-content column-grid">
+              <div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div><div class="cell"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="floating-menu" id="laneMenu">
+    <button class="menu-item">重命名泳道</button>
+    <button class="menu-item">移到顶部</button>
+    <button class="menu-item danger">删除泳道</button>
+  </div>
+  <div class="toast" id="toast">任务已移动</div>
+
+  <script>
+    const toast = document.querySelector('#toast')
+    const laneMenu = document.querySelector('#laneMenu')
+    let draggedCard = null
+    let toastTimer = null
+
+    function showToast(message) {
+      toast.textContent = message
+      toast.classList.add('show')
+      clearTimeout(toastTimer)
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1200)
+    }
+
+    document.querySelectorAll('.lane-toggle').forEach(button => {
+      button.addEventListener('click', () => button.closest('.lane').classList.toggle('collapsed'))
+    })
+
+    document.querySelectorAll('.lane-menu').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation()
+        const rect = button.getBoundingClientRect()
+        laneMenu.style.left = `${Math.min(rect.right - 164, innerWidth - 172)}px`
+        laneMenu.style.top = `${rect.bottom + 5}px`
+        laneMenu.classList.add('open')
+      })
+    })
+
+    document.querySelectorAll('.card').forEach(card => {
+      card.addEventListener('dragstart', () => {
+        draggedCard = card
+        requestAnimationFrame(() => card.classList.add('dragging'))
+      })
+      card.addEventListener('dragend', () => {
+        card.classList.remove('dragging')
+        document.querySelectorAll('.drag-over').forEach(cell => cell.classList.remove('drag-over'))
+        draggedCard = null
+      })
+    })
+
+    document.querySelectorAll('.cell').forEach(cell => {
+      cell.addEventListener('dragover', event => {
+        if (!draggedCard) return
+        event.preventDefault()
+        cell.classList.add('drag-over')
+      })
+      cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'))
+      cell.addEventListener('drop', event => {
+        event.preventDefault()
+        cell.classList.remove('drag-over')
+        if (!draggedCard) return
+        let cards = cell.querySelector('.cards')
+        if (!cards) {
+          cards = document.createElement('div')
+          cards.className = 'cards'
+          cell.querySelector('.empty-drop')?.remove()
+          cell.prepend(cards)
+        }
+        cards.append(draggedCard)
+        showToast(`已移动到 ${cell.dataset.cell || '新位置'}`)
+      })
+    })
+
+    document.addEventListener('click', () => laneMenu.classList.remove('open'))
+    laneMenu.addEventListener('click', event => event.stopPropagation())
+  </script>
+</body>
+</html>

@@ -53,7 +53,7 @@ export interface CloudLoopItem {
   assignee_name?: string | null
   title: string
   description: string
-  status: 'inbox' | 'pending' | 'in_progress' | 'in_review' | 'completed'
+  status: string
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent'
   due_at: string | null
   tags: string[]
@@ -104,6 +104,20 @@ export interface CloudProject {
     status_mode?: 'mapped' | 'custom'
     status_mapping?: Record<string, CloudLoopItem['status']>
     custom_statuses?: string[]
+  }
+  card_display?: {
+    show_assignee: boolean
+    show_priority: boolean
+    show_tags: boolean
+    show_date: boolean
+  }
+  board_config?: {
+    group_by: 'status' | 'priority' | 'assignee' | 'tag'
+    statuses: Array<{
+      id: string
+      name: string
+      color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
+    }>
   }
   created_by_user_id: number
   current_user_id?: number
@@ -238,6 +252,8 @@ export function createDeliveryApi(client: HttpClient) {
         description?: string
         tags?: string[]
         visibility?: 'private' | 'public'
+        card_display?: CloudProject['card_display']
+        board_config?: CloudProject['board_config']
         provider_config?: {
           repository?: string
           domain?: string
@@ -313,7 +329,7 @@ export function createDeliveryApi(client: HttpClient) {
       projectId: CloudProjectIdInput,
       data: {
         parent_id: string | null
-        status: CloudLoopItem['status']
+        status: string
         item_ids: string[]
       }
     ): Promise<{ items: CloudLoopItem[] }> {

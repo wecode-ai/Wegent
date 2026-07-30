@@ -1178,6 +1178,7 @@ export function useWorkbenchRuntimeMessaging({
         cloudProjectId: options.cloudProjectId,
         additionalContext: options.additionalContext,
         onError: options.onError,
+        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
         openInMainPane: false,
       })
     },

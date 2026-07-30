@@ -103,6 +103,18 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.provider_config)
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
+    board_config:
+      record.metadata.board_config &&
+      typeof record.metadata.board_config === 'object' &&
+      !Array.isArray(record.metadata.board_config)
+        ? (record.metadata.board_config as CloudProject['board_config'])
+        : undefined,
+    card_display:
+      record.metadata.card_display &&
+      typeof record.metadata.card_display === 'object' &&
+      !Array.isArray(record.metadata.card_display)
+        ? (record.metadata.card_display as CloudProject['card_display'])
+        : undefined,
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -362,6 +374,8 @@ export function createLocalDeliveryApi(
         name?: string
         description?: string
         tags?: string[]
+        board_config?: CloudProject['board_config']
+        card_display?: CloudProject['card_display']
         version: number
       }
     ) {

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>紧凑看板设置 · UI Demo</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #fff;
+      --page: #f7f7f6;
+      --text: #1e1e1e;
+      --secondary: #686868;
+      --muted: #929292;
+      --line: rgb(0 0 0 / 8%);
+      --hover: rgb(0 0 0 / 4%);
+      --panel: #f4f4f3;
+      --danger: #c63e3e;
+      --shadow: 0 1px 2px rgb(0 0 0 / 5%), 0 7px 22px rgb(0 0 0 / 7%);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 14px;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    .shell {
+      width: min(1120px, calc(100vw - 48px));
+      margin: 32px auto;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--bg);
+      box-shadow: 0 12px 38px rgb(0 0 0 / 7%);
+    }
+    .topbar {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .back, .icon-button {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .back:hover, .icon-button:hover { background: var(--hover); }
+    .topbar-title { font-weight: 550; }
+    .topbar-meta { color: var(--muted); font-size: 12px; }
+    .content { width: min(900px, calc(100% - 48px)); margin: 0 auto; padding: 34px 0 44px; }
+    h1 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 590; letter-spacing: -.02em; }
+    .lead { margin: 6px 0 28px; color: var(--secondary); font-size: 13px; }
+    .section { padding: 22px 0; border-top: 1px solid var(--line); }
+    .section:first-of-type { border-top: 0; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 560; }
+    .hint { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .quiet-row {
+      margin-top: 12px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 12px;
+      border-radius: 10px;
+      background: var(--hover);
+    }
+    .avatars { display: flex; }
+    .avatar { width: 24px; height: 24px; display: grid; place-items: center; margin-left: -5px; border: 2px solid #fff; border-radius: 50%; background: #dededc; font-size: 10px; }
+    .avatar:first-child { margin-left: 0; }
+    .link-button { border: 0; background: transparent; color: var(--secondary); cursor: pointer; font-size: 12px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .tag { padding: 5px 9px; border-radius: 7px; background: var(--hover); color: var(--secondary); font-size: 12px; }
+
+    /* The proposed compact visual editor */
+    .board-editor { padding-bottom: 0; }
+    .editor-toolbar { display: flex; align-items: center; gap: 6px; position: relative; }
+    .saved { opacity: 0; color: var(--muted); font-size: 12px; transition: opacity 160ms ease; }
+    .saved.show { opacity: 1; }
+    .fields-trigger {
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .fields-trigger:hover { background: var(--hover); }
+    .fields-menu {
+      display: none;
+      position: absolute;
+      z-index: 20;
+      top: 36px;
+      right: 0;
+      width: 190px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgb(255 255 255 / 97%);
+      box-shadow: var(--shadow);
+    }
+    .fields-menu.open { display: block; animation: menu-in 120ms ease-out; }
+    @keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } }
+    .menu-label { padding: 5px 8px 6px; color: var(--muted); font-size: 11px; }
+    .check-row {
+      width: 100%; height: 32px; display: flex; align-items: center; gap: 8px;
+      padding: 0 8px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; text-align: left;
+    }
+    .check-row:hover { background: var(--hover); }
+    .check { width: 15px; height: 15px; display: grid; place-items: center; border: 1px solid #b8b8b8; border-radius: 4px; font-size: 11px; }
+    .check-row.on .check { border-color: var(--text); background: var(--text); color: white; }
+
+    .board-stage {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 14px;
+      background: var(--panel);
+      overflow-x: auto;
+    }
+    .columns {
+      min-width: 720px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(126px, 1fr)) 38px;
+      gap: 8px;
+      align-items: start;
+    }
+    .column {
+      min-width: 0;
+      min-height: 144px;
+      padding: 7px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      transition: opacity 120ms ease, background 120ms ease, border 120ms ease;
+    }
+    .column:hover { background: rgb(255 255 255 / 55%); }
+    .column.dragging { opacity: .35; }
+    .column.drag-over { border-color: rgb(0 0 0 / 14%); background: rgb(255 255 255 / 75%); }
+    .column-head { height: 28px; display: flex; align-items: center; gap: 6px; }
+    .drag-handle { color: #b0b0b0; cursor: grab; user-select: none; letter-spacing: -3px; font-size: 14px; }
+    .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--dot, #888); }
+    .column-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
+    .column-name-input { width: 100%; min-width: 0; height: 24px; border: 1px solid #aaa; border-radius: 6px; padding: 0 6px; outline: none; background: white; font-size: 12px; }
+    .more { width: 22px; height: 22px; display: grid; place-items: center; opacity: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+    .column:hover .more, .more:focus { opacity: 1; }
+    .more:hover { background: rgb(0 0 0 / 6%); }
+    .card {
+      margin-top: 7px;
+      min-height: 82px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: white;
+      box-shadow: 0 1px 1px rgb(0 0 0 / 3%);
+    }
+    .card-title { font-size: 12px; line-height: 17px; font-weight: 520; }
+    .card-tags { display: flex; gap: 4px; margin-top: 8px; }
+    .card-tag { padding: 2px 5px; border-radius: 4px; background: #eee; color: #666; font-size: 9px; }
+    .card-meta { min-height: 17px; display: flex; align-items: center; gap: 6px; margin-top: 9px; color: var(--muted); font-size: 10px; }
+    .mini-avatar { width: 17px; height: 17px; display: grid; place-items: center; margin-left: auto; border-radius: 50%; background: #252525; color: white; font-size: 8px; }
+    .empty-line { height: 5px; margin-top: 10px; border-radius: 5px; background: rgb(0 0 0 / 4%); }
+    .empty-line.short { width: 58%; }
+    .add-column {
+      width: 30px; height: 30px; margin-top: 7px; display: grid; place-items: center;
+      border: 1px dashed rgb(0 0 0 / 14%); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+    }
+    .add-column:hover { border-style: solid; background: white; color: var(--text); }
+    .status-popover {
+      display: none; position: fixed; z-index: 30; width: 150px; padding: 5px;
+      border: 1px solid var(--line); border-radius: 11px; background: white; box-shadow: var(--shadow);
+    }
+    .status-popover.open { display: block; }
+    .status-action { width: 100%; height: 31px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; font-size: 12px; }
+    .status-action:hover { background: var(--hover); }
+    .status-action.danger { color: var(--danger); }
+    .status-action.danger:hover { background: #fff0f0; }
+    .note { margin: 10px 2px 0; color: var(--muted); font-size: 11px; }
+
+    @media (max-width: 760px) {
+      .shell { width: calc(100vw - 20px); margin: 10px auto; border-radius: 14px; }
+      .content { width: calc(100% - 28px); padding-top: 24px; }
+      .section-head { align-items: flex-start; }
+      .editor-toolbar { flex-wrap: wrap; justify-content: flex-end; }
+      .saved { display: none; }
+      .board-stage { margin-left: -4px; margin-right: -4px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <button class="back" aria-label="返回">←</button>
+      <span class="topbar-title">项目设置</span>
+      <span class="topbar-meta">产品研发</span>
+    </header>
+
+    <div class="content">
+      <h1>管理项目</h1>
+      <p class="lead">管理项目成员、标签和看板布局。</p>
+
+      <section class="section">
+        <div class="section-head"><div><h2>项目成员</h2><p class="hint">成员可以访问项目任务和共享文件。</p></div><button class="link-button">管理成员</button></div>
+        <div class="quiet-row"><span>5 位成员</span><div class="avatars"><span class="avatar">林</span><span class="avatar">王</span><span class="avatar">周</span><span class="avatar">+2</span></div></div>
+      </section>
+
+      <section class="section">
+        <div class="section-head"><div><h2>标签</h2><p class="hint">用于区分任务类型并筛选看板。</p></div><button class="link-button">＋ 新建标签</button></div>
+        <div class="tags"><span class="tag">产品需求</span><span class="tag">研发需求</span><span class="tag">缺陷</span><span class="tag">优化</span></div>
+      </section>
+
+      <section class="section board-editor" data-testid="board-layout-editor">
+        <div class="section-head">
+          <div><h2>看板布局</h2><p class="hint">拖动状态调整顺序，选择任务卡上需要显示的信息。</p></div>
+          <div class="editor-toolbar">
+            <span class="saved" id="saved">已保存</span>
+            <button class="fields-trigger" id="fieldsTrigger" aria-expanded="false">显示字段 <span>⌄</span></button>
+            <div class="fields-menu" id="fieldsMenu" role="menu">
+              <div class="menu-label">任务卡显示</div>
+              <button class="check-row on" data-field="assignee"><span class="check">✓</span><span>负责人</span></button>
+              <button class="check-row on" data-field="priority"><span class="check">✓</span><span>优先级</span></button>
+              <button class="check-row on" data-field="tags"><span class="check">✓</span><span>标签</span></button>
+              <button class="check-row on" data-field="date"><span class="check">✓</span><span>更新时间</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="board-stage">
+          <div class="columns" id="columns">
+            <article class="column" draggable="true" data-name="收集箱" style="--dot:#a0a0a0"><header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">收集箱</span><button class="more" aria-label="收集箱菜单">•••</button></header><div class="empty-line"></div><div class="empty-line short"></div></article>
+            <article class="column" draggable="true" data-name="待开始" style="--dot:#7b8ea8"><header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">待开始</span><button class="more" aria-label="待开始菜单">•••</button></header><div class="card" id="sampleCard"><div class="card-title">补充项目管理页的空状态</div><div class="card-tags" data-card-field="tags"><span class="card-tag">产品需求</span></div><div class="card-meta"><span data-card-field="priority">中优先级</span><span data-card-field="date">刚刚</span><span class="mini-avatar" data-card-field="assignee">林</span></div></div></article>
+            <article class="column" draggable="true" data-name="进行中" style="--dot:#bf8b45"><header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">进行中</span><button class="more" aria-label="进行中菜单">•••</button></header><div class="empty-line"></div><div class="empty-line short"></div></article>
+            <article class="column" draggable="true" data-name="待确认" style="--dot:#806fa2"><header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">待确认</span><button class="more" aria-label="待确认菜单">•••</button></header><div class="empty-line"></div><div class="empty-line short"></div></article>
+            <article class="column" draggable="true" data-name="已完成" style="--dot:#668973"><header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">已完成</span><button class="more" aria-label="已完成菜单">•••</button></header><div class="empty-line"></div><div class="empty-line short"></div></article>
+            <button class="add-column" id="addColumn" aria-label="添加状态">＋</button>
+          </div>
+        </div>
+        <p class="note">这是交互 Demo：状态可拖动；点击状态菜单可重命名或删除；“显示字段”会实时更新示例卡。</p>
+      </section>
+    </div>
+  </main>
+
+  <div class="status-popover" id="statusPopover">
+    <button class="status-action" id="renameStatus">重命名</button>
+    <button class="status-action danger" id="deleteStatus">删除状态</button>
+  </div>
+
+  <script>
+    const fieldsTrigger = document.querySelector('#fieldsTrigger')
+    const fieldsMenu = document.querySelector('#fieldsMenu')
+    const saved = document.querySelector('#saved')
+    const columns = document.querySelector('#columns')
+    const statusPopover = document.querySelector('#statusPopover')
+    let activeColumn = null
+    let draggedColumn = null
+    let saveTimer = null
+
+    function flashSaved() {
+      saved.classList.add('show')
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => saved.classList.remove('show'), 1300)
+    }
+
+    fieldsTrigger.addEventListener('click', event => {
+      event.stopPropagation()
+      const open = fieldsMenu.classList.toggle('open')
+      fieldsTrigger.setAttribute('aria-expanded', String(open))
+      statusPopover.classList.remove('open')
+    })
+    fieldsMenu.addEventListener('click', event => event.stopPropagation())
+    document.querySelectorAll('.check-row').forEach(row => row.addEventListener('click', () => {
+      row.classList.toggle('on')
+      row.querySelector('.check').textContent = row.classList.contains('on') ? '✓' : ''
+      const field = row.dataset.field
+      document.querySelectorAll(`[data-card-field="${field}"]`).forEach(el => {
+        el.style.display = row.classList.contains('on') ? '' : 'none'
+      })
+      flashSaved()
+    }))
+
+    function bindColumn(column) {
+      column.addEventListener('dragstart', () => {
+        draggedColumn = column
+        requestAnimationFrame(() => column.classList.add('dragging'))
+      })
+      column.addEventListener('dragend', () => {
+        column.classList.remove('dragging')
+        document.querySelectorAll('.drag-over').forEach(item => item.classList.remove('drag-over'))
+        draggedColumn = null
+        flashSaved()
+      })
+      column.addEventListener('dragover', event => {
+        event.preventDefault()
+        if (!draggedColumn || draggedColumn === column) return
+        column.classList.add('drag-over')
+        const rect = column.getBoundingClientRect()
+        columns.insertBefore(draggedColumn, event.clientX < rect.left + rect.width / 2 ? column : column.nextSibling)
+      })
+      column.addEventListener('dragleave', () => column.classList.remove('drag-over'))
+      column.querySelector('.more').addEventListener('click', event => {
+        event.stopPropagation()
+        activeColumn = column
+        const rect = event.currentTarget.getBoundingClientRect()
+        statusPopover.style.left = `${Math.min(rect.right - 150, innerWidth - 158)}px`
+        statusPopover.style.top = `${rect.bottom + 5}px`
+        statusPopover.classList.add('open')
+        fieldsMenu.classList.remove('open')
+      })
+    }
+    document.querySelectorAll('.column').forEach(bindColumn)
+
+    document.querySelector('#renameStatus').addEventListener('click', () => {
+      if (!activeColumn) return
+      const label = activeColumn.querySelector('.column-name')
+      const input = document.createElement('input')
+      input.className = 'column-name-input'
+      input.value = label.textContent
+      label.replaceWith(input)
+      input.focus()
+      input.select()
+      const finish = () => {
+        const nextLabel = document.createElement('span')
+        nextLabel.className = 'column-name'
+        nextLabel.textContent = input.value.trim() || '未命名'
+        activeColumn.dataset.name = nextLabel.textContent
+        input.replaceWith(nextLabel)
+        flashSaved()
+      }
+      input.addEventListener('blur', finish, { once: true })
+      input.addEventListener('keydown', event => { if (event.key === 'Enter') input.blur() })
+      statusPopover.classList.remove('open')
+    })
+    document.querySelector('#deleteStatus').addEventListener('click', () => {
+      if (!activeColumn) return
+      activeColumn.remove()
+      activeColumn = null
+      statusPopover.classList.remove('open')
+      flashSaved()
+    })
+    document.querySelector('#addColumn').addEventListener('click', () => {
+      const column = document.createElement('article')
+      column.className = 'column'
+      column.draggable = true
+      column.dataset.name = '新状态'
+      column.style.setProperty('--dot', '#929292')
+      column.innerHTML = '<header class="column-head"><span class="drag-handle">⠿</span><span class="dot"></span><span class="column-name">新状态</span><button class="more" aria-label="新状态菜单">•••</button></header><div class="empty-line"></div><div class="empty-line short"></div>'
+      columns.insertBefore(column, document.querySelector('#addColumn'))
+      bindColumn(column)
+      flashSaved()
+    })
+    document.addEventListener('click', () => {
+      fieldsMenu.classList.remove('open')
+      fieldsTrigger.setAttribute('aria-expanded', 'false')
+      statusPopover.classList.remove('open')
+    })
+  </script>
+</body>
+</html>

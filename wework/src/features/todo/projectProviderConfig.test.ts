@@ -3,6 +3,7 @@ import type { CloudProject } from '@/api/deliveries'
 import {
   dingtalkAITableRuntimeContext,
   parseDingTalkAITableLink,
+  projectSpaceChatRuntimeContext,
   repositoryProviderConfig,
 } from './projectProviderConfig'
 
@@ -81,5 +82,35 @@ describe('dingtalkAITableRuntimeContext', () => {
         provider_config: {},
       } as CloudProject)
     ).toBeUndefined()
+  })
+})
+
+describe('projectSpaceChatRuntimeContext', () => {
+  it('binds ordinary chat references to the current project board without enabling task mode', () => {
+    const context = projectSpaceChatRuntimeContext({
+      id: 'space-7',
+      name: 'Local tasks',
+      task_provider: 'local',
+      provider_config: {},
+    } as CloudProject)
+
+    expect(context.projectSpaceChat.kind).toBe('application')
+    expect(context.projectSpaceChat.value).toContain('<current_project_space>')
+    expect(context.projectSpaceChat.value).toContain('{"id":"space-7","name":"Local tasks"}')
+    expect(context.projectSpaceChat.value).toContain('use the configured project task-provider')
+    expect(context).not.toHaveProperty('dingtalkAITableProject')
+  })
+
+  it('keeps the bound DingTalk provider instructions alongside the chat context', () => {
+    const context = projectSpaceChatRuntimeContext({
+      id: 'space-8',
+      name: 'DingTalk tasks',
+      project_key: 'DING',
+      task_provider: 'dingtalk_aitable',
+      provider_config: { base_id: 'base-1', table_id: 'table-1' },
+    } as CloudProject)
+
+    expect(context.projectSpaceChat.kind).toBe('application')
+    expect(context.dingtalkAITableProject.kind).toBe('application')
   })
 })

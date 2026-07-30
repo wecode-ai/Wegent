@@ -6,6 +6,34 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 
+vi.mock('./ProjectSpaceChatSidebar', () => ({
+  ProjectSpaceChatSidebar: ({
+    project,
+    launchRequest,
+    onClose,
+  }: {
+    project: { id: number; name: string }
+    launchRequest?: {
+      item: { id: string; description: string }
+      localProjectId: number | null
+    } | null
+    onClose: () => void
+  }) => (
+    <div
+      data-testid="project-space-chat-sidebar"
+      data-project-id={project.id}
+      data-item-id={launchRequest?.item.id}
+      data-description={launchRequest?.item.description}
+      data-local-project-id={launchRequest?.localProjectId ?? ''}
+    >
+      {project.name}
+      <button type="button" data-testid="mock-project-space-chat-close" onClick={onClose}>
+        关闭
+      </button>
+    </div>
+  ),
+}))
+
 const project = {
   id: 11,
   public_id: 'cloud-public-id',
@@ -119,6 +147,7 @@ function services(): WorkbenchServices {
         created_at: '2026-07-23T00:00:00Z',
       })),
       removeLoopItemCollaborator: vi.fn(async () => undefined),
+      bindTask: vi.fn(async () => undefined),
       listMyWork: vi.fn(async () => ({ items: [] })),
       listCloudProjectMembers: vi.fn(async () => [
         {
@@ -160,62 +189,96 @@ function services(): WorkbenchServices {
 }
 
 describe('CloudTodoWorkspace', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+  })
 
-  it('starts a project-level AI conversation with DingTalk dws context', async () => {
+  it('opens project chat for every project provider', async () => {
     const workbenchServices = services()
-    const aitableProject = {
-      ...project,
-      task_provider: 'dingtalk_aitable' as const,
-      provider_config: {
-        base_id: 'base-1',
-        table_id: 'table-1',
-        view_id: 'view-1',
-      },
-    }
-    workbenchServices.deliveryApi!.listCloudProjects = vi.fn(async () => ({
-      items: [aitableProject],
-    }))
-    const onRunTodo = vi.fn(async () => ({ taskId: 'runtime-1', deviceId: 'device-1' }))
-    const onOpenRuntimeTask = vi.fn()
 
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
         services={workbenchServices}
-        onRunTodo={onRunTodo}
-        onOpenRuntimeTask={onOpenRuntimeTask}
       />
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    expect(await screen.findByTestId('dingtalk-project-assistant')).toBeInTheDocument()
-    await userEvent.type(
-      screen.getByTestId('dingtalk-project-assistant-input'),
-      '只看本周未完成的任务'
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('与 AI 沟通')
+    await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
+    expect(screen.getByTestId('project-space-chat-sidebar')).toHaveAttribute(
+      'data-project-id',
+      '11'
     )
-    await userEvent.click(screen.getByTestId('dingtalk-project-assistant-send'))
+    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('收起 AI')
+  })
 
-    await waitFor(() => expect(onRunTodo).toHaveBeenCalledTimes(1))
-    expect(onRunTodo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project: expect.objectContaining({ id: 91 }),
-        message: '只看本周未完成的任务',
-        goal: 'Wegent V4',
-        cloudProjectId: 11,
-        additionalContext: expect.objectContaining({
-          dingtalkAITableProject: expect.objectContaining({
-            kind: 'application',
-            value: expect.stringContaining('"base_id": "base-1"'),
-          }),
-        }),
-      })
+  it('hides task ids and configures the properties shown on board cards', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [{ ...item, assignee_name: 'hongyu9', tags: ['发布'] }],
+    }))
+    workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...project,
+      card_display: values.card_display,
+      version: project.version + 1,
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
     )
-    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
-      taskId: 'runtime-1',
-      deviceId: 'device-1',
-    })
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    expect(await screen.findByText('Implement cloud MCP')).toBeInTheDocument()
+    expect(screen.queryByText('WEG-1')).not.toBeInTheDocument()
+    expect(screen.getByText('hongyu9')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('负责人')
+    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveTextContent('H')
+    expect(screen.getByTestId('cloud-todo-card-assignee-avatar-WEG-1')).toHaveClass(
+      'from-indigo-400',
+      'to-indigo-500'
+    )
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('高')
+    expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    expect(screen.getByTestId('cloud-project-board-layout-settings')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-board-display-menu'))
+    expect(screen.getByTestId('cloud-project-card-display-settings')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-board-display-assignee'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({
+          card_display: expect.objectContaining({ show_assignee: false }),
+        })
+      )
+    )
+    await userEvent.click(screen.getByTestId('cloud-project-board-view'))
+    expect(screen.queryByText('hongyu9')).not.toBeInTheDocument()
+    expect(screen.getAllByText('发布').length).toBeGreaterThan(0)
+  })
+
+  it('does not render an avatar for an unassigned board card', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toHaveTextContent('未指定')
+    expect(screen.queryByTestId('cloud-todo-card-assignee-avatar-WEG-1')).not.toBeInTheDocument()
   })
 
   it('renders DingTalk records by live table fields without exposing provider record ids', async () => {
@@ -281,6 +344,10 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByText('修复发布流程')).toBeInTheDocument()
     expect(screen.queryByText('补齐测试')).not.toBeInTheDocument()
     expect(screen.getByText('1 个子任务')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-board-group-by')).toHaveTextContent('分组依据天河状态')
+    expect(screen.getByTestId('dingtalk-board-assignee-filter').parentElement).toHaveTextContent(
+      '分组筛选全部天河状态'
+    )
 
     await userEvent.click(screen.getByTestId('dingtalk-board-group-by'))
     await userEvent.type(screen.getByTestId('dingtalk-board-group-search'), '负责人')
@@ -647,6 +714,14 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
+    console.log(
+      'DEBUG advanced expanded?',
+      screen.getByTestId('cloud-project-advanced-toggle').getAttribute('aria-expanded'),
+      'has location?',
+      Boolean(screen.queryByTestId('cloud-project-location-cloud'))
+    )
     expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -745,6 +820,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
     expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -823,6 +899,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
+    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
     await userEvent.click(screen.getByTestId('cloud-project-location-local'))
     await userEvent.type(screen.getByTestId('cloud-project-name'), 'Local board')
     await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))
@@ -849,6 +926,9 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    expect(screen.getByText('管理项目')).toBeInTheDocument()
+    expect(await screen.findByText('2 位成员')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-members-toggle'))
     expect(await screen.findByTestId('cloud-project-member-1')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('cloud-project-board-view'))
 
@@ -912,7 +992,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
     expect(screen.getByText('需要配置令牌')).toBeInTheDocument()
-    const tagHeading = screen.getByRole('heading', { name: '标签管理' })
+    const tagHeading = screen.getByRole('heading', { name: '标签' })
     const providerHeading = screen.getByRole('heading', { name: '任务来源' })
     expect(
       tagHeading.compareDocumentPosition(providerHeading) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -923,6 +1003,7 @@ describe('CloudTodoWorkspace', () => {
       'disabled:bg-black',
       'disabled:text-white'
     )
+    await userEvent.click(screen.getByRole('button', { name: '＋ 新建标签' }))
     expect(screen.getByTestId('cloud-project-tag-create-confirm')).toHaveClass(
       'bg-black',
       'text-white',
@@ -1117,7 +1198,7 @@ describe('CloudTodoWorkspace', () => {
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
   })
 
-  it('offers a follow-up task for a completed TODO', async () => {
+  it('offers a conversation for a completed TODO', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [{ ...item, status: 'completed' as const }],
@@ -1133,8 +1214,38 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
-    expect(screen.getByTestId('cloud-todo-start-task')).toHaveTextContent('开启后续任务')
+    expect(screen.getByTestId('cloud-todo-start-task')).toHaveTextContent('开始对话')
     expect(screen.getByTestId('cloud-todo-detail-title')).toBeEnabled()
+  })
+
+  it('opens a task conversation in the project sidebar with an optional Wework project', async () => {
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: 'Wegent 本地项目', tasks: [] }]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-start-task'))
+
+    const sidebar = screen.getByTestId('project-space-chat-sidebar')
+    expect(sidebar).toHaveAttribute('data-project-id', '11')
+    expect(sidebar).toHaveAttribute('data-item-id', item.id)
+    expect(sidebar).toHaveAttribute('data-description', item.description)
+    expect(sidebar).toHaveAttribute('data-local-project-id', '')
+
+    await userEvent.click(screen.getByTestId('mock-project-space-chat-close'))
+    await userEvent.click(screen.getByTestId('cloud-project-ask-ai'))
+
+    const reopenedSidebar = screen.getByTestId('project-space-chat-sidebar')
+    expect(reopenedSidebar).not.toHaveAttribute('data-item-id')
+    expect(reopenedSidebar).not.toHaveAttribute('data-description')
+    expect(reopenedSidebar).toHaveAttribute('data-local-project-id', '')
   })
 
   it('offers every board status when editing a completed TODO', async () => {
@@ -1158,6 +1269,72 @@ describe('CloudTodoWorkspace', () => {
     expect(status).toHaveTextContent('已完成')
     expect(status).toHaveTextContent('进行中')
     expect(status).toHaveTextContent('收集箱')
+  })
+
+  it('uses the DingTalk-style grouping, filtering, and search toolbar', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
+      ...project,
+      board_config: values.board_config,
+      version: project.version + 1,
+    }))
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    await userEvent.selectOptions(screen.getByTestId('cloud-board-group-filter'), 'in_progress')
+    expect(screen.getByTestId('cloud-board-group-filter-label')).toHaveTextContent('进行中')
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
+    expect(localStorage.getItem('wework-board-group:1:11')).toBe('priority')
+    expect(screen.getByTestId('cloud-todo-column-priority-high')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-group-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-search')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-board-save-global'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(
+        11,
+        expect.objectContaining({
+          board_config: expect.objectContaining({ group_by: 'priority' }),
+        })
+      )
+    )
+    expect(screen.queryByTestId('cloud-board-save-global')).not.toBeInTheDocument()
+  })
+
+  it('groups native board tasks by tag and keeps the tag filter beside grouping', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
+      items: [{ ...item, tags: ['发布'] }],
+    }))
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    await userEvent.click(screen.getByTestId('cloud-board-group-option-tag'))
+
+    expect(screen.getByTestId('cloud-todo-column-tag-发布')).toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-todo-column-tag-untagged')).not.toHaveTextContent(
+      'Implement cloud MCP'
+    )
+    expect(screen.getByTestId('cloud-board-group-filter-label')).toHaveTextContent('全部标签')
   })
 
   it('defaults new TODOs to the inbox unless another status is selected', async () => {
