@@ -61,11 +61,12 @@ import {
   isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
+  supportsDeviceMetrics,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
+import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import {
   defaultAppearance,
@@ -578,8 +579,42 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
   const [terminalSession, setTerminalSession] = useState<DeviceSessionResponse | null>(null)
+  const [metricsState, setMetricsState] = useState<{
+    deviceId: string
+    value: CloudDeviceMetricsResponse | null
+  } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const actionMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!supportsDeviceMetrics(device) || device.status === 'offline') {
+      return
+    }
+
+    let cancelled = false
+    const loadMetrics = async () => {
+      try {
+        const nextMetrics = await createSettingsDeviceApi(cloudConnection).getMetrics(
+          device.device_id
+        )
+        if (!cancelled) {
+          setMetricsState({ deviceId: device.device_id, value: nextMetrics })
+        }
+      } catch (error) {
+        console.error('Failed to load device metrics:', error)
+        if (!cancelled) {
+          setMetricsState({ deviceId: device.device_id, value: null })
+        }
+      }
+    }
+
+    void loadMetrics()
+    const timer = window.setInterval(loadMetrics, 30_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [cloudConnection, device])
 
   const handleStartTerminal = useCallback(async () => {
     if (device.status !== 'online') return
@@ -707,6 +742,10 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   }
 
   const isOnline = device.status === 'online'
+  const metrics =
+    device.status !== 'offline' && metricsState?.deviceId === device.device_id
+      ? metricsState.value
+      : null
   const isRemote = isRemoteDevice(device)
   const displayName = deviceDisplayName(device)
   const canUseCloudSessions = supportsCloudSessions(device)
@@ -862,6 +901,42 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             )}
           </div>
         </div>
+        {supportsDeviceMetrics(device) && (
+          <div
+            data-testid={`connection-device-metrics-${device.device_id}`}
+            className="mt-3 grid grid-cols-3 gap-3 border-t border-border pt-3"
+          >
+            {[
+              { key: 'cpu', label: 'CPU', value: metrics?.cpu_usage },
+              { key: 'memory', label: '内存', value: metrics?.memory_usage },
+              { key: 'disk', label: '磁盘', value: metrics?.disk_usage },
+            ].map(metric => {
+              const value =
+                typeof metric.value === 'number'
+                  ? Math.min(100, Math.max(0, Math.round(metric.value)))
+                  : null
+              return (
+                <div key={metric.key} className="min-w-0">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-text-secondary">{metric.label}</span>
+                    <span
+                      data-testid={`connection-device-metric-${metric.key}-${device.device_id}`}
+                      className="tabular-nums text-text-primary"
+                    >
+                      {value === null ? '-' : `${value}%`}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-text-secondary transition-[width]"
+                      style={{ width: `${value ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {terminalSession && remoteTerminalClientFactory && (
@@ -916,7 +991,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   )
 }
 
-function DeviceSection({
+export function DeviceSection({
   title,
   devices,
   onChanged,
@@ -1411,6 +1486,9 @@ export function ConnectionsSettingsPage({
   const visibleSettingsNavItems = settingsNavItems.filter(
     item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || usesOverlayTitlebar
   )
+  const shouldAutoOpenAddCloudDeviceDialog =
+    autoOpenAddCloudDeviceDialog ||
+    new URLSearchParams(window.location.search).get('addDevice') === '1'
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
   useEffect(() => {
@@ -1571,7 +1649,8 @@ export function ConnectionsSettingsPage({
           />
         ) : (
           <ConnectionsDeviceSettingsPage
-            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            key={shouldAutoOpenAddCloudDeviceDialog ? 'add-device' : 'connections'}
+            autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
           />
         )}
       </main>

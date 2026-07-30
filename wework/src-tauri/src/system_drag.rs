@@ -2,6 +2,9 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const PANEL_LABEL: &str = "system-drag-panel";
+const PANEL_WIDTH: f64 = 440.0;
+const PANEL_HEIGHT: f64 = 60.0;
+const PANEL_TOP_MARGIN: f64 = 8.0;
 const DROP_EVENT: &str = "wework-system-drag-drop";
 const NATIVE_TEXT_DROP_EVENT: &str = "wework-system-drag-native-text-drop";
 
@@ -32,7 +35,7 @@ fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
 
     WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("/system-drag".into()))
         .title("Wework")
-        .inner_size(440.0, 72.0)
+        .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
         .resizable(false)
         .decorations(false)
         .transparent(true)
@@ -40,45 +43,82 @@ fn ensure_panel(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
-        .center()
         .build()
         .map_err(|error| format!("Failed to create system drag panel: {error}"))
 }
 
-fn show_panel(app: &AppHandle, cursor: tauri::PhysicalPosition<f64>) {
+fn show_panel(app: &AppHandle) {
     let Ok(window) = ensure_panel(app) else {
         return;
     };
+    if let Err(error) = position_panel_at_mouse_screen(&window) {
+        log::warn!("Failed to position system drag panel: {error}");
+        return;
+    }
     if !window.is_visible().unwrap_or(false) {
-        position_panel_at_screen_top(&window, cursor);
         let _ = window.show();
     }
 }
 
-fn position_panel_at_screen_top(
-    window: &tauri::WebviewWindow,
-    cursor: tauri::PhysicalPosition<f64>,
-) {
-    let Ok(monitors) = window.available_monitors() else {
-        return;
+fn panel_top_left_for_visible_frame(
+    frame_x: f64,
+    frame_y: f64,
+    frame_width: f64,
+    frame_height: f64,
+    panel_width: f64,
+) -> (f64, f64) {
+    let x = frame_x + ((frame_width - panel_width) / 2.0).max(0.0);
+    let y = frame_y + frame_height - PANEL_TOP_MARGIN;
+    (x, y)
+}
+
+#[cfg(target_os = "macos")]
+fn position_panel_at_mouse_screen(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSEvent, NSScreen, NSWindow};
+    use objc2_foundation::NSPoint;
+
+    let main_thread = MainThreadMarker::new()
+        .ok_or_else(|| "AppKit callback is not on the main thread".to_string())?;
+    let cursor = NSEvent::mouseLocation();
+    let screens = NSScreen::screens(main_thread);
+    let screen = screens
+        .iter()
+        .find(|screen| {
+            let frame = screen.frame();
+            cursor.x >= frame.origin.x
+                && cursor.x < frame.origin.x + frame.size.width
+                && cursor.y >= frame.origin.y
+                && cursor.y < frame.origin.y + frame.size.height
+        })
+        .ok_or_else(|| {
+            format!(
+                "No NSScreen contains cursor position ({:.1}, {:.1})",
+                cursor.x, cursor.y
+            )
+        })?;
+    let ns_window: &NSWindow = unsafe {
+        &*window
+            .ns_window()
+            .map_err(|error| format!("Failed to access native panel window: {error}"))?
+            .cast()
     };
-    let Some(monitor) = monitors.into_iter().find(|monitor| {
-        let area = monitor.work_area();
-        cursor.x >= area.position.x as f64
-            && cursor.x < (area.position.x + area.size.width as i32) as f64
-            && cursor.y >= area.position.y as f64
-            && cursor.y < (area.position.y + area.size.height as i32) as f64
-    }) else {
-        return;
-    };
-    let Ok(panel_size) = window.outer_size() else {
-        return;
-    };
-    let work_area = monitor.work_area();
-    let x =
-        work_area.position.x + ((work_area.size.width as i32 - panel_size.width as i32) / 2).max(0);
-    let y = work_area.position.y + (8.0 * monitor.scale_factor()).round() as i32;
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    let visible_frame = screen.visibleFrame();
+    let panel_frame = ns_window.frame();
+    let (x, y) = panel_top_left_for_visible_frame(
+        visible_frame.origin.x,
+        visible_frame.origin.y,
+        visible_frame.size.width,
+        visible_frame.size.height,
+        panel_frame.size.width,
+    );
+    ns_window.setFrameTopLeftPoint(NSPoint::new(x, y));
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn position_panel_at_mouse_screen(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Ok(())
 }
 
 fn cursor_is_inside(window: &tauri::WebviewWindow) -> bool {
@@ -172,9 +212,9 @@ fn handle_drag_event(
             return;
         }
         drag_in_progress.store(true, Ordering::SeqCst);
-        if let Ok(cursor) = app.cursor_position() {
-            show_panel(app, cursor);
-        }
+    }
+    if drag_in_progress.load(Ordering::SeqCst) {
+        show_panel(app);
     }
 }
 
@@ -290,17 +330,19 @@ fn deliver_drop(
     state: &SystemDragState,
     payload: SystemDragDropPayload,
 ) -> Result<(), String> {
-    let main_exists = app.get_webview_window(crate::MAIN_WINDOW_LABEL).is_some();
-    if !main_exists {
+    let popout_exists = app
+        .get_webview_window(crate::popout_window::WINDOW_LABEL)
+        .is_some();
+    if !popout_exists {
         state
             .pending
             .lock()
             .map_err(|_| "Failed to lock pending system drops".to_string())?
             .push(payload.clone());
-        crate::ensure_main_window(app, None)?;
+        crate::popout_window::show(app)?;
     } else {
-        crate::ensure_main_window(app, None)?;
-        app.emit(DROP_EVENT, payload)
+        crate::popout_window::show(app)?;
+        app.emit_to(crate::popout_window::WINDOW_LABEL, DROP_EVENT, payload)
             .map_err(|error| format!("Failed to deliver system drop: {error}"))?;
     }
     Ok(())
@@ -324,23 +366,47 @@ pub fn dismiss_system_drag_panel(app: AppHandle) {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
-    use super::take_drag_in_progress;
-    use std::sync::atomic::AtomicBool;
+    use super::{panel_top_left_for_visible_frame, PANEL_HEIGHT, PANEL_WIDTH};
 
     #[test]
-    fn plain_mouse_up_does_not_consume_a_drop() {
-        let drag_in_progress = AtomicBool::new(false);
-
-        assert!(!take_drag_in_progress(&drag_in_progress));
+    fn panel_uses_compact_logical_size() {
+        assert_eq!((PANEL_WIDTH, PANEL_HEIGHT), (440.0, 60.0));
     }
 
     #[test]
-    fn mouse_up_consumes_only_the_current_drag() {
-        let drag_in_progress = AtomicBool::new(true);
+    fn panel_position_centers_in_a_primary_visible_frame() {
+        let position = panel_top_left_for_visible_frame(0.0, 84.0, 1920.0, 966.0, 440.0);
 
-        assert!(take_drag_in_progress(&drag_in_progress));
-        assert!(!take_drag_in_progress(&drag_in_progress));
+        assert_eq!(position, (740.0, 1042.0));
+    }
+
+    #[test]
+    fn panel_position_respects_a_portrait_monitor_origin() {
+        let position = panel_top_left_for_visible_frame(-1200.0, -719.0, 1200.0, 1920.0, 440.0);
+
+        assert_eq!(position, (-820.0, 1193.0));
+    }
+
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use super::super::take_drag_in_progress;
+        use std::sync::atomic::AtomicBool;
+
+        #[test]
+        fn plain_mouse_up_does_not_consume_a_drop() {
+            let drag_in_progress = AtomicBool::new(false);
+
+            assert!(!take_drag_in_progress(&drag_in_progress));
+        }
+
+        #[test]
+        fn mouse_up_consumes_only_the_current_drag() {
+            let drag_in_progress = AtomicBool::new(true);
+
+            assert!(take_drag_in_progress(&drag_in_progress));
+            assert!(!take_drag_in_progress(&drag_in_progress));
+        }
     }
 }

@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { getTaskQueryParam, removeTaskQueryParams } from '@/features/tasks/utils/task-query-params'
 import type { KnowledgeBaseType, KnowledgeView } from '@/types/knowledge'
 
 export const DEFAULT_KNOWLEDGE_VIEW: KnowledgeView = 'notebook'
@@ -20,8 +21,6 @@ export function getDefaultKnowledgeView(kbType?: KnowledgeBaseType | null): Know
   return DEFAULT_KNOWLEDGE_VIEW
 }
 
-const TASK_QUERY_KEYS = ['taskId', 'task_id', 'taskid'] as const
-
 function readBrowserView(): string | null {
   if (typeof window === 'undefined') return null
   return new URLSearchParams(window.location.search).get('view')
@@ -29,33 +28,13 @@ function readBrowserView(): string | null {
 
 function readBrowserTaskParam(): string | null {
   if (typeof window === 'undefined') return null
-  const params = new URLSearchParams(window.location.search)
-  for (const key of TASK_QUERY_KEYS) {
-    const value = params.get(key)
-    if (value) return value
-  }
-  return null
+  return getTaskQueryParam(new URLSearchParams(window.location.search))
 }
 
 function readTaskParam(searchParams: URLSearchParams): string | null {
   const browserValue = readBrowserTaskParam()
   if (browserValue) return browserValue
-  for (const key of TASK_QUERY_KEYS) {
-    const value = searchParams.get(key)
-    if (value) return value
-  }
-  return null
-}
-
-function removeTaskParams(url: URL): boolean {
-  let removed = false
-  for (const key of TASK_QUERY_KEYS) {
-    if (url.searchParams.has(key)) {
-      url.searchParams.delete(key)
-      removed = true
-    }
-  }
-  return removed
+  return getTaskQueryParam(searchParams)
 }
 
 function replaceKnowledgeViewInUrl(view: KnowledgeView) {
@@ -63,17 +42,17 @@ function replaceKnowledgeViewInUrl(view: KnowledgeView) {
   const url = new URL(window.location.href)
   url.searchParams.set('view', view)
   if (view === 'documents') {
-    removeTaskParams(url)
+    removeTaskQueryParams(url.searchParams)
   }
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
 function removeTaskParamsForDocumentsView() {
   if (typeof window === 'undefined') return
   const url = new URL(window.location.href)
-  const hadTaskParam = removeTaskParams(url)
+  const hadTaskParam = removeTaskQueryParams(url.searchParams)
   if (!hadTaskParam) return
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
 }
 
 export function useKnowledgeViewMode(kbType?: KnowledgeBaseType | null, resetKey?: unknown) {

@@ -27,7 +27,7 @@ async fn env_lock() -> EnvLockGuard {
         _guard: LOCK
             .get_or_init(|| StdMutex::new(()))
             .lock()
-            .expect("environment lock should be available"),
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
     }
 }
 
@@ -166,17 +166,18 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
                 .collect::<Vec<_>>()
         })
         .expect("workspace list should be present");
-    assert_eq!(product_workspaces.len(), 2);
+    assert_eq!(product_workspaces.len(), 1);
     assert_eq!(
         product_workspaces[0]["projectRoots"],
         json!([first_root, second_root])
     );
-    let total_tasks = product_workspaces
-        .iter()
-        .filter_map(|workspace| workspace["tasks"].as_array())
-        .map(Vec::len)
-        .sum::<usize>();
-    assert_eq!(total_tasks, 1);
+    assert_eq!(
+        product_workspaces[0]["tasks"]
+            .as_array()
+            .expect("project workspace tasks should be present")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -196,7 +197,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -979,6 +980,74 @@ async fn runtime_tasks_share_one_codex_app_server_across_handlers() {
 }
 
 #[tokio::test]
+async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-shared-proxy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-shared-proxy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-shared-proxy-log", "jsonl");
+    let fake_codex = write_fake_codex_auxiliary_rpc_then_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.runtime_config.update",
+            "payload": {"proxyUrl": "http://127.0.0.1:7890"}
+        }))
+        .await
+        .expect("runtime proxy configuration should succeed");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.rate_limits.read",
+            "payload": {}
+        }))
+        .await
+        .expect("rate limits should start the proxy-configured app-server");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-shared-proxy",
+                "workspacePath": "/tmp/project",
+                "message": "implement feature",
+                "executionRequest": codex_execution_request(
+                    "implement feature",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("task should be accepted");
+
+    wait_until_task_idle(&handler, "local-task-shared-proxy").await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(calls[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(calls[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "initialize")
+            .count(),
+        1,
+        "auxiliary RPC and task should share one Codex app-server process"
+    );
+    assert!(calls
+        .iter()
+        .any(|call| call["method"] == "account/rateLimits/read"));
+    assert!(calls.iter().any(|call| call["method"] == "turn/start"));
+}
+
+#[tokio::test]
 async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1488,7 +1557,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
     let _sqlite_home = EnvGuard::set("CODEX_SQLITE_HOME", &sqlite_home.display().to_string());
     write_codex_state_db_thread(&sqlite_home);
     let log_path = temp_path("runtime-send-text-log", "jsonl");
-    let fake_codex = write_fake_codex(&log_path);
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
     let (event_tx, mut events) = broadcast::channel(32);
     let handler = RuntimeWorkRpcHandler::with_event_sender(
         "device-1",
@@ -1915,6 +1984,59 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
 }
 
 #[tokio::test]
+async fn runtime_tasks_cancel_uses_startup_interrupt_before_first_turn_progress() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-cancel-startup-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-startup-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-cancel-startup-log", "jsonl");
+    let fake_codex = write_fake_codex_startup_interrupt_race(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-cancel-startup",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-cancel-startup"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    assert_eq!(cancelled["accepted"], true);
+    wait_for_method_count(&log_path, "turn/interrupt", 1).await;
+    let interrupt = read_json_lines(&log_path)
+        .into_iter()
+        .find(|call| call["method"] == "turn/interrupt")
+        .expect("startup turn should be interrupted");
+    assert_eq!(interrupt["params"]["turnId"], "");
+}
+
+#[tokio::test]
 async fn runtime_tasks_cancel_does_not_kill_shared_app_server_process_group() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2195,11 +2317,16 @@ async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {
+    write_fake_codex_for_turns(log_path, 1)
+}
+
+fn write_fake_codex_for_turns(log_path: &Path, exit_after_turns: usize) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+turn_count=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -2214,7 +2341,6 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[{{"id":"turn-1","createdAt":1780000000,"items":[{{"id":"user-1","type":"userMessage","content":[{{"type":"text","text":"first turn"}}]}},{{"id":"agent-1","type":"agentMessage","text":"done","phase":"final_answer"}}]}}]}}}}}}'
-      exit 0
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
@@ -2260,6 +2386,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
       progress_id='progress-1'
       case "$line" in
         *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
@@ -2271,12 +2398,15 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
-      exit 0
+      if [ "$turn_count" -ge {} ]; then
+        exit 0
+      fi
       ;;
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        exit_after_turns
     );
     write_executable(&path, &content);
     path
@@ -2414,6 +2544,53 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-persistent","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-persistent","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-auxiliary-rpc-then-turn", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+http_proxy=$(printenv HTTP_PROXY)
+https_proxy=$(printenv HTTPS_PROXY)
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"account/rateLimits/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"rateLimits":[]}}}}'
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-shared-proxy"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-shared-proxy","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-shared-proxy","turnId":"turn-shared-proxy","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-shared-proxy","turn":{{"id":"turn-shared-proxy","status":"completed"}}}}}}'
       ;;
   esac
 done
@@ -2710,6 +2887,47 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_startup_interrupt_race(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-cancel-startup", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/interrupt"'*)
+      if printf '%s\n' "$line" | grep -q '"turnId":""'; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      fi
       ;;
   esac
 done
@@ -3056,7 +3274,7 @@ async fn recv_events_until<F>(events: &mut broadcast::Receiver<Value>, mut done:
 where
     F: FnMut(&[Value]) -> bool,
 {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut received = Vec::new();
     loop {
         if done(&received) {

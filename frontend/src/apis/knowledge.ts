@@ -12,6 +12,7 @@ import type {
   ChunkListResponse,
   ChunkResponse,
   DocumentDetailResponse,
+  DocumentContentReadResponse,
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
@@ -145,6 +146,26 @@ export async function createDocument(
   data: KnowledgeDocumentCreate
 ): Promise<KnowledgeDocument> {
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
+}
+
+export interface CreateTextKnowledgeDocumentRequest {
+  knowledge_base_id: number
+  name: string
+  content: string
+}
+
+/**
+ * Create a Markdown document directly from text content.
+ */
+export async function createTextKnowledgeDocument(
+  data: CreateTextKnowledgeDocumentRequest
+): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>('/knowledge/documents', {
+    ...data,
+    source_type: 'text',
+    file_extension: 'md',
+    folder_id: 0,
+  })
 }
 
 /**
@@ -468,6 +489,19 @@ export async function getDocumentChunk(
  */
 export async function getDocumentDetail(documentId: number): Promise<DocumentDetailResponse> {
   return apiClient.get<DocumentDetailResponse>(`/knowledge-documents/${documentId}/detail`)
+}
+
+/**
+ * Read a small page of document content and its stable identity metadata.
+ */
+export async function getDocumentContent(
+  documentId: number,
+  offset: number = 0,
+  limit: number = 1
+): Promise<DocumentContentReadResponse> {
+  return apiClient.get<DocumentContentReadResponse>(
+    `/knowledge/documents/${documentId}/content?offset=${offset}&limit=${limit}`
+  )
 }
 
 // ============== Knowledge Folder APIs ==============

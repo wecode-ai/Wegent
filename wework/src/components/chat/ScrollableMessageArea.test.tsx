@@ -3,6 +3,7 @@ import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
+import { getConversationScrollSnapshot } from '@/features/workbench/runtimeConversationCache'
 
 function mockRect(element: Element, top: number, bottom: number) {
   element.getBoundingClientRect = vi.fn(
@@ -333,7 +334,9 @@ describe('ScrollableMessageArea', () => {
       mockRect(scroller, 100, 300)
       mockScrollRelativeRect(anchor, scroller, 450, 40)
 
-      fireEvent.wheel(scroller, { deltaY: -80 })
+      scroller.scrollTop = 1000
+      fireEvent.scroll(scroller)
+      scroller.scrollTop = 300
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -410,6 +413,71 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 320,
       behavior: 'auto',
+    })
+  })
+
+  test('stops external bottom following when the scroll position leaves the bottom', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const streamingMessage = {
+      id: 'external-streaming-message',
+      role: 'assistant' as const,
+      content: '正在流式输出',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-stream-a"
+          externalScrollRef={externalScrollRef}
+          messages={[streamingMessage]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    rerender(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-stream-b"
+          externalScrollRef={externalScrollRef}
+          messages={[{ ...streamingMessage, id: 'external-streaming-message-b' }]}
+        />
+      </div>
+    )
+    rerender(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-stream-a"
+          externalScrollRef={externalScrollRef}
+          messages={[streamingMessage]}
+        />
+      </div>
+    )
+
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    scroller.scrollTop = 350
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+    expect(getConversationScrollSnapshot('external-stream-a')).toEqual({
+      distanceFromBottomPx: 450,
+      pinnedToBottom: false,
     })
   })
 
@@ -833,6 +901,63 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
 
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+  })
+
+  test('deduplicates retry navigation entries that point to the same user message', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'original-user',
+            role: 'user',
+            content: '原始需求',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'retry-user',
+            role: 'user',
+            content: '继续',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:01.000Z',
+            runtimeMessageIndex: 8,
+          },
+        ]}
+        turnNavigation={[
+          {
+            id: 'original-user',
+            turnIndex: 0,
+            messageIndex: 0,
+            cursor: 'offset:0',
+            promptPreview: '原始需求',
+            responsePreview: '',
+          },
+          ...[2, 4, 6, 8].map((messageIndex, index) => ({
+            id: 'retry-user',
+            turnIndex: index + 1,
+            messageIndex,
+            cursor: `offset:${messageIndex}`,
+            promptPreview: '继续',
+            responsePreview: '',
+          })),
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(2)
+    expect(markers[1]).toHaveAccessibleName('跳转到第 2 条发言')
+
+    fireEvent.focus(markers[1])
+
+    const visiblePreviews = screen
+      .getAllByTestId('message-turn-navigation-preview')
+      .filter(preview => preview.classList.contains('opacity-100'))
+    expect(visiblePreviews).toHaveLength(1)
+    expect(visiblePreviews[0]).toHaveTextContent('继续')
   })
 
   test('keeps message navigation available while its portal target is unavailable', () => {
@@ -1488,6 +1613,71 @@ describe('ScrollableMessageArea', () => {
     vi.unstubAllGlobals()
   })
 
+  test('does not render a gap for transcript indexes already covered by a loaded page', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'retried-user',
+            role: 'user',
+            content: '重试后的请求',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'successful-retry',
+            role: 'assistant',
+            content: '最终成功响应',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:03.000Z',
+            runtimeMessageIndex: 3,
+          },
+        ]}
+        loadedTranscriptRanges={[{ start: 0, end: 4 }]}
+        onLoadTranscriptGap={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('runtime-transcript-gap-marker')).not.toBeInTheDocument()
+  })
+
+  test('loads only the uncovered part between partially loaded transcript ranges', () => {
+    const onLoadTranscriptGap = vi.fn()
+
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: 'before-partial-gap',
+            role: 'user',
+            content: '缺口之前',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:00.000Z',
+            runtimeMessageIndex: 0,
+          },
+          {
+            id: 'after-partial-gap',
+            role: 'assistant',
+            content: '缺口之后',
+            status: 'done',
+            createdAt: '2026-07-27T00:00:05.000Z',
+            runtimeMessageIndex: 5,
+          },
+        ]}
+        loadedTranscriptRanges={[
+          { start: 0, end: 3 },
+          { start: 4, end: 6 },
+        ]}
+        onLoadTranscriptGap={onLoadTranscriptGap}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')!)
+
+    expect(onLoadTranscriptGap).toHaveBeenCalledWith({ start: 3, end: 4 })
+  })
+
   test('pins the conversation to the bottom after opening a chat', () => {
     render(
       <ScrollableMessageArea
@@ -1644,6 +1834,53 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('does not overwrite a saved reading position with a restore-generated scroll event', () => {
+    const messageA = {
+      id: 'transient-layout-a',
+      role: 'assistant' as const,
+      content: '会话 A 的长内容',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const messageB = {
+      id: 'transient-layout-b',
+      role: 'assistant' as const,
+      content: '会话 B',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="transient-layout-a" messages={[messageA]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    rerender(<ScrollableMessageArea conversationKey="transient-layout-b" messages={[messageB]} />)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 0
+    rerender(<ScrollableMessageArea conversationKey="transient-layout-a" messages={[messageA]} />)
+    scroller.scrollTop = 850
+    fireEvent.scroll(scroller)
+
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 300,
+      behavior: 'auto',
+    })
+  })
+
   test('restores a streaming conversation to its latest bottom after switching back', () => {
     const streamingMessage = {
       id: 'streaming-a',
@@ -1693,6 +1930,38 @@ describe('ScrollableMessageArea', () => {
       behavior: 'auto',
     })
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+  })
+
+  test('captures a bottom-pinned streaming conversation before its pane unmounts', () => {
+    const streamingMessage = {
+      id: 'streaming-unmount',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { unmount } = render(
+      <ScrollableMessageArea
+        conversationKey="streaming-unmount-bottom"
+        messages={[streamingMessage]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 600, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 400,
+      writable: true,
+      configurable: true,
+    })
+
+    unmount()
+
+    expect(getConversationScrollSnapshot('streaming-unmount-bottom')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
+    })
   })
 
   test('unmounts previously selected conversation DOM while preserving switch-back rendering', () => {
@@ -2100,12 +2369,15 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 0,
+      value: 400,
       writable: true,
       configurable: true,
     })
     scroller.scrollTo = vi.fn()
 
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 0
     fireEvent.wheel(scroller, { deltaY: -80 })
     fireEvent.scroll(scroller)
     rerender(
@@ -2129,6 +2401,82 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('scrolls to a newly applied guidance message inserted before the assistant continuation', () => {
+    const streamingMessage = {
+      id: 'guidance-stream',
+      role: 'assistant' as const,
+      content: '正在处理现有回复',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="guidance-scroll" messages={[streamingMessage]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 240,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    flushScheduledTimers()
+    scroller.scrollTop = 240
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 1000,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="guidance-scroll"
+        messages={[
+          {
+            ...streamingMessage,
+            id: 'guidance-stream-before',
+            status: 'done',
+            runtimeGuidanceSplitBefore: true,
+          },
+          {
+            id: 'guidance-user',
+            role: 'user',
+            content: '请优先修复滚动问题',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:01.000Z',
+            runtimeGuidance: true,
+          },
+          {
+            ...streamingMessage,
+            id: 'guidance-stream-after',
+            content: '',
+            runtimeGuidanceContinuation: true,
+          },
+        ]}
+      />
+    )
+
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1000,
+      behavior: 'auto',
+    })
   })
 
   test('keeps streaming content pinned when the user was already at the bottom', () => {
@@ -2280,7 +2628,6 @@ describe('ScrollableMessageArea', () => {
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     scroller.scrollTop = 360
-    fireEvent.wheel(scroller, { deltaY: -80 })
     fireEvent.scroll(scroller)
     Object.defineProperty(scroller, 'scrollHeight', {
       value: 800,

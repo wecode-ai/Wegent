@@ -37,6 +37,8 @@ const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
 const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
 const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
+const BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME: &str = "bundled-plugins";
+const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const SESSION_GATEWAY_HOST_ENV: &str = "DEVICE_SESSION_GATEWAY_HOST";
 const SESSION_GATEWAY_PORT_ENV: &str = "DEVICE_SESSION_GATEWAY_PORT";
@@ -48,7 +50,15 @@ const LOCAL_EXECUTOR_SIGNAL_AUDIT_FILE_NAME: &str = "wework-executor-signal-audi
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
-const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) { 60 } else { 10 };
+const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = if cfg!(debug_assertions) {
+    if cfg!(windows) {
+        180
+    } else {
+        60
+    }
+} else {
+    10
+};
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
@@ -118,6 +128,7 @@ pub struct LocalExecutorState {
     next_id: Arc<AtomicU64>,
     start_lock: Arc<AsyncMutex<()>>,
     backend_connection_lock: Arc<AsyncMutex<()>>,
+    bundled_plugin_marketplace: Arc<AsyncMutex<Option<BundledPluginMarketplace>>>,
 }
 
 impl Clone for LocalExecutorState {
@@ -127,6 +138,7 @@ impl Clone for LocalExecutorState {
             next_id: self.next_id.clone(),
             start_lock: self.start_lock.clone(),
             backend_connection_lock: self.backend_connection_lock.clone(),
+            bundled_plugin_marketplace: self.bundled_plugin_marketplace.clone(),
         }
     }
 }
@@ -345,6 +357,7 @@ impl Default for LocalExecutorState {
             next_id: Arc::new(AtomicU64::new(1)),
             start_lock: Arc::new(AsyncMutex::new(())),
             backend_connection_lock: Arc::new(AsyncMutex::new(())),
+            bundled_plugin_marketplace: Arc::new(AsyncMutex::new(None)),
         }
     }
 }
@@ -460,7 +473,12 @@ pub struct CodexHomeMigrationStatus {
 #[serde(rename_all = "camelCase")]
 pub struct CodexHomeInitializeOptions {
     migrate_native_home: bool,
+    #[serde(default = "default_remote_apps_enabled")]
     remote_apps_enabled: bool,
+}
+
+fn default_remote_apps_enabled() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -490,6 +508,14 @@ pub struct CodexLocalConfig {
     codex_home: String,
     config_path: String,
     remote_apps_enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundledPluginMarketplace {
+    id: String,
+    path: String,
+    plugin_count: usize,
 }
 
 struct LocalExecutorLogTail {
@@ -526,14 +552,21 @@ fn local_executor_instance_name() -> &'static str {
 }
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
-    let home = local_executor_home_path()?;
-    if local_executor_isolation_enabled()? {
-        return Ok(home
-            .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
-            .join(local_executor_instance_name()));
+    if let Some((_, instance)) = isolated_runtime_instance_paths()? {
+        return Ok(instance);
     }
 
-    Ok(home)
+    local_executor_home_path()
+}
+
+pub(crate) fn isolated_runtime_instance_paths() -> Result<Option<(PathBuf, PathBuf)>, String> {
+    if !local_executor_isolation_enabled()? {
+        return Ok(None);
+    }
+
+    let root = local_executor_home_path()?.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME);
+    let instance = root.join(local_executor_instance_name());
+    Ok(Some((root, instance)))
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
@@ -1222,6 +1255,135 @@ fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), Str
         }
     }
     Ok(())
+}
+
+fn marketplace_plugin_names(manifest_path: &Path) -> Result<HashSet<String>, String> {
+    let content = fs::read_to_string(manifest_path)
+        .map_err(|error| format!("failed to read {}: {error}", manifest_path.display()))?;
+    let manifest: Value = serde_json::from_str(&content)
+        .map_err(|error| format!("invalid marketplace {}: {error}", manifest_path.display()))?;
+    if manifest.get("name").and_then(Value::as_str) != Some(WEWORK_PERSONAL_MARKETPLACE_ID) {
+        return Err(format!(
+            "marketplace {} must use the reserved name {WEWORK_PERSONAL_MARKETPLACE_ID:?}",
+            manifest_path.display()
+        ));
+    }
+    let plugins = manifest
+        .get("plugins")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "marketplace {} must contain a plugins array",
+                manifest_path.display()
+            )
+        })?;
+    let mut names = HashSet::new();
+    for plugin in plugins {
+        let name = plugin
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "marketplace {} contains a plugin without a name",
+                    manifest_path.display()
+                )
+            })?;
+        if !names.insert(name.to_string()) {
+            return Err(format!(
+                "marketplace {} contains duplicate plugin {name:?}",
+                manifest_path.display()
+            ));
+        }
+    }
+    Ok(names)
+}
+
+fn remove_bundled_marketplace_path(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|error| format!("failed to remove {}: {error}", path.display()))
+    } else if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("failed to remove {}: {error}", path.display()))
+    } else {
+        Ok(())
+    }
+}
+
+fn initialize_bundled_plugin_marketplace_from_paths(
+    source: &Path,
+    destination: &Path,
+) -> Result<BundledPluginMarketplace, String> {
+    let codex_manifest = source.join(".agents/plugins/marketplace.json");
+    let claude_manifest = source.join(".claude-plugin/marketplace.json");
+    let codex_plugins = marketplace_plugin_names(&codex_manifest)?;
+    let claude_plugins = marketplace_plugin_names(&claude_manifest)?;
+    if codex_plugins != claude_plugins {
+        return Err(
+            "Bundled Codex and Claude Code marketplace plugin names must match".to_string(),
+        );
+    }
+
+    let parent = destination.parent().ok_or_else(|| {
+        format!(
+            "Bundled plugin marketplace destination has no parent: {}",
+            destination.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    let staging = parent.join(format!(
+        ".{WEWORK_PERSONAL_MARKETPLACE_ID}-{}-staging",
+        std::process::id()
+    ));
+    remove_bundled_marketplace_path(&staging)?;
+    if let Err(error) = copy_directory_recursive(source, &staging) {
+        let _ = remove_bundled_marketplace_path(&staging);
+        return Err(error);
+    }
+    remove_bundled_marketplace_path(destination)?;
+    fs::rename(&staging, destination).map_err(|error| {
+        format!(
+            "failed to activate bundled plugin marketplace {}: {error}",
+            destination.display()
+        )
+    })?;
+
+    Ok(BundledPluginMarketplace {
+        id: WEWORK_PERSONAL_MARKETPLACE_ID.to_string(),
+        path: destination.display().to_string(),
+        plugin_count: codex_plugins.len(),
+    })
+}
+
+fn initialize_bundled_plugin_marketplace(
+    _app: &tauri::AppHandle,
+) -> Result<BundledPluginMarketplace, String> {
+    #[cfg(debug_assertions)]
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME)
+        .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+    #[cfg(not(debug_assertions))]
+    let source = _app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("failed to resolve WeWork resources: {error}"))?
+        .join(BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME)
+        .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+    let destination = local_executor_runtime_home_path()?
+        .join("capabilities")
+        .join("bundled-marketplaces")
+        .join(WEWORK_PERSONAL_MARKETPLACE_ID);
+    let initialized = initialize_bundled_plugin_marketplace_from_paths(&source, &destination)?;
+    log::info!(
+        "Initialized WeWork bundled plugin marketplace: id={}, path={}, plugins={}",
+        initialized.id,
+        initialized.path,
+        initialized.plugin_count,
+    );
+    Ok(initialized)
 }
 
 fn local_executor_sidecar_env(
@@ -2181,11 +2343,25 @@ pub async fn local_executor_initialize_codex_home(
 }
 
 #[tauri::command]
+pub async fn local_executor_initialize_bundled_plugin_marketplace(
+    app: tauri::AppHandle,
+    state: State<'_, LocalExecutorState>,
+) -> Result<BundledPluginMarketplace, String> {
+    let mut initialized = state.bundled_plugin_marketplace.lock().await;
+    if let Some(marketplace) = initialized.as_ref() {
+        return Ok(marketplace.clone());
+    }
+    let marketplace = initialize_bundled_plugin_marketplace(&app)?;
+    *initialized = Some(marketplace.clone());
+    Ok(marketplace)
+}
+
+#[tauri::command]
 pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigrationStatus, String>
 {
     local_executor_initialize_codex_home(CodexHomeInitializeOptions {
         migrate_native_home: true,
-        remote_apps_enabled: false,
+        remote_apps_enabled: true,
     })
     .await
 }
@@ -3155,7 +3331,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_local_config_remote_apps_defaults_to_disabled() {
+    fn codex_local_config_remote_apps_reports_missing_or_false_as_disabled() {
         assert!(!read_remote_apps_enabled_from_config(""));
         assert!(!read_remote_apps_enabled_from_config("[features]\n"));
         assert!(!read_remote_apps_enabled_from_config(
@@ -3164,6 +3340,82 @@ mod tests {
         assert!(!read_remote_apps_enabled_from_config(
             "[other]\napps = true\n"
         ));
+    }
+
+    #[test]
+    fn codex_home_initialization_defaults_remote_apps_to_enabled() {
+        let options: CodexHomeInitializeOptions =
+            serde_json::from_value(serde_json::json!({ "migrateNativeHome": true })).unwrap();
+
+        assert!(options.remote_apps_enabled);
+    }
+
+    #[test]
+    fn initializes_empty_bundled_plugin_marketplace_idempotently() {
+        let root = import_test_root("bundled-plugin-marketplace");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[]}"#,
+        )
+        .unwrap();
+
+        let first =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+        fs::write(destination.join("stale.txt"), "stale").unwrap();
+        let second =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        assert_eq!(first.id, WEWORK_PERSONAL_MARKETPLACE_ID);
+        assert_eq!(first.plugin_count, 0);
+        assert_eq!(first.path, second.path);
+        assert!(destination
+            .join(".agents/plugins/marketplace.json")
+            .is_file());
+        assert!(destination
+            .join(".claude-plugin/marketplace.json")
+            .is_file());
+        assert!(!destination.join("stale.txt").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_mismatched_bundled_plugin_marketplaces_before_replacing_destination() {
+        let root = import_test_root("bundled-plugin-marketplace-mismatch");
+        let source = root.join("source");
+        let destination = root.join("destination/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("existing.txt"), "existing").unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[{"name":"codex-only"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","plugins":[]}"#,
+        )
+        .unwrap();
+
+        let error = initialize_bundled_plugin_marketplace_from_paths(&source, &destination)
+            .expect_err("mismatched marketplaces should fail");
+
+        assert!(error.contains("plugin names must match"));
+        assert_eq!(
+            fs::read_to_string(destination.join("existing.txt")).unwrap(),
+            "existing"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3242,9 +3494,9 @@ shell_environment_policy = "inherit"
 
     #[test]
     fn codex_local_config_remote_apps_inserts_features_section() {
-        let next = set_remote_apps_enabled_in_config("model = \"gpt-5.5\"\n", false);
+        let next = set_remote_apps_enabled_in_config("model = \"gpt-5.5\"\n", true);
 
-        assert_eq!(next, "model = \"gpt-5.5\"\n\n[features]\napps = false\n");
+        assert_eq!(next, "model = \"gpt-5.5\"\n\n[features]\napps = true\n");
     }
 
     #[test]

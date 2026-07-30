@@ -578,12 +578,7 @@ export function ModelSelector({
           <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-normal">
             {disabledMessage ? (
               <span className="min-w-0 flex-1 truncate">
-                <span className="block truncate">
-                  {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
-                </span>
-                <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
-                  {disabledMessage}
-                </span>
+                {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
               </span>
             ) : isCloudModel(model) ? (
               <span className="min-w-0 flex-1 truncate">

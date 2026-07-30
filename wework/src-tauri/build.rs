@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const SIDECAR_NAME: &str = "wegent-executor";
+const DWS_SIDECAR_NAME: &str = "dws";
 const SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
 const EXECUTOR_NAMESPACE_ENV: &str = "WEWORK_EXECUTOR_NAMESPACE";
 
 fn main() {
     println!("cargo:rerun-if-env-changed={EXECUTOR_NAMESPACE_ENV}");
     prepare_local_executor_sidecar();
+    prepare_dws_sidecar();
     verify_bundled_codex_binary();
     ensure_codex_resource_glob_exists();
     tauri_build::build()
@@ -24,7 +26,7 @@ fn prepare_local_executor_sidecar() {
     let target = env::var("TARGET").expect("TARGET must be set by Cargo");
     let sidecar_path = manifest_dir
         .join("binaries")
-        .join(sidecar_file_name(&target));
+        .join(sidecar_file_name(SIDECAR_NAME, &target));
     let marker_path = sidecar_path.with_extension("debug-stub");
 
     fs::create_dir_all(
@@ -63,8 +65,46 @@ fn prepare_local_executor_sidecar() {
     }
 
     if !sidecar_path.exists() || marker_path.exists() {
-        build_debug_stub(&sidecar_path, &marker_path, &target);
+        build_debug_stub(
+            &sidecar_path,
+            &marker_path,
+            &target,
+            "wegent_executor_debug_stub.rs",
+            "local executor",
+            EXECUTOR_DEBUG_STUB_SOURCE,
+        );
     }
+}
+
+fn prepare_dws_sidecar() {
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo"),
+    );
+    let target = env::var("TARGET").expect("TARGET must be set by Cargo");
+    let sidecar_path = manifest_dir
+        .join("binaries")
+        .join(sidecar_file_name(DWS_SIDECAR_NAME, &target));
+    let marker_path = sidecar_path.with_extension("debug-stub");
+
+    if sidecar_path.exists() && !marker_path.exists() {
+        return;
+    }
+
+    if env::var("PROFILE").as_deref() == Ok("release") {
+        panic!(
+            "Missing bundled DWS sidecar for {target}: {}. Run `pnpm --filter wework run prepare:dws` with WEWORK_DWS_TARGET={target} before creating a release app bundle.",
+            sidecar_path.display()
+        );
+    }
+
+    build_debug_stub(
+        &sidecar_path,
+        &marker_path,
+        &target,
+        "dws_debug_stub.rs",
+        "DWS",
+        DWS_DEBUG_STUB_SOURCE,
+    );
 }
 
 fn verify_bundled_codex_binary() {
@@ -166,11 +206,11 @@ fn default_executor_dist_path(manifest_dir: &Path, target: &str) -> PathBuf {
         .join(default_executor_file_name(target))
 }
 
-fn sidecar_file_name(target: &str) -> String {
+fn sidecar_file_name(name: &str, target: &str) -> String {
     if target.contains("windows") {
-        format!("{SIDECAR_NAME}-{target}.exe")
+        format!("{name}-{target}.exe")
     } else {
-        format!("{SIDECAR_NAME}-{target}")
+        format!("{name}-{target}")
     }
 }
 
@@ -189,15 +229,24 @@ fn copy_sidecar(source: &Path, destination: &Path) {
             source.display()
         );
     }
-    if source != destination {
-        fs::copy(source, destination).unwrap_or_else(|error| {
-            panic!(
-                "Failed to copy local executor sidecar from {} to {}: {error}",
-                source.display(),
-                destination.display()
-            )
-        });
+    if source == destination {
+        make_executable(destination);
+        return;
     }
+    // On Windows the destination may be briefly locked by a previous dev
+    // process or by Cargo's fingerprinting. Remove or rename it first, then
+    // copy the new sidecar into place.
+    if destination.exists() && fs::remove_file(destination).is_err() {
+        let backup = destination.with_extension("old.exe");
+        let _ = fs::rename(destination, &backup);
+    }
+    fs::copy(source, destination).unwrap_or_else(|error| {
+        panic!(
+            "Failed to copy local executor sidecar from {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    });
     make_executable(destination);
 }
 
@@ -212,12 +261,19 @@ fn remove_debug_marker(marker_path: &Path) {
     }
 }
 
-fn build_debug_stub(destination: &Path, marker_path: &Path, target: &str) {
+fn build_debug_stub(
+    destination: &Path,
+    marker_path: &Path,
+    target: &str,
+    source_file_name: &str,
+    sidecar_label: &str,
+    source: &str,
+) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set by Cargo"));
-    let source_path = out_dir.join("wegent_executor_debug_stub.rs");
-    fs::write(&source_path, DEBUG_STUB_SOURCE).unwrap_or_else(|error| {
+    let source_path = out_dir.join(source_file_name);
+    fs::write(&source_path, source).unwrap_or_else(|error| {
         panic!(
-            "Failed to write local executor debug stub source {}: {error}",
+            "Failed to write {sidecar_label} debug stub source {}: {error}",
             source_path.display()
         )
     });
@@ -235,16 +291,16 @@ fn build_debug_stub(destination: &Path, marker_path: &Path, target: &str) {
     }
 
     let status = command.status().unwrap_or_else(|error| {
-        panic!("Failed to invoke rustc for local executor debug stub: {error}")
+        panic!("Failed to invoke rustc for {sidecar_label} debug stub: {error}")
     });
     if !status.success() {
-        panic!("Failed to compile local executor debug stub");
+        panic!("Failed to compile {sidecar_label} debug stub");
     }
 
     make_executable(destination);
     fs::write(marker_path, b"debug stub\n").unwrap_or_else(|error| {
         panic!(
-            "Failed to write local executor debug marker {}: {error}",
+            "Failed to write {sidecar_label} debug marker {}: {error}",
             marker_path.display()
         )
     });
@@ -274,7 +330,7 @@ fn make_executable(path: &Path) {
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) {}
 
-const DEBUG_STUB_SOURCE: &str = r##"
+const EXECUTOR_DEBUG_STUB_SOURCE: &str = r##"
 use std::io::{self, BufRead, Write};
 
 fn json_escape(value: &str) -> String {
@@ -321,5 +377,14 @@ fn main() {
         );
         let _ = io::stdout().flush();
     }
+}
+"##;
+
+const DWS_DEBUG_STUB_SOURCE: &str = r##"
+fn main() {
+    eprintln!(
+        "DWS sidecar is not prepared. Run `pnpm --filter wework run prepare:dws` before launching Wework."
+    );
+    std::process::exit(1);
 }
 "##;

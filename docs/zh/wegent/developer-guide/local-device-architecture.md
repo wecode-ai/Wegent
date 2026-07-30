@@ -61,6 +61,12 @@ stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### Executor 启动环境与 Codex Home 初始化
+
+Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的交互式登录 shell 读取完整环境。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
+
+Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
@@ -79,13 +85,23 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
-同一对话可在回合之间切换模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 在恢复空闲 Codex thread 前等待当前 app-server 订阅真正释放，使 `thread/resume` 能应用新的 provider 覆盖，随后由恢复操作重新订阅。若不等待释放完成，Codex 会保留已加载 thread 的旧 provider，即使 `turn/start` 中的模型名已经变化，实际请求仍可能发往旧的自定义模型上游。对于仍缓存旧本地路由 URL 的已加载 thread，本地模型代理还会依据本次请求的模型，在相同网关地址和凭据作用域内选择当前活跃的模型注册；这样模型切换继续使用 `resume` 保持原会话上下文，无需 fork thread，也不会跨用户或跨 provider 复用凭据。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
+同一对话可在回合之间切换同一 provider 类别中的模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 为每个 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。Codex thread 始终恢复到同一个 task 代理，不需要因同类别模型切换而重启 app-server、fork thread，或根据 Codex 请求体中可能过期的模型名查找其他代理。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
+
+官方 Codex 使用 OpenAI provider 身份创建 thread，第三方模型则通过 Wework router provider 运行。Codex app-server 不允许恢复 thread 时改变 provider，因此前端会在已启动会话中直接禁用跨类别模型：官方 Codex 会话不能切到第三方模型，第三方会话也不能切到官方 Codex。新建会话仍可选择任意可用模型；需要跨类别延续上下文时，用户可以新建会话并通过 `@` 引用原对话。
+
+收到明确错误后，用户通过“切换模型并重试”发起的是一个新的回合：它复用原 task 和 thread 上下文，但只能选择同一 provider 类别中的模型，并只向新选择的上游发送一次请求。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
 
 Wework 在发送用户消息前生成稳定的客户端消息 ID，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求传入 executor，再映射到 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留对应的 `clientMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
+
+Codex 同一回合可以交错产生推理、助手文本和工具调用。executor 必须按 provider item ID 跟踪每一段助手文本的流式偏移和完成快照：同一 item 的 `delta` 与 `completed` 是同一内容的增量和快照，应去重；不同 item 的完成文本即使位于同一回合，也必须作为后续文本继续发送，不能因为前一个 item 已产生 delta 而丢弃。Wework 在把当前助手文本移动到工具或处理块之前会清空该文本流的偏移状态，使工具后的下一段助手文本从 offset 0 开始，并保持 transcript 的事件顺序。
+
+助手文本只有在 Codex 明确提供 `final` 或 `final_answer` phase 时才会在流式阶段进入 final content。phase 缺失或无法识别的文本必须先作为过程文本发送，避免第三方模型在文本与工具调用交错时让 Wework 在 final content 和过程块之间反复切换。executor 会保留最后一段未确定文本；回合成功结束且没有明确 final 文本时，才将它提升为最终结果。若同一回合随后产生明确 final 文本，则明确 final 始终优先。
+
+推理内容仍可保留在 runtime transcript 中用于诊断和恢复，但 Wework 不展示推理字符或字符数。回合仍在执行时，界面只显示统一的“正在思考”状态；产生正常助手文本、工具状态或回合终态后，由任务状态机和可见消息内容决定该提示的显示与消失。
 
 ### 后端设备对话任务 REST 入口
 
@@ -320,7 +336,7 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
-Claude Code 和 Agno 运行时内部会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Codex 使用共享 app-server 进程，不注入任务身份环境变量；需要区分任务或轮次时，应继续使用 Responses 事件、artifact metadata 或已有 task/subtask 协议字段，而不是依赖环境变量。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
+Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 

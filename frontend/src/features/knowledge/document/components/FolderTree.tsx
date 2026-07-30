@@ -57,6 +57,8 @@ interface FolderTreeProps {
   reindexingDocId?: number | null
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
+  isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
+  getSelectionDisabledHint?: (doc: KnowledgeDocument) => string
   selectedIds?: Set<number>
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
@@ -406,6 +408,8 @@ interface FolderTreeNodeProps {
   isReindexing?: (docId: number) => boolean
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
+  isSelectionDisabled?: (doc: KnowledgeDocument) => boolean
+  getSelectionDisabledHint?: (doc: KnowledgeDocument) => string
   selected?: (docId: number) => boolean
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
@@ -442,6 +446,8 @@ function FolderTreeNode({
   isReindexing,
   canManage,
   canSelect,
+  isSelectionDisabled,
+  getSelectionDisabledHint,
   selected,
   includedInFolderScope,
   onSelect,
@@ -486,6 +492,8 @@ function FolderTreeNode({
             isReindexing={isReindexing?.(doc.id) ?? false}
             canManage={canManage?.(doc) ?? true}
             canSelect={canSelect?.(doc) ?? false}
+            selectionDisabled={isSelectionDisabled?.(doc) ?? false}
+            selectionDisabledHint={getSelectionDisabledHint?.(doc)}
             showBorder={false}
             selected={selected?.(doc.id) ?? false}
             includedInFolderScope={includedByFolder}
@@ -514,6 +522,8 @@ function FolderTreeNode({
         isReindexing={isReindexing?.(doc.id) ?? false}
         canManage={canManage?.(doc) ?? true}
         canSelect={canSelect?.(doc) ?? false}
+        selectionDisabled={isSelectionDisabled?.(doc) ?? false}
+        selectionDisabledHint={getSelectionDisabledHint?.(doc)}
         showBorder={true}
         selected={selected?.(doc.id) ?? false}
         includedInFolderScope={includedByFolder}
@@ -577,6 +587,8 @@ function FolderTreeNode({
               isReindexing={isReindexing}
               canManage={canManage}
               canSelect={canSelect}
+              isSelectionDisabled={isSelectionDisabled}
+              getSelectionDisabledHint={getSelectionDisabledHint}
               selected={selected}
               includedInFolderScope={includedInFolderScope}
               onSelect={onSelect}
@@ -615,6 +627,8 @@ export function FolderTree({
   reindexingDocId,
   canManage,
   canSelect,
+  isSelectionDisabled,
+  getSelectionDisabledHint,
   selectedIds,
   includedInFolderScope,
   onSelect,
@@ -749,6 +763,8 @@ export function FolderTree({
             isReindexing={id => reindexingDocId === id}
             canManage={canManage}
             canSelect={canSelect}
+            isSelectionDisabled={isSelectionDisabled}
+            getSelectionDisabledHint={getSelectionDisabledHint}
             selected={id => selectedIds?.has(id) ?? false}
             includedInFolderScope={includedInFolderScope}
             onSelect={onSelect}
@@ -789,6 +805,8 @@ export function FolderTree({
       isReindexing={id => reindexingDocId === id}
       canManage={canManage}
       canSelect={canSelect}
+      isSelectionDisabled={isSelectionDisabled}
+      getSelectionDisabledHint={getSelectionDisabledHint}
       selected={id => selectedIds?.has(id) ?? false}
       includedInFolderScope={includedInFolderScope}
       onSelect={onSelect}

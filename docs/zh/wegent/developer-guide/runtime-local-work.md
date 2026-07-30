@@ -86,7 +86,13 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
 
+本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
+
 分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
+
+`loadedTranscriptRanges` 是判断历史区间是否已加载的权威状态，不能只根据当前可见消息的 `messageIndex` 是否连续来判断。模型透明重试等流程可能让前端折叠已经加载的失败尝试，此时可见消息索引会跳号，但中间记录并不缺失。只有相邻可见消息之间存在未被任何已加载区间覆盖的索引时，Wework 才显示缺失区间标记，并且请求范围必须裁剪为实际未覆盖的部分。
+
+发言导航以稳定的客户端消息 ID 标识用户消息。重试或恢复可能让 transcript 导航元数据暂时包含多个指向同一客户端消息的条目；前端必须合并这些重复项，并优先保留与当前已加载消息索引匹配的条目，避免重复刻度、重叠预览和错误跳转。
 
 可用下面的手工 benchmark 复测本机 rollout：
 
@@ -136,6 +142,8 @@ POST /api/runtime-work/guidance
 Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + localTaskId`、用户文本和前端生成的 `clientGuidanceId` 转发为设备 RPC `runtime.tasks.guidance`。executor 必须定位正在运行的 Codex turn，并通过 Codex app-server 原生引导能力把用户文本追加到当前 turn；如果没有可引导的活跃 turn，应返回 `no_active_turn`，前端再把这条消息按普通 follow-up 发送。`runtime.tasks.guidance` 不创建新的中心库任务或子任务，也不把 `workspacePath` 当成任务身份。
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
+
+Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或 transcript 解析主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 `thread/read` 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由 `thread/read` 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
@@ -194,6 +202,8 @@ executor 从原生 Codex session 发现用户消息时，会把 `local_images`�
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
 Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientMessageId` 和附件元数据。发言导航的 id 优先使用 `clientMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
+
+Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。为了保持 Codex transcript 的单一信源，Wework 只在 LocalTask 的 `runtimeHandle.userMessagePresentations` 中按 `clientMessageId` 持久化引用 token 与目标，不保存第二份用户正文。executor 读取 provider transcript 后，以 provider 的 `content` 作为唯一正文，仅为相同 `clientMessageId` 的消息补充 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回；没有稳定客户端消息 id 时不做推测匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
 
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Rust executor 的 Codex app-server 路径以 app-server 通知流作为本轮事件来源；如果后续接入 diff 通知，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
 

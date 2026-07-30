@@ -5,6 +5,7 @@ import {
   clearRuntimeConversationCacheForTests,
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
+import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 
 const { useVirtualizerMock } = vi.hoisted(() => ({
@@ -115,6 +116,41 @@ describe('MessageList Tauri virtualization', () => {
     expect(screen.getByText('navigation message 99')).toBeInTheDocument()
   })
 
+  test('keeps an active streaming message mounted outside the visible range', () => {
+    const messages = buildMessages(100, 'streaming')
+    messages[80] = {
+      ...messages[80],
+      role: 'assistant',
+      status: 'streaming',
+    }
+
+    render(
+      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
+    )
+
+    expect(screen.getByText('streaming message 80')).toBeInTheDocument()
+    expect(screen.getByText('streaming message 99')).toBeInTheDocument()
+  })
+
+  test('deduplicates a streaming message that is also a forced navigation target', () => {
+    const messages = buildMessages(100, 'streaming-navigation')
+    messages[80] = {
+      ...messages[80],
+      role: 'assistant',
+      status: 'streaming',
+    }
+
+    render(
+      <MessageList
+        messages={messages}
+        scrollElementRef={{ current: createScrollElement(200) }}
+        forceVirtualMessageId="user-80"
+      />
+    )
+
+    expect(screen.getAllByText('streaming-navigation message 80')).toHaveLength(1)
+  })
+
   test('restores and persists the TanStack measurement snapshot', () => {
     const messages = buildMessages(20, 'measured')
     const props = {
@@ -142,7 +178,7 @@ describe('MessageList Tauri virtualization', () => {
   })
 })
 
-function buildMessages(count: number, prefix: string) {
+function buildMessages(count: number, prefix: string): WorkbenchMessage[] {
   return Array.from({ length: count }, (_, index) => ({
     id: `user-${index}`,
     role: 'user' as const,

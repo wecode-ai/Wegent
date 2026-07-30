@@ -16,7 +16,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.services.claude_plugin_parser import claude_plugin_parser
 from app.services.plugin_marketplace_service import (
     SEMVER_PATTERN,
     SLUG_PATTERN,
@@ -24,6 +23,7 @@ from app.services.plugin_marketplace_service import (
     PublishedRelease,
     plugin_marketplace_service,
 )
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import scan_plugin_package
 
 IGNORED_DIRECTORY_NAMES = {".git", ".pytest_cache", "__pycache__", "node_modules"}
@@ -73,7 +73,7 @@ class OfficialPluginPublisher:
                 archive.writestr(info, path.read_bytes(), compresslevel=9)
         package = output.getvalue()
         scan_report = scan_plugin_package(package)
-        parsed = claude_plugin_parser.parse_package(package)
+        parsed = plugin_package_parser.parse_package(package)
         if not parsed.version:
             raise ValueError("Official plugin manifest must include a version")
         if not SLUG_PATTERN.fullmatch(parsed.name):

@@ -11,6 +11,9 @@ on:
   pull_request:
     branches:
       - main
+  merge_group:
+    types:
+      - checks_requested
 
 permissions:
   contents: read
@@ -41,8 +44,13 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
-            .github/scripts/classify-ci-changes.sh
+          if [[ "$GITHUB_EVENT_NAME" == "merge_group" ]] ||
+            [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+          else
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+              .github/scripts/classify-ci-changes.sh
+          fi
 
   lint-backend:
     name: Lint Backend (Black & isort)
@@ -193,6 +201,9 @@ jobs:
 
       - name: Test CI change classifier
         run: .github/scripts/test-classify-ci-changes.sh
+
+      - name: Test repository policy workflow
+        run: scripts/test-repository-policy-workflow.sh
 
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target

@@ -86,6 +86,7 @@ export interface SendCurrentInputOptions {
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
   additionalContext?: RuntimeAdditionalContext
+  cloudProjectId?: string
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {

@@ -26,6 +26,7 @@ pub(crate) struct RuntimeTaskLink {
     pub title: String,
     pub runtime: String,
     pub status: String,
+    #[serde(skip)]
     pub running: bool,
     pub continuable: bool,
     pub thread_status: String,
@@ -743,6 +744,7 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
         key,
         "message"
             | "messages"
+            | "userMessagePresentations"
             | "cachedMessage"
             | "cachedMessages"
             | "cached_message"
@@ -846,6 +848,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn runtime_task_link_does_not_persist_running_state() {
+        let link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+
+        let serialized = serde_json::to_value(&link).expect("task link should serialize");
+        assert!(serialized.get("running").is_none());
+
+        let restored: RuntimeTaskLink = serde_json::from_value(json!({
+            "local_task_id": "task-1",
+            "running": true,
+        }))
+        .expect("task link should deserialize");
+        assert!(!restored.running);
+    }
+
+    #[test]
     fn workspace_response_omits_runtime_handle_messages_from_task_list() {
         let task = RuntimeTaskLink {
             local_task_id: "task-1".to_owned(),
@@ -866,6 +887,13 @@ mod tests {
                         ],
                     }
                 ],
+                "userMessagePresentations": [{
+                    "clientMessageId": "runtime-local-pane-1",
+                    "references": [{
+                        "token": "$plugin:skill",
+                        "href": "/tmp/plugin/skill/SKILL.md"
+                    }]
+                }],
             }),
             ..RuntimeTaskLink::default()
         };
@@ -876,6 +904,7 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+        assert!(handle.get("userMessagePresentations").is_none());
     }
 
     #[test]

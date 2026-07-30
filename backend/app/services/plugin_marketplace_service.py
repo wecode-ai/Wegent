@@ -54,7 +54,7 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
-from app.services.claude_plugin_parser import claude_plugin_parser
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
     scan_plugin_package,
@@ -795,7 +795,7 @@ class PluginMarketplaceService:
         self, package: bytes
     ) -> tuple[PluginUploadInfo, dict[str, Any]]:
         security_report = self._scan_package(package)
-        parsed = claude_plugin_parser.parse_package(package)
+        parsed = plugin_package_parser.parse_package(package)
         if not parsed.version:
             raise HTTPException(status_code=422, detail="Plugin version is required")
         self._validate_version(parsed.version)
@@ -993,7 +993,7 @@ class PluginMarketplaceService:
                 package=package,
             )
             package = adapted.package
-            parsed = claude_plugin_parser.parse_package(package)
+            parsed = plugin_package_parser.parse_package(package)
             version = parsed.version
             if not version:
                 raise ValueError("Upstream plugin version is required")
@@ -1378,7 +1378,7 @@ class PluginMarketplaceService:
             return cached
         try:
             package = plugin_package_storage.get(release.storage_key)
-            resolved = claude_plugin_parser.resolve_interface_assets(
+            resolved = plugin_package_parser.resolve_interface_assets(
                 package,
                 interface,
             )

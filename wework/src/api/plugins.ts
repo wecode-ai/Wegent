@@ -112,6 +112,14 @@ export function createPluginApi(client: HttpClient) {
     getSubmission(id: number): Promise<PluginSubmissionItem> {
       return client.get(`/plugins/submissions/${id}`)
     },
+    ensureBuiltinPluginInstalled(
+      pluginKey: string,
+      options: { deviceId?: string } = {}
+    ): Promise<PluginMarketplaceInstallResponse> {
+      return client.post(`/plugins/builtin/${encodeURIComponent(pluginKey)}/ensure-installed`, {
+        ...(options.deviceId ? { device_id: options.deviceId } : {}),
+      })
+    },
     async publishSubmission(
       file: File,
       metadata: Pick<

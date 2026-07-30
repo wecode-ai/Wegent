@@ -649,15 +649,39 @@ fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>, reasoning: &mu
     if calls.is_empty() {
         return;
     }
+    let calls = std::mem::take(calls);
+    if let Some(last) = messages
+        .last_mut()
+        .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
+    {
+        if let Some(existing) = last.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            existing.extend(calls);
+        } else {
+            last["tool_calls"] = Value::Array(calls);
+        }
+        merge_reasoning_content(last, reasoning);
+        return;
+    }
     let mut message = json!({
         "role": "assistant",
         "content": Value::Null,
-        "tool_calls": std::mem::take(calls)
+        "tool_calls": calls
     });
-    if !reasoning.is_empty() {
-        message["reasoning_content"] = Value::String(std::mem::take(reasoning));
-    }
+    merge_reasoning_content(&mut message, reasoning);
     messages.push(message);
+}
+
+fn merge_reasoning_content(message: &mut Value, reasoning: &mut String) {
+    if reasoning.is_empty() {
+        return;
+    }
+    let mut combined = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    append_text(&mut combined, &std::mem::take(reasoning));
+    message["reasoning_content"] = Value::String(combined);
 }
 
 fn chat_content(content: &Value) -> Value {
@@ -788,6 +812,7 @@ struct CallState {
 struct ChatStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: std::collections::VecDeque<Result<Bytes, std::io::Error>>,
     context: ToolContext,
     response_started: bool,
@@ -903,6 +928,7 @@ where
     let state = ResponsesStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: VecDeque::new(),
         context_state: ResponsesCustomToolState {
             context,
@@ -931,7 +957,18 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) = super::append_stream_utf8(
+                        &mut state.pending,
+                        &mut state.pending_utf8,
+                        &bytes,
+                    ) {
+                        state.source_done = true;
+                        state.terminal_seen = true;
+                        return Some((
+                            Ok(super::responses_failed_event(&error.to_string())),
+                            state,
+                        ));
+                    }
                     while let Some(block) = super::take_sse_block(&mut state.pending) {
                         if super::is_responses_terminal_event(&block) {
                             state.terminal_seen = true;
@@ -958,6 +995,13 @@ where
                 }
                 None => {
                     state.source_done = true;
+                    if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
+                        state.terminal_seen = true;
+                        return Some((
+                            Ok(super::responses_failed_event(&error.to_string())),
+                            state,
+                        ));
+                    }
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
                         let trailing = trailing.trim_end();
@@ -987,6 +1031,7 @@ where
 struct ResponsesStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
+    pending_utf8: Vec<u8>,
     output: std::collections::VecDeque<Result<Bytes, std::io::Error>>,
     context_state: ResponsesCustomToolState,
     source_done: bool,
@@ -1190,6 +1235,7 @@ where
     let state = ChatStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
+        pending_utf8: Vec::new(),
         output: std::collections::VecDeque::new(),
         context,
         response_started: false,
@@ -1214,7 +1260,15 @@ where
             }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
-                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    if let Err(error) = super::append_stream_utf8(
+                        &mut state.pending,
+                        &mut state.pending_utf8,
+                        &bytes,
+                    ) {
+                        let event = state.failed_event(error.to_string());
+                        state.completed = true;
+                        return Some((Ok(event), state));
+                    }
                     while let Some(block) = super::take_sse_block(&mut state.pending) {
                         state.handle_block(&block, true);
                     }
@@ -1227,6 +1281,11 @@ where
                 None => {
                     if state.completed {
                         return None;
+                    }
+                    if let Err(error) = super::finish_stream_utf8(&state.pending_utf8) {
+                        let event = state.failed_event(error.to_string());
+                        state.completed = true;
+                        return Some((Ok(event), state));
                     }
                     if !state.pending.trim().is_empty() {
                         let trailing = std::mem::take(&mut state.pending);
@@ -1460,16 +1519,18 @@ impl<S> ChatStreamState<S> {
             }
             _ => String::new(),
         };
-        let (needs_start, call_id, complete_name, complete_namespace, custom) = {
+        let (needs_start, call_id, complete_name, complete_namespace, custom, matched_tool) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
                 state.call_id = super::normalized_responses_api_id(id);
             }
+            let mut matched_tool = false;
             if !name.is_empty() {
                 if let Some(identity) = self.context.identity(name) {
                     state.name = identity.name.clone();
                     state.namespace = identity.namespace.clone();
                     state.custom = identity.kind == ToolKind::Custom;
+                    matched_tool = true;
                 } else {
                     state.name = name.to_owned();
                     state.namespace = None;
@@ -1489,6 +1550,7 @@ impl<S> ChatStreamState<S> {
                 state.name.clone(),
                 state.namespace.clone(),
                 state.custom,
+                matched_tool,
             )
         };
         if needs_start {
@@ -1510,13 +1572,30 @@ impl<S> ChatStreamState<S> {
                 "function_call"
             };
             let mut item = if item_type == "custom_tool_call" {
-                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "input": ""})
+                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "input": ""})
             } else {
-                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name, "arguments": ""})
+                json!({"id": item_id, "type": item_type, "status": "in_progress", "call_id": call_id, "name": complete_name.clone(), "arguments": ""})
             };
             if let Some(namespace) = complete_namespace {
                 item["namespace"] = Value::String(namespace);
             }
+            log_executor_event(
+                "local model proxy tool call started",
+                &[
+                    ("call_index", index.to_string()),
+                    ("upstream_tool_name", name.to_owned()),
+                    ("resolved_tool_name", complete_name),
+                    ("matched_tool", matched_tool.to_string()),
+                    (
+                        "namespace",
+                        item.get("namespace")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    ),
+                    ("custom_tool", custom.to_string()),
+                ],
+            );
             self.emit(sse("response.output_item.added", json!({"type": "response.output_item.added", "output_index": output_index, "item": item})));
         }
         if !arguments.is_empty() {
@@ -1544,6 +1623,25 @@ impl<S> ChatStreamState<S> {
         }
         self.ensure_started();
         self.completed = true;
+        let tool_call_count = self.calls.values().filter(|state| state.started).count();
+        log_executor_event(
+            "local model proxy chat completion summary",
+            &[
+                ("model", self.model.clone()),
+                (
+                    "finish_reason",
+                    self.finish_reason.clone().unwrap_or_default(),
+                ),
+                ("text_bytes", self.text.text.len().to_string()),
+                ("reasoning_bytes", self.reasoning.text.len().to_string()),
+                ("tool_calls", tool_call_count.to_string()),
+                (
+                    "empty_output",
+                    (!self.text.started && !self.reasoning.started && tool_call_count == 0)
+                        .to_string(),
+                ),
+            ],
+        );
         let mut output = Vec::new();
         if self.reasoning.started {
             let item = json!({"id": self.reasoning.item_id, "type": "reasoning", "status": "completed", "summary": [{"type": "summary_text", "text": self.reasoning.text}]});
@@ -1565,6 +1663,15 @@ impl<S> ChatStreamState<S> {
             if !state.started {
                 continue;
             }
+            log_executor_event(
+                "local model proxy tool call completed",
+                &[
+                    ("tool_name", state.name.clone()),
+                    ("namespace", state.namespace.clone().unwrap_or_default()),
+                    ("custom_tool", state.custom.to_string()),
+                    ("arguments_bytes", state.arguments.len().to_string()),
+                ],
+            );
             let custom = state.custom;
             let arguments = if custom {
                 custom_input(&state.name, &state.arguments)
@@ -1606,14 +1713,19 @@ impl<S> ChatStreamState<S> {
             output.push((state.output_index, item));
         }
         output.sort_by_key(|(index, _)| *index);
-        let response = self.response(
-            "completed",
-            output.into_iter().map(|(_, value)| value).collect(),
-        );
-        self.emit(sse(
-            "response.completed",
-            json!({"type": "response.completed", "response": response}),
-        ));
+        let incomplete = self.finish_reason.as_deref() == Some("length");
+        let status = if incomplete {
+            "incomplete"
+        } else {
+            "completed"
+        };
+        let event = if incomplete {
+            "response.incomplete"
+        } else {
+            "response.completed"
+        };
+        let response = self.response(status, output.into_iter().map(|(_, value)| value).collect());
+        self.emit(sse(event, json!({"type": event, "response": response})));
     }
 
     fn response(&self, status: &str, output: Vec<Value>) -> Value {
@@ -1626,7 +1738,7 @@ impl<S> ChatStreamState<S> {
             "output": output,
             "usage": self.usage,
             "error": Value::Null,
-            "incomplete_details": if status == "completed" && self.finish_reason.as_deref() == Some("length") { json!({"reason": "max_output_tokens"}) } else { Value::Null }
+            "incomplete_details": if status == "incomplete" { json!({"reason": "max_output_tokens"}) } else { Value::Null }
         })
     }
 
@@ -1877,6 +1989,41 @@ mod tests {
         assert_eq!(converted["messages"][2]["reasoning_content"], "Need patch");
         assert_eq!(converted["messages"][3]["role"], "tool");
         assert_eq!(converted["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn keeps_assistant_text_and_tool_calls_in_one_chat_message() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "Inspect it"}]},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "I will inspect it."}]},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Need the logs"}]},
+                {"type": "function_call", "call_id": "call_1", "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}"},
+                {"type": "function_call_output", "call_id": "call_1", "output": "/workspace"}
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "I will inspect it.");
+        assert_eq!(messages[1]["reasoning_content"], "Need the logs");
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["name"],
+            "exec_command"
+        );
+        assert_eq!(messages[2]["role"], "tool");
+        assert!(!messages
+            .windows(2)
+            .any(|pair| pair[0]["role"] == "assistant" && pair[1]["role"] == "assistant"));
     }
 
     #[test]
@@ -2199,6 +2346,24 @@ mod tests {
         )
         .await;
         assert!(output.contains("response.failed"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn reports_max_token_finish_as_incomplete() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+
+        assert!(output.contains("response.incomplete"));
+        assert!(output.contains("\"status\":\"incomplete\""));
+        assert!(output.contains("\"reason\":\"max_output_tokens\""));
         assert!(!output.contains("response.completed"));
     }
 

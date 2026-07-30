@@ -3,8 +3,8 @@ import json
 import zipfile
 from types import SimpleNamespace
 
-from app.services.claude_plugin_parser import claude_plugin_parser
 from app.services.plugin_marketplace_service import PluginMarketplaceService
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_storage import plugin_package_storage
 from app.services.plugin_upstream_adapter import (
     OPENAI_GITHUB_SKILL_DESCRIPTIONS,
@@ -53,7 +53,7 @@ def _adapted_github_package() -> bytes:
 
 
 def test_mirrored_github_plugin_uses_wework_connector_contract() -> None:
-    parsed = claude_plugin_parser.parse_package(_adapted_github_package())
+    parsed = plugin_package_parser.parse_package(_adapted_github_package())
 
     assert parsed.name == "github"
     assert parsed.version == "0.1.6+wegent.3"

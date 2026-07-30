@@ -20,6 +20,8 @@ A project UI identity combines the state-owning device with the project key. Ide
 
 A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
 
+Tasks without a manual order are sorted by the completion time of their latest turn; a new task that has never completed uses its creation time. When an existing task starts another streaming turn, it retains the previous turn's completion time until the current turn completes. Opening or resuming a running task, receiving streaming deltas, and ordinary task-summary synchronization must therefore not move a task row solely because `updatedAt` changed.
+
 ## Project model
 
 Executor merges three Codex project representations:
@@ -48,7 +50,7 @@ An unavailable remote device and an explicitly disconnected cloud session are di
 
 ## Interaction boundary
 
-- When the Cloud Work entry reports `Available`, clicking the row opens the Connections settings, matching its trailing settings action.
+- When the Cloud Work entry reports `Available`, clicking the row opens the dedicated Cloud work page. Its trailing settings action still opens Connections settings.
 - Clicking a project only expands or collapses its tasks and does not change the center pane.
 - Clicking a task or creating a project task changes the main content.
 - Projects, pinned projects, pinned tasks, and tasks within one project support semantic drag ordering.

@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   ArrowLeft,
   Calendar,
@@ -32,12 +32,21 @@ import type {
   Delivery,
   DeliveryDetail,
 } from '@/api/deliveries'
+import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
-import { columnDotClasses, columns, memberAvatarClasses, priorityBadgeClasses } from './todoShared'
+import { AITableTaskFields } from './AITableTaskFields'
+import { markdownAttachmentRows } from './attachmentMarkdown'
+import {
+  columnDotClasses,
+  columns,
+  memberAvatarClasses,
+  memberNameById,
+  priorityBadgeClasses,
+} from './todoShared'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -104,6 +113,11 @@ function descendantIds(items: CloudLoopItem[], itemId: string): Set<string> {
     }
   }
   return result
+}
+
+function appendAttachmentMarkdown(description: string, markdown: string): string {
+  if (!markdown) return description
+  return `${description.trimEnd()}\n\n${markdown}`.trim()
 }
 
 const propChipClass =
@@ -218,6 +232,7 @@ export interface TodoEditorEditProps {
 
 export type TodoEditorProps = {
   api: DeliveryApi
+  aitableApi?: AITableApi
   allItems: CloudLoopItem[]
   onClose: () => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -232,6 +247,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
   const item = editProps?.item ?? null
+  const isAITableEdit = item !== null && editProps?.project?.task_provider === 'dingtalk_aitable'
 
   const draftKey = createProps
     ? todoDraftKey(createProps.project.id, createProps.initialStatus)
@@ -290,6 +306,12 @@ export function TodoEditor(props: TodoEditorProps) {
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const visibleAttachments = useMemo(() => {
+    const merged = new Map<string, AttachmentRow>()
+    markdownAttachmentRows(description).forEach(attachment => merged.set(attachment.id, attachment))
+    attachments.forEach(attachment => merged.set(attachment.id, attachment))
+    return Array.from(merged.values())
+  }, [attachments, description])
 
   // Edit mode loads everything tied to the item id.
   useEffect(() => {
@@ -376,12 +398,22 @@ export function TodoEditor(props: TodoEditorProps) {
   const statusLabel = columns.find(column => column.status === status)?.label ?? ''
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
+  const creator =
+    item?.created_by_user_name ||
+    (item && item.created_by_user_id === editProps?.project?.current_user_id
+      ? editProps.project.current_user_name
+      : item
+        ? memberNameById(projectMembers, item.created_by_user_id)
+        : null)
 
   async function submitCreate() {
     if (props.mode !== 'create' || !title.trim() || saving) return
     setSaving(true)
     setSaveError(null)
     try {
+      const creatorName =
+        props.project.current_user_name ||
+        memberNameById(projectMembers, props.project.current_user_id ?? null)
       let created = await api.createLoopItem(props.project.id, {
         title: title.trim(),
         description,
@@ -390,6 +422,7 @@ export function TodoEditor(props: TodoEditorProps) {
         tags,
         ...(parentId ? { parent_id: parentId } : {}),
         ...(dueDate ? { due_at: dueDate } : {}),
+        ...(creatorName ? { creator_name: creatorName } : {}),
       })
       // createLoopItem does not accept an assignee, so apply it right after.
       if (assigneeId) {
@@ -398,11 +431,13 @@ export function TodoEditor(props: TodoEditorProps) {
           assignee_user_id: Number(assigneeId),
         })
       }
-      // Upload staged attachments after creation; a single failure must not
-      // block the rest or the panel completion.
-      await Promise.allSettled(
-        pendingFiles.map(file => api.addLoopItemAttachment(created.id, file))
-      )
+      const uploaded = await uploadAttachments(created.id, pendingFiles)
+      if (uploaded.markdown) {
+        created = await api.updateLoopItem(created.id, {
+          version: created.version,
+          description: appendAttachmentMarkdown(description, uploaded.markdown),
+        })
+      }
       if (draftKey) {
         localStorage.removeItem(draftKey)
         draftAttachmentStore.delete(draftKey)
@@ -485,10 +520,8 @@ export function TodoEditor(props: TodoEditorProps) {
     setAttachmentBusy(true)
     setAttachmentError(null)
     try {
-      const uploaded = await Promise.all(
-        Array.from(files).map(file => api.addLoopItemAttachment(editItemId, file))
-      )
-      setAttachments(current => [...uploaded.reverse(), ...current])
+      const result = await uploadAttachments(editItemId, Array.from(files))
+      setAttachments(current => [...result.attachments.reverse(), ...current])
     } catch (cause) {
       setAttachmentError(cause instanceof Error ? cause.message : '附件上传失败')
     } finally {
@@ -496,9 +529,40 @@ export function TodoEditor(props: TodoEditorProps) {
     }
   }
 
+  async function uploadAttachments(itemId: string, files: File[]) {
+    const uploaded = await Promise.all(
+      files.map(async file => {
+        const attachment = await api.addLoopItemAttachment(itemId, file)
+        return { attachment, markdown: attachment.markdown }
+      })
+    )
+    return {
+      attachments: uploaded.map(entry => entry.attachment),
+      markdown: uploaded.map(entry => entry.markdown).join('\n'),
+    }
+  }
+
+  function pasteAttachments(files: File[]) {
+    if (isCreate) {
+      setPendingFiles(current => [...current, ...files])
+      return
+    }
+    if (!editItemId || attachmentBusy) return
+    setAttachmentBusy(true)
+    setAttachmentError(null)
+    void uploadAttachments(editItemId, files)
+      .then(result => {
+        setAttachments(current => [...result.attachments.reverse(), ...current])
+        setDescription(current => appendAttachmentMarkdown(current, result.markdown))
+      })
+      .catch(cause => {
+        setAttachmentError(cause instanceof Error ? cause.message : '附件上传失败')
+      })
+      .finally(() => setAttachmentBusy(false))
+  }
+
   async function openAttachment(attachment: AttachmentRow) {
-    const access = await api.accessLoopItemAttachment(attachment.id)
-    window.open(access.url, '_blank', 'noopener,noreferrer')
+    await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
   }
 
   async function removeAttachment(attachment: AttachmentRow) {
@@ -582,7 +646,12 @@ export function TodoEditor(props: TodoEditorProps) {
         data-testid={isCreate ? 'cloud-todo-create-panel' : 'cloud-todo-detail'}
         className={cn(
           'flex flex-col overflow-hidden rounded-2xl bg-background shadow-2xl',
-          fullScreen ? 'h-full w-full' : 'max-h-[88vh] w-[760px] max-w-[calc(100vw-48px)]'
+          fullScreen
+            ? 'h-full w-full'
+            : cn(
+                'max-h-[88vh] max-w-[calc(100vw-48px)]',
+                isAITableEdit ? 'w-[1080px]' : 'w-[760px]'
+              )
         )}
         onKeyDown={handleKeyDown}
         onDragOver={event => event.preventDefault()}
@@ -708,6 +777,18 @@ export function TodoEditor(props: TodoEditorProps) {
                 ))}
               </select>
             </span>
+            {item && (
+              <span
+                data-testid="cloud-todo-detail-creator"
+                className={cn(propChipClass, 'text-text-muted')}
+              >
+                <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
+                <span className="text-text-muted">创建人</span>
+                <span className="text-text-primary">
+                  {creator ?? (item.created_by_user_id > 0 ? `#${item.created_by_user_id}` : '—')}
+                </span>
+              </span>
+            )}
             <span className={propChipClass}>
               <ListTodo className="h-3.5 w-3.5 text-text-muted" />
               <span className="text-text-muted">父任务</span>
@@ -762,17 +843,27 @@ export function TodoEditor(props: TodoEditorProps) {
             />
           </div>
 
-          <div className="mt-3 min-h-[240px]">
-            <TaskDescriptionEditor value={description} onChange={setDescription} />
-            <p className="mt-2.5 text-xs text-text-muted">
-              支持 Markdown，可拖拽文件到编辑器添加附件
-            </p>
-          </div>
+          {!isAITableEdit ? (
+            <div className="mt-3 min-h-[240px]">
+              <TaskDescriptionEditor
+                value={description}
+                onChange={setDescription}
+                onPasteFiles={pasteAttachments}
+              />
+              <p className="mt-2.5 text-xs text-text-muted">
+                支持 Markdown，可拖拽文件到编辑器添加附件
+              </p>
+            </div>
+          ) : null}
           {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
+
+          {isAITableEdit && item && editProps?.project && props.aitableApi ? (
+            <AITableTaskFields api={props.aitableApi} project={editProps.project} item={item} />
+          ) : null}
 
           <div className="mt-5">
             <TodoAttachmentSection
-              attachments={isCreate ? pendingAttachmentRows : attachments}
+              attachments={isCreate ? pendingAttachmentRows : visibleAttachments}
               busy={attachmentBusy}
               error={attachmentError}
               editable

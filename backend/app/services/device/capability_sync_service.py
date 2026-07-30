@@ -168,12 +168,11 @@ class DeviceCapabilitySyncService:
         mode: str = "merge",
     ) -> DeviceCapabilitySyncResponse:
         """Resolve selected capabilities and send them to one online device."""
-        device_kind = device_service.get_device_by_device_id(db, user.id, device_id)
-        if not device_kind:
-            raise DeviceCapabilityResolutionError(
-                "Device not found or access denied", 404
-            )
-
+        runtime_device_id = await self._resolve_user_device_runtime_id(
+            db,
+            user_id=user.id,
+            device_id=device_id,
+        )
         payload = self.resolve_payload(
             db,
             user=user,
@@ -184,10 +183,10 @@ class DeviceCapabilitySyncService:
             mcp_ids=mcp_ids,
             mode=mode,
         )
-        payload["device_id"] = device_id
+        payload["device_id"] = runtime_device_id
         result = await self._dispatch_payload_or_raise(
             user_id=user.id,
-            device_id=device_id,
+            device_id=runtime_device_id,
             payload=payload,
         )
         return self._aggregate_response([result], skipped=0, mode=mode)
@@ -216,6 +215,36 @@ class DeviceCapabilitySyncService:
             installed_mcp_ids=list(installed_mcp_ids or []),
             mode=mode,
         )
+
+    async def sync_installed_plugin_to_device(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        installed_plugin_id: int,
+    ) -> DeviceCapabilitySyncResponse:
+        """Merge one installed plugin and require its explicit acknowledgement."""
+        response = await self.sync_device_selected_capabilities(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+            installed_plugin_ids=[installed_plugin_id],
+            mode="merge",
+        )
+        plugin_result = next(
+            (
+                item
+                for item in response.plugins
+                if str(item.id) == str(installed_plugin_id)
+            ),
+            None,
+        )
+        if not plugin_result or plugin_result.status != "synced":
+            raise DeviceCapabilitySyncError(
+                f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
+            )
+        return response
 
     async def sync_device_payload(
         self,
@@ -335,6 +364,30 @@ class DeviceCapabilitySyncService:
         if not result.success:
             raise DeviceCapabilitySyncError(result.error or "Capability sync failed")
         return result
+
+    async def _resolve_user_device_runtime_id(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+    ) -> str:
+        if not device_service.get_device_by_device_id(db, user_id, device_id):
+            raise DeviceCapabilityResolutionError(
+                "Device not found or access denied", 404
+            )
+
+        devices = await device_service.get_all_devices(db, user_id)
+        device = next(
+            (item for item in devices if str(item.get("device_id") or "") == device_id),
+            None,
+        )
+        runtime_device_id = self._extract_device_id(device or {})
+        if not runtime_device_id:
+            raise DeviceCapabilityResolutionError(
+                "Device runtime is unavailable. Refresh devices and retry.", 409
+            )
+        return runtime_device_id
 
     def _load_enabled_installed_skills(
         self,

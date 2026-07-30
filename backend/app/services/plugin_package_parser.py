@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import io
 import json
 import re
 import zipfile
@@ -33,12 +34,45 @@ INTERFACE_ASSET_MEDIA_TYPES = {
 }
 
 
-class ClaudePluginParser:
-    """Parse and validate Codex-compatible plugin ZIP packages."""
+CLAUDE_PLUGIN_MANIFEST_PATH = ".claude-plugin/plugin.json"
+CODEX_PLUGIN_MANIFEST_PATH = ".codex-plugin/plugin.json"
+PLUGIN_MANIFEST_PATHS = (
+    CODEX_PLUGIN_MANIFEST_PATH,
+    CLAUDE_PLUGIN_MANIFEST_PATH,
+)
+CODEX_MANIFEST_FIELDS = {
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "skills",
+    "mcpServers",
+}
+# Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
+CLAUDE_MANIFEST_FIELDS = CODEX_MANIFEST_FIELDS | {
+    "commands",
+    "agents",
+    "hooks",
+    "outputStyles",
+    "lspServers",
+    "experimental",
+    "dependencies",
+    "userConfig",
+    "channels",
+    "themes",
+    "monitors",
+}
+
+
+class PluginPackageParser:
+    """Parse and normalize Codex and Claude Code plugin ZIP packages."""
 
     def parse_package(self, package_bytes: bytes) -> PluginUploadInfo:
-        if len(package_bytes) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
-            raise HTTPException(status_code=413, detail="Plugin package is too large")
+        self._validate_package_size(package_bytes)
 
         try:
             with zipfile.ZipFile(self._bytes_reader(package_bytes)) as archive:
@@ -100,10 +134,54 @@ class ClaudePluginParser:
                     resolved[field] = value
         return resolved
 
+    def normalize_and_parse(
+        self, package_bytes: bytes
+    ) -> tuple[PluginUploadInfo, bytes]:
+        normalized = self.normalize_package(package_bytes)
+        return self.parse_package(normalized), normalized
+
+    def normalize_package(self, package_bytes: bytes) -> bytes:
+        """Ensure the package contains compatible manifests for both runtimes."""
+        self._validate_package_size(package_bytes)
+        try:
+            with zipfile.ZipFile(self._bytes_reader(package_bytes)) as archive:
+                self._validate_archive_paths(archive)
+                root, source_manifest_path = self._detect_plugin_root(archive)
+                manifests = self._read_root_manifests(archive, root)
+                self._validate_manifest_names(manifests)
+                source_manifest = manifests[source_manifest_path]
+                codex_manifest = manifests.get(CODEX_PLUGIN_MANIFEST_PATH)
+                if codex_manifest is None:
+                    codex_manifest = self._convert_manifest(
+                        source_manifest,
+                        CODEX_PLUGIN_MANIFEST_PATH,
+                    )
+                claude_source = manifests.get(CLAUDE_PLUGIN_MANIFEST_PATH)
+                if claude_source is None:
+                    claude_source = self._convert_manifest(
+                        source_manifest,
+                        CLAUDE_PLUGIN_MANIFEST_PATH,
+                    )
+                claude_manifest = self._convert_manifest(
+                    claude_source,
+                    CLAUDE_PLUGIN_MANIFEST_PATH,
+                )
+                return self._rewrite_manifests(
+                    archive,
+                    root,
+                    codex_manifest,
+                    claude_manifest,
+                )
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
+
+    @staticmethod
+    def _validate_package_size(package_bytes: bytes) -> None:
+        if len(package_bytes) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Plugin package is too large")
+
     @staticmethod
     def _bytes_reader(package_bytes: bytes):
-        import io
-
         return io.BytesIO(package_bytes)
 
     @staticmethod
@@ -130,29 +208,32 @@ class ClaudePluginParser:
                 )
 
     def _detect_plugin_root(self, archive: zipfile.ZipFile) -> tuple[str, str]:
-        supported_manifests = (
-            ".codex-plugin/plugin.json",
-            ".claude-plugin/plugin.json",
-        )
-        candidates = []
-        for name in archive.namelist():
-            for relative_path in supported_manifests:
-                if name.endswith(relative_path):
-                    candidates.append((name, relative_path))
+        candidates = [
+            (name, manifest_path)
+            for name in archive.namelist()
+            for manifest_path in PLUGIN_MANIFEST_PATHS
+            if name.endswith(manifest_path)
+        ]
         if not candidates:
             raise HTTPException(
                 status_code=400,
-                detail="Codex plugin must include .codex-plugin/plugin.json",
+                detail=(
+                    "Plugin must include .codex-plugin/plugin.json or "
+                    ".claude-plugin/plugin.json"
+                ),
             )
-        # Prefer Codex-native manifests when both layouts are present.
-        manifest_path, relative_path = sorted(
+        manifest_path, manifest_relative_path = min(
             candidates,
-            key=lambda item: (
-                0 if item[1].startswith(".codex-plugin") else 1,
-                len(item[0]),
+            key=lambda candidate: (
+                len(PurePosixPath(candidate[0][: -len(candidate[1])]).parts),
+                0 if candidate[1] == CODEX_PLUGIN_MANIFEST_PATH else 1,
+                len(candidate[0]),
             ),
-        )[0]
-        return manifest_path[: -len(relative_path)], relative_path
+        )
+        return (
+            manifest_path[: -len(manifest_relative_path)],
+            manifest_relative_path,
+        )
 
     def _read_json(self, archive: zipfile.ZipFile, path: str) -> Dict[str, Any]:
         try:
@@ -160,13 +241,123 @@ class ClaudePluginParser:
                 data = json.loads(file.read().decode("utf-8"))
         except KeyError as exc:
             raise HTTPException(status_code=400, detail=f"Missing {path}") from exc
-        except json.JSONDecodeError as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=400, detail=f"Invalid JSON in {path}"
             ) from exc
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail=f"{path} must be a JSON object")
         return data
+
+    def _read_root_manifests(
+        self,
+        archive: zipfile.ZipFile,
+        root: str,
+    ) -> dict[str, Dict[str, Any]]:
+        names = set(archive.namelist())
+        return {
+            manifest_path: self._read_json(archive, f"{root}{manifest_path}")
+            for manifest_path in PLUGIN_MANIFEST_PATHS
+            if f"{root}{manifest_path}" in names
+        }
+
+    def _validate_manifest_names(
+        self,
+        manifests: dict[str, Dict[str, Any]],
+    ) -> None:
+        names = {
+            manifest_path: str(manifest.get("name") or "").strip()
+            for manifest_path, manifest in manifests.items()
+        }
+        for manifest_path, name in names.items():
+            if not name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{manifest_path} must include a non-empty name",
+                )
+        if len(set(names.values())) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Codex and Claude Code plugin manifest names must match",
+            )
+
+    @staticmethod
+    def _convert_manifest(
+        manifest: Dict[str, Any],
+        target_manifest_path: str,
+    ) -> Dict[str, Any]:
+        fields = (
+            CLAUDE_MANIFEST_FIELDS
+            if target_manifest_path == CLAUDE_PLUGIN_MANIFEST_PATH
+            else CODEX_MANIFEST_FIELDS
+        )
+        converted = {key: value for key, value in manifest.items() if key in fields}
+        if target_manifest_path == CLAUDE_PLUGIN_MANIFEST_PATH:
+            interface = manifest.get("interface")
+            if isinstance(interface, dict):
+                description = interface.get("shortDescription") or interface.get(
+                    "longDescription"
+                )
+                if description and not converted.get("description"):
+                    converted["description"] = description
+        else:
+            interface = {}
+            if manifest.get("displayName"):
+                interface["displayName"] = manifest["displayName"]
+            if manifest.get("description"):
+                interface["shortDescription"] = manifest["description"]
+            if interface:
+                converted["interface"] = interface
+        return converted
+
+    @staticmethod
+    def _rewrite_manifests(
+        archive: zipfile.ZipFile,
+        root: str,
+        codex_manifest: Dict[str, Any],
+        claude_manifest: Dict[str, Any],
+    ) -> bytes:
+        manifests = {
+            f"{root}{CODEX_PLUGIN_MANIFEST_PATH}": codex_manifest,
+            f"{root}{CLAUDE_PLUGIN_MANIFEST_PATH}": claude_manifest,
+        }
+        written_manifests: set[str] = set()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            buffer,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as normalized:
+            for member in archive.infolist():
+                manifest = manifests.get(member.filename)
+                if manifest is None:
+                    normalized.writestr(member, archive.read(member))
+                    continue
+                normalized.writestr(
+                    member,
+                    PluginPackageParser._manifest_bytes(manifest),
+                )
+                written_manifests.add(member.filename)
+            for path, manifest in manifests.items():
+                if path in written_manifests:
+                    continue
+                info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
+                info.create_system = 3
+                info.external_attr = 0o644 << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                normalized.writestr(
+                    info,
+                    PluginPackageParser._manifest_bytes(manifest),
+                )
+        return buffer.getvalue()
+
+    @staticmethod
+    def _manifest_bytes(manifest: Dict[str, Any]) -> bytes:
+        return json.dumps(
+            manifest,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
     def _parse_components(
         self, archive: zipfile.ZipFile, root: str, manifest: Dict[str, Any]
@@ -453,4 +644,4 @@ class ClaudePluginParser:
         return metadata
 
 
-claude_plugin_parser = ClaudePluginParser()
+plugin_package_parser = PluginPackageParser()

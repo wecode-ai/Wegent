@@ -147,6 +147,10 @@ function enableTauri() {
     configurable: true,
     value: {},
   })
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+  })
 }
 
 describe('DesktopSidebar', () => {
@@ -190,6 +194,21 @@ describe('DesktopSidebar', () => {
     act(() => window.dispatchEvent(new Event('blur')))
     expect(sidebar).toHaveAttribute('data-window-focused', 'false')
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+  })
+
+  test('removes right border on Windows', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
+    })
+    renderSidebar()
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    expect(sidebar).not.toHaveClass('border-r')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {
@@ -739,8 +758,9 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability and opens connection settings from the sidebar entry', async () => {
+  test('shows cloud work availability and opens the cloud work page from the sidebar entry', async () => {
     const onOpenSettings = vi.fn()
+    const onOpenCloudWork = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -752,7 +772,9 @@ describe('DesktopSidebar', () => {
         }),
       ],
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      activeItem: 'cloud-work',
       onOpenSettings,
+      onOpenCloudWork,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -761,6 +783,7 @@ describe('DesktopSidebar', () => {
 
     expect(cloudButton).toHaveTextContent('云端工作')
     expect(cloudButton).toHaveTextContent('可用')
+    expect(cloudButton.parentElement).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
     expect(cloudButton).toHaveClass('pr-2')
     expect(cloudButton).not.toHaveClass('pr-8')
     expect(statusLabel).toHaveClass(
@@ -778,7 +801,8 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(cloudButton)
 
-    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
+    expect(onOpenCloudWork).toHaveBeenCalledTimes(1)
+    expect(onOpenSettings).not.toHaveBeenCalled()
   })
 
   test('opens cloud connection settings from the sidebar cloud management button', async () => {
@@ -1024,6 +1048,19 @@ describe('DesktopSidebar', () => {
     renderSidebar()
 
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+  })
+
+  test('shows Automations only while experimental features are enabled', () => {
+    experimentalFeatures.enabled = false
+    const { unmount } = renderSidebar()
+
+    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
+
+    unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar()
+
+    expect(screen.getByTestId('automation-button')).toBeInTheDocument()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

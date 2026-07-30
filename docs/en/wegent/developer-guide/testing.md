@@ -237,6 +237,13 @@ and CLI suites, while a `packages/chat-core/` change runs both Frontend and
 Wework checks. Changes to the test workflows or the classifier itself select
 every module so CI orchestration changes receive full validation.
 
+Apply the `ci:all` label to a PR to bypass path classification and force every
+module test, the platform E2E suite, Wework browser and desktop E2E, and the
+Wework macOS memory gate. This is useful when changed paths might not capture
+the full blast radius of a change. All three test workflows respond to label
+events; without `ci:all`, test selection still follows the changed paths.
+`ci:memory` continues to trigger only the Wework macOS memory gate.
+
 Feature-branch pushes do not run a duplicate CI suite; the `pull_request` event
 validates the branch after a PR is opened. A newer commit to the same PR or to
 `main` cancels the older in-progress run. `test-summary` and `lint-summary`

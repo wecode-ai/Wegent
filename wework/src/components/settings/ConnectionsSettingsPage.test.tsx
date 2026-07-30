@@ -96,6 +96,7 @@ vi.mock('@/tauri/localExecutor', () => ({
     ready: true,
     runtimeInstanceId: 'runtime-instance-1',
   }),
+  getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 
@@ -369,6 +370,18 @@ describe('ConnectionsSettingsPage', () => {
         'macos-titlebar-drag-region'
       )
     ).toHaveAttribute('data-tauri-drag-region')
+  })
+
+  test('opens the add device dialog from the cloud work route query', async () => {
+    window.history.pushState({}, '', '/settings/connections?addDevice=1')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-connections')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
   })
 
   test('keeps the settings navigation scrollable within the sidebar', () => {
@@ -1021,7 +1034,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(restartCodexButton).toHaveTextContent('重启 Codex')
     await userEvent.click(restartCodexButton)
     await waitFor(() =>
-      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart')
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+        proxyUrl: 'http://127.0.0.1:7890',
+      })
     )
     expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
     expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
@@ -1409,7 +1424,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
-  test('omits local devices, metrics, and scaling guidance from cloud connections', async () => {
+  test('shows cloud device metrics while omitting local devices and scaling guidance', async () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
@@ -1423,10 +1438,12 @@ describe('ConnectionsSettingsPage', () => {
 
     await screen.findByTestId('connection-device-device-1')
     expect(screen.queryByTestId('connection-device-local-device')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
+    await waitFor(() => expect(api.getMetrics).toHaveBeenCalledWith('device-1'))
+    expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
+    expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent('68%')
+    expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki-link')).not.toBeInTheDocument()
-    expect(api.getMetrics).not.toHaveBeenCalled()
   })
 
   test('embeds a remote terminal for socketio cloud device terminal sessions', async () => {

@@ -55,6 +55,7 @@ from app.core.constants import get_wework_task_room, get_wework_user_room
 from app.core.events import TaskCompletedEvent, get_event_bus
 from app.core.socketio import get_sio
 from app.db.session import SessionLocal
+from app.models.subscription import BackgroundExecution
 from app.models.subtask import SubtaskStatus
 from app.models.user import User
 from app.schemas.device import (
@@ -577,6 +578,70 @@ def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, A
     payload = dict(data)
     payload["device_id"] = device_id
     return payload
+
+
+def _complete_runtime_automation_execution_sync(
+    user_id: int,
+    device_id: str,
+    local_task_id: str,
+    event_name: str,
+    event_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if event_name not in {
+        "response.completed",
+        "response.failed",
+        "response.incomplete",
+    }:
+        return None
+    with get_db_session() as db:
+        execution = (
+            db.query(BackgroundExecution)
+            .filter(
+                BackgroundExecution.user_id == user_id,
+                BackgroundExecution.source_surface == "wework",
+                BackgroundExecution.runtime_device_id == device_id,
+                BackgroundExecution.runtime_task_id == local_task_id,
+                BackgroundExecution.status.in_(["PENDING", "RUNNING"]),
+            )
+            .order_by(BackgroundExecution.created_at.desc())
+            .first()
+        )
+        if execution is None:
+            return None
+        now = datetime.utcnow()
+        if event_name == "response.completed":
+            data = event_payload.get("data")
+            stop_reason = data.get("stop_reason") if isinstance(data, dict) else None
+            if stop_reason == "waiting_for_user_input":
+                execution.status = "NEEDS_ATTENTION"
+                execution.error_message = "Automation requires user input"
+            else:
+                execution.status = "COMPLETED"
+                if isinstance(data, dict):
+                    value = data.get("value")
+                    if isinstance(value, str):
+                        execution.result_summary = value[:4000]
+        elif event_name == "response.incomplete":
+            execution.status = "CANCELLED"
+        else:
+            execution.status = "FAILED"
+            data = event_payload.get("data")
+            error = data.get("error") if isinstance(data, dict) else None
+            if isinstance(error, dict):
+                execution.error_message = str(
+                    error.get("message") or "Automation failed"
+                )
+            else:
+                execution.error_message = "Automation failed"
+        execution.completed_at = now
+        execution.updated_at = now
+        db.commit()
+        return {
+            "id": execution.id,
+            "subscription_id": execution.subscription_id,
+            "status": execution.status,
+            "runtime_task_id": execution.runtime_task_id,
+        }
 
 
 async def emit_chat_user_event(
@@ -1825,6 +1890,29 @@ class DeviceNamespace(socketio.AsyncNamespace):
             payload["payload"] = nested_payload
         else:
             payload["payload"] = {"deviceId": device_id, "device_id": device_id}
+
+        event_name = str(payload.get("event") or "")
+        runtime_payload = payload.get("payload")
+        local_task_id = (
+            str(runtime_payload.get("taskId") or runtime_payload.get("task_id") or "")
+            if isinstance(runtime_payload, dict)
+            else ""
+        )
+        if event_name and local_task_id:
+            automation_update = await run_sync_in_executor(
+                _complete_runtime_automation_execution_sync,
+                int(user_id),
+                device_id,
+                local_task_id,
+                event_name,
+                runtime_payload,
+            )
+            if automation_update:
+                await emit_chat_user_event(
+                    event_name=ServerEvents.BACKGROUND_EXECUTION_UPDATE,
+                    payload=automation_update,
+                    user_id=int(user_id),
+                )
 
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,

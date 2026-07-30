@@ -29,6 +29,7 @@ from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.plugin_marketplace import (
@@ -92,6 +93,7 @@ __all__ = [
     "NamespaceMember",
     "APIKey",
     "KnowledgeDocument",
+    "KnowledgeArtifactRecord",
     "Project",
     "Plugin",
     "PluginRelease",

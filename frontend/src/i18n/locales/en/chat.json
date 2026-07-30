@@ -297,6 +297,12 @@
     "overwrite_confirm_cancel": "Keep current input",
     "overwrite_confirm_action": "Replace"
   },
+  "knowledge_draft": {
+    "confirm_title": "Start a new task?",
+    "confirm_description": "Your current unsent message, attachments, and additional context will be cleared before creating the presentation draft.",
+    "confirm_cancel": "Keep current draft",
+    "confirm_action": "Start new task"
+  },
   "errors": {
     "request_failed": "LLM API request failed",
     "request_failed_retry": "LLM API request failed, please click retry",
@@ -731,6 +737,37 @@
     "other_required": "Please describe your answer",
     "custom_input": "Custom Input",
     "custom_placeholder": "Enter custom input..."
+  },
+  "saveToKnowledge": {
+    "action": "Save to knowledge base",
+    "title": "Save to knowledge base",
+    "description": "Save the current response as a knowledge base document under the target knowledge base's existing access permissions.",
+    "targetLabel": "Target knowledge base",
+    "targetPlaceholder": "Select a knowledge base",
+    "loadingTargets": "Loading knowledge bases...",
+    "noWritableTargets": "No writable knowledge bases",
+    "currentTargetReadOnly": "The current knowledge base is read-only. Select another one.",
+    "permissionHint": "After saving, the content follows the existing permissions of “{{name}}” and is visible to its authorized members.",
+    "documentTitleLabel": "Document title",
+    "contentLabel": "Markdown content",
+    "contentLength": "{{current}} / {{max}} characters",
+    "save": "Save",
+    "saving": "Saving...",
+    "fallbackTitle": "Saved conversation content",
+    "successTitle": "Saved to knowledge base",
+    "successDescription": "Saved to “{{name}}”. The document is being processed.",
+    "viewDocument": "View document",
+    "scope": {
+      "personal": "Personal",
+      "shared": "Shared with me"
+    },
+    "errors": {
+      "loadFailed": "Failed to load knowledge bases. Try again later.",
+      "permissionChanged": "The target permissions changed. Select a knowledge base again.",
+      "targetMissing": "The target knowledge base no longer exists. Select another one.",
+      "invalidContent": "The title or content is invalid. Check it and try again.",
+      "saveFailed": "Failed to save. Try again later."
+    }
   },
   "dingtalkDocs": {
     "tabTitle": "DingTalk Docs",
