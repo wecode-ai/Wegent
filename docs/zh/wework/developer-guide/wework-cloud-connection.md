@@ -19,7 +19,7 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
-桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。授权窗使用 Wework 主窗口作为原生父窗口，因此在授权期间始终位于 Wework 之上；它不会设置为跨应用全局置顶，切换到其他应用时仍遵循系统窗口层级。
+桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
 
 Socket.IO 地址按以下优先级解析：用户在连接窗口显式输入的地址、与当前 Backend 匹配的打包 Socket 地址、Backend `/auth/wework/config` 返回的 `socket_url`、Backend 同源默认地址。Backend 通过 `WEGENT_SOCKET_URL` 声明公开 Socket.IO origin；HTTPS 部署应配置 `wss://` 地址。启动时也会按同一优先级刷新并迁移已保存连接。
 
