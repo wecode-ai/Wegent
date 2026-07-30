@@ -1,10 +1,13 @@
-import { Boxes, CornerDownLeft, ExternalLink, Puzzle, Search } from 'lucide-react'
+import { Boxes, ExternalLink, Puzzle, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { insertPluginReference } from '@/features/plugins/pluginTrial'
+import {
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  insertPluginReference,
+} from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
-import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { appReference, displayAppName } from './composerMentionCandidates'
 import { OPEN_COMPOSER_PLUGIN_PICKER_EVENT } from './composerEvents'
 import { registerComposerMentionIcon } from './composerMentions'
@@ -28,6 +31,7 @@ export function PluginPickerMenu({
   const [query, setQuery] = useState('')
   const [apps, setApps] = useState<LocalDeviceApp[]>([])
   const [loading, setLoading] = useState(Boolean(onListLocalApps))
+  const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -46,6 +50,12 @@ export function PluginPickerMenu({
     window.addEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
     return () => window.removeEventListener(OPEN_COMPOSER_PLUGIN_PICKER_EVENT, onOpenPicker)
   }, [disabled])
+
+  useEffect(() => {
+    const onSkillsChanged = () => setReloadToken(token => token + 1)
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, onSkillsChanged)
+    return () => window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, onSkillsChanged)
+  }, [])
 
   useEffect(() => {
     let current = true
@@ -77,7 +87,7 @@ export function PluginPickerMenu({
     return () => {
       current = false
     }
-  }, [onListLocalApps])
+  }, [onListLocalApps, open, reloadToken])
 
   const visibleApps = apps.filter(app => {
     const text =
@@ -104,7 +114,13 @@ export function PluginPickerMenu({
           <>
             <span>{t('workbench.composer_plugins', '插件')}</span>
             {apps.slice(0, 3).map(app => {
-              const logo = resolvePluginAssetUrl(app.logoUrl)
+              const logo = resolvePluginLogoUrl({
+                pluginKey:
+                  app.source === 'installed-plugin'
+                    ? app.id.replace(/^plugin:/, '')
+                    : (app.pluginDisplayNames?.[0] ?? app.id),
+                logo: app.logoUrl,
+              })
               return (
                 <span
                   key={app.id}
@@ -126,7 +142,7 @@ export function PluginPickerMenu({
       {open && (
         <div
           data-testid="composer-plugin-picker"
-          className="absolute bottom-9 left-0 z-popover w-[min(760px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl"
+          className="absolute bottom-9 left-0 z-popover w-[min(280px,calc(100vw-36px))] overflow-hidden rounded-xl border border-border bg-popover p-2 shadow-xl"
         >
           <label className="relative mb-1 block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
@@ -141,7 +157,7 @@ export function PluginPickerMenu({
           <div className="px-2 pb-1 pt-2 text-xs text-text-muted">
             {query
               ? t('workbench.composer_plugin_matches', '匹配结果')
-              : t('workbench.composer_plugin_recent', '最近使用')}
+              : t('workbench.composer_plugin_available', '可用插件')}
           </div>
           <div className="max-h-[280px] overflow-y-auto">
             {loading ? (
@@ -150,13 +166,19 @@ export function PluginPickerMenu({
               </div>
             ) : visibleApps.length > 0 ? (
               visibleApps.slice(0, 8).map(app => {
-                const logo = resolvePluginAssetUrl(app.logoUrl)
+                const logo = resolvePluginLogoUrl({
+                  pluginKey:
+                    app.source === 'installed-plugin'
+                      ? app.id.replace(/^plugin:/, '')
+                      : (app.pluginDisplayNames?.[0] ?? app.id),
+                  logo: app.logoUrl,
+                })
                 return (
                   <button
                     key={app.id}
                     type="button"
                     data-testid={`composer-plugin-picker-item-${app.id}`}
-                    className="grid min-h-11 w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
                     onClick={() => {
                       const reference = appReference(app)
                       registerComposerMentionIcon(reference, logo)
@@ -171,22 +193,16 @@ export function PluginPickerMenu({
                       setOpen(false)
                     }}
                   >
-                    <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
                       {logo ? (
                         <img src={logo} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <Boxes className="h-4 w-4 text-text-muted" />
+                        <Boxes className="h-3.5 w-3.5 text-text-muted" />
                       )}
                     </span>
-                    <span className="min-w-0">
-                      <strong className="block truncate text-sm font-medium">
-                        {displayAppName(app)}
-                      </strong>
-                      <small className="block truncate text-xs text-text-muted">
-                        {app.description}
-                      </small>
+                    <span className="min-w-0 truncate text-sm font-medium">
+                      {displayAppName(app)}
                     </span>
-                    <CornerDownLeft className="h-4 w-4 text-text-muted" />
                   </button>
                 )
               })
@@ -202,24 +218,19 @@ export function PluginPickerMenu({
           <button
             type="button"
             data-testid="composer-open-plugin-marketplace"
-            className="mt-1 grid min-h-11 w-full grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+            className="mt-1 flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
             onClick={() => {
               setOpen(false)
               navigateTo('/plugins')
             }}
           >
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface">
-              <Boxes className="h-4 w-4 text-text-secondary" />
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface">
+              <Boxes className="h-3.5 w-3.5 text-text-secondary" />
             </span>
-            <span>
-              <strong className="block text-sm font-medium">
-                {t('workbench.composer_open_plugin_marketplace', '打开插件市场')}
-              </strong>
-              <small className="block text-xs text-text-muted">
-                {t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件')}
-              </small>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">
+              {t('workbench.composer_open_plugin_marketplace', '打开插件市场')}
             </span>
-            <ExternalLink className="h-4 w-4 text-text-muted" />
+            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-text-muted" />
           </button>
         </div>
       )}

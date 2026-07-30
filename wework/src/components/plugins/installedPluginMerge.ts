@@ -11,12 +11,20 @@ export function localPluginId(item: InstalledPlugin): string | null {
   return typeof labelId === 'string' || typeof labelId === 'number' ? String(labelId) : null
 }
 
+function pluginKey(item: InstalledPlugin): string {
+  return String(item.spec.source.pluginKey || item.metadata.name || '')
+    .trim()
+    .toLowerCase()
+}
+
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],
   currentDeviceId = ''
 ): InstalledPlugin[] {
   const merged = new Map<string, InstalledPlugin>()
+  const cloudPluginKeys = new Set<string>()
+
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
       if (
@@ -27,19 +35,26 @@ export function mergeInstalledPlugins(
         continue
       }
       merged.set(`market:${item.spec.pluginId}:${item.spec.releaseId}`, item)
+      const key = pluginKey(item)
+      if (key) cloudPluginKeys.add(key)
     }
   }
+
   for (const item of localItems) {
-    if (item.spec.origin !== 'created' && item.spec.source.type !== 'local') {
-      if (cloudItems.length === 0) {
-        const id = localPluginId(item)
-        if (id) merged.set(`runtime:${id}`, item)
-      }
+    if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
+      const id = localPluginId(item)
+      if (id) merged.set(`created:${id}`, item)
       continue
     }
+
+    // Keep local Codex marketplace installs visible in management/library even when
+    // cloud installs exist. Skip only when the cloud catalog already owns the same key.
+    const key = pluginKey(item)
+    if (key && cloudPluginKeys.has(key)) continue
     const id = localPluginId(item)
-    if (id) merged.set(`created:${id}`, item)
+    if (id) merged.set(`runtime:${id}`, item)
   }
+
   return Array.from(merged.values())
 }
 
@@ -64,5 +79,5 @@ export function installedPluginSourceLabel(item: InstalledPlugin): string {
 }
 
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {
-  return item.spec.origin === 'market' || typeof item.spec.pluginId === 'number'
+  return typeof item.spec.pluginId === 'number'
 }

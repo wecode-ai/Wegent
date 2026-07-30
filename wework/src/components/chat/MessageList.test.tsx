@@ -4869,6 +4869,11 @@ describe('MessageList', () => {
       '/plugins?plugin=documents&marketplace=openai-primary-runtime'
     )
     expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('sent-plugin-icon-Documents').tagName).toBe('IMG')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toHaveAttribute(
+      'src',
+      '/plugin-icons/wework.svg'
+    )
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'Documents Draft a project memo as a document'
     )

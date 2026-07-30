@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
-import { enrichComposerApps } from './composerPluginMetadata'
+import { appendInstalledPluginsAsComposerApps, enrichComposerApps } from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
   id: 'github',
@@ -39,6 +39,44 @@ const githubPlugin: InstalledPlugin = {
     },
     interface: {
       composerIcon: '/Users/test/plugins/github/assets/icon.png',
+    },
+  },
+  status: { state: 'enabled' },
+}
+
+const superpowersPlugin: InstalledPlugin = {
+  apiVersion: 'wegent.ai/v1',
+  kind: 'InstalledPlugin',
+  metadata: { name: 'superpowers', namespace: 'openai-official' },
+  spec: {
+    source: {
+      type: 'marketplace',
+      providerKey: 'openai-official',
+      pluginKey: 'superpowers',
+    },
+    displayName: 'superpowers',
+    description: 'A complete software development workflow',
+    installState: 'installed',
+    enabled: true,
+    manifest: {},
+    components: {
+      skills: [{ name: 'superpowers', path: '/tmp/plugins/superpowers/skills/superpowers' }],
+      commands: [],
+      apps: [],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+    interface: {
+      logo: '/tmp/plugins/superpowers/assets/icon.png',
+      shortDescription: 'A complete software development workflow',
+    },
+    sourcePayload: {
+      pluginName: 'superpowers',
+      marketplaceName: 'openai-official',
     },
   },
   status: { state: 'enabled' },
@@ -103,5 +141,34 @@ describe('enrichComposerApps', () => {
     }
 
     expect(enrichComposerApps([unrelatedApp], [githubPlugin])).toEqual([unrelatedApp])
+  })
+})
+
+describe('appendInstalledPluginsAsComposerApps', () => {
+  test('adds skill-only installed plugins that have no Codex app entry', () => {
+    expect(
+      appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, superpowersPlugin])
+    ).toEqual([
+      githubApp,
+      expect.objectContaining({
+        id: 'plugin:superpowers',
+        name: 'superpowers',
+        source: 'installed-plugin',
+        skillPath: 'plugin://superpowers@openai-official',
+        logoUrl: '/tmp/plugins/superpowers/assets/icon.png',
+      }),
+    ])
+  })
+
+  test('does not duplicate plugins already represented by an app', () => {
+    expect(appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin])).toEqual([githubApp])
+  })
+
+  test('skips disabled skill-only plugins', () => {
+    const disabled = {
+      ...superpowersPlugin,
+      spec: { ...superpowersPlugin.spec, enabled: false },
+    }
+    expect(appendInstalledPluginsAsComposerApps([], [disabled])).toEqual([])
   })
 })

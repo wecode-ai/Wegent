@@ -31,7 +31,10 @@ import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { mergeInstalledPlugins } from '@/components/plugins/installedPluginMerge'
-import { enrichComposerApps } from '@/features/plugins/composerPluginMetadata'
+import {
+  appendInstalledPluginsAsComposerApps,
+  enrichComposerApps,
+} from '@/features/plugins/composerPluginMetadata'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
@@ -1496,7 +1499,10 @@ export function WorkbenchProvider({
         console.warn('[Wework] Failed to load Wegent connector apps.', error)
       }
     }
-    apps = enrichComposerApps(apps, installedPlugins)
+    apps = appendInstalledPluginsAsComposerApps(
+      enrichComposerApps(apps, installedPlugins),
+      installedPlugins
+    )
     localAppsCacheRef.current = {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       apps,

@@ -1,4 +1,5 @@
-import { parsePluginMentionReference } from '@/features/plugins/pluginNavigation'
+import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
@@ -31,6 +32,28 @@ export function registerComposerMentionIcon(reference: string, iconUrl?: string 
   const normalizedIconUrl = iconUrl?.trim()
   if (!href || !normalizedIconUrl) return
   composerMentionIconUrls.set(href, normalizedIconUrl)
+}
+
+export function getComposerMentionIconUrl(href: string): string | undefined {
+  return composerMentionIconUrls.get(href)
+}
+
+/** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
+export function resolveComposerMentionBrandIconUrl(href: string): string | null {
+  const registered = getComposerMentionIconUrl(href)?.trim()
+  if (registered) return registered
+
+  const pluginReference = parsePluginUri(href)
+  if (pluginReference) {
+    return resolvePluginLogoUrl({ pluginKey: pluginReference.pluginName })
+  }
+
+  if (href.startsWith('app://')) {
+    const appId = href.slice('app://'.length).trim()
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId }) : null
+  }
+
+  return null
 }
 
 export function localSkillTestId(name: string): string {
@@ -186,7 +209,7 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
   const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
-  const brandIconUrl = mentionHref ? composerMentionIconUrls.get(mentionHref) : undefined
+  const brandIconUrl = mentionHref ? resolveComposerMentionBrandIconUrl(mentionHref) : null
   iconSlot.append(
     pathReference?.directory
       ? createComposerFolderIcon()

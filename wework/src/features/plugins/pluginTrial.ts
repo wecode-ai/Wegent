@@ -1,5 +1,5 @@
 import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
-import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
@@ -62,7 +62,11 @@ function pluginMentionPath(plugin: InstalledPlugin): string | null {
 function registerPluginMentionIcon(plugin: InstalledPlugin, reference: string): void {
   registerComposerMentionIcon(
     reference,
-    resolvePluginAssetUrl(plugin.spec.interface?.composerIcon || plugin.spec.interface?.logo)
+    resolvePluginLogoUrl({
+      pluginKey: plugin.spec.source.pluginKey || plugin.metadata.name,
+      logo: plugin.spec.interface?.logo,
+      composerIcon: plugin.spec.interface?.composerIcon,
+    })
   )
 }
 

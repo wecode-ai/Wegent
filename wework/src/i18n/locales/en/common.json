@@ -995,6 +995,7 @@
     "composer_plugin_search": "Search plugins",
     "composer_plugin_matches": "Matches",
     "composer_plugin_recent": "Recently used",
+    "composer_plugin_available": "Available plugins",
     "composer_plugin_add": "Add",
     "composer_open_plugin_marketplace": "Open plugin marketplace",
     "composer_open_plugin_marketplace_hint": "Browse and search all plugins",

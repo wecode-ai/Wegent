@@ -996,6 +996,7 @@
     "composer_plugin_search": "搜索插件",
     "composer_plugin_matches": "匹配结果",
     "composer_plugin_recent": "最近使用",
+    "composer_plugin_available": "可用插件",
     "composer_plugin_add": "添加",
     "composer_open_plugin_marketplace": "打开插件市场",
     "composer_open_plugin_marketplace_hint": "浏览和搜索全部插件",

@@ -709,6 +709,7 @@ function PluginMarketplaceRow({
 }) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
   const logo = resolvePluginLogoUrl({
     pluginKey: item.name,
     logo: item.interface?.logo,
@@ -724,6 +725,17 @@ function PluginMarketplaceRow({
     deviceState === 'uninstalling'
   const actionPending = isInstalling || showSyncingState
   const actionLabel = showFailedState ? retryLabel : showSyncingState ? syncingLabel : installLabel
+
+  useEffect(() => {
+    if (!isActionMenuOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) {
+        setIsActionMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isActionMenuOpen])
 
   return (
     <article
@@ -781,7 +793,7 @@ function PluginMarketplaceRow({
             <span>{isInstalling ? installingLabel : syncingLabel}</span>
           </span>
         ) : showInstalledState ? (
-          <div className="relative">
+          <div ref={actionsRef} className="relative">
             <button
               type="button"
               data-testid={`plugin-marketplace-actions-${item.id}`}
@@ -1524,26 +1536,47 @@ export function PluginsWorkspace({
   }
 
   const uninstallInstalledPlugin = (id: string | number) => {
-    const plugin = installedPlugins.find(item => item.id === id)
-    if (!plugin) return
-
-    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-    setPluginMarketplaceState(previous => ({
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    const clearMarketplaceInstall = (
+      previous: typeof pluginMarketplaceState
+    ): typeof pluginMarketplaceState => ({
       ...previous,
       items: previous.items.map(item =>
-        String(item.installedPluginId) === String(id)
+        String(item.installedPluginId) === String(id) ||
+        (item.installed && String(item.id) === String(id))
           ? {
               ...item,
               installed: false,
               installedPluginId: null,
               enabled: false,
+              currentDeviceInstallation: null,
             }
           : item
       ),
-    }))
+    })
+
+    if (!plugin) {
+      // Local Codex marketplace installs are omitted from the merged installed list
+      // once any cloud install exists, but they still appear as installed catalog rows.
+      setPluginMarketplaceState(clearMarketplaceInstall)
+      void localPluginApi
+        .uninstallInstalledPlugin(id)
+        .then(() => notifyLocalPluginSkillsChanged())
+        .catch((error: Error) => {
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            error: error.message,
+          }))
+          setMarketplaceRefreshTick(previous => previous + 1)
+        })
+      return
+    }
+
+    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+    setPluginMarketplaceState(clearMarketplaceInstall)
     const uninstallApi =
-      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+      plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
         ? localPluginApi.uninstallInstalledPlugin(id)
         : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
     uninstallApi
@@ -1553,7 +1586,9 @@ export function PluginsWorkspace({
         setPluginMarketplaceState(previous => ({
           ...previous,
           items: previous.items.map(item =>
-            item.installedPluginId === null && String(item.id) === String(plugin.id)
+            item.installedPluginId === null &&
+            (String(item.id) === String(plugin.id) ||
+              String(item.name) === String(plugin.raw.spec.source.pluginKey))
               ? {
                   ...item,
                   installed: true,
@@ -2594,13 +2629,13 @@ export function PluginsWorkspace({
           }}
           onUninstall={() => {
             const installedPluginId =
-              installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
-            if (installedPluginId !== null && installedPluginId !== undefined) {
-              requestUninstallPlugin(
-                installedPluginId,
-                selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
-              )
-            }
+              installedDetail?.id ??
+              selectedMarketplacePlugin.installedPluginId ??
+              selectedMarketplacePlugin.id
+            requestUninstallPlugin(
+              installedPluginId,
+              selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
+            )
           }}
           onPromptSelect={prompt => {
             if (isInstalled && installedDetail) {
@@ -2953,16 +2988,11 @@ export function PluginsWorkspace({
                     onTry={() => tryMarketplacePluginInChat(item)}
                     onManage={() => navigateTo('/plugins/manage')}
                     onUninstall={() => {
-                      const installed =
-                        item.installedPluginId === null || item.installedPluginId === undefined
-                          ? null
-                          : (installedPlugins.find(
-                              plugin => String(plugin.id) === String(item.installedPluginId)
-                            ) ?? null)
-                      requestUninstallPlugin(
-                        installed?.id ?? toMarketplaceInstalledPluginItem(item).id,
-                        item.displayName || item.name
-                      )
+                      const uninstallId =
+                        item.installedPluginId !== null && item.installedPluginId !== undefined
+                          ? item.installedPluginId
+                          : item.id
+                      requestUninstallPlugin(uninstallId, item.displayName || item.name)
                     }}
                   />
                 ))}

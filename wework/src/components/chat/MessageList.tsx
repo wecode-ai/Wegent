@@ -66,7 +66,11 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
-import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
+import {
+  composerPathReference,
+  composerSkillFilePath,
+  resolveComposerMentionBrandIconUrl,
+} from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
@@ -1712,6 +1716,10 @@ function renderUserContent(
     const pathReference = composerPathReference(match[0])
     const mentionKind = codexMentionKind(href)
     const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+    const brandIconUrl =
+      mentionKind === 'plugin' || mentionKind === 'app'
+        ? resolveComposerMentionBrandIconUrl(href)
+        : null
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
       mentionKind === 'skill'
@@ -1757,6 +1765,13 @@ function renderUserContent(
           )
         ) : mentionKind === 'conversation' ? (
           <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : brandIconUrl ? (
+          <img
+            data-testid={iconTestId}
+            src={brandIconUrl}
+            alt=""
+            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+          />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}

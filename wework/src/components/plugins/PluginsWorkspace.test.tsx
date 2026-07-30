@@ -1084,6 +1084,10 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-marketplace-manage-101')).toHaveTextContent('管理')
     expect(screen.getByTestId('plugin-marketplace-uninstall-101')).toHaveTextContent('卸载')
 
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByTestId('plugin-marketplace-actions-menu-101')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-marketplace-actions-101'))
     await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
     await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
@@ -1093,6 +1097,53 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
+  })
+
+  test('uninstalls a local Codex plugin even when cloud installs own the installed list', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceDeviceState: 'installed',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'openai-official',
+          displayName: 'OpenAI 官方市场',
+          path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: 'superpowers-local-id',
+              name: 'superpowers',
+              displayName: 'Superpowers',
+              description: 'Planning, TDD, debugging, and delivery workflows',
+              category: 'Productivity',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['superpowers'],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Superpowers')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-actions-superpowers-local-id'))
+    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-superpowers-local-id'))
+    expect(screen.getByTestId('plugin-uninstall-confirm-button')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+
+    expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'superpowers-local-id' })
+    expect(
+      await screen.findByTestId('plugin-marketplace-install-superpowers-local-id')
+    ).toHaveTextContent('安装')
+    expect(
+      screen.queryByTestId('plugin-marketplace-actions-superpowers-local-id')
+    ).not.toBeInTheDocument()
   })
 
   test('tries an installed cloud Codex plugin from the row menu', async () => {

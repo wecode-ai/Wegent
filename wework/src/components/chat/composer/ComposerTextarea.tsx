@@ -17,7 +17,7 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
-import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
@@ -289,7 +289,13 @@ export function ComposerTextarea({
       group: pluginGroup,
       searchAliases: candidate.searchAliases,
       Icon: Plug,
-      iconUrl: resolvePluginAssetUrl(candidate.app.logoUrl),
+      iconUrl: resolvePluginLogoUrl({
+        pluginKey:
+          candidate.app.source === 'installed-plugin'
+            ? candidate.app.id.replace(/^plugin:/, '')
+            : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+        logo: candidate.app.logoUrl,
+      }),
       trailingIcon: CornerDownLeft,
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
@@ -709,7 +715,13 @@ export function ComposerTextarea({
       if (candidate.kind === 'app') {
         registerComposerMentionIcon(
           candidate.reference,
-          resolvePluginAssetUrl(candidate.app.logoUrl)
+          resolvePluginLogoUrl({
+            pluginKey:
+              candidate.app.source === 'installed-plugin'
+                ? candidate.app.id.replace(/^plugin:/, '')
+                : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+            logo: candidate.app.logoUrl,
+          })
         )
       }
       const replacement = replaceComposerMentionTrigger(
