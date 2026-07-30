@@ -120,7 +120,11 @@
     const hasIndex =
       request.index !== null && request.index !== undefined && Number.isInteger(index) && index >= 0
     if (request.ref || hasIndex) {
-      const resolver = window.__WEWORK_BROWSER_AGENT__?.resolveInspectElement
+      const browserAgent = window.__WEWORK_BROWSER_AGENT__
+      const resolver =
+        typeof browserAgent?.resolveInspectElement === 'function'
+          ? browserAgent.resolveInspectElement
+          : fallbackResolveInspectElement
       if (typeof resolver !== 'function') {
         return errorResult(
           'stale_inspect',
@@ -240,6 +244,57 @@
       'No target was provided and no editable element is focused.',
       'inspect'
     )
+  }
+
+  function fallbackResolveInspectElement(request) {
+    const current = window.__WEWORK_BROWSER_AGENT__
+    if (!current || !Array.isArray(current.inspectRegistries)) {
+      return { ok: false, errorCode: 'stale_inspect', message: 'No inspect registry is available.' }
+    }
+    const registry = request.ref
+      ? current.inspectRegistries.find(item => item.refs?.[request.ref])
+      : request.inspectId
+        ? current.inspectRegistries.find(item => item.inspectId === request.inspectId)
+        : current.inspectRegistries[0]
+    if (!registry) {
+      return {
+        ok: false,
+        errorCode: 'stale_inspect',
+        message: 'Inspect result is no longer available.',
+      }
+    }
+    if (Date.now() - Number(registry.createdAt || 0) > 120000) {
+      return { ok: false, errorCode: 'stale_inspect', message: 'Inspect result expired.' }
+    }
+    const ref =
+      request.ref ||
+      registry.indexToRef?.[String(request.index)] ||
+      registry.indexToRef?.[Number(request.index)]
+    const record = ref ? registry.refs?.[ref] : null
+    if (!record) {
+      return { ok: false, errorCode: 'element_not_found', message: 'Inspect target was not found.' }
+    }
+    if (!record.actionable) {
+      return {
+        ok: false,
+        errorCode: 'element_not_actionable',
+        message: 'Inspect target is not actionable.',
+      }
+    }
+    if (!record.element || !record.element.isConnected) {
+      return { ok: false, errorCode: 'stale_ref', message: 'Inspect target is detached.' }
+    }
+    return {
+      ok: true,
+      element: record.element,
+      ref,
+      inspectId: registry.inspectId,
+      index: record.index,
+      frameId: record.frameId,
+      role: record.role,
+      name: accessibleName(record.element),
+      rect: rectFor(record.element),
+    }
   }
 
   function inspectPreflight(element, actionName) {
