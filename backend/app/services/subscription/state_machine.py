@@ -22,7 +22,6 @@ VALID_STATE_TRANSITIONS: Dict[
         BackgroundExecutionStatus.RUNNING,
         BackgroundExecutionStatus.CANCELLED,
         BackgroundExecutionStatus.FAILED,  # Can fail before starting (e.g., validation error)
-        BackgroundExecutionStatus.SKIPPED,
     },
     BackgroundExecutionStatus.RUNNING: {
         BackgroundExecutionStatus.COMPLETED,
@@ -30,7 +29,6 @@ VALID_STATE_TRANSITIONS: Dict[
         BackgroundExecutionStatus.FAILED,
         BackgroundExecutionStatus.RETRYING,
         BackgroundExecutionStatus.CANCELLED,  # Allow cancellation of running executions
-        BackgroundExecutionStatus.NEEDS_ATTENTION,
     },
     BackgroundExecutionStatus.RETRYING: {
         BackgroundExecutionStatus.RUNNING,
@@ -42,8 +40,6 @@ VALID_STATE_TRANSITIONS: Dict[
     BackgroundExecutionStatus.COMPLETED_SILENT: set(),  # Terminal state (silent completion)
     BackgroundExecutionStatus.FAILED: set(),  # Terminal state
     BackgroundExecutionStatus.CANCELLED: set(),  # Terminal state
-    BackgroundExecutionStatus.NEEDS_ATTENTION: set(),  # Terminal until user resumes it
-    BackgroundExecutionStatus.SKIPPED: set(),  # Terminal state
 }
 
 
@@ -110,8 +106,6 @@ def is_terminal_state(status: BackgroundExecutionStatus) -> bool:
         BackgroundExecutionStatus.COMPLETED_SILENT,
         BackgroundExecutionStatus.FAILED,
         BackgroundExecutionStatus.CANCELLED,
-        BackgroundExecutionStatus.NEEDS_ATTENTION,
-        BackgroundExecutionStatus.SKIPPED,
     }
 
 
