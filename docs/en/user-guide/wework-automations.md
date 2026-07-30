@@ -23,22 +23,15 @@ are scheduled by the local Executor.
 
 ## Cloud mode
 
-After connecting Wegent, you can create an automation for a cloud device. The
-Wegent Backend stores and schedules the automation, then dispatches it to the
-selected Codex Runtime device.
-
-- Cloud automations do not require the current Wework window to remain open.
-- Only connected cloud devices owned by the current user can be selected.
-- Local and cloud configurations are independent. Recreate an automation to change its source.
-- A run is marked as **Needs attention** when the task requests user input.
-- Local automations remain available when the cloud connection is unavailable.
+Cloud automations are not currently available. The **Cloud** option remains
+visible in Wework but cannot be selected. Automations are stored, scheduled,
+and executed by the current device's local Executor.
 
 ## Schedule types
 
 - **Fixed time** uses a Cron expression and IANA time zone. For example,
   `0 9 * * 1-5` runs at 9:00 AM on weekdays.
-- **Interval** repeats in minutes, hours, or days. Cloud minute intervals have a
-  minimum of 15 minutes.
+- **Interval** repeats in minutes, hours, or days.
 - **One time** runs at a specific time and disables itself after scheduling.
 
 ## Conversation modes

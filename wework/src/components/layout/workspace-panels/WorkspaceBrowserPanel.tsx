@@ -28,6 +28,7 @@ import {
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
+  listenEmbeddedBrowserInvalidTlsCertificates,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -37,6 +38,7 @@ import {
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
+  type EmbeddedBrowserInvalidTlsCertificateEvent,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -112,6 +114,14 @@ function getFallbackFaviconUrl(url: string) {
     return new URL('/favicon.ico', url).toString()
   } catch {
     return null
+  }
+}
+
+function haveSameOrigin(leftUrl: string, rightUrl: string) {
+  try {
+    return new URL(leftUrl).origin === new URL(rightUrl).origin
+  } catch {
+    return false
   }
 }
 
@@ -599,6 +609,8 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [invalidTlsCertificate, setInvalidTlsCertificate] =
+    useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
   const internalDesktopPage = Boolean(
@@ -657,6 +669,16 @@ export function WorkspaceBrowserPanel({
       applyDownloadEvent(download)
     })
   }, [applyDownloadEvent])
+
+  useEffect(() => {
+    const unlistenPromise = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
+      if (!activeRef.current || certificate.nativeLabel !== nativeLabelRef.current) return
+      setInvalidTlsCertificate(certificate)
+    })
+    return () => {
+      void unlistenPromise?.then(unlisten => unlisten())
+    }
+  }, [])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -920,6 +942,7 @@ export function WorkspaceBrowserPanel({
         return false
       }
       adoptNativeLabel(pageState.nativeLabel, label)
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
       if (
         nextUrl &&
@@ -985,13 +1008,17 @@ export function WorkspaceBrowserPanel({
           return
         }
         adoptNativeLabel(pageState.nativeLabel, label)
+        setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
         setStatus('ready')
       } catch (error) {
-        console.error('Failed to open embedded browser:', error)
+        console.error(
+          'Failed to open embedded browser:',
+          error instanceof Error ? error.message : String(error)
+        )
         if (!disposed) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
           setStatus('error')
@@ -1384,6 +1411,9 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
+      setInvalidTlsCertificate(certificate =>
+        certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
+      )
       pageStateRequestGenerationRef.current += 1
 
       if (annotationMode && cloudDesktopExtension.isInternalPageUrl(nextUrl)) {
@@ -1681,6 +1711,23 @@ export function WorkspaceBrowserPanel({
               )
             })
           )}
+        </div>
+      ) : null}
+      {invalidTlsCertificate ? (
+        <div
+          data-testid="workspace-browser-invalid-tls-warning"
+          role="status"
+          className="flex shrink-0 items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-text-primary"
+        >
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0">
+            <p className="font-medium">{t('workbench.browser_invalid_tls_title')}</p>
+            <p className="mt-0.5 text-xs text-text-secondary">
+              {t('workbench.browser_invalid_tls_desc', {
+                host: invalidTlsCertificate.host,
+              })}
+            </p>
+          </div>
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-background pl-1">

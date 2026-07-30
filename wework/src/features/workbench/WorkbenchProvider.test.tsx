@@ -61,6 +61,11 @@ const localExecutorMocks = vi.hoisted(() => ({
   subscribeLocalExecutorEvents: vi.fn(),
 }))
 
+const runtimeWorkSyncMocks = vi.hoisted(() => ({
+  installMainRuntimeWorkChangedListener: vi.fn(() => null),
+  notifyMainRuntimeWorkChanged: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
@@ -68,6 +73,8 @@ vi.mock('@/tauri/localExecutor', () => ({
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
+
+vi.mock('@/tauri/runtimeWorkSync', () => runtimeWorkSyncMocks)
 
 function setTauriRuntime() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -5321,6 +5328,12 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    await waitFor(() =>
+      expect(runtimeWorkSyncMocks.notifyMainRuntimeWorkChanged).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        taskId: 'conversation-created',
+      })
+    )
     expect(screen.getByTestId('workbench-error')).not.toHaveTextContent(
       '请选择项目或打开设备工作区后再发送'
     )
