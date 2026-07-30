@@ -310,6 +310,21 @@ impl CodexAppServerClient {
 
     async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
+        let response_rx = self.start_existing_request(method, params).await?;
+
+        with_rpc_timeout(method, timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await
+    }
+
+    async fn start_existing_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
         let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
         let message = json!({
             "method": method,
@@ -320,13 +335,7 @@ impl CodexAppServerClient {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
-
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await
+        Ok(response_rx)
     }
 
     pub async fn run_turn_with_cancel(
@@ -532,24 +541,46 @@ impl CodexAppServerClient {
     }
 
     async fn mark_thread_active(&self, thread_id: &str) {
+        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
+        let generation = state.next_thread_generation;
+        state.next_thread_generation += 1;
+        state
+            .thread_generations
+            .insert(thread_id.to_owned(), generation);
         *state
             .active_threads
             .entry(thread_id.to_owned())
             .or_insert(0) += 1;
     }
 
-    async fn mark_thread_idle(&self, thread_id: &str) -> bool {
+    async fn mark_thread_idle(&self, thread_id: &str) -> Option<u64> {
+        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
         let mut state = self.state.lock().await;
-        let Some(active_count) = state.active_threads.get_mut(thread_id) else {
-            return false;
-        };
+        let active_count = state.active_threads.get_mut(thread_id)?;
         *active_count -= 1;
         if *active_count > 0 {
-            return false;
+            return None;
         }
         state.active_threads.remove(thread_id);
-        true
+        state.thread_generations.get(thread_id).copied()
+    }
+
+    async fn thread_lifecycle_gate(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.state.lock().await.thread_lifecycle_gate)
+    }
+
+    async fn clear_idle_thread_generation(&self, thread_id: &str, generation: u64) {
+        let lifecycle_gate = self.thread_lifecycle_gate().await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let mut state = self.state.lock().await;
+        if !state.active_threads.contains_key(thread_id)
+            && state.thread_generations.get(thread_id) == Some(&generation)
+        {
+            state.thread_generations.remove(thread_id);
+        }
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
@@ -568,11 +599,52 @@ impl CodexAppServerClient {
             .map(|_| ())
     }
 
-    fn unsubscribe_thread_in_background(&self, thread_id: String) {
+    async fn request_thread_unsubscribe_if_idle(
+        &self,
+        thread_id: &str,
+        generation: u64,
+    ) -> Result<bool, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let response_rx = {
+            let lifecycle_gate = self.thread_lifecycle_gate().await;
+            let _lifecycle_guard = lifecycle_gate.lock().await;
+            {
+                let state = self.state.lock().await;
+                if state.active_threads.contains_key(thread_id)
+                    || state.thread_generations.get(thread_id) != Some(&generation)
+                {
+                    return Ok(false);
+                }
+            }
+
+            let response_rx = self
+                .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
+                .await?;
+            let mut state = self.state.lock().await;
+            if !state.active_threads.contains_key(thread_id)
+                && state.thread_generations.get(thread_id) == Some(&generation)
+            {
+                state.thread_generations.remove(thread_id);
+            }
+            response_rx
+        };
+
+        with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
+            response_rx
+                .await
+                .map_err(|_| "codex app-server response channel closed".to_owned())?
+        })
+        .await?;
+        Ok(true)
+    }
+
+    fn unsubscribe_thread_in_background(&self, thread_id: String, generation: u64) {
         let client = self.clone();
         tokio::spawn(async move {
             let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone());
-            let result = client.request_thread_unsubscribe(&thread_id).await;
+            let result = client
+                .request_thread_unsubscribe_if_idle(&thread_id, generation)
+                .await;
             observation.finish(&result);
         });
     }
@@ -667,7 +739,7 @@ impl CodexThreadUnsubscribeObservation {
         }
     }
 
-    fn finish(mut self, result: &Result<(), String>) {
+    fn finish(mut self, result: &Result<bool, String>) {
         let mut fields = vec![
             ("thread_id", self.thread_id.clone()),
             (
@@ -676,7 +748,8 @@ impl CodexThreadUnsubscribeObservation {
             ),
         ];
         let event = match result {
-            Ok(()) => "codex shared thread unsubscribe background completed",
+            Ok(true) => "codex shared thread unsubscribe background completed",
+            Ok(false) => "codex shared thread unsubscribe background skipped stale cleanup",
             Err(error) => {
                 fields.push(("error", error.clone()));
                 "codex shared thread unsubscribe background failed"
@@ -730,6 +803,9 @@ struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,
     active_threads: HashMap<String, usize>,
+    thread_generations: HashMap<String, u64>,
+    next_thread_generation: u64,
+    thread_lifecycle_gate: Arc<Mutex<()>>,
     runtime_proxy_env: BTreeMap<String, String>,
 }
 
@@ -739,6 +815,9 @@ impl Default for CodexAppServerSharedState {
             process: None,
             next_id: 1,
             active_threads: HashMap::new(),
+            thread_generations: HashMap::new(),
+            next_thread_generation: 1,
+            thread_lifecycle_gate: Arc::new(Mutex::new(())),
             runtime_proxy_env: BTreeMap::new(),
         }
     }
@@ -1256,9 +1335,14 @@ async fn run_codex_app_server_turn_on_shared_client(
     .await;
 
     if let Some(thread_id) = subscribed_thread_id {
-        let thread_became_idle = client.mark_thread_idle(&thread_id).await;
-        if result.is_ok() && thread_became_idle {
-            client.unsubscribe_thread_in_background(thread_id);
+        if let Some(generation) = client.mark_thread_idle(&thread_id).await {
+            if result.is_ok() {
+                client.unsubscribe_thread_in_background(thread_id, generation);
+            } else {
+                client
+                    .clear_idle_thread_generation(&thread_id, generation)
+                    .await;
+            }
         }
     }
 

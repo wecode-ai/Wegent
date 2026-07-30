@@ -7,6 +7,34 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn queued_unsubscribe_is_skipped_after_thread_reactivation() {
+    let client = CodexAppServerClient::new("codex-lifecycle-generation-test");
+    let thread_id = format!("thread-reactivation-{}", std::process::id());
+
+    client.mark_thread_active(&thread_id).await;
+    let stale_generation = client
+        .mark_thread_idle(&thread_id)
+        .await
+        .expect("terminal turn should make the thread idle");
+    client.mark_thread_active(&thread_id).await;
+
+    let sent = client
+        .request_thread_unsubscribe_if_idle(&thread_id, stale_generation)
+        .await
+        .expect("stale cleanup should be skipped without contacting an app-server");
+
+    assert!(!sent);
+    let current_generation = client
+        .mark_thread_idle(&thread_id)
+        .await
+        .expect("reactivated turn should have its own idle generation");
+    assert_ne!(current_generation, stale_generation);
+    client
+        .clear_idle_thread_generation(&thread_id, current_generation)
+        .await;
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);
