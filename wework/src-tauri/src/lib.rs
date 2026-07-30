@@ -1,4 +1,6 @@
 mod appshots;
+#[cfg(desktop)]
+mod cloud_authorization_window;
 mod desktop_capture;
 mod embedded_browser;
 #[cfg(target_os = "macos")]
@@ -4519,6 +4521,8 @@ pub fn run() {
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
+            #[cfg(desktop)]
+            cloud_authorization_window::position_cloud_authorization_window,
             desktop_capture::capture_main_webview,
             desktop_capture::capture_popout_webview,
             acknowledge_frontend_resume_probe,
