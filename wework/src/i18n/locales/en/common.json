@@ -634,6 +634,8 @@
     "browser_invalid_url": "Enter a valid http or https URL",
     "browser_open_failed": "Unable to open the in-app browser",
     "browser_control_failed": "Browser action failed",
+    "browser_invalid_tls_title": "This connection has an invalid certificate",
+    "browser_invalid_tls_desc": "Wework continued to {{host}}, but the connection may be impersonated or intercepted. Do not enter sensitive information.",
     "browser_agent_ready": "AI browser control is ready",
     "browser_agent_running": "AI is {{action}}",
     "browser_agent_paused": "You are controlling the browser, so AI actions are paused",

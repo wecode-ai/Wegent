@@ -110,6 +110,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tokio",
  "wry",
  "zip 2.4.2",
 ]

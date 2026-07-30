@@ -29,6 +29,7 @@ import {
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
+  listenEmbeddedBrowserInvalidTlsCertificates,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -41,6 +42,7 @@ import {
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
+  type EmbeddedBrowserInvalidTlsCertificateEvent,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -132,6 +134,14 @@ function getFallbackFaviconUrl(url: string) {
     return new URL('/favicon.ico', url).toString()
   } catch {
     return null
+  }
+}
+
+function haveSameOrigin(leftUrl: string, rightUrl: string) {
+  try {
+    return new URL(leftUrl).origin === new URL(rightUrl).origin
+  } catch {
+    return false
   }
 }
 
@@ -728,6 +738,8 @@ export function WorkspaceBrowserPanel({
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
+  const [invalidTlsCertificate, setInvalidTlsCertificate] =
+    useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
   const internalDesktopPage = Boolean(
@@ -806,6 +818,27 @@ export function WorkspaceBrowserPanel({
       .catch(error => {
         console.error('Failed to listen for embedded browser agent state:', error)
       })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
+      if (!activeRef.current || certificate.nativeLabel !== nativeLabelRef.current) return
+      setInvalidTlsCertificate(certificate)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) {
+        nextUnlisten()
+        return
+      }
+      unlisten = nextUnlisten
+    })
     return () => {
       disposed = true
       unlisten?.()
@@ -1074,6 +1107,7 @@ export function WorkspaceBrowserPanel({
         return false
       }
       adoptNativeLabel(pageState.nativeLabel, label)
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
       if (
         nextUrl &&
@@ -1139,6 +1173,7 @@ export function WorkspaceBrowserPanel({
           return
         }
         adoptNativeLabel(pageState.nativeLabel, label)
+        setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
@@ -1181,6 +1216,7 @@ export function WorkspaceBrowserPanel({
         const pageState = await readEmbeddedBrowserPageState(label)
         if (disposed) return
         adoptNativeLabel(pageState.nativeLabel, label)
+        setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
         if (!pageState.url) return
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
@@ -1538,6 +1574,9 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
+      setInvalidTlsCertificate(certificate =>
+        certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
+      )
       pageStateRequestGenerationRef.current += 1
 
       if (annotationMode && cloudDesktopExtension.isInternalPageUrl(nextUrl)) {
@@ -1969,6 +2008,23 @@ export function WorkspaceBrowserPanel({
               )
             })
           )}
+        </div>
+      ) : null}
+      {invalidTlsCertificate ? (
+        <div
+          data-testid="workspace-browser-invalid-tls-warning"
+          role="status"
+          className="flex shrink-0 items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-text-primary"
+        >
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0">
+            <p className="font-medium">{t('workbench.browser_invalid_tls_title')}</p>
+            <p className="mt-0.5 text-xs text-text-secondary">
+              {t('workbench.browser_invalid_tls_desc', {
+                host: invalidTlsCertificate.host,
+              })}
+            </p>
+          </div>
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-background pl-1">

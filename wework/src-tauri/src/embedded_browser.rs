@@ -56,6 +56,7 @@ const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
+const EMBEDDED_BROWSER_PLACEHOLDER_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
@@ -143,6 +144,16 @@ pub struct EmbeddedBrowserPageState {
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EmbeddedBrowserInvalidTlsCertificate {
+    pub(crate) native_label: String,
+    pub(crate) url: String,
+    pub(crate) host: String,
+    pub(crate) port: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,11 +281,21 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
     match url.scheme() {
         "http" | "https" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn initial_browser_webview_url() -> Result<WebviewUrl, String> {
+    browser_url(EMBEDDED_BROWSER_PLACEHOLDER_URL).map(WebviewUrl::External)
+}
+
+fn should_record_loaded_url(url: &str) -> bool {
+    url != EMBEDDED_BROWSER_PLACEHOLDER_URL
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -593,6 +614,12 @@ fn page_state_for_label(
 ) -> Result<EmbeddedBrowserPageState, String> {
     let entry = get_entry(state, label)?;
     Ok(EmbeddedBrowserPageState {
+        #[cfg(target_os = "macos")]
+        invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+            &entry.native_label,
+        ),
+        #[cfg(not(target_os = "macos"))]
+        invalid_tls_certificate: None,
         native_label: entry.native_label,
         title: entry.title,
         url: entry.url,
@@ -1138,6 +1165,12 @@ pub async fn embedded_browser_open(
             }),
         );
         return Ok(EmbeddedBrowserPageState {
+            #[cfg(target_os = "macos")]
+            invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+                &entry.native_label,
+            ),
+            #[cfg(not(target_os = "macos"))]
+            invalid_tls_certificate: None,
             native_label: entry.native_label,
             title: entry.title,
             url: Some(url),
@@ -1192,94 +1225,102 @@ pub async fn embedded_browser_open(
         }),
     );
 
-    let builder =
-        tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
-            .user_agent(EMBEDDED_BROWSER_USER_AGENT)
-            .data_directory(data_directory)
-            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
-            .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
-            .devtools(true)
-            .accept_first_mouse(true)
-            .on_navigation({
-                let state = state.inner().clone();
-                move |url| {
-                    let owner = current_logical_owner_or(
-                        &state,
-                        &native_label_for_navigation,
-                        &label_for_navigation,
-                    );
-                    log_embedded_browser_diagnostic(
-                        &state,
-                        &owner,
-                        "navigation_requested",
-                        json!({
-                            "requestedUrl": url.to_string(),
-                        }),
-                    );
-                    true
-                }
-            })
-            .on_page_load(move |webview, payload| {
-                let event = format!("{:?}", payload.event());
-                let current_url = payload.url().to_string();
-                let webview_url = webview.url().ok().map(|url| url.to_string());
+    #[cfg(target_os = "macos")]
+    let initial_url = initial_browser_webview_url()?;
+    #[cfg(not(target_os = "macos"))]
+    let initial_url = browser_webview_url(parsed_url.clone());
+    let builder = tauri::webview::WebviewBuilder::new(&native_label, initial_url)
+        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+        .data_directory(data_directory)
+        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+        .initialization_script(EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT)
+        .devtools(true)
+        .accept_first_mouse(true)
+        .on_navigation({
+            let state = state.inner().clone();
+            move |url| {
                 let owner = current_logical_owner_or(
-                    &load_state_handle,
-                    &native_label_for_load,
-                    &label_for_load,
+                    &state,
+                    &native_label_for_navigation,
+                    &label_for_navigation,
                 );
                 log_embedded_browser_diagnostic(
-                    &load_state_handle,
+                    &state,
                     &owner,
-                    "page_load_event",
+                    "navigation_requested",
                     json!({
-                        "event": event,
-                        "payloadUrl": current_url,
-                        "webviewUrl": webview_url.clone(),
+                        "requestedUrl": url.to_string(),
                     }),
                 );
-                if matches!(payload.event(), PageLoadEvent::Finished) {
-                    let loaded_url = webview_url.clone().or(Some(current_url.clone()));
+                true
+            }
+        })
+        .on_page_load(move |webview, payload| {
+            let event = format!("{:?}", payload.event());
+            let current_url = payload.url().to_string();
+            let webview_url = webview.url().ok().map(|url| url.to_string());
+            let owner = current_logical_owner_or(
+                &load_state_handle,
+                &native_label_for_load,
+                &label_for_load,
+            );
+            log_embedded_browser_diagnostic(
+                &load_state_handle,
+                &owner,
+                "page_load_event",
+                json!({
+                    "event": event,
+                    "payloadUrl": current_url,
+                    "webviewUrl": webview_url.clone(),
+                }),
+            );
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                #[cfg(target_os = "macos")]
+                crate::embedded_browser_tls::clear_invalid_tls_certificate_if_origin_changed(
+                    &native_label_for_load,
+                    &current_url,
+                );
+                let loaded_url = webview_url.clone().or(Some(current_url.clone()));
+                if let Some(loaded_url) = loaded_url.filter(|url| should_record_loaded_url(url)) {
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
-                        |entry| entry.url = loaded_url,
-                    );
-                    log_embedded_browser_page_diagnostics(
-                        load_state_handle.clone(),
-                        owner,
-                        "page_load_finished",
+                        |entry| entry.url = Some(loaded_url),
                     );
                 }
-            })
-            .on_document_title_changed(move |_webview, title| {
-                let _ = update_entry_for_native_label(
-                    &title_state_handle,
-                    &native_label_for_title,
-                    |entry| entry.title = Some(title),
+                log_embedded_browser_page_diagnostics(
+                    load_state_handle.clone(),
+                    owner,
+                    "page_load_finished",
                 );
-            })
-            .on_new_window(move |url, _features| {
-                let parent_label = current_logical_owner_or(
-                    app_for_popup.state::<EmbeddedBrowserState>().inner(),
-                    &native_label_for_popup,
-                    &label_for_popup,
-                );
-                emit_popup_observed(
-                    &app_for_popup,
-                    &parent_label,
-                    &native_label_for_popup,
-                    url.clone(),
-                );
-                let (_kind, strategy, _warning) = classify_popup_url(&url);
-                if strategy == "user_confirmation_required"
-                    || strategy == "controlled_popup_required"
-                {
-                    NewWindowResponse::Deny
-                } else {
-                    NewWindowResponse::Allow
-                }
-            });
+            }
+        })
+        .on_document_title_changed(move |_webview, title| {
+            let _ = update_entry_for_native_label(
+                &title_state_handle,
+                &native_label_for_title,
+                |entry| entry.title = Some(title),
+            );
+        })
+        .on_new_window(move |url, _features| {
+            let parent_label = current_logical_owner_or(
+                app_for_popup.state::<EmbeddedBrowserState>().inner(),
+                &native_label_for_popup,
+                &label_for_popup,
+            );
+            emit_popup_observed(
+                &app_for_popup,
+                &parent_label,
+                &native_label_for_popup,
+                url.clone(),
+            );
+            let (_kind, strategy, _warning) = classify_popup_url(&url);
+            if strategy == "user_confirmation_required" || strategy == "controlled_popup_required" {
+                NewWindowResponse::Deny
+            } else {
+                NewWindowResponse::Allow
+            }
+        });
 
     #[cfg(desktop)]
     let builder = {
@@ -1358,6 +1399,34 @@ pub async fn embedded_browser_open(
         }),
     );
 
+    #[cfg(target_os = "macos")]
+    {
+        let tls_result = crate::embedded_browser_tls::register_invalid_tls_handler(
+            &webview,
+            app.clone(),
+            native_label.clone(),
+        )
+        .await
+        .and_then(|_| {
+            webview
+                .navigate(parsed_url)
+                .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
+        });
+        if let Err(error) = tls_result {
+            if let Ok(mut webviews) = state.webviews.lock() {
+                remove_logical_entry_if_native_matches(
+                    &mut webviews,
+                    &label,
+                    &native_label,
+                    |current| current.native_label.as_str(),
+                );
+            }
+            crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+            let _ = webview.close();
+            return Err(error);
+        }
+    }
+
     if let Err(error) = webview
         .show()
         .map_err(|error| format!("Failed to show embedded browser: {error}"))
@@ -1379,6 +1448,8 @@ pub async fn embedded_browser_open(
                 |current| current.native_label.as_str(),
             );
         }
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
         let _ = webview.close();
         return Err(error);
     }
@@ -1408,6 +1479,8 @@ pub async fn embedded_browser_open(
                 |current| current.native_label.as_str(),
             );
         }
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
         let _ = webview.close();
         return Err(error);
     }
@@ -1421,6 +1494,12 @@ pub async fn embedded_browser_open(
     );
 
     Ok(EmbeddedBrowserPageState {
+        #[cfg(target_os = "macos")]
+        invalid_tls_certificate: crate::embedded_browser_tls::invalid_tls_certificate(
+            &native_label,
+        ),
+        #[cfg(not(target_os = "macos"))]
+        invalid_tls_certificate: None,
         native_label,
         title: None,
         url: Some(url),
@@ -1646,8 +1725,10 @@ pub async fn embedded_browser_close(
         webviews.get(&label).cloned()
     };
     if let Some(entry) = entry {
-        entry
-            .ready_webview()?
+        let webview = entry.ready_webview()?;
+        #[cfg(target_os = "macos")]
+        crate::embedded_browser_tls::unregister_invalid_tls_handler(&webview);
+        webview
             .close()
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;
         let mut webviews = state

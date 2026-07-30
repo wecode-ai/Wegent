@@ -14,10 +14,10 @@ use super::{
     merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
     register_agent_approval, relabel_logical_entry, remove_logical_entry_if_native_matches,
     script_browser_action, script_resolve_inspect_target, script_semantic_inspect,
-    update_logical_entry_if_native_matches, wait_for_browser_ready, EmbeddedBrowserBridgeRequest,
-    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    should_record_loaded_url, update_logical_entry_if_native_matches, wait_for_browser_ready,
+    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use serde_json::{json, Value};
 use tauri::WebviewUrl;
@@ -38,6 +38,12 @@ fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
         browser_webview_url(app_url),
         WebviewUrl::CustomProtocol(_)
     ));
+}
+
+#[test]
+fn placeholder_load_does_not_replace_the_requested_url() {
+    assert!(!should_record_loaded_url("about:blank"));
+    assert!(should_record_loaded_url("https://example.com/"));
 }
 
 #[test]
@@ -171,6 +177,7 @@ fn native_webview_labels_are_unique_across_creation_sequences() {
 #[test]
 fn page_state_serializes_native_identity() {
     let state = EmbeddedBrowserPageState {
+        invalid_tls_certificate: None,
         native_label: "workspace-browser-native-41".to_string(),
         title: Some("Example".to_string()),
         url: Some("https://example.com/".to_string()),

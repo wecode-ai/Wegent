@@ -3024,6 +3024,18 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     !draftSnapshot.testIds.includes('automation-workspace-input'),
     'Automation creation should derive its working directory instead of exposing a path input'
   )
+  await control.command('click', '[data-testid="automation-source-select"]')
+  await assert.rejects(
+    control.command('click', '[data-testid="automation-source-select-option-cloud"]'),
+    /disabled/,
+    'The cloud automation source remained selectable'
+  )
+  const sourceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    sourceSnapshot.testIds.includes('automation-source-select-menu'),
+    'The automation source menu closed after clicking the disabled cloud option'
+  )
+  await control.command('click', '[data-testid="automation-source-select"]')
   await control.command('click', '[data-testid="automation-conversation-mode"]')
   await control.command(
     'click',
@@ -10048,9 +10060,11 @@ async function main() {
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: 'workspace',
-    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="local-project-create-name-input"]'),
+      'workspace',
+      'The project name did not default to the first source folder name'
+    )
     await control.command('click', '[data-testid="add-local-project-create-folders"]')
     await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -10172,9 +10186,11 @@ async function main() {
     await control.command('waitFor', '[data-testid="local-project-create-dialog"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    await control.command('fill', '[data-testid="local-project-create-name-input"]', {
-      value: 'workspace',
-    })
+    assert.equal(
+      await control.command('getValue', '[data-testid="local-project-create-name-input"]'),
+      'workspace',
+      'The reopened project name did not default to the first source folder name'
+    )
     await control.command('click', '[data-testid="add-local-project-create-folders"]')
     await control.command('waitFor', '[data-testid="local-project-create-folder-picker"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

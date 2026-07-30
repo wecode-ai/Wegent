@@ -36,6 +36,7 @@ use crate::{
     claude_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
+    process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
@@ -816,9 +817,7 @@ enum StreamingStdoutOutcome {
 }
 
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args).envs(&spec.env);
-    command.kill_on_drop(true);
+    let mut command = command_from_spec(&spec);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -865,14 +864,11 @@ async fn run_streaming_command_output<S>(
 where
     S: EventSink,
 {
-    let mut command = Command::new(&spec.program);
+    let mut command = command_from_spec(&spec);
     command
-        .args(&spec.args)
-        .envs(&spec.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -922,6 +918,21 @@ where
     }
     log_executor_event("process finished", &fields);
     outcome
+}
+
+fn command_from_spec(spec: &CommandSpec) -> Command {
+    let extra_env = spec
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .env_clear()
+        .envs(process_environment::process_env(&extra_env))
+        .kill_on_drop(true);
+    command
 }
 
 async fn run_prepared_streaming_command<S>(

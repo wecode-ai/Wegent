@@ -11,6 +11,8 @@ let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
+export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
+  'wework:embedded-browser-invalid-tls-certificate'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
@@ -31,6 +33,7 @@ export interface EmbeddedBrowserPageState {
   nativeLabel: string
   title: string | null
   url: string | null
+  invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
 }
 
 export interface EmbeddedBrowserOpenRequest {
@@ -67,6 +70,23 @@ export interface EmbeddedBrowserAgentApproval {
   reason: string
   target: unknown | null
   expiresAtUnixMs: number
+}
+
+export interface EmbeddedBrowserInvalidTlsCertificateEvent {
+  nativeLabel: string
+  url: string
+  host: string
+  port: number
+}
+
+export function listenEmbeddedBrowserInvalidTlsCertificates(
+  handler: (event: EmbeddedBrowserInvalidTlsCertificateEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserInvalidTlsCertificateEvent>(
+    EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT,
+    event => handler(event.payload)
+  )
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
