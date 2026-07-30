@@ -1035,7 +1035,7 @@ button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
 .plugin-installed-icons-scroller {
   overflow-x: auto;
   overflow-y: visible;
-  min-height: 48px;
+  min-height: 54px;
   padding-bottom: 28px;
   margin-bottom: -20px;
   overscroll-behavior-x: contain;
@@ -1043,7 +1043,7 @@ button.plugin-market-filter[aria-selected='true']:hover:not(:disabled) {
 
 .plugin-installed-icons-track {
   display: flex;
-  min-height: 48px;
+  min-height: 54px;
   align-items: flex-start;
   gap: 7px;
   width: max-content;
@@ -1082,8 +1082,8 @@ button.plugin-installed-strip-item {
   -webkit-appearance: none;
   position: relative;
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   place-items: center;
   border: 0;
@@ -1132,26 +1132,35 @@ button.plugin-installed-strip-item:focus-visible::after {
   transform: translateX(-50%) translateY(0);
 }
 
+.plugin-market-card-logo,
 .plugin-installed-strip-logo {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   overflow: hidden;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
+  border: 1px solid rgb(232 232 229);
+  border-radius: 10px;
+  background-color: rgb(var(--color-bg-base));
   padding: 5px;
+}
+
+.plugin-installed-strip-logo {
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.05);
   pointer-events: none;
 }
 
+.plugin-market-card-logo img,
 .plugin-installed-strip-logo img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+.plugin-installed-strip-logo img {
   pointer-events: none;
 }
 
@@ -1396,7 +1405,7 @@ button.plugin-route-back-button:hover {
 }
 
 .plugin-market-catalog-after-strip .plugin-market-section-head {
-  margin-top: 29px;
+  margin-top: 0;
 }
 
 .plugin-market-section-head h2 {
@@ -1469,26 +1478,6 @@ button.plugin-market-card-main {
 
 button.plugin-market-card-main:active {
   background-color: rgb(240 240 237);
-}
-
-.plugin-market-card-logo {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  overflow: hidden;
-  border: 1px solid rgb(232 232 229);
-  border-radius: 10px;
-  background-color: rgb(var(--color-bg-base));
-  padding: 5px;
-}
-
-.plugin-market-card-logo img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .plugin-market-card-copy {
