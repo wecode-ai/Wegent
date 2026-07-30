@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER } from './localSession'
-import { createLocalAppServices } from './localServices'
+import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
 import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
@@ -1203,6 +1203,154 @@ describe('createLocalAppServices', () => {
         responses_url: 'http://localhost:9876/api/respond',
         codex_responses_compat_proxy: true,
       })
+    )
+  })
+
+  test('sends configured model settings to a cloud device executor', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-ollama',
+      displayName: 'Cloud Ollama',
+      modelId: 'qwen3-coder',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      return { accepted: true }
+    })
+    const requestModelCatalogSync = vi.fn(async ({ sync }: { sync: () => Promise<void> }) => {
+      await sync()
+      return true
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+      resolveDeviceName: () => 'Cloud Executor',
+    })
+
+    await runtimeApi.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'cloud-task',
+      runtime: 'codex',
+      message: 'hello from cloud',
+      modelId: 'local-model:cloud-ollama',
+    })
+    await runtimeApi.sendRuntimeMessage({
+      address: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        taskId: 'cloud-task',
+      },
+      message: 'continue from cloud',
+      modelId: 'local-model:cloud-ollama',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    const expectedModelConfig = expect.objectContaining({
+      model_id: 'qwen3-coder',
+      base_url: 'http://localhost:11434/v1',
+      responses_url: 'http://localhost:11434/v1/responses',
+      api_key: 'cloud-device-key',
+      codex_responses_compat_proxy: true,
+    })
+
+    expect(createPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(sendPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(requestModelCatalogSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'cloud-device',
+        deviceName: 'Cloud Executor',
+        modelName: 'Cloud Ollama',
+      })
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.catalog.custom.write',
+      {
+        models: [
+          expect.objectContaining({
+            slug: 'wework-custom-cloud-ollama',
+          }),
+        ],
+      },
+      'cloud-device'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.restart',
+      { ifIdle: true },
+      'cloud-device'
+    )
+    expect(request).toHaveBeenCalledWith('runtime.tasks.create', expect.any(Object), 'cloud-device')
+    expect(request).toHaveBeenCalledWith('runtime.tasks.send', expect.any(Object), 'cloud-device')
+    expect(requestModelCatalogSync).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not send when cloud model catalog synchronization is cancelled', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-cancelled',
+      displayName: 'Cloud Cancelled',
+      modelId: 'cancelled-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn()
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: vi.fn().mockResolvedValue(false),
+    })
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-cancelled',
+      })
+    ).resolves.toBe(false)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  test('reports a busy cloud Codex without forcing a restart', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-busy',
+      displayName: 'Cloud Busy',
+      modelId: 'busy-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') {
+        return { restarted: false, requiresConfirmation: true }
+      }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-busy',
+      })
+    ).rejects.toThrow('正在运行')
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.restart',
+      { ifIdle: true },
+      'cloud-device'
     )
   })
 

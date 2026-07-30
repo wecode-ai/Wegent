@@ -244,6 +244,7 @@ function createLocalImageAttachment(overrides: Partial<Attachment> = {}): Attach
 
 function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
   return {
+    prepareRuntimeModel: vi.fn().mockResolvedValue(true),
     listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
     upsertDeviceWorkspace: vi.fn(),
     prepareDeviceWorkspace: vi.fn(),
@@ -3144,7 +3145,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('does not restore a local model for a cloud runtime task', async () => {
+  test('restores a configured model for a cloud runtime task', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.5',
@@ -3219,8 +3220,10 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(await screen.findByText('open runtime a'))
 
-    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
-    expect(screen.getByTestId('selected-mode')).toHaveTextContent('default')
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+    )
+    expect(screen.getByTestId('selected-mode')).toHaveTextContent('plan')
     await userEvent.click(screen.getByText('select mimo'))
     expect(updateCurrentUser).not.toHaveBeenCalled()
   })

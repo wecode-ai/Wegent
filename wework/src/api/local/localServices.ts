@@ -1,5 +1,6 @@
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
+import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
@@ -21,6 +22,7 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeLocalProjectUpsertResponse,
   RuntimeGoalClearRequest,
@@ -400,6 +402,14 @@ interface RuntimeWorkIpcOptions {
   cloudModelGateway?: CloudModelGateway
   user?: User
   transportLabel?: 'Local' | 'Cloud'
+  syncConfiguredModelCatalog?: boolean
+  requestModelCatalogSync?: (request: {
+    deviceId: string
+    deviceName: string
+    modelName: string
+    sync: () => Promise<void>
+  }) => Promise<boolean>
+  resolveDeviceName?: (deviceId: string) => string | undefined
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -1830,6 +1840,8 @@ export function createRuntimeWorkApiFromIpc(
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
+  let syncedModelCatalogKey = ''
+  let modelCatalogSyncInFlight: Promise<boolean> | null = null
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1874,7 +1886,73 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
+  const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    if (!options.syncConfiguredModelCatalog) return true
+    const selectedModel = findLocalModelConfigByModelName(data.modelId)
+    if (!selectedModel?.catalogEntry) return true
+
+    const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+    const catalogKey = catalogModels
+      .map(model => `${model.id}:${model.updatedAt}`)
+      .sort()
+      .join('|')
+    if (catalogKey === syncedModelCatalogKey) return true
+    if (modelCatalogSyncInFlight) return modelCatalogSyncInFlight
+
+    const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+    const sync = async () => {
+      await request(
+        'runtime.codex.catalog.custom.write',
+        {
+          models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
+        },
+        deviceId
+      )
+      let restart: {
+        restarted?: boolean
+        requiresConfirmation?: boolean
+      }
+      try {
+        restart = await request('runtime.codex.app_server.restart', { ifIdle: true }, deviceId)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('codex_catalog_not_loaded')) {
+          throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'), {
+            cause: error,
+          })
+        }
+        throw error
+      }
+      if (!restart.restarted) {
+        throw new Error(
+          restart.requiresConfirmation
+            ? i18n.t('workbench.cloud_model_catalog_sync_busy')
+            : i18n.t('workbench.cloud_model_catalog_sync_failed')
+        )
+      }
+    }
+
+    const confirmation = options.requestModelCatalogSync
+    if (!confirmation) {
+      throw new Error(i18n.t('workbench.cloud_model_catalog_sync_failed'))
+    }
+    modelCatalogSyncInFlight = confirmation({
+      deviceId,
+      deviceName: options.resolveDeviceName?.(deviceId) ?? deviceId,
+      modelName: selectedModel.displayName,
+      sync,
+    }).then(confirmed => {
+      if (confirmed) syncedModelCatalogKey = catalogKey
+      return confirmed
+    })
+    try {
+      return await modelCatalogSyncInFlight
+    } finally {
+      modelCatalogSyncInFlight = null
+    }
+  }
+
   return {
+    prepareRuntimeModel,
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -1929,6 +2007,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw new Error('Model configuration sync was cancelled')
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -1952,6 +2033,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw new Error('Model configuration sync was cancelled')
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -2010,6 +2094,9 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeInterruptAndSendRequest
     ): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw new Error('Model configuration sync was cancelled')
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -2176,6 +2263,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw new Error('Model configuration sync was cancelled')
+      }
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,
