@@ -8721,7 +8721,7 @@ class DesktopE2EServer {
         {
           type: 'message_delta',
           delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: 1 },
+          usage: { output_tokens: text ? 1 : 0 },
         },
       ],
       ['message_stop', { type: 'message_stop' }],

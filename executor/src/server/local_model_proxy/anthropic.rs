@@ -691,6 +691,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completes_zero_token_anthropic_response_without_output() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-k2.5","usage":{"input_tokens":1}}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}),
+            json!({"type":"message_stop"}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+    }
+
+    #[tokio::test]
     async fn restores_namespace_on_anthropic_tool_calls() {
         let events = [
             json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
