@@ -2466,6 +2466,7 @@ while IFS= read -r line; do
       progress_id="progress-$turn_count"
       final_id="final-$turn_count"
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"Inspecting "}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
@@ -2714,6 +2715,7 @@ while IFS= read -r line; do
         printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"synthetic turn failure"}}}}'
       else
         printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-recovered","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-failure-2","turn":{{"id":"turn-recovered","status":"inProgress"}}}}}}'
         printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-failure-2","turnId":"turn-recovered","delta":"recovered","phase":"finalAnswer"}}}}'
         printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-failure-2","turn":{{"id":"turn-recovered","status":"completed"}}}}}}'
       fi
@@ -2922,6 +2924,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       ;;
     *'"method":"turn/steer"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
