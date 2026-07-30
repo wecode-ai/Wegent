@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import sys
+from datetime import datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace
 
 from kubernetes.client.rest import ApiException
@@ -337,3 +338,130 @@ def test_create_pod_from_warmpool_deletes_stale_claim_without_pod(mocker):
     assert result == {"status": "success"}
     warm_pool_client.delete_sandbox_claim.assert_called_once_with("executor-1")
     warm_pool_client.create_sandbox_claim.assert_called_once()
+
+
+def _conflict_error():
+    return ApiException(status=409, reason="Conflict")
+
+
+def test_submit_kubernetes_pod_adopts_running_pod_on_conflict(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    core_v1.create_namespaced_pod.side_effect = _conflict_error()
+    core_v1.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(
+            deletion_timestamp=None,
+            creation_timestamp=datetime.now(timezone.utc),
+        ),
+        status=SimpleNamespace(phase="Running"),
+    )
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    delete = mocker.patch.object(executor, "delete_executor")
+
+    result = executor._submit_kubernetes_pod(
+        pod=object(), namespace=K8S_NAMESPACE, pod_name="executor-1", task_id="123"
+    )
+
+    assert result == {"status": "success", "pod_name": "executor-1"}
+    core_v1.read_namespaced_pod.assert_called_once()
+    delete.assert_not_called()
+    core_v1.create_namespaced_pod.assert_called_once()
+
+
+def test_submit_kubernetes_pod_recreates_old_pod_on_conflict(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    core_v1.create_namespaced_pod.side_effect = [
+        _conflict_error(),
+        SimpleNamespace(metadata=SimpleNamespace(name="executor-1")),
+    ]
+    core_v1.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(
+            deletion_timestamp=None,
+            creation_timestamp=datetime.now(timezone.utc) - timedelta(hours=1),
+        ),
+        status=SimpleNamespace(phase="Running"),
+    )
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    delete = mocker.patch.object(executor, "delete_executor")
+    mocker.patch.object(executor, "_wait_pod_deleted", return_value=True)
+
+    result = executor._submit_kubernetes_pod(
+        pod=object(), namespace=K8S_NAMESPACE, pod_name="executor-1", task_id="123"
+    )
+
+    assert result == {"status": "success", "pod_name": "executor-1"}
+    delete.assert_called_once_with("executor-1", K8S_NAMESPACE)
+    assert core_v1.create_namespaced_pod.call_count == 2
+
+
+def test_submit_kubernetes_pod_recreates_stale_pod_on_conflict(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    core_v1.create_namespaced_pod.side_effect = [
+        _conflict_error(),
+        SimpleNamespace(metadata=SimpleNamespace(name="executor-1")),
+    ]
+    core_v1.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(
+            deletion_timestamp=None,
+            creation_timestamp=datetime.now(timezone.utc),
+        ),
+        status=SimpleNamespace(phase="Succeeded"),
+    )
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    delete = mocker.patch.object(executor, "delete_executor")
+    mocker.patch.object(executor, "_wait_pod_deleted", return_value=True)
+
+    result = executor._submit_kubernetes_pod(
+        pod=object(), namespace=K8S_NAMESPACE, pod_name="executor-1", task_id="123"
+    )
+
+    assert result == {"status": "success", "pod_name": "executor-1"}
+    delete.assert_called_once_with("executor-1", K8S_NAMESPACE)
+    assert core_v1.create_namespaced_pod.call_count == 2
+
+
+def test_submit_kubernetes_pod_fails_when_stale_pod_stuck(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    core_v1.create_namespaced_pod.side_effect = _conflict_error()
+    core_v1.read_namespaced_pod.return_value = SimpleNamespace(
+        metadata=SimpleNamespace(
+            deletion_timestamp="2026-07-13T00:00:00Z",
+            creation_timestamp=datetime.now(timezone.utc),
+        ),
+        status=SimpleNamespace(phase="Running"),
+    )
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    mocker.patch.object(executor, "delete_executor")
+    mocker.patch.object(executor, "_wait_pod_deleted", return_value=False)
+
+    result = executor._submit_kubernetes_pod(
+        pod=object(), namespace=K8S_NAMESPACE, pod_name="executor-1", task_id="123"
+    )
+
+    assert result["status"] == "failed"
+    assert core_v1.create_namespaced_pod.call_count == 1
+
+
+def test_submit_executor_cleans_up_pod_on_prepare_failure(mocker):
+    executor = object.__new__(K8sExecutor)
+    prepare_task = {
+        "task_id": 123,
+        "subtask_id": 456,
+        "user": {"name": "test_user"},
+        "type": "online",
+        "prepare_only": True,
+    }
+
+    mocker.patch.object(executor, "get_user_pods", return_value=0)
+    mocker.patch.object(executor, "get_user_max_tasks", return_value=5)
+    mocker.patch.object(executor, "create_instance", side_effect=RuntimeError("boom"))
+    cleanup = mocker.patch.object(executor, "delete_executor")
+    mocker.patch.object(executor, "_send_failure_callback")
+
+    result = executor.submit_executor(prepare_task)
+
+    assert result["status"] == "failed"
+    cleanup.assert_called_once_with(result["executor_name"])
