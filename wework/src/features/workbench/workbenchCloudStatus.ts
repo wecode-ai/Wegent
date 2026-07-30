@@ -642,6 +642,7 @@ function mergeRuntimeProjects(
 ): RuntimeProjectWork[] {
   const projects = new Map<string, RuntimeProjectWork>()
   const remoteProjectAliases = new Map<string, string>()
+  const workspaceProjectAliases = new Map<string, string>()
 
   const upsertProject = (project: RuntimeProjectWork) => {
     const normalizedProject: RuntimeProjectWork = {
@@ -649,19 +650,24 @@ function mergeRuntimeProjects(
       deviceWorkspaces: mergeRuntimeWorkspaces(
         [],
         project.deviceWorkspaces,
-        taskOwners,
+        new Map(),
         canonicalizer
       ),
     }
     normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
     const defaultKey = runtimeProjectKey(normalizedProject)
+    const workspaceIdentity = normalizedProject.deviceWorkspaces
+      .map(runtimeWorkspaceRouteIdentity)
+      .find(identity => workspaceProjectAliases.has(identity))
     const remoteIdentity = normalizedProject.deviceWorkspaces
       .map(runtimeRemoteWorkspaceIdentity)
       .find(identity => remoteProjectAliases.has(identity))
-    const key = remoteIdentity
-      ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
-      : defaultKey
+    const key = workspaceIdentity
+      ? (workspaceProjectAliases.get(workspaceIdentity) ?? defaultKey)
+      : remoteIdentity
+        ? (remoteProjectAliases.get(remoteIdentity) ?? defaultKey)
+        : defaultKey
     if (isRuntimeRemoteProjectDescriptor(normalizedProject)) {
       normalizedProject.deviceWorkspaces.forEach(workspace => {
         remoteProjectAliases.set(runtimeRemoteWorkspaceIdentity(workspace), key)
@@ -669,7 +675,21 @@ function mergeRuntimeProjects(
     }
     const existing = projects.get(key)
     if (!existing) {
-      projects.set(key, normalizedProject)
+      const deviceWorkspaces = mergeRuntimeWorkspaces(
+        [],
+        normalizedProject.deviceWorkspaces,
+        taskOwners,
+        canonicalizer
+      )
+      const registeredProject = {
+        ...normalizedProject,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      }
+      projects.set(key, registeredProject)
+      deviceWorkspaces.forEach(workspace => {
+        workspaceProjectAliases.set(runtimeWorkspaceRouteIdentity(workspace), key)
+      })
       return
     }
 
@@ -708,12 +728,16 @@ function mergeRuntimeProjects(
             ...normalizedProject.project,
             ...existing.project,
           }
-    projects.set(key, {
+    const mergedProject = {
       ...existing,
       ...normalizedProject,
       project: projectRef,
       deviceWorkspaces,
       totalTasks: countWorkspaceTasks(deviceWorkspaces),
+    }
+    projects.set(key, mergedProject)
+    deviceWorkspaces.forEach(workspace => {
+      workspaceProjectAliases.set(runtimeWorkspaceRouteIdentity(workspace), key)
     })
   }
 
@@ -732,6 +756,16 @@ function runtimeRemoteWorkspaceIdentity(workspace: RuntimeDeviceWorkspace): stri
   return `${workspace.remoteHostId ?? workspace.deviceId}\0${normalizedPath}`
 }
 
+function runtimeWorkspaceRouteIdentity(workspace: RuntimeDeviceWorkspace): string {
+  const normalizedPath = workspace.workspacePath.trim().replace(/\/+$/u, '') || '/'
+  return [
+    workspace.deviceId,
+    normalizedPath,
+    workspace.workspaceKind ?? '',
+    workspace.worktreeId ?? '',
+  ].join('\0')
+}
+
 function mergeRuntimeWorkspaces(
   primaryWorkspaces: RuntimeDeviceWorkspace[],
   secondaryWorkspaces: RuntimeDeviceWorkspace[],
@@ -742,10 +776,12 @@ function mergeRuntimeWorkspaces(
     string,
     { workspace: RuntimeDeviceWorkspace; inputTaskCount: number }
   >()
+  const workspaceRouteAliases = new Map<string, string>()
 
   const upsertWorkspace = (workspace: RuntimeDeviceWorkspace) => {
     const canonicalWorkspace = canonicalizeRuntimeWorkspace(workspace, canonicalizer)
-    const key = runtimeWorkspaceKey(canonicalWorkspace)
+    const routeIdentity = runtimeWorkspaceRouteIdentity(canonicalWorkspace)
+    const key = workspaceRouteAliases.get(routeIdentity) ?? runtimeWorkspaceKey(canonicalWorkspace)
     const existingEntry = workspaces.get(key)
     const existing = existingEntry?.workspace
     const tasks = mergeRuntimeTasks(
@@ -768,6 +804,7 @@ function mergeRuntimeWorkspaces(
       },
       inputTaskCount: (existingEntry?.inputTaskCount ?? 0) + canonicalWorkspace.tasks.length,
     })
+    workspaceRouteAliases.set(routeIdentity, key)
   }
 
   primaryWorkspaces.forEach(upsertWorkspace)

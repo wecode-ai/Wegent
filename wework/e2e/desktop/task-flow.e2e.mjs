@@ -5760,6 +5760,42 @@ class RealCloudEnvironment {
     throw new Error('The real cloud backend still returned the removed project')
   }
 
+  async aliasCloudDeviceToCurrentApp() {
+    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const localCandidates = (devices.items ?? []).filter(
+      device => device.device_id !== CLOUD_DEVICE_ID && device.status === 'online'
+    )
+    const localDevice =
+      localCandidates.find(device => device.device_type === 'app') ?? localCandidates[0]
+    assert.ok(localDevice?.device_id, 'The connected local app device was not registered')
+    assert.match(
+      localDevice.device_id,
+      /^[A-Za-z0-9._-]+$/,
+      'The connected local app device ID is not safe for the SQLite fixture'
+    )
+
+    await runChecked('sqlite3', [
+      this.databasePath,
+      [
+        'UPDATE kinds',
+        `SET json = json_set(json, '$.spec.appDeviceId', '${localDevice.device_id}')`,
+        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
+      ].join(' '),
+    ])
+
+    const updated = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const cloudDevice = updated.items?.find(device => device.device_id === CLOUD_DEVICE_ID)
+    assert.equal(
+      cloudDevice?.app_device_id,
+      localDevice.device_id,
+      'The cloud route was not associated with the connected local app device'
+    )
+  }
+
   async cancelRunningTasks() {
     if (!this.backendUrl || !this.authToken) return
     const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
@@ -9057,7 +9093,7 @@ async function verifyConnectedModelsOnLocalExecution({
   )
 }
 
-async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) {
+async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -9345,6 +9381,51 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The removed cloud project remained visible in the workbench'
   )
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
+
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: CLOUD_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'cloud-executor-home'),
+    'The duplicate regression remote picker did not load the cloud executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'The duplicate regression cloud project was not created'
+  )
+
+  await cloudEnvironment.aliasCloudDeviceToCurrentApp()
+  await createSingleRootLocalProject(control, workspacePath, 'workspace')
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'Creating a local project while cloud work was connected exposed duplicate projects',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'cloud-08-local-project-deduplicated.png')
+
+  await restartDesktopApp()
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {
@@ -9807,7 +9888,7 @@ async function main() {
         workspacePath,
       })
       phase = 'cloud-project-flow'
-      await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
+      await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath)
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
