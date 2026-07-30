@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::runtime_capabilities,
+    agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model,
     logging::{log_executor_event, task_fields},
@@ -267,6 +267,47 @@ impl CodexAppServerClient {
         .await
     }
 
+    pub async fn configure_runtime_proxy(&self, proxy_url: Option<&str>) -> Result<bool, String> {
+        self.configure_runtime_proxy_with_active_turns(proxy_url, false)
+            .await
+    }
+
+    pub async fn configure_runtime_proxy_for_restart(
+        &self,
+        proxy_url: Option<&str>,
+    ) -> Result<bool, String> {
+        self.configure_runtime_proxy_with_active_turns(proxy_url, true)
+            .await
+    }
+
+    async fn configure_runtime_proxy_with_active_turns(
+        &self,
+        proxy_url: Option<&str>,
+        allow_active_turns: bool,
+    ) -> Result<bool, String> {
+        let runtime_proxy_env = proxy_environment(proxy_url);
+        let process = {
+            let mut state = self.state.lock().await;
+            if state.runtime_proxy_env == runtime_proxy_env {
+                return Ok(false);
+            }
+            if !allow_active_turns && !state.active_threads.is_empty() {
+                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+            }
+            state.runtime_proxy_env = runtime_proxy_env;
+            state.process.take()
+        };
+        if let Some(process) = process {
+            fail_all_pending(
+                &process.pending,
+                "codex app-server was restarted after its runtime proxy changed".to_owned(),
+            )
+            .await;
+            drop(process);
+        }
+        Ok(true)
+    }
+
     async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
@@ -297,7 +338,34 @@ impl CodexAppServerClient {
     }
 
     pub async fn restart(&self) {
-        self.state.lock().await.process = None;
+        let process = self.state.lock().await.process.take();
+        let Some(process) = process else {
+            return;
+        };
+        fail_all_pending(
+            &process.pending,
+            "codex app-server was restarted".to_owned(),
+        )
+        .await;
+        drop(process);
+    }
+
+    pub async fn restart_if_no_pending_requests(&self) -> Result<(), usize> {
+        let process = {
+            let mut state = self.state.lock().await;
+            let Some(process) = state.process.as_ref() else {
+                return Ok(());
+            };
+            let pending_request_count = process.pending.lock().await.len();
+            if pending_request_count > 0 {
+                return Err(pending_request_count);
+            }
+            state.process.take()
+        };
+        if let Some(process) = process {
+            drop(process);
+        }
+        Ok(())
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
@@ -392,15 +460,16 @@ impl CodexAppServerClient {
             state.process = None;
         }
         if state.process.is_none() {
+            let launch_config = CodexLaunchConfig {
+                env: state.runtime_proxy_env.clone(),
+                ..CodexLaunchConfig::default()
+            };
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) = start_persistent_codex_app_server(
-                &self.binary,
-                state.next_id,
-                &CodexLaunchConfig::default(),
-            )
-            .await?;
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
+                    .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -500,12 +569,13 @@ impl CodexAppServerClient {
             state.process = None;
         }
         if state.process.is_none() {
-            let (process, next_id) = start_persistent_codex_app_server(
-                &self.binary,
-                state.next_id,
-                &CodexLaunchConfig::default(),
-            )
-            .await?;
+            let launch_config = CodexLaunchConfig {
+                env: state.runtime_proxy_env.clone(),
+                ..CodexLaunchConfig::default()
+            };
+            let (process, next_id) =
+                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
+                    .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -528,10 +598,22 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        if !launch_config.env.is_empty() && state.runtime_proxy_env != launch_config.env {
+            if !state.active_threads.is_empty() {
+                return Err("cannot change Codex runtime proxy while a turn is active".to_owned());
+            }
+            state.runtime_proxy_env = launch_config.env.clone();
+            state.process = None;
+        }
         if state.process.is_none() {
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
-                    .await?;
+            let mut process_launch_config = launch_config.clone();
+            process_launch_config.env = state.runtime_proxy_env.clone();
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &process_launch_config,
+            )
+            .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -568,6 +650,7 @@ struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,
     active_threads: HashSet<String>,
+    runtime_proxy_env: BTreeMap<String, String>,
 }
 
 impl Default for CodexAppServerSharedState {
@@ -576,6 +659,7 @@ impl Default for CodexAppServerSharedState {
             process: None,
             next_id: 1,
             active_threads: HashSet::new(),
+            runtime_proxy_env: BTreeMap::new(),
         }
     }
 }
@@ -1419,7 +1503,12 @@ async fn read_shared_turn_notifications(
         };
         let Some(received) = received else {
             options.cancellation = None;
-            if let Some(turn_id) = options.active_turn_id.as_deref() {
+            let interrupt_turn_id = if waiting_for_initial_progress {
+                Some("")
+            } else {
+                options.active_turn_id.as_deref()
+            };
+            if let Some(turn_id) = interrupt_turn_id {
                 if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
                     log_executor_event(
                         "codex shared turn interrupt failed",
@@ -1966,6 +2055,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .push(shell_path_config_override());
     launch_config
         .config_overrides
+        .extend(task_identity_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(codex_runtime_default_config_overrides());
     launch_config
         .config_overrides
@@ -2085,6 +2177,19 @@ fn shell_path_config_override() -> String {
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+fn task_identity_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    task_identity_env(request)
+        .into_iter()
+        .map(|(key, value)| {
+            format!(
+                "shell_environment_policy.set.{}={}",
+                toml_key_segment(&key),
+                toml_value(&value)
+            )
+        })
+        .collect()
 }
 
 fn codex_streaming_patch_config_overrides() -> Vec<String> {
@@ -2286,6 +2391,13 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
         return BTreeMap::new();
     };
 
+    proxy_environment(Some(proxy_url))
+}
+
+fn proxy_environment(proxy_url: Option<&str>) -> BTreeMap<String, String> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return BTreeMap::new();
+    };
     let configured_no_proxy = env::var("NO_PROXY")
         .ok()
         .or_else(|| env::var("no_proxy").ok())

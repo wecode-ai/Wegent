@@ -84,6 +84,41 @@ describe('keybindings', () => {
     expect(
       keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
     ).toBe('Command+Minus')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'Shift', altKey: true, shiftKey: true })
+      )
+    ).toBe('')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', {
+          key: '\u00a0',
+          code: 'Space',
+          altKey: true,
+          shiftKey: true,
+        })
+      )
+    ).toBe('Alt+Shift+Space')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'å', code: 'KeyA', altKey: true })
+      )
+    ).toBe('Alt+A')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '¡', code: 'Digit1', altKey: true })
+      )
+    ).toBe('Alt+1')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '≤', code: 'Comma', altKey: true })
+      )
+    ).toBe('Alt+,')
   })
 
   it('detects editable shortcut targets', () => {

@@ -52,6 +52,7 @@ from app.services.openapi.output_builder import (
     build_response_output,
     extract_pending_user_input_state,
 )
+from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_access_store, task_store
 from shared.telemetry.decorators import (
@@ -549,6 +550,17 @@ async def _create_non_streaming_response_unified(
             knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except ExternalRefValidationError as e:
+        logger.warning("Failed to build execution request: %s", e)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except HTTPException as e:
         logger.warning("Failed to build execution request: %s", e.detail)
         await _persist_terminal_failure(
@@ -861,6 +873,17 @@ async def _create_streaming_response_unified(
             knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
         )
+    except ExternalRefValidationError as e:
+        logger.warning("Failed to build execution request: %s", e)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except HTTPException as e:
         logger.warning("Failed to build execution request: %s", e.detail)
         await _persist_terminal_failure(

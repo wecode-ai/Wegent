@@ -802,7 +802,7 @@ fn required_loopback_hosts_are_merged_into_no_proxy() {
 }
 
 #[test]
-fn codex_launch_config_does_not_forward_task_identity() {
+fn codex_launch_config_forwards_task_identity_to_thread_only() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
@@ -824,18 +824,26 @@ fn codex_launch_config_does_not_forward_task_identity() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_TASK_ID")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.AUTH_TOKEN")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
-        .is_none());
-    assert!(config
-        .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
-        .is_none());
+    assert!(!launch_config
+        .env
+        .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_SKILL_USER_NAME"));
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
 }
 
 #[test]
@@ -846,6 +854,10 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "model_provider=wecode-openai".to_owned(),
             "model_catalog_json=\"/tmp/wework-models.json\"".to_owned(),
             "mcp_servers.wework.command=\"node\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_TASK_ID=\"task-525\"".to_owned(),
+            "shell_environment_policy.set.AUTH_TOKEN=\"task-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
         ],
         model_provider: Some("wecode-openai".to_owned()),
         effort: Some("high".to_owned()),
@@ -867,6 +879,17 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
         .config_overrides
         .iter()
         .any(|value| value.starts_with("model_catalog_json=")));
+    for key in [
+        "WEGENT_TASK_ID",
+        "AUTH_TOKEN",
+        "WEGENT_SKILL_IDENTITY_TOKEN",
+        "WEGENT_SKILL_USER_NAME",
+    ] {
+        assert!(!launch_config
+            .config_overrides
+            .iter()
+            .any(|value| value.starts_with(&format!("shell_environment_policy.set.{key}="))));
+    }
     assert!(launch_config
         .config_overrides
         .contains(&"goals=true".to_owned()));

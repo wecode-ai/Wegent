@@ -189,6 +189,13 @@ class InteractiveFormAnswerPayload(BaseModel):
     )
 
 
+class ArtifactNodeContextPayload(BaseModel):
+    """Reference to an interactive knowledge Artifact node."""
+
+    artifact_id: str = Field(..., min_length=1, max_length=100)
+    node_id: str = Field(..., min_length=1, max_length=100)
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -243,6 +250,10 @@ class ChatSendPayload(BaseModel):
     )
     knowledge_base_id: Optional[int] = Field(
         None, description="Knowledge base ID for knowledge type tasks"
+    )
+    artifact_context: Optional[ArtifactNodeContextPayload] = Field(
+        None,
+        description="Interactive Artifact node that initiated this knowledge message",
     )
     additional_skills: Optional[List[SkillRef]] = Field(
         None,

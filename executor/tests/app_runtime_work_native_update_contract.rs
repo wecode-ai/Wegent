@@ -137,7 +137,7 @@ async fn runtime_task_list_does_not_infer_execution_from_native_thread_status() 
 }
 
 #[tokio::test]
-async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() {
+async fn runtime_task_list_ignores_persisted_running_state_when_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-running-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -208,14 +208,10 @@ async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() 
     assert_eq!(locally_running["title"], "Locally running idle");
     assert_eq!(locally_running["status"], "active");
     assert_eq!(locally_running["running"], false);
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
-    assert_eq!(persisted["tasks"]["local-running-idle"]["status"], "active");
-    assert_eq!(persisted["tasks"]["local-running-idle"]["running"], false);
 }
 
 #[tokio::test]
-async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
+async fn runtime_task_list_ignores_persisted_running_state_when_thread_is_missing() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-missing-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -268,18 +264,7 @@ async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
         .find(|task| task["taskId"] == "local-running-missing")
         .unwrap();
 
-    assert_eq!(missing["status"], "active");
     assert_eq!(missing["running"], false);
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
-    assert_eq!(
-        persisted["tasks"]["local-running-missing"]["status"],
-        "active"
-    );
-    assert_eq!(
-        persisted["tasks"]["local-running-missing"]["running"],
-        false
-    );
 }
 
 #[tokio::test]

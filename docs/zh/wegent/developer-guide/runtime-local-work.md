@@ -86,6 +86,8 @@ Wework 的 Codex 本机会话只使用一条主读取路径，避免列表、打
 
 列表、读取和线程管理共享同一个常驻 Codex app-server 连接，避免每次 RPC 都重新启动子进程。没有使用 Codex app-server `thread/turns/list` 做长会话分页，因为当前 Codex 实现仍会在每次请求时 replay 整个 rollout 文件；对 Wework 来说它和全量读取成本相同，却不能复用 executor 已经标准化好的 tool/message cache。打开时也不请求 `includeTurns: true`，因为大 transcript 会把完整 turns 通过 app-server 再序列化一次，反而增加 IPC 和前端压力。
 
+本地设备代理属于这个共享 Codex app-server 的进程级配置，而不是单次任务配置。Wework 在本地 executor 启动完成后、插件列表、模型列表、限额读取或任务 RPC 可能首次启动 app-server 之前，通过 `runtime.codex.runtime_config.update` 同步当前代理。无论哪个 RPC 首先触发进程，executor 都必须使用同一份代理环境启动唯一的 app-server，后续任务继续复用该进程。用户修改或关闭代理后，Wework 会把新配置随 app-server 重启请求一起发送；executor 不能让没有任务上下文的辅助 RPC 用默认环境提前启动一个绕过代理的共享进程。
+
 分页或按发言跳转可能让前端同时持有不连续的 transcript 区间。Wework 会在相邻消息索引之间显示缺失区间，并在该标记首次进入视口时自动请求一次；如果运行时仍无法补齐同一个区间，前端必须停止自动重试，只保留用户点击重试。缺失区间加载只更新当前标记的状态，不能接管发言导航的滚动状态、关闭浏览器滚动锚定或切换消息虚拟化模式，否则无法补齐的历史会形成请求与布局抖动循环。
 
 `loadedTranscriptRanges` 是判断历史区间是否已加载的权威状态，不能只根据当前可见消息的 `messageIndex` 是否连续来判断。模型透明重试等流程可能让前端折叠已经加载的失败尝试，此时可见消息索引会跳号，但中间记录并不缺失。只有相邻可见消息之间存在未被任何已加载区间覆盖的索引时，Wework 才显示缺失区间标记，并且请求范围必须裁剪为实际未覆盖的部分。
@@ -141,7 +143,7 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
-Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的消息必须修复 Codex 事件记录或 transcript 解析主路径。前端在当前 pane 中可以用实时事件维护尚未持久化的视图，但后台收到引导成功事件时只能结算引导队列，不能把同一条用户消息写入另一份缓存 transcript。重新打开对话后，消息完全由 `thread/read` 恢复。
+Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或 transcript 解析主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 `thread/read` 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由 `thread/read` 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
