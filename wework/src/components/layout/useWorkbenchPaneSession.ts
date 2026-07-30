@@ -2532,7 +2532,9 @@ export function reconcileRuntimeConversationMessages(
 ): WorkbenchMessage[] {
   if (transcriptMessages.length === 0) return cachedMessages
   if (transcriptRunning) {
-    return hasUnsettledRuntimePaneState(cachedMessages) ? cachedMessages : transcriptMessages
+    return hasUnsettledRuntimePaneState(cachedMessages)
+      ? mergeRunningRuntimeConversationMessages(transcriptMessages, cachedMessages)
+      : transcriptMessages
   }
 
   const latestCachedTurnIdentity = latestRuntimeTurnIdentity(cachedMessages)
@@ -2545,6 +2547,113 @@ export function reconcileRuntimeConversationMessages(
   return hasSettledAssistantMessage(transcriptMessages)
     ? preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
     : transcriptMessages
+}
+
+function mergeRunningRuntimeConversationMessages(
+  transcriptMessages: WorkbenchMessage[],
+  cachedMessages: WorkbenchMessage[]
+): WorkbenchMessage[] {
+  const matchedTranscriptIndexes = new Set<number>()
+  const transcriptWithLiveMessages = [...transcriptMessages]
+  const indexedCachedMessages = [...cachedMessages]
+  const activeCachedIndexes = new Set<number>()
+
+  for (const [cachedIndex, cachedMessage] of cachedMessages.entries()) {
+    if (cachedMessage.role !== 'assistant' || !isUnsettledRuntimeMessage(cachedMessage)) continue
+    activeCachedIndexes.add(cachedIndex)
+
+    const cachedIdentity = runtimeMessageTurnIdentity(cachedMessage)
+    let transcriptIndex = transcriptMessages.findLastIndex((transcriptMessage, index) => {
+      if (
+        matchedTranscriptIndexes.has(index) ||
+        transcriptMessage.role !== 'assistant' ||
+        cachedIdentity.size === 0
+      ) {
+        return false
+      }
+      return [...runtimeMessageTurnIdentity(transcriptMessage)].some(identity =>
+        cachedIdentity.has(identity)
+      )
+    })
+    if (transcriptIndex < 0) {
+      transcriptIndex = transcriptMessages.findLastIndex(
+        (transcriptMessage, index) =>
+          !matchedTranscriptIndexes.has(index) &&
+          transcriptMessage.role === 'assistant' &&
+          isUnsettledRuntimeMessage(transcriptMessage)
+      )
+    }
+    if (transcriptIndex < 0) continue
+
+    const transcriptMessage = transcriptMessages[transcriptIndex]
+    matchedTranscriptIndexes.add(transcriptIndex)
+    const indexedCachedMessage = {
+      ...transcriptMessage,
+      ...cachedMessage,
+      runtimeMessageIndex: transcriptMessage.runtimeMessageIndex,
+      turnId: cachedMessage.turnId ?? transcriptMessage.turnId,
+      subtaskId: cachedMessage.subtaskId ?? transcriptMessage.subtaskId,
+    }
+    transcriptWithLiveMessages[transcriptIndex] = indexedCachedMessage
+    indexedCachedMessages[cachedIndex] = indexedCachedMessage
+  }
+
+  const activeCachedMessages = cachedMessagesForActiveRuntimeTurn(
+    indexedCachedMessages,
+    transcriptWithLiveMessages,
+    activeCachedIndexes
+  )
+  return mergeRuntimeTranscriptMessages(transcriptWithLiveMessages, activeCachedMessages)
+}
+
+function cachedMessagesForActiveRuntimeTurn(
+  cachedMessages: WorkbenchMessage[],
+  transcriptMessages: WorkbenchMessage[],
+  activeCachedIndexes: ReadonlySet<number>
+): WorkbenchMessage[] {
+  const activeStart = Math.min(...activeCachedIndexes)
+  if (!Number.isFinite(activeStart)) return []
+
+  let activeStartIndex = activeStart
+  for (let index = activeStartIndex - 1; index >= 0; index -= 1) {
+    if (cachedMessages[index]?.role !== 'user') continue
+    activeStartIndex = index
+    break
+  }
+
+  return cachedMessages.slice(activeStartIndex).filter(cachedMessage => {
+    if (cachedMessage.role === 'assistant' && isUnsettledRuntimeMessage(cachedMessage)) return true
+    return !transcriptMessages.some(transcriptMessage =>
+      runtimeMessagesRepresentSameTurnRole(transcriptMessage, cachedMessage)
+    )
+  })
+}
+
+function runtimeMessagesRepresentSameTurnRole(
+  left: WorkbenchMessage,
+  right: WorkbenchMessage
+): boolean {
+  if (left.id === right.id) return true
+  if (left.role !== right.role) return false
+
+  const leftIdentity = runtimeMessageTurnIdentity(left)
+  const sharesTurnIdentity = [...runtimeMessageTurnIdentity(right)].some(identity =>
+    leftIdentity.has(identity)
+  )
+  if (sharesTurnIdentity) return true
+  return left.role === 'user' && left.content === right.content
+}
+
+function isUnsettledRuntimeMessage(message: WorkbenchMessage): boolean {
+  return (
+    message.status === 'streaming' ||
+    message.status === 'pending' ||
+    Boolean(
+      message.blocks?.some(block =>
+        ['generating_arguments', 'pending', 'streaming'].includes(block.status)
+      )
+    )
+  )
 }
 
 function preserveSettledRuntimeBlocks(

@@ -38,6 +38,7 @@ const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
   ).join('\n\n')}`,
 }))
 const STREAMING_TURN_INDEX = HISTORY_TURNS.length + 1
+const PANE_EVICTION_BLANK_COUNT = 4
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
@@ -680,6 +681,7 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
       )
+      await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
@@ -690,21 +692,46 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      await new Promise(resolve => setTimeout(resolve, 1_500))
-      const pinnedAfterSwitch = await getSingleElementMetrics(
+      const pinnedAfterSwitch = await waitForBottom(
         control,
-        SCROLLER_SELECTOR,
-        'The bottom-pinned streaming conversation after switching back'
+        'The bottom-pinned streaming conversation after switching back',
+        5_000
       )
       assert.ok(
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
       await capture(control, 'streaming-text-03-bottom-restored-after-task-switch.png')
+
+      for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+      await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
-        'The user turns were rendered with duplicate turn-navigation markers'
+        'The remounted running conversation lost or duplicated earlier user turns'
+      )
+      await control.command('hover', `${TURN_NAVIGATION_MARKER_SELECTOR}[data-turn-index="0"]`)
+      const initialTurnPreview = await control.command(
+        'getText',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"][data-turn-index="0"]`
+      )
+      assert.ok(
+        initialTurnPreview.includes(INITIAL_PROMPT),
+        'The remounted running conversation lost the previous user question'
+      )
+      assert.ok(
+        initialTurnPreview.includes('WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE'),
+        'The remounted running conversation lost the previous assistant answer'
       )
       await control.command(
         'hover',

@@ -823,13 +823,15 @@ function getProcessingSummaryStartMs(
   blocks: ProcessingBlock[],
   isStreaming: boolean
 ): number | undefined {
-  if (!isStreaming) return getTurnStartMs(message.createdAt)
-
+  const turnStartedAt = getTurnStartMs(message.createdAt)
   const blockStartTimes = blocks
     .map(block => block.createdAt)
     .filter((createdAt): createdAt is number => Number.isFinite(createdAt))
+  const earliestBlockStart = blockStartTimes.length > 0 ? Math.min(...blockStartTimes) : undefined
 
-  if (blockStartTimes.length > 0) return Math.min(...blockStartTimes)
+  if (!isStreaming || blocks.length > 0) {
+    return turnStartedAt ?? earliestBlockStart
+  }
 
   return undefined
 }
@@ -1942,7 +1944,7 @@ function AssistantMessage({
           blocks={segment.blocks}
           fileEditDurationBlocks={displayBlocks}
           isStreaming={isStreaming}
-          startedAt={segment.blocks[0]?.createdAt}
+          startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
           processingPhase={
             segment.blocks.length === 0

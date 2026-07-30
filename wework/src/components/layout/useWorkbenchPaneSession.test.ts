@@ -30,17 +30,122 @@ describe('reconcileRuntimeConversationMessages', () => {
     expect(reconcileRuntimeConversationMessages(transcript, cached, false)).toBe(transcript)
   })
 
-  test('keeps unsettled cached state while the server still reports the task running', () => {
-    const transcript = [message({ id: 'server', content: 'Partial', status: 'streaming' })]
+  test('keeps live state while restoring transcript history for a running task', () => {
+    const transcript = [
+      message({
+        id: 'older-user',
+        role: 'user',
+        content: 'Earlier request',
+        turnId: 'turn-1',
+        runtimeMessageIndex: 0,
+      }),
+      message({
+        id: 'older-assistant',
+        content: 'Earlier response',
+        turnId: 'turn-1',
+        runtimeMessageIndex: 1,
+      }),
+      message({
+        id: 'server-current',
+        content: 'Stale partial response',
+        status: 'streaming',
+        turnId: 'turn-2',
+        subtaskId: 'turn-2',
+        runtimeMessageIndex: 3,
+        createdAt: '2026-07-24T00:01:00.000Z',
+      }),
+    ]
     const cached = [
+      message({
+        id: 'cached-older-user',
+        role: 'user',
+        content: 'Earlier request',
+        turnId: 'turn-1',
+      }),
+      message({
+        id: 'cached-older-assistant',
+        content: 'Earlier response',
+        turnId: 'turn-1',
+      }),
+      message({
+        id: 'current-user',
+        role: 'user',
+        content: 'Current request',
+        turnId: 'turn-2',
+      }),
       message({
         id: 'cached',
         content: 'Partial response from the live stream',
         status: 'streaming',
+        turnId: 'turn-2',
+        subtaskId: 'turn-2',
+        createdAt: '2026-07-24T00:01:05.000Z',
       }),
     ]
 
-    expect(reconcileRuntimeConversationMessages(transcript, cached, true)).toBe(cached)
+    expect(reconcileRuntimeConversationMessages(transcript, cached, true)).toEqual([
+      transcript[0],
+      transcript[1],
+      cached[2],
+      {
+        ...cached[3],
+        runtimeMessageIndex: 3,
+      },
+    ])
+  })
+
+  test('keeps an identity-less live response when the running transcript is reloaded', () => {
+    const transcript = [
+      message({
+        id: 'server-user',
+        role: 'user',
+        content: 'Current request',
+        runtimeMessageIndex: 0,
+      }),
+      message({
+        id: 'server-assistant',
+        content: 'Stale partial response',
+        status: 'streaming',
+        runtimeMessageIndex: 1,
+        createdAt: '2026-07-24T00:01:00.000Z',
+      }),
+    ]
+    const cached = [
+      message({
+        id: 'local-user',
+        role: 'user',
+        content: 'Current request',
+      }),
+      message({
+        id: 'process-assistant',
+        content: 'Process update',
+        blocks: [
+          {
+            id: 'process-block',
+            subtaskId: 1,
+            type: 'text',
+            content: 'Process update',
+            status: 'done',
+            createdAt: Date.parse('2026-07-24T00:00:00.000Z'),
+          },
+        ],
+      }),
+      message({
+        id: 'live-assistant',
+        content: 'Latest partial response',
+        status: 'streaming',
+        createdAt: '2026-07-24T00:00:00.000Z',
+      }),
+    ]
+
+    expect(reconcileRuntimeConversationMessages(transcript, cached, true)).toEqual([
+      transcript[0],
+      cached[1],
+      {
+        ...cached[2],
+        runtimeMessageIndex: 1,
+      },
+    ])
   })
 
   test('keeps a completed cached plan when the transcript only settles an older turn', () => {

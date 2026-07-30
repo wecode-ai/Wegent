@@ -1812,6 +1812,42 @@ describe('MessageList', () => {
     expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
+  test('anchors a remounted running tool timer to the assistant turn start', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-remounted-with-process',
+              role: 'assistant',
+              content: '',
+              status: 'streaming',
+              blocks: [
+                {
+                  id: 'tool-remounted',
+                  type: 'tool',
+                  toolName: 'Bash',
+                  toolInput: { command: 'long-running-command' },
+                  status: 'streaming',
+                  createdAt: Date.parse('2026-06-24T08:09:59.000Z'),
+                },
+              ],
+              createdAt: '2026-06-24T08:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      expect(screen.getByText('10 分 0 秒')).toBeInTheDocument()
+      expect(screen.queryByText('1 秒')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('keeps narrative visible but collapses tools before runtime guidance', () => {
     const blocks: ProcessingBlock[] = [
       {
