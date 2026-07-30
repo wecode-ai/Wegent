@@ -1613,7 +1613,14 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   )
   await captureVerificationScreenshot(control, 'short-conversation-03-rapid-switch-restored.png')
   control.releaseConcurrentMemoryResponses()
+  const runningTaskId = runningTaskRowTestId.replace('runtime-local-task-row-', '')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`runtime-local-task-running-${runningTaskId}`),
+    'The rapid-switch background task did not settle after its response was released'
+  )
   control.setScenario('fresh_chat')
+  return shortConversationTaskRowTestId
 }
 
 function countTextOccurrences(value, search) {
@@ -11217,11 +11224,6 @@ async function main() {
       }
       phase = 'fresh-chat'
       control.setScenario('fresh_chat')
-      const taskRowsBeforeFreshChat = new Set(
-        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-          testId.startsWith('runtime-local-task-row-')
-        )
-      )
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -11233,23 +11235,12 @@ async function main() {
         false,
         'The new conversation retained the previous task'
       )
-      await verifyShortConversationLayout({ composerSelector, control })
+      const secondTaskRowTestId = await verifyShortConversationLayout({
+        composerSelector,
+        control,
+      })
 
       phase = 'task-draft-isolation'
-      const secondTaskSnapshot = await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.some(
-            testId =>
-              testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
-          ),
-        'The second task was not available for task draft isolation'
-      )
-      const secondTaskRowTestId = secondTaskSnapshot.testIds.find(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
-      )
-      assert.ok(secondTaskRowTestId, 'The second task row was not found')
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
       await waitForPersistedComposerInput(
         control,
