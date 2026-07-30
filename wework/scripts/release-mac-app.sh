@@ -526,38 +526,9 @@ UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
+BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 CONFIG_OVERRIDE="$config_override" \
-python3 - <<'PY'
-import json
-import os
-
-config = {
-    "version": os.environ["VERSION"],
-    "bundle": {
-        "createUpdaterArtifacts": True,
-    },
-    "plugins": {
-        "updater": {
-            "endpoints": [os.environ["UPDATER_ENDPOINT"]],
-            "pubkey": os.environ["UPDATER_PUBKEY"],
-        },
-    },
-}
-
-identity = os.environ["SIGNING_IDENTITY"].strip()
-if identity:
-    config["bundle"]["macOS"] = {
-        "signingIdentity": identity,
-        "hardenedRuntime": True,
-    }
-
-if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
-    config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
-
-with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
+node "$SCRIPT_DIR/generate-release-config.mjs"
 
 echo "Release target: $TARGET"
 echo "Releasing version: $next_version"
