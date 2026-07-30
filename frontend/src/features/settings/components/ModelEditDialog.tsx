@@ -21,6 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -1296,6 +1297,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
           </DialogTitle>
+          <DialogDescription>{t('common:models.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">

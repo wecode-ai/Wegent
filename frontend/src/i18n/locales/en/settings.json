@@ -99,6 +99,10 @@
     "go_to_market": "Go to Market",
     "libraryTitle": "Skill Library",
     "libraryDescription": "Upload and manage skills. Skills can be auto-enabled for your conversations or bound to agents as built-in capabilities.",
+    "myLibraryTitle": "My Skills",
+    "myLibraryDescription": "Manage skills you created and currently auto-enable.",
+    "groupLibraryTitle": "Group Skills",
+    "groupLibraryDescription": "Manage skills created and maintained by this group. Skills added from the marketplace are shown separately above.",
     "defaultEnabled": {
       "title": "Auto-Enabled Skills",
       "description": "These skills automatically take effect in all your conversations. You can add exceptions for modes or agents.",
@@ -119,6 +123,7 @@
       "removeFromMyDefault": "Stop Auto-Enabling",
       "addSuccess": "Skill will auto-enable",
       "removeSuccess": "Skill will no longer auto-enable",
+      "removeExternalSuccess": "Auto-enable stopped. You can add this skill again from Discover.",
       "updateFailed": "Failed to update auto-enabled skills",
       "groupScopeHint": "Only affects you. Other group members are unchanged."
     },
@@ -193,7 +198,7 @@
   "team": {
     "list": {
       "filterDevice": "Device",
-      "goToDevice": "Go to Device"
+      "runOnDevice": "Run on Device"
     },
     "quick_phrases": {
       "label": "Quick phrases",

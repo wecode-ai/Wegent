@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, literal, literal_column, union_all
+from sqlalchemy import and_, func, literal, literal_column, or_, tuple_, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -52,6 +52,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ACCESS_RANK_NATIVE = 0
     ACCESS_RANK_USER_SHARE = 1
     ACCESS_RANK_NAMESPACE_AUTHORIZATION = 2
+    RECENT_TEAM_TASK_SCAN_LIMIT = 100
 
     # List of sensitive keys that should be decrypted when reading
     SENSITIVE_CONFIG_KEYS = [
@@ -122,6 +123,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         obj_in: TeamCreate,
         user_id: int,
         group_name: Optional[str] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         Create user Team using kinds table.
@@ -264,50 +266,36 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         )
         db.add(team)
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(team)
 
         return self._convert_to_team_dict(team, db, user_id)
 
-    def get_user_teams(
+    def _build_accessible_teams_query(
         self,
         db: Session,
         *,
         user_id: int,
-        skip: int = 0,
-        limit: int = 100,
         scope: str = "personal",
         group_name: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Get user's Team list (only active teams) including shared teams and public teams.
-        Uses database union query for better performance and pagination.
-
-        Scope behavior:
-        - scope='personal' (default): personal teams + public teams + shared teams
-        - scope='group': group teams + public teams (requires group_name)
-        - scope='all': personal + public + shared + all user's groups
-        """
-        total_start = time.time()
+    ) -> Optional[tuple[Any, Any]]:
+        """Build the deduplicated accessible-Team query shared by list views."""
         from app.services.group_permission import get_user_groups
 
-        # Determine which namespaces to query based on scope
         namespaces_to_query = []
-
         t0 = time.time()
         if scope == "personal":
-            # Personal teams only (default namespace)
             namespaces_to_query = ["default"]
         elif scope == "group":
-            # Group teams - if group_name not provided, query all user's groups
             if group_name:
                 namespaces_to_query = [group_name]
             else:
-                # Query all user's groups (excluding default)
                 user_groups = get_user_groups(db, user_id)
                 namespaces_to_query = user_groups if user_groups else []
         elif scope == "all":
-            # Personal + all user's groups
             namespaces_to_query = ["default"] + get_user_groups(db, user_id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
@@ -315,8 +303,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             f"[get_user_teams] get_user_groups took {time.time() - t0:.3f}s, namespaces={namespaces_to_query}"
         )
 
-        # Build queries - separate default namespace from group namespaces
-        # Optimization: use IN clause for group namespaces instead of separate queries
         queries = []
         group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
         has_default = "default" in namespaces_to_query
@@ -327,7 +313,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         )
 
         if has_default:
-            # Query for user's own teams in default namespace
             own_teams_query = db.query(
                 Kind.id.label("team_id"),
                 Kind.user_id.label("team_user_id"),
@@ -348,9 +333,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             queries.append(own_teams_query)
 
-            # Add shared teams for personal and all scopes
             if scope in ("personal", "all"):
-                # Query for shared teams using ResourceMember
                 shared_teams_query = (
                     db.query(
                         Kind.id.label("team_id"),
@@ -386,7 +369,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 queries.append(shared_teams_query)
 
-                # Query for public teams (user_id=0)
                 public_teams_query = db.query(
                     Kind.id.label("team_id"),
                     Kind.user_id.label("team_user_id"),
@@ -409,8 +391,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 queries.append(public_teams_query)
 
-        # Optimized: Query all group teams in a single query using IN clause
-        # instead of creating separate queries for each namespace
         if group_namespaces:
             group_teams_query = db.query(
                 Kind.id.label("team_id"),
@@ -470,12 +450,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             queries.append(authorized_team_query)
 
-        # Handle empty queries case
         if not queries:
-            # No namespaces to query, return empty list
-            return []
+            return None
 
-        # Combine queries using union all
         if len(queries) == 1:
             combined_query = queries[0].subquery()
         else:
@@ -504,9 +481,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .label("access_row_number"),
             )
         ).subquery()
-
-        # Create final query with pagination
-        final_query = (
+        return (
             db.query(
                 ranked_query.c.team_id,
                 ranked_query.c.team_user_id,
@@ -518,9 +493,260 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 ranked_query.c.share_status,
                 ranked_query.c.context_user_id,
                 ranked_query.c.access_source,
+            ).filter(ranked_query.c.access_row_number == 1),
+            ranked_query,
+        )
+
+    def get_recent_accessible_teams(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Return recently used accessible Teams, filled by recently updated Teams."""
+        if limit <= 0:
+            return []
+
+        accessible_query = self._build_accessible_teams_query(
+            db,
+            user_id=user_id,
+            scope="all",
+        )
+        if accessible_query is None:
+            return []
+        base_query, ranked_query = accessible_query
+        recent_refs = self._get_recent_team_refs(db, user_id)
+        recent_rows = self._query_recent_team_rows(
+            base_query,
+            ranked_query,
+            recent_refs,
+        )
+        selected_rows, selected_identities = self._select_recent_team_rows(
+            recent_rows,
+            recent_refs,
+            user_id=user_id,
+            limit=limit,
+        )
+        if len(selected_rows) < limit:
+            selected_rows.extend(
+                self._query_latest_distinct_team_rows(
+                    db,
+                    base_query,
+                    selected_identities,
+                    limit=limit - len(selected_rows),
+                )
             )
-            .filter(ranked_query.c.access_row_number == 1)
+        return [self._team_dict_from_access_row(db, row) for row in selected_rows]
+
+    def _get_recent_team_refs(
+        self,
+        db: Session,
+        user_id: int,
+    ) -> list[tuple[str, str, int | None]]:
+        recent_tasks = task_store.list_recent_owner_only_used_tasks(
+            db,
+            user_id=user_id,
+            limit=self.RECENT_TEAM_TASK_SCAN_LIMIT,
+        )
+        recent_refs: list[tuple[str, str, int | None]] = []
+        for task in recent_tasks:
+            payload = task.json if isinstance(task.json, dict) else {}
+            spec = payload.get("spec")
+            team_ref = spec.get("teamRef") if isinstance(spec, dict) else None
+            if not isinstance(team_ref, dict):
+                continue
+            name = str(team_ref.get("name") or "")
+            if not name:
+                continue
+            namespace = str(team_ref.get("namespace") or "default")
+            raw_owner_id = team_ref.get("user_id")
+            try:
+                owner_id = int(raw_owner_id) if raw_owner_id is not None else None
+            except (TypeError, ValueError):
+                continue
+            ref = (name, namespace, owner_id)
+            if ref not in recent_refs:
+                recent_refs.append(ref)
+        return recent_refs
+
+    def _query_recent_team_rows(
+        self,
+        base_query: Any,
+        ranked_query: Any,
+        recent_refs: list[tuple[str, str, int | None]],
+    ) -> list[Any]:
+        if not recent_refs:
+            return []
+        exact_refs = {
+            (name, namespace, owner_id)
+            for name, namespace, owner_id in recent_refs
+            if owner_id is not None
+        }
+        ownerless_refs = {
+            (name, namespace)
+            for name, namespace, owner_id in recent_refs
+            if owner_id is None
+        }
+        ref_filters = []
+        if exact_refs:
+            ref_filters.append(
+                tuple_(
+                    ranked_query.c.team_name,
+                    ranked_query.c.team_namespace,
+                    ranked_query.c.team_user_id,
+                ).in_(exact_refs)
+            )
+        if ownerless_refs:
+            ref_filters.append(
+                tuple_(
+                    ranked_query.c.team_name,
+                    ranked_query.c.team_namespace,
+                ).in_(ownerless_refs)
+            )
+        return (
+            base_query.filter(or_(*ref_filters))
             .order_by(
+                ranked_query.c.team_updated_at.desc(),
+                ranked_query.c.team_id.desc(),
+            )
+            .all()
+        )
+
+    def _select_recent_team_rows(
+        self,
+        recent_rows: list[Any],
+        recent_refs: list[tuple[str, str, int | None]],
+        *,
+        user_id: int,
+        limit: int,
+    ) -> tuple[list[Any], set[tuple[str, str]]]:
+        exact_row_index = {
+            (row.team_name, row.team_namespace, int(row.team_user_id)): row
+            for row in recent_rows
+        }
+        identity_row_index: dict[tuple[str, str], list[Any]] = {}
+        for row in recent_rows:
+            identity_row_index.setdefault(
+                (row.team_name, row.team_namespace), []
+            ).append(row)
+
+        selected_rows = []
+        selected_ids: set[int] = set()
+        selected_identities: set[tuple[str, str]] = set()
+        for name, namespace, owner_id in recent_refs:
+            identity = (name, namespace)
+            if identity in selected_identities:
+                continue
+            if owner_id is not None:
+                row = exact_row_index.get((name, namespace, owner_id))
+            else:
+                candidates = identity_row_index.get(identity, [])
+                row = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if int(candidate.team_user_id) == user_id
+                    ),
+                    candidates[0] if candidates else None,
+                )
+            if row is None or int(row.team_id) in selected_ids:
+                continue
+            selected_rows.append(row)
+            selected_ids.add(int(row.team_id))
+            selected_identities.add(identity)
+            if len(selected_rows) == limit:
+                break
+        return selected_rows, selected_identities
+
+    def _query_latest_distinct_team_rows(
+        self,
+        db: Session,
+        base_query: Any,
+        excluded_identities: set[tuple[str, str]],
+        *,
+        limit: int,
+    ) -> list[Any]:
+        accessible_rows = base_query.subquery()
+        identity_ranked = db.query(
+            accessible_rows,
+            func.row_number()
+            .over(
+                partition_by=(
+                    accessible_rows.c.team_name,
+                    accessible_rows.c.team_namespace,
+                ),
+                order_by=(
+                    accessible_rows.c.team_updated_at.desc(),
+                    accessible_rows.c.team_id.desc(),
+                ),
+            )
+            .label("identity_row_number"),
+        ).subquery()
+        fallback_query = db.query(identity_ranked).filter(
+            identity_ranked.c.identity_row_number == 1
+        )
+        if excluded_identities:
+            fallback_query = fallback_query.filter(
+                tuple_(
+                    identity_ranked.c.team_name,
+                    identity_ranked.c.team_namespace,
+                ).notin_(excluded_identities)
+            )
+        return (
+            fallback_query.order_by(
+                identity_ranked.c.team_updated_at.desc(),
+                identity_ranked.c.team_id.desc(),
+            )
+            .limit(limit)
+            .all()
+        )
+
+    def _team_dict_from_access_row(self, db: Session, row: Any) -> Dict[str, Any]:
+        team = Kind(
+            id=row.team_id,
+            user_id=row.team_user_id,
+            name=row.team_name,
+            namespace=row.team_namespace,
+            json=row.team_json,
+            created_at=row.team_created_at,
+            updated_at=row.team_updated_at,
+            is_active=True,
+        )
+        return self._convert_to_team_dict(team, db, int(row.context_user_id))
+
+    def get_user_teams(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        scope: str = "personal",
+        group_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user's Team list (only active teams) including shared teams and public teams.
+        Uses database union query for better performance and pagination.
+
+        Scope behavior:
+        - scope='personal' (default): personal teams + public teams + shared teams
+        - scope='group': group teams + public teams (requires group_name)
+        - scope='all': personal + public + shared + all user's groups
+        """
+        total_start = time.time()
+        accessible_query = self._build_accessible_teams_query(
+            db,
+            user_id=user_id,
+            scope=scope,
+            group_name=group_name,
+        )
+        if accessible_query is None:
+            return []
+        base_query, ranked_query = accessible_query
+
+        final_query = (
+            base_query.order_by(
                 ranked_query.c.team_updated_at.desc(), ranked_query.c.team_id.desc()
             )
             .offset(skip)
@@ -580,8 +806,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     )
 
         # Batch fetch all bots
-        from sqlalchemy import or_
-
         bots_cache = {}  # (user_id, name, namespace) -> Kind for personal bots
         group_bots_cache = {}  # (name, namespace) -> Kind for group bots
 
@@ -955,43 +1179,64 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 raise HTTPException(status_code=403, detail="Access denied")
 
         update_data = obj_in.model_dump(exclude_unset=True)
+        old_name = team.name
+        old_namespace = team.namespace
+        new_name = update_data.get("name", old_name)
+        new_namespace = update_data.get("namespace", old_namespace)
 
-        # If updating name, ensure uniqueness (only active teams), excluding current team
-        # For personal teams (default namespace): check uniqueness per user
-        # For group teams: check uniqueness within the group namespace
-        if "name" in update_data:
-            new_name = update_data["name"]
-            if new_name != team.name:
-                conflict_query = db.query(Kind).filter(
-                    Kind.kind == "Team",
-                    Kind.name == new_name,
-                    Kind.namespace == team.namespace,
-                    Kind.is_active == True,
-                    Kind.id != team.id,
-                )
-                if team.namespace == "default":
-                    # Personal team: also filter by user_id
-                    conflict_query = conflict_query.filter(Kind.user_id == user_id)
-                conflict = conflict_query.first()
-
-                if conflict:
+        if not new_namespace:
+            raise HTTPException(status_code=400, detail="Team namespace is required")
+        if new_namespace != old_namespace:
+            if new_namespace == "default":
+                if team.user_id != user_id:
                     raise HTTPException(
-                        status_code=400,
-                        detail="Team name already exists, please modify the name",
+                        status_code=403,
+                        detail="Only the agent owner can move it to personal scope",
                     )
+            elif not check_group_permission(
+                db, user_id, new_namespace, GroupRole.Developer
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You need at least Developer role in group '{new_namespace}' to move this team",
+                )
+
+        # Check uniqueness in the destination scope when name or namespace changes.
+        if new_name != old_name or new_namespace != old_namespace:
+            conflict_query = db.query(Kind).filter(
+                Kind.kind == "Team",
+                Kind.name == new_name,
+                Kind.namespace == new_namespace,
+                Kind.is_active == True,
+                Kind.id != team.id,
+            )
+            if new_namespace == "default":
+                conflict_query = conflict_query.filter(Kind.user_id == team.user_id)
+            if conflict_query.first():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Team name already exists, please modify the name",
+                )
 
         # Update team based on update_data
         team_crd = Team.model_validate(team.json)
 
         if "name" in update_data:
-            new_name = update_data["name"]
-            old_name = team.name
             team.name = new_name
             team_crd.metadata.name = new_name
 
-            # Update all references to this team in tasks
+        if "namespace" in update_data:
+            team.namespace = new_namespace
+            team_crd.metadata.namespace = new_namespace
+
+        if new_name != old_name or new_namespace != old_namespace:
             self._update_team_references_in_tasks(
-                db, old_name, team.namespace, new_name, team.namespace, user_id
+                db,
+                old_name,
+                old_namespace,
+                new_name,
+                new_namespace,
+                team.user_id,
             )
 
         if "displayName" in update_data:
@@ -1571,6 +1816,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        capability = (team.json.get("spec") or {}).get("capability") or {}
+        publication_status = capability.get("publishStatus")
 
         total_convert_time = time.time() - convert_start
         if total_convert_time > 0.2:
@@ -1597,6 +1844,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,  # Add icon field
             "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
+            "publication_status": publication_status,
         }
 
     def _convert_to_team_dict_with_cache(
@@ -1774,6 +2022,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = team_crd.spec.requiresWorkspace
 
         quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+        capability = (team.json.get("spec") or {}).get("capability") or {}
+        publication_status = capability.get("publishStatus")
 
         return {
             "id": team.id,
@@ -1794,6 +2044,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "icon": icon,
             "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
+            "publication_status": publication_status,
         }
 
     def _get_bot_summary_with_cache(
@@ -2052,30 +2303,32 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         old_namespace: str,
         new_name: str,
         new_namespace: str,
-        user_id: int,
+        team_owner_id: int,
     ) -> None:
-        """
-        Update all references to this team in tasks when team name/namespace changes
-        """
-        # Find all tasks that reference this team
-        tasks = task_store.list_regular_active_tasks(db, user_id=user_id)
+        """Update active Task references when a Team identity changes."""
+        tasks = task_store.list_active_tasks_referencing_team(
+            db,
+            team_name=old_name,
+            team_namespace=old_namespace,
+        )
 
         for task in tasks:
             task_crd = Task.model_validate(task.json)
-
-            # Check if this task references the old team
+            ref_owner_id = task_crd.spec.teamRef.user_id
+            if ref_owner_id not in {None, team_owner_id}:
+                continue
             if (
-                task_crd.spec.teamRef.name == old_name
-                and task_crd.spec.teamRef.namespace == old_namespace
+                old_namespace == "default"
+                and ref_owner_id is None
+                and task.user_id != team_owner_id
             ):
-                # Update the reference
-                task_crd.spec.teamRef.name = new_name
-                task_crd.spec.teamRef.namespace = new_namespace
+                continue
 
-                # Save changes
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
+            task_crd.spec.teamRef.name = new_name
+            task_crd.spec.teamRef.namespace = new_namespace
+            task.json = task_crd.model_dump(mode="json")
+            task.updated_at = datetime.now()
+            flag_modified(task, "json")
 
     def get_team_input_parameters(
         self, db: Session, *, team_id: int, user_id: int
@@ -2356,12 +2609,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         user_id: int,
         target_namespace: Optional[str] = None,
         copy_skills: bool = False,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         Copy a team. Creates a new team with 'Copy of {name}'.
 
-        Solo mode: deep copy — also clones the leader bot.
-        Non-solo mode: shallow copy — new team references the same bots.
+        Solo mode always clones the leader bot. Non-solo mode clones every bot when
+        moving across namespaces.
 
         If target_namespace is provided, the copy is placed in that namespace.
         Otherwise, copies to the original team's namespace.
@@ -2386,9 +2640,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         collaboration_model = spec.get("collaborationModel", "pipeline")
         members = spec.get("members", [])
         bind_mode = spec.get("bind_mode", ["chat"])
-        description = original.json.get("metadata", {}).get("description", "")
+        description = spec.get("description", "")
         icon = spec.get("icon")
         requires_workspace = spec.get("requiresWorkspace", True)
+        display_name = (original.json.get("metadata") or {}).get("displayName")
+        quick_phrases = normalize_quick_phrases(spec.get("quick_phrases"))
         workflow = {"mode": collaboration_model}
 
         # Determine the effective target namespace
@@ -2429,14 +2685,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 namespace=dest_namespace,
             )
 
-            # Build skill_id_mapping if copy_skills requested
+            # Grant the destination access to the source Skills when requested.
             skill_mapping: Dict[int, int] = {}
             if copy_skills and dest_namespace != original.namespace:
-                skill_mapping = self._copy_bot_skills_to_namespace(
+                skill_mapping = self._bind_bot_skills_to_namespace(
                     db,
                     bot=original_bot,
                     target_namespace=dest_namespace,
                     user_id=user_id,
+                    commit=commit,
                 )
 
             # Clone the bot into the destination namespace
@@ -2447,6 +2704,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 new_name=bot_name,
                 namespace=dest_namespace,
                 skill_id_mapping=skill_mapping if skill_mapping else None,
+                commit=commit,
             )
             new_bots.append(
                 {
@@ -2486,11 +2744,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         )
                         skill_mapping: Dict[int, int] = {}
                         if copy_skills:
-                            skill_mapping = self._copy_bot_skills_to_namespace(
+                            skill_mapping = self._bind_bot_skills_to_namespace(
                                 db,
                                 bot=bot,
                                 target_namespace=dest_namespace,
                                 user_id=user_id,
+                                commit=commit,
                             )
                         cloned = bot_kinds_service.clone_bot(
                             db,
@@ -2499,6 +2758,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             new_name=bot_name,
                             namespace=dest_namespace,
                             skill_id_mapping=skill_mapping if skill_mapping else None,
+                            commit=commit,
                         )
                         new_bots.append(
                             {
@@ -2541,6 +2801,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         team_create = TeamCreate(
             name=team_name,
+            displayName=display_name,
             description=description or None,
             workflow=workflow,
             bind_mode=bind_mode,
@@ -2548,6 +2809,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             namespace=dest_namespace,
             icon=icon,
             requires_workspace=requires_workspace,
+            quick_phrases=quick_phrases,
         )
 
         return self.create_with_user(
@@ -2555,10 +2817,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             obj_in=team_create,
             user_id=user_id,
             group_name=group_name,
+            commit=commit,
         )
 
-    def _collect_personal_skill_ids(self, db: Session, bot: Kind) -> Dict[str, int]:
-        """Return {skill_name: skill_id} for personal (namespace=default) skill refs on a bot.
+    def _collect_private_skill_ids(self, db: Session, bot: Kind) -> Dict[str, int]:
+        """Return private Skill refs that must be copied with a distributed agent.
 
         Skills are stored in the ghost's spec, not the bot's spec.
         """
@@ -2571,6 +2834,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.kind == "Ghost",
                 Kind.name == ghost_ref.get("name"),
                 Kind.namespace == ghost_ref.get("namespace", bot.namespace),
+                Kind.user_id == bot.user_id,
                 Kind.is_active == True,
             )
             .first()
@@ -2586,40 +2850,52 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             for skill_name, meta in ref_map.items():
                 if isinstance(meta, dict):
                     is_public = meta.get("is_public", False)
-                    ns = meta.get("namespace", "default")
                     skill_id = meta.get("skill_id")
                 else:
                     is_public = getattr(meta, "is_public", False)
-                    ns = getattr(meta, "namespace", "default")
                     skill_id = getattr(meta, "skill_id", None)
-                if not is_public and ns == "default" and skill_id is not None:
+                if not is_public and skill_id is not None:
                     result[skill_name] = skill_id
         return result
 
-    def _copy_bot_skills_to_namespace(
+    def _bind_bot_skills_to_namespace(
         self,
         db: Session,
         *,
         bot: Kind,
         target_namespace: str,
         user_id: int,
+        commit: bool = True,
     ) -> Dict[int, int]:
-        """Copy personal skills from a bot to target_namespace.
+        """Grant a target namespace access to a bot's private Skills.
 
-        Returns {old_skill_id: new_skill_id} mapping.
+        The source Skill remains canonical so every Agent sees future updates.
+        The identity mapping keeps cloned Bot refs on the source Skill ids.
         """
-        from app.services.adapters.skill_kinds import skill_kinds_service
+        from app.services.skill_binding_service import skill_binding_service
 
-        personal_skill_ids = self._collect_personal_skill_ids(db, bot)
+        private_skill_ids = self._collect_private_skill_ids(db, bot)
         mapping: Dict[int, int] = {}
-        for _skill_name, skill_id in personal_skill_ids.items():
-            copy_result = skill_kinds_service.copy_skill_to_namespace(
-                db,
-                skill_id=skill_id,
-                target_namespace=target_namespace,
-                user_id=user_id,
-            )
-            mapping[copy_result["original_id"]] = copy_result["target_id"]
+        for _skill_name, skill_id in private_skill_ids.items():
+            if target_namespace == "default":
+                skill_binding_service.add_user_default_skill(
+                    db,
+                    user_id=user_id,
+                    skill_id=skill_id,
+                    created_by=user_id,
+                    commit=False,
+                )
+            else:
+                skill_binding_service.add_group_skill(
+                    db,
+                    group_namespace=target_namespace,
+                    skill_id=skill_id,
+                    created_by=user_id,
+                    commit=False,
+                )
+            mapping[skill_id] = skill_id
+        if commit:
+            db.commit()
         return mapping
 
     def get_copy_preflight(
@@ -2677,6 +2953,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.kind == "Ghost",
                     Kind.name == ghost_ref.get("name"),
                     Kind.namespace == ghost_ref.get("namespace", bot.namespace),
+                    Kind.user_id == bot.user_id,
                     Kind.is_active == True,
                 )
                 .first()

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -12,6 +12,8 @@ import { fetchBotsList } from '@/features/settings/services/bots'
 import { fetchTeamsList } from '@/features/settings/services/teams'
 import type { Team } from '@/types/api'
 import type { Group } from '@/types/group'
+
+Element.prototype.scrollIntoView = jest.fn()
 
 const mockPush = jest.fn()
 const mockToast = jest.fn()
@@ -26,9 +28,14 @@ const mockT = (key: string, options?: Record<string, unknown>) =>
     'settings:team.list.filterDevice': 'Device',
     'teams.active': 'Active',
     'teams.inactive': 'Inactive',
+    'teams.authorized_from_group': `From parent group ${options?.group}`,
+    'teams.bot_count': `${options?.count} ${options?.count === 1 ? 'Bot' : 'Bots'}`,
     'teams.go_to_chat': 'Go to Chat',
     'teams.go_to_code': 'Go to Code',
-    'settings:team.list.goToDevice': 'Go to Device',
+    'teams.more_actions': 'More actions',
+    'teams.api_call.action': 'Call via API',
+    'teams.unbind': 'Unbind',
+    'settings:team.list.runOnDevice': 'Run on Device',
     'teams.new_team': 'New Team',
     'bots.manage_bots': 'Manage Bots',
     'wizard:wizard_button': 'Wizard',
@@ -92,7 +99,28 @@ jest.mock('@/features/settings/components/BotList', () => () => null)
 jest.mock('@/features/settings/components/TeamShareModal', () => () => null)
 jest.mock('@/features/settings/components/wizard/TeamCreationWizard', () => () => null)
 jest.mock('@/features/settings/components/TeamApiCallButton', () => ({
-  TeamApiCallButton: () => null,
+  TeamApiCallButton: ({
+    team,
+    emphasized,
+    hideTrigger,
+    open,
+  }: {
+    team: Team
+    emphasized?: boolean
+    hideTrigger?: boolean
+    open?: boolean
+  }) => (
+    <>
+      {!hideTrigger && (
+        <button
+          type="button"
+          data-testid={`team-api-call-button-${team.id}`}
+          data-emphasized={String(Boolean(emphasized))}
+        />
+      )}
+      {open && <div data-testid={`team-api-call-dialog-${team.id}`} />}
+    </>
+  ),
 }))
 
 jest.mock('@/components/common/UnifiedAddButton', () => ({
@@ -117,10 +145,26 @@ jest.mock('@/components/ui/dialog', () => ({
 jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
-    <button type="button" onClick={onClick}>
+  DropdownMenuItem: ({
+    children,
+    onClick,
+    onSelect,
+    'data-testid': testId,
+  }: {
+    children: ReactNode
+    onClick?: () => void
+    onSelect?: () => void
+    'data-testid'?: string
+  }) => (
+    <button type="button" onClick={onClick || onSelect} data-testid={testId}>
       {children}
     </button>
+  ),
+  DropdownMenuSeparator: () => <hr />,
+  DropdownMenuSub: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) => (
+    <button type="button">{children}</button>
   ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
@@ -141,8 +185,9 @@ function makeTeam(id: number, name: string, bindMode: Team['bind_mode']): Team {
     workflow: {},
     is_active: true,
     user_id: 1,
-    created_at: '',
-    updated_at: '',
+    created_at: '2026-07-29T00:00:00Z',
+    updated_at: '2026-07-29T00:00:00Z',
+    user: { user_name: 'yansheng3' },
     bind_mode: bindMode,
   }
 }
@@ -180,7 +225,8 @@ describe('TeamList mode filter', () => {
     render(<TeamList scope="personal" />)
 
     await screen.findByText('chat-agent')
-    await userEvent.click(screen.getByRole('button', { name: 'Device' }))
+    fireEvent.keyDown(screen.getByTestId('team-mode-filter-select'), { key: 'ArrowDown' })
+    fireEvent.click(await screen.findByRole('option', { name: 'Device' }))
 
     await waitFor(() => {
       expect(screen.queryByText('chat-agent')).not.toBeInTheDocument()
@@ -199,7 +245,121 @@ describe('TeamList mode filter', () => {
     render(<TeamList scope="group" sourceFilter="group" />)
 
     await screen.findByText('group-agent')
-    expect(screen.getByText('platform')).toBeInTheDocument()
+    expect(screen.getByText('platform')).toHaveClass('text-text-muted')
+  })
+
+  it('uses the marketplace-style card grid in compact capability views', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(8, 'compact-agent', ['chat']),
+        namespace: 'platform',
+        bots: [{ bot_id: 1, bot_prompt: '' }],
+      },
+    ])
+
+    render(<TeamList scope="group" sourceFilter="group" compact />)
+
+    const card = await screen.findByTestId('team-card-8')
+    expect(screen.getByTestId('team-list-items')).toHaveClass(
+      'grid',
+      'sm:grid-cols-2',
+      'lg:grid-cols-3',
+      'xl:grid-cols-4'
+    )
+    expect(card).toHaveClass('group', 'relative', 'min-h-[160px]', 'gap-4')
+    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
+      'h-11',
+      'w-11',
+      'rounded-xl',
+      'border'
+    )
+    expect(within(card).getByTestId('use-team-button-8')).toHaveTextContent('Go to Chat')
+    expect(within(card).getByTestId('use-team-button-8')).toHaveClass('h-8', 'px-2.5', 'text-xs')
+    expect(
+      within(card).getByTestId('use-team-button-8').querySelector('svg')
+    ).not.toBeInTheDocument()
+    expect(within(card).getByTestId('team-more-actions-button-8')).toHaveAccessibleName(
+      'More actions'
+    )
+    expect(within(card).getByTestId('team-more-actions-button-8')).toHaveClass(
+      'h-11',
+      'w-11',
+      'md:h-8',
+      'md:w-8'
+    )
+    expect(within(card).getByTestId('team-card-footer-8')).toHaveTextContent('yansheng32026-07-29')
+    expect(within(card).queryByTestId('team-api-call-button-8')).not.toBeInTheDocument()
+    expect(within(card).getByTestId('team-api-call-menu-item-8')).toHaveTextContent('Call via API')
+    expect(within(card).getByText('Active')).toBeInTheDocument()
+    expect(within(card).getByText('1 Bot')).toBeInTheDocument()
+  })
+
+  it('keeps a parent-group agent authorized through the selected child group', async () => {
+    ;(fetchTeamsList as jest.Mock).mockImplementation(
+      (_scope: string, selectedGroupName?: string) =>
+        Promise.resolve(
+          selectedGroupName === 'child-group'
+            ? [
+                {
+                  ...makeTeam(6, 'authorized-agent', ['chat']),
+                  namespace: 'parent-group',
+                  share_status: 2,
+                  access_source: 'namespace_authorization',
+                },
+              ]
+            : []
+        )
+    )
+
+    render(<TeamList scope="group" sourceFilter="group" groupFilter={['child-group']} />)
+
+    expect(await screen.findByText('authorized-agent')).toBeInTheDocument()
+    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group')
+    const card = screen.getByTestId('team-card-6')
+    expect(within(card).getByText('From parent group parent-group')).toBeInTheDocument()
+    expect(within(card).queryByText('parent-group', { exact: true })).not.toBeInTheDocument()
+  })
+
+  it('shows a personal-source agent authorized to a group', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(9, 'bound-personal-agent', ['chat']),
+        namespace: 'default',
+        share_status: 2,
+        access_source: 'namespace_authorization',
+      },
+    ])
+
+    render(<TeamList scope="group" sourceFilter="group" />)
+
+    const card = (await screen.findByText('bound-personal-agent')).closest(
+      '[data-testid="team-card-9"]'
+    )
+    expect(card).not.toBeNull()
+    expect(within(card as HTMLElement).queryByText('Unbind')).not.toBeInTheDocument()
+  })
+
+  it('merges and deduplicates agents resolved through multiple selected groups', async () => {
+    const sharedAgent = {
+      ...makeTeam(7, 'shared-authorized-agent', ['chat']),
+      namespace: 'parent-group',
+      share_status: 2,
+      access_source: 'namespace_authorization' as const,
+    }
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([sharedAgent])
+
+    render(
+      <TeamList
+        scope="group"
+        sourceFilter="group"
+        groupFilter={['child-group-a', 'child-group-b']}
+      />
+    )
+
+    expect(await screen.findByText('shared-authorized-agent')).toBeInTheDocument()
+    expect(screen.getAllByText('shared-authorized-agent')).toHaveLength(1)
+    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group-a')
+    expect(fetchTeamsList).toHaveBeenCalledWith('group', 'child-group-b')
   })
 
   it('keeps source and mode filters in the same toolbar area above the list', async () => {
