@@ -350,6 +350,92 @@ describe('reconcileRuntimeConversationMessages', () => {
     expect(reconciled[1].blocks).toBeUndefined()
   })
 
+  test('preserves settled tool blocks from every cached assistant segment in a subtask', () => {
+    const transcript = [
+      message({
+        id: 'server',
+        turnId: 'turn-1',
+        subtaskId: 'turn-1',
+        content: 'Complete response',
+        blocks: [
+          {
+            id: 'file-changes-1',
+            type: 'file_changes',
+            status: 'done',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-1',
+              device_id: 'device-1',
+              workspace_path: '/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [],
+              reverted_at: null,
+            },
+          },
+        ],
+      }),
+    ]
+    const cached = [
+      message({
+        id: 'cached-before-guidance',
+        turnId: 'turn-1',
+        subtaskId: 'turn-1',
+        blocks: [
+          {
+            id: 'command-1',
+            type: 'tool',
+            toolName: 'exec_command',
+            toolInput: { cmd: 'pwd' },
+            status: 'done',
+          },
+          {
+            id: 'file-changes-1',
+            type: 'file_changes',
+            status: 'streaming',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'turn-1',
+              device_id: 'device-1',
+              workspace_path: '/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [],
+              reverted_at: null,
+            },
+          },
+        ],
+      }),
+      message({
+        id: 'cached-after-guidance',
+        turnId: 'turn-1',
+        subtaskId: 'turn-1',
+        blocks: [
+          {
+            id: 'view-image-1',
+            type: 'tool',
+            toolName: 'view_image',
+            toolInput: { path: '/workspace/image.png' },
+            status: 'done',
+          },
+        ],
+      }),
+    ]
+
+    const reconciled = reconcileRuntimeConversationMessages(transcript, cached, false)
+
+    expect(reconciled[0].blocks?.map(block => block.id)).toEqual([
+      'command-1',
+      'view-image-1',
+      'file-changes-1',
+    ])
+    expect(reconciled[0].blocks?.[2].status).toBe('done')
+  })
+
   test('does not preserve unfinished live blocks after the transcript settles', () => {
     const transcript = [
       message({

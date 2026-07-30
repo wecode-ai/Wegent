@@ -2666,17 +2666,35 @@ function preserveSettledRuntimeBlocks(
   const messages = transcriptMessages.map(message => {
     if (message.role !== 'assistant' || !message.subtaskId) return message
     if (restoredSubtaskIds.has(message.subtaskId)) return message
-    const cachedMessage = cachedAssistants.find(
-      candidate => candidate.subtaskId === message.subtaskId
-    )
-    if (!cachedMessage) return message
+    const cachedBlocks = collectCachedRuntimeBlocksForSubtask(cachedAssistants, message.subtaskId)
+    if (!cachedBlocks) return message
     restoredSubtaskIds.add(message.subtaskId)
-    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedMessage?.blocks)
+    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedBlocks)
     if (blocks === message.blocks) return message
     changed = true
     return { ...message, blocks }
   })
   return changed ? messages : transcriptMessages
+}
+
+function collectCachedRuntimeBlocksForSubtask(
+  cachedAssistants: WorkbenchMessage[],
+  subtaskId: string
+): WorkbenchMessage['blocks'] {
+  const orderedBlockIds: string[] = []
+  const blocksById = new Map<string, NonNullable<WorkbenchMessage['blocks']>[number]>()
+
+  cachedAssistants.forEach(message => {
+    if (message.subtaskId !== subtaskId) return
+    message.blocks?.forEach(block => {
+      if (!blocksById.has(block.id)) orderedBlockIds.push(block.id)
+      blocksById.set(block.id, block)
+    })
+  })
+
+  return orderedBlockIds.length
+    ? orderedBlockIds.map(blockId => blocksById.get(blockId)!)
+    : undefined
 }
 
 function mergeSettledRuntimeBlocks(
