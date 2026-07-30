@@ -46,6 +46,7 @@ interface ComposerToolbarProps {
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
+  sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
@@ -78,6 +79,7 @@ export function ComposerToolbar({
   onPause,
   onQuickPhraseSelect,
   onSubmit,
+  sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
 }: ComposerToolbarProps) {
@@ -188,7 +190,7 @@ export function ComposerToolbar({
           <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
             <button
               type="submit"
-              data-testid="send-message-button"
+              data-testid={sendButtonTestId}
               className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
               aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
             >
@@ -242,7 +244,7 @@ export function ComposerToolbar({
         ) : (
           <button
             type="submit"
-            data-testid="send-message-button"
+            data-testid={sendButtonTestId}
             disabled={!canSend}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white disabled:cursor-not-allowed disabled:bg-text-muted/45 disabled:text-background"
             aria-label={t('workbench.send_message', '发送消息')}

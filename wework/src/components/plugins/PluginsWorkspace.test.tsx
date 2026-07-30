@@ -1327,6 +1327,45 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toBeInTheDocument()
   })
 
+  test('selects a newly added local marketplace', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.spyOn(Date, 'now').mockReturnValue(1234)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-curated',
+          displayName: 'Codex official',
+          path: 'https://github.com/openai/plugins',
+        },
+      ],
+    })
+    const { unmount } = render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugins-create-button'))
+    await userEvent.click(screen.getByTestId('plugins-add-market-option'))
+    await userEvent.type(
+      screen.getByTestId('plugins-marketplace-path-input'),
+      '/Users/test/plugins'
+    )
+    await userEvent.click(screen.getByTestId('plugins-marketplace-save-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugins-marketplace-selector')).toHaveValue('local:local-1234')
+    )
+    expect(screen.getByTestId('plugins-marketplace-tab-local-1234')).toHaveClass('bg-surface')
+
+    unmount()
+    render(<PluginsWorkspace />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugins-marketplace-selector')).toHaveValue('local:local-1234')
+    )
+  })
+
   test('shows add-marketplace state when no marketplace is configured', async () => {
     render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
 

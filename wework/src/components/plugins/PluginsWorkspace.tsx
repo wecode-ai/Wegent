@@ -394,6 +394,22 @@ function cloudMarketplaceKey(): string {
   return 'cloud:default'
 }
 
+const SELECTED_MARKETPLACE_KEY_STORAGE = 'wework.plugins.selectedMarketplaceKey'
+
+function rememberedMarketplaceKey(): string {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem(SELECTED_MARKETPLACE_KEY_STORAGE) ?? ''
+}
+
+function rememberMarketplaceKey(key: string): void {
+  if (typeof window === 'undefined') return
+  if (key) {
+    window.localStorage.setItem(SELECTED_MARKETPLACE_KEY_STORAGE, key)
+  } else {
+    window.localStorage.removeItem(SELECTED_MARKETPLACE_KEY_STORAGE)
+  }
+}
+
 function currentDeviceInstallation(
   plugin: InstalledPlugin,
   deviceId: string
@@ -451,6 +467,7 @@ function AddMarketDialog({
       onClick={onClose}
     >
       <div
+        data-testid="plugins-marketplace-dialog"
         className="w-full max-w-md rounded-xl border border-border bg-background p-6 shadow-xl"
         onClick={event => event.stopPropagation()}
       >
@@ -483,6 +500,7 @@ function AddMarketDialog({
             <input
               type="text"
               required
+              data-testid="plugins-marketplace-path-input"
               value={formData.source}
               onChange={event => onChange({ ...formData, source: event.target.value })}
               placeholder="openai/plugins 或 git@github.com:org/repo.git"
@@ -550,6 +568,7 @@ function AddMarketDialog({
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
+              data-testid="plugins-marketplace-cancel-button"
               onClick={onClose}
               disabled={isSubmitting}
               className="h-9 rounded-lg px-4 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:opacity-50"
@@ -558,6 +577,7 @@ function AddMarketDialog({
             </button>
             <button
               type="submit"
+              data-testid="plugins-marketplace-save-button"
               disabled={isSubmitting}
               className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background transition-colors hover:bg-text-primary/90 disabled:opacity-50"
             >
@@ -864,7 +884,7 @@ export function PluginsWorkspace({
   const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
-  const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState('')
+  const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(rememberedMarketplaceKey)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [canPublish, setCanPublish] = useState(false)
@@ -1486,6 +1506,11 @@ export function PluginsWorkspace({
       })
       .then(state => {
         applyLocalMarketplaceState(state)
+        if (state.selectedMarketplaceId) {
+          const selectedKey = localMarketplaceKey(state.selectedMarketplaceId)
+          rememberMarketplaceKey(selectedKey)
+          setSelectedMarketplaceKey(selectedKey)
+        }
         setAddMarketForm({ source: '', gitRef: '', subPath: '', displayName: '' })
         setShowAddMarketDialog(false)
         refreshMarketplace()
@@ -2518,6 +2543,7 @@ export function PluginsWorkspace({
                     onChange={event => {
                       const key = event.target.value
                       const marketplace = marketplaces.find(item => item.key === key)
+                      rememberMarketplaceKey(key)
                       setSelectedMarketplaceKey(key)
                       if (marketplace?.kind === 'local') {
                         void localPluginApi.selectMarketplace(marketplace.id)
