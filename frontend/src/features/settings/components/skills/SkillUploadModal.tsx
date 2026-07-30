@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, type ReactNode } from 'react'
 import { Skill } from '@/types/api'
 import {
   uploadSkill,
@@ -19,6 +19,7 @@ import {
   importGitRepoPublicSkills,
   GitSkillInfo,
   GitImportResponse,
+  addSkillToGroups,
 } from '@/apis/skills'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -57,13 +58,24 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { Group } from '@/types/group'
+import type { ResourceCreateTarget } from '@/features/resource-library/components/ResourceCreateButton'
+import {
+  CapabilityScopeSelector,
+  type CapabilityPublishTarget,
+} from '@/features/resource-library/components/CapabilityScopeSelector'
+import { toast } from 'sonner'
 
 interface SkillUploadModalProps {
   open: boolean
-  onClose: (saved: boolean) => void
+  onClose: (saved: boolean, skillId?: number) => void
   skill?: Skill | UnifiedSkill | null
   namespace?: string // Namespace for the skill (default: 'default', group name for group skills)
   isPublic?: boolean // Whether this is for public skill management (admin)
+  createTarget?: ResourceCreateTarget
+  writableGroups?: Group[]
+  publishAfterCreate?: boolean
+  onCreateOptionsChange?: (target: ResourceCreateTarget, publishAfterCreate: boolean) => void
 }
 
 // Helper to get skill name from either type
@@ -92,6 +104,10 @@ export default function SkillUploadModal({
   skill,
   namespace: propNamespace,
   isPublic = false,
+  createTarget = { scope: 'personal' },
+  writableGroups = [],
+  publishAfterCreate = false,
+  onCreateOptionsChange,
 }: SkillUploadModalProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<'upload' | 'git'>('upload')
@@ -121,6 +137,51 @@ export default function SkillUploadModal({
   const [showResult, setShowResult] = useState(false)
 
   const isEditMode = !!skill
+  const publishTarget: CapabilityPublishTarget = publishAfterCreate
+    ? 'marketplace'
+    : createTarget.scope === 'group'
+      ? 'team'
+      : 'personal'
+  const targetGroupNames =
+    publishTarget === 'team'
+      ? Array.from(
+          new Set(
+            createTarget.groupNames || (createTarget.groupName ? [createTarget.groupName] : [])
+          )
+        )
+      : []
+
+  const addSavedSkillsToGroups = async (skillIds: number[]): Promise<void> => {
+    if (targetGroupNames.length === 0 || skillIds.length === 0) return
+    const results = await Promise.allSettled(
+      skillIds.map(skillId => addSkillToGroups(skillId, targetGroupNames))
+    )
+    if (results.some(result => result.status === 'rejected')) {
+      toast.warning(t('resource-library:messages.skill_saved_group_binding_failed'))
+    }
+  }
+
+  const handlePublishTargetChange = (
+    target: CapabilityPublishTarget,
+    selectedGroup?: string,
+    selectedGroups?: string[]
+  ) => {
+    if (target === 'team') {
+      const nextGroupNames = Array.from(
+        new Set(selectedGroups || (selectedGroup ? [selectedGroup] : []))
+      )
+      onCreateOptionsChange?.(
+        {
+          scope: 'group',
+          groupName: nextGroupNames[0],
+          groupNames: nextGroupNames,
+        },
+        false
+      )
+      return
+    }
+    onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace')
+  }
 
   // ============================================================================
   // Upload Tab Logic
@@ -204,6 +265,11 @@ export default function SkillUploadModal({
       return
     }
 
+    if (!isEditMode && publishTarget === 'team' && targetGroupNames.length === 0) {
+      setError(t('resource-library:states.select_groups'))
+      return
+    }
+
     // Check if skill with same name already exists (only for create mode)
     if (!isEditMode && !isPublic) {
       try {
@@ -229,25 +295,39 @@ export default function SkillUploadModal({
     setUploadProgress(0)
 
     try {
+      let savedSkillId: number | undefined
       if (isEditMode && skill) {
         const skillId = getSkillId(skill)
         if (isPublic) {
-          await updatePublicSkillWithUpload(skillId, selectedFile, setUploadProgress)
+          const saved = await updatePublicSkillWithUpload(skillId, selectedFile, setUploadProgress)
+          savedSkillId = getSkillId(saved)
         } else {
-          await updateSkill(skillId, selectedFile, setUploadProgress)
+          const saved = await updateSkill(skillId, selectedFile, setUploadProgress)
+          savedSkillId = getSkillId(saved)
         }
       } else if (overwrite && existingSkill) {
         // Update existing skill
         const skillId = parseInt(existingSkill.metadata.labels?.id || '0')
-        await updateSkill(skillId, selectedFile, setUploadProgress)
+        const saved = await updateSkill(skillId, selectedFile, setUploadProgress)
+        savedSkillId = getSkillId(saved)
       } else {
         if (isPublic) {
-          await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+          const saved = await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+          savedSkillId = getSkillId(saved)
         } else {
-          await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress)
+          const saved = await uploadSkill(
+            selectedFile,
+            skillName.trim(),
+            namespace,
+            setUploadProgress
+          )
+          savedSkillId = getSkillId(saved)
         }
       }
-      onClose(true)
+      if (!isEditMode && savedSkillId && targetGroupNames.length > 0) {
+        await addSavedSkillsToGroups([savedSkillId])
+      }
+      onClose(true, savedSkillId)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('skills.error_upload_failed'))
     } finally {
@@ -334,6 +414,10 @@ export default function SkillUploadModal({
 
   const handleImportSkills = async () => {
     if (selectedSkillPaths.size === 0) return
+    if (publishTarget === 'team' && targetGroupNames.length === 0) {
+      setGitError(t('resource-library:states.select_groups'))
+      return
+    }
 
     setImporting(true)
     setGitError(null)
@@ -347,6 +431,9 @@ export default function SkillUploadModal({
       }
 
       const result = await importFn(request)
+      if (targetGroupNames.length > 0 && result.success.length > 0) {
+        await addSavedSkillsToGroups(result.success.map(item => item.id))
+      }
 
       // Check if there are skipped skills (conflicts)
       if (result.skipped.length > 0 && result.success.length === 0 && result.failed.length === 0) {
@@ -380,6 +467,9 @@ export default function SkillUploadModal({
       }
 
       const result = await importFn(request)
+      if (targetGroupNames.length > 0 && result.success.length > 0) {
+        await addSavedSkillsToGroups(result.success.map(item => item.id))
+      }
       setImportResult(result)
       setShowResult(true)
     } catch (err) {
@@ -431,7 +521,10 @@ export default function SkillUploadModal({
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && handleClose()}>
-        <DialogContent className="sm:max-w-[600px] bg-surface max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="sm:max-w-[600px] bg-surface max-h-[90vh] overflow-y-auto"
+          data-testid="skill-upload-dialog"
+        >
           <DialogHeader>
             <DialogTitle>
               {isEditMode ? t('skills.update_modal_title') : t('skills.upload_modal_title')}
@@ -494,6 +587,16 @@ export default function SkillUploadModal({
                   handleDrop={handleDrop}
                   handleSubmit={handleSubmit}
                   handleClose={handleClose}
+                  publishScope={
+                    <CapabilityScopeSelector
+                      value={publishTarget}
+                      groups={writableGroups}
+                      groupName={createTarget.groupName}
+                      groupNames={targetGroupNames}
+                      onChange={handlePublishTargetChange}
+                      multipleGroups
+                    />
+                  }
                   t={t}
                 />
               </TabsContent>
@@ -515,6 +618,16 @@ export default function SkillUploadModal({
                     handleToggleSkill={handleToggleSkill}
                     handleImportSkills={handleImportSkills}
                     handleClose={handleClose}
+                    publishScope={
+                      <CapabilityScopeSelector
+                        value={publishTarget}
+                        groups={writableGroups}
+                        groupName={createTarget.groupName}
+                        groupNames={targetGroupNames}
+                        onChange={handlePublishTargetChange}
+                        multipleGroups
+                      />
+                    }
                     t={t}
                   />
                 )}
@@ -605,6 +718,7 @@ interface UploadFormProps {
   handleDrop: (e: React.DragEvent) => void
   handleSubmit: () => void
   handleClose: () => void
+  publishScope?: ReactNode
   t: (key: string, options?: Record<string, unknown>) => string
 }
 
@@ -622,6 +736,7 @@ function UploadForm({
   handleDrop,
   handleSubmit,
   handleClose,
+  publishScope,
   t,
 }: UploadFormProps) {
   return (
@@ -717,6 +832,8 @@ function UploadForm({
         </AlertDescription>
       </Alert>
 
+      {publishScope}
+
       <DialogFooter>
         <Button variant="outline" onClick={handleClose} disabled={uploading}>
           {t('actions.cancel')}
@@ -746,6 +863,7 @@ interface GitImportFormProps {
   handleToggleSkill: (path: string) => void
   handleImportSkills: () => void
   handleClose: () => void
+  publishScope?: ReactNode
   t: (key: string, options?: Record<string, unknown>) => string
 }
 
@@ -762,6 +880,7 @@ function GitImportForm({
   handleToggleSkill,
   handleImportSkills,
   handleClose,
+  publishScope,
   t,
 }: GitImportFormProps) {
   const isLoading = scanning || importing
@@ -857,6 +976,8 @@ function GitImportForm({
           </div>
         </div>
       )}
+
+      {publishScope}
 
       <DialogFooter>
         <Button variant="outline" onClick={handleClose} disabled={isLoading}>

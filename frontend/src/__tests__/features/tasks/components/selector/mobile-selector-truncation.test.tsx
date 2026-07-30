@@ -67,6 +67,13 @@ jest.mock('@/features/tasks/components/selector/useTeamFavorites', () => ({
   }),
 }))
 
+jest.mock('@/features/tasks/components/selector/useRecentTeams', () => ({
+  useRecentTeams: () => ({
+    recentTeamIds: [],
+    refreshRecentTeams: jest.fn(),
+  }),
+}))
+
 jest.mock('@/features/tasks/hooks/useModelSelection', () => ({
   DEFAULT_MODEL_NAME: '__default__',
   useModelSelection: () => ({

@@ -125,6 +125,9 @@ const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context win
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RATE_LIMIT_PROMPT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT: recover from one model 429.'
 const RATE_LIMIT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT_COMPLETE'
+const ANTHROPIC_EMPTY_PROMPT =
+  'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY: recover when Kimi reports tokens without output.'
+const ANTHROPIC_EMPTY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
@@ -1003,6 +1006,25 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const activeGuidanceUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const activeGuidanceAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const activeGuidance = activeGuidanceUserMessages.at(-1)
+  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  assert.ok(activeGuidance, 'The active background guidance message was not rendered')
+  assert.ok(
+    activeAssistantContinuation,
+    'The active assistant continuation after background guidance was not rendered'
+  )
+  assert.ok(
+    activeGuidance.top < activeAssistantContinuation.top,
+    'The active background guidance message was appended after the running assistant'
+  )
   control.releaseInitialCompletionResponse()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: COMPLETION_TEXT,
@@ -2672,11 +2694,6 @@ async function verifyCloudWorkPage(control) {
 
 async function initializeBlankCodexHome({ codexHome, control }) {
   const configPath = join(codexHome, 'config.toml')
-  assert.equal(
-    await pathExists(configPath),
-    false,
-    'The isolated Wework Codex home was not blank before initialization'
-  )
   await control.command('waitFor', '[data-testid="codex-home-initializer-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -3651,6 +3668,18 @@ async function verifyBackgroundTaskWindowLifecycle({
   const lifecycleScreenshotName = name => `window-lifecycle-${name}`
   setPhase('popout-window-lifecycle')
   await verifyPopoutWindowLifecycle(control, composerSelector)
+  setPhase('close-request-without-running-task')
+  await control.command('requestMainWindowClose', 'body')
+  await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+  const closeCancelledSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !closeCancelledSnapshot.testIds.includes('runtime-task-close-confirm-overlay'),
+    'The close-to-tray prompt remained open after cancelling'
+  )
   setPhase('background-streaming-task')
   control.setScenario('window_lifecycle')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -3715,7 +3744,12 @@ async function verifyBackgroundTaskWindowLifecycle({
       'The executor process was not alive before close'
     )
 
-    await control.command('closeMainWindowToTray', 'body')
+    await control.command('requestMainWindowClose', 'body')
+    await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
     await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
@@ -4702,6 +4736,49 @@ async function verifyRateLimitRecovery({ composerSelector, control }) {
   await captureVerificationScreenshot(
     control,
     'rate-limit-01-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control }) {
+  const anthropicModel = CLOUD_MODEL_CASES.find(model => model.protocol === 'anthropic')
+  assert.ok(anthropicModel, 'The Anthropic cloud model fixture is missing')
+  control.setScenario('anthropic_empty_response')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, anthropicModel.optionId, anthropicModel.label)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    ANTHROPIC_EMPTY_PROMPT,
+    'anthropic_empty_response'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('anthropic_empty_response', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Codex did not retry the empty Anthropic response'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: ANTHROPIC_EMPTY_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  assert.equal(
+    control.scenarioRequests.get('anthropic_empty_response')?.length,
+    2,
+    'The empty Anthropic response did not recover with exactly one retry'
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'The recovered Anthropic response rendered an assistant error'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'anthropic-empty-01-recovered.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
 }
@@ -6006,6 +6083,7 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
         'fresh_chat',
@@ -6540,6 +6618,52 @@ class DesktopE2EServer {
 
     if (requestKind === 'prewarm') {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'anthropic_empty_response') {
+      assert.equal(protocol, 'anthropic', 'The empty-response regression used the wrong protocol')
+      assert.equal(
+        body.model,
+        CLOUD_MODEL_CASES.find(model => model.protocol === 'anthropic')?.modelId,
+        'The empty-response regression used the wrong cloud model'
+      )
+      this.recordScenarioRequest('anthropic_empty_response', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(ANTHROPIC_EMPTY_PROMPT),
+        'The Anthropic empty-response request lost the user prompt'
+      )
+      const requests = this.scenarioRequests.get('anthropic_empty_response') ?? []
+      if (requests.length === 1) {
+        this.writeAnthropicSse(response, [
+          [
+            'message_start',
+            {
+              type: 'message_start',
+              message: {
+                id: 'anthropic-empty-response',
+                type: 'message',
+                role: 'assistant',
+                content: [],
+                model: 'kimi-k2.5',
+                stop_reason: null,
+                usage: { input_tokens: 1, output_tokens: 0 },
+              },
+            },
+          ],
+          [
+            'message_delta',
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn', stop_sequence: null },
+              usage: { output_tokens: 157 },
+            },
+          ],
+          ['message_stop', { type: 'message_stop' }],
+        ])
+        return
+      }
+      this.writeAnthropicMessage(response, ANTHROPIC_EMPTY_COMPLETION_TEXT)
       return
     }
 
@@ -8611,7 +8735,7 @@ class DesktopE2EServer {
         {
           type: 'message_delta',
           delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: 1 },
+          usage: { output_tokens: text ? 1 : 0 },
         },
       ],
       ['message_stop', { type: 'message_stop' }],
@@ -9179,6 +9303,8 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
+  await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
+
   await verifyModelProtocolMatrix({
     cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
@@ -9457,6 +9583,11 @@ async function main() {
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
   if (RUNS_PLUGIN_E2E) {
+    assert.equal(
+      await pathExists(join(codexHome, 'config.toml')),
+      false,
+      'The isolated Wework Codex home was not blank before application startup'
+    )
     await createOfficialPluginMarketplaceFixture({
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
@@ -10492,13 +10623,13 @@ async function main() {
           Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
         )
       }
-      await verifyViewImageProcessingBlock(control)
       await control.command('click', '[data-testid="processing-summary-toggle"]')
       await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
         text: '+1',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       if (VIEW_IMAGE_ONLY) {
+        await verifyViewImageProcessingBlock(control)
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,

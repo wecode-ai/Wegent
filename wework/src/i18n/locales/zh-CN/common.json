@@ -634,6 +634,8 @@
     "browser_invalid_url": "请输入有效的 http 或 https 地址",
     "browser_open_failed": "无法打开应用内浏览器",
     "browser_control_failed": "浏览器操作失败",
+    "browser_invalid_tls_title": "此连接的证书无效",
+    "browser_invalid_tls_desc": "Wework 已继续访问 {{host}}，但该连接可能被冒充或窃听，请勿输入敏感信息。",
     "browser_annotation_start": "批注页面",
     "browser_annotation_active": "正在批注 · {{site}}",
     "browser_annotation_close": "退出批注",

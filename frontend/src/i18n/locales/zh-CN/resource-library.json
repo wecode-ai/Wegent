@@ -1,8 +1,11 @@
 {
   "title": "资源库",
+  "description": "发现、安装和管理你的智能体、技能、模型、执行器与检索器",
   "tabs": {
     "discover": "发现",
     "mine": "我的",
+    "team": "团队",
+    "system": "系统",
     "installed": "已安装",
     "published": "我发布的"
   },
@@ -24,7 +27,8 @@
     "personal": "我创建的",
     "group": "团队",
     "system": "系统",
-    "all_groups": "全部团队"
+    "all_groups": "全部团队",
+    "selected_groups": "已选择 {{count}} 个团队"
   },
   "targets": {
     "personal": "我的资源",
@@ -36,29 +40,61 @@
   },
   "actions": {
     "install": "安装",
+    "use": "去使用",
+    "add": "添加",
+    "added": "已添加",
+    "new_capability": "新建能力",
+    "view_capabilities": "已有能力",
+    "add_capability": "从市场添加",
+    "enable_personal_install": "允许个人安装",
+    "enable_group_install": "允许团队安装",
+    "restore": "重新发布",
     "installed": "已安装",
     "publish": "发布资源",
+    "publish_new_version": "发布新版本",
+    "edit_skill": "编辑技能",
+    "edit_and_publish": "编辑并发布新版本",
     "upgrade": "升级",
     "archive": "归档",
     "configure": "配置",
     "view_detail": "查看详情",
     "details": "详情",
     "manage_groups": "管理...",
+    "more": "更多操作",
+    "remove_from_team": "从团队移除",
     "retry": "重试",
+    "load_more": "加载更多",
     "create_to_personal": "创建到我的资源",
     "create_to_group": "创建到 {{group}}",
     "choose_create_target": "{{action}}保存到哪里？",
     "choose_create_target_description": "保存位置会影响谁能看到和管理这个资源。",
     "search": "搜索",
+    "filter": "筛选",
+    "continue": "继续",
+    "save": "保存",
     "close": "关闭",
     "cancel": "取消"
   },
   "status": {
     "installed": "已安装",
-    "requires_configuration": "需要配置",
     "draft": "草稿",
     "published": "已发布",
     "archived": "已归档"
+  },
+  "publication": {
+    "settings": "发布设置",
+    "personal_install": "个人安装",
+    "group_install": "团队安装",
+    "edit_scope": "编辑发布范围",
+    "edit_scope_description": "选择能力的发布范围；发布到团队时可以选择多个目标团队。",
+    "edit_share_scope": "编辑分享范围",
+    "edit_share_scope_description": "修改技能的分享位置。发布到团队时可以选择多个目标团队。",
+    "personal_install_description": "其他用户可以将该能力添加到自己的能力中。",
+    "group_install_description": "有权限的成员可以将该能力添加到团队。",
+    "target_groups": "目标团队",
+    "target_groups_description": "可多选。保存后所选团队会引用同一个源能力。",
+    "target_groups_preserve_note": "移出范围会解除该团队对能力的引用，但不会删除源能力。",
+    "target_groups_count": "{{count}} 个目标团队"
   },
   "fields": {
     "name": "名称",
@@ -67,27 +103,46 @@
     "tags": "标签",
     "type": "资源类型",
     "sort": "排序",
+    "scope": "范围",
+    "mode": "模式",
     "source": "来源",
     "source_id": "源资源 ID",
     "version": "版本",
     "publisher": "发布者",
+    "official_publisher": "Wegent 官方",
     "install_count": "安装次数",
-    "updated_at": "更新时间"
+    "updated_at": "更新时间",
+    "team_scope": "团队范围",
+    "group_added_skills": "团队已添加技能",
+    "installed_capabilities": "已安装能力"
   },
   "sort": {
     "default": "默认",
+    "popular": "热门",
     "latest": "最新"
+  },
+  "modes": {
+    "all": "全部模式",
+    "chat": "聊天",
+    "code": "编码",
+    "task": "设备"
   },
   "empty": {
     "discover": "暂无可发现资源",
-    "mine": "暂无我的资源"
+    "mine": "暂无我的能力",
+    "team": "暂无团队能力",
+    "published": "暂无发布记录",
+    "create_model": "使用页面顶部的“新建能力”创建第一个模型",
+    "create_shell": "使用页面顶部的“新建能力”创建第一个执行器",
+    "create_retriever": "使用页面顶部的“新建能力”创建第一个检索器"
   },
   "states": {
     "loading": "正在加载资源",
     "empty": "暂无资源",
     "error": "加载失败",
     "requiresConfiguration": "需要配置",
-    "no_groups": "暂无组资源"
+    "no_groups": "暂无组资源",
+    "select_groups": "请选择至少一个团队"
   },
   "search": {
     "placeholder": "搜索资源",
@@ -96,12 +151,56 @@
   },
   "messages": {
     "install_success": "安装成功",
-    "install_requires_configuration": "安装成功，需要配置",
     "install_failed": "安装失败",
     "publish_success": "发布成功",
-    "publish_failed": "发布失败"
+    "publish_failed": "发布失败",
+    "update_success": "发布规则已更新",
+    "update_failed": "发布规则更新失败",
+    "publication_loading": "正在读取分享范围…",
+    "publication_load_failed": "分享范围读取失败",
+    "groups_load_failed": "团队列表加载失败",
+    "group_manage_required": "需要群组开发者或更高权限",
+    "skill_saved_group_binding_failed": "技能已保存，但未能添加到部分团队，请在“我的”中重新配置分享范围",
+    "agent_saved_publication_failed": "智能体已保存，但发布范围更新失败，请在“我发布的”中重试",
+    "remove_from_team_success": "已从团队移除技能",
+    "remove_from_team_failed": "从团队移除技能失败",
+    "remove_from_team_confirm": "确定从「{{group}}」移除技能「{{skill}}」吗？源技能不会被删除。"
   },
   "publish": {
-    "description": "将已有智能体或技能发布到资源库"
+    "description": "选择已有智能体或技能并发布到市场",
+    "select_resource": "选择已有能力"
+  },
+  "new_capability": {
+    "description": "选择要创建的能力类型，发布范围在新建页面中设置。",
+    "core_resources": "核心能力",
+    "foundation_resources": "基础资源",
+    "type_descriptions": {
+      "agent": "组合机器人与协作模式",
+      "skill": "上传或导入可复用技能",
+      "model": "配置大模型与推理服务",
+      "shell": "配置智能体执行环境",
+      "retriever": "配置知识检索服务"
+    },
+    "scope_title": "发布范围",
+    "scope_description": "选择能力的可见范围；发布到团队时可以选择多个目标群组。",
+    "existing_scope_description": "发布到其他范围时会创建对当前能力的引用；源能力修改后，各范围立即使用最新内容。",
+    "scopes": {
+      "personal": "私有",
+      "team": "团队",
+      "marketplace": "市场"
+    },
+    "destination": "发布到",
+    "group": "目标群组",
+    "select_group": "选择群组",
+    "targets": {
+      "mine": "私有",
+      "published": "市场",
+      "team": "团队"
+    },
+    "target_descriptions": {
+      "mine": "仅自己可见、使用和管理",
+      "published": "公开展示，供用户安装",
+      "team": "群组成员共同使用"
+    }
   }
 }

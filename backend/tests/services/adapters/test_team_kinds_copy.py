@@ -11,6 +11,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.skill_binding_service import skill_binding_service
 
 
 def _create_user(test_db: Session, user_name: str, email: str) -> User:
@@ -201,6 +202,40 @@ class TestCopyTeamNonSolo:
 
         assert result["name"] == "Copy of my-team"
         assert result["id"] != team.id
+
+    def test_copy_preserves_display_metadata(self, test_db: Session):
+        user = _create_user(test_db, "copy_metadata_user", "copy-metadata@test.com")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+        bot = _create_bot(test_db, user_id=user.id, name="metadata-bot")
+        team = _create_team(
+            test_db,
+            user_id=user.id,
+            name="source-team",
+            collaboration_model="pipeline",
+            bot_ids=[bot.id],
+        )
+        team.json = {
+            **team.json,
+            "metadata": {
+                **team.json["metadata"],
+                "displayName": "Published agent",
+            },
+            "spec": {
+                **team.json["spec"],
+                "quick_phrases": ["Start here"],
+            },
+        }
+        test_db.commit()
+
+        result = team_kinds_service.copy_team(
+            test_db,
+            team_id=team.id,
+            user_id=user.id,
+        )
+
+        assert result["name"] == "Copy of source-team"
+        assert result["displayName"] == "Published agent"
+        assert result["quick_phrases"] == ["Start here"]
 
     def test_copy_non_solo_team_does_not_clone_bots(self, test_db: Session):
         """Non-solo copy: bot count stays the same (no new bots created)."""
@@ -537,7 +572,7 @@ def _attach_skill_to_bot(test_db, *, bot, skill):
     """Add a skill_ref to a bot's spec and to its ghost spec (where clone_bot reads from)."""
     from app.models.kind import Kind
 
-    # Update bot spec (used by preflight and _collect_personal_skill_ids)
+    # Update bot spec (used by preflight and _collect_private_skill_ids)
     spec = bot.json.get("spec", {})
     skills_list = spec.get("skills", [])
     skill_refs = spec.get("skill_refs", {})
@@ -611,8 +646,8 @@ def _create_skill_with_binary(test_db, *, user_id, name, namespace="default"):
 
 
 class TestCopyTeamWithSkills:
-    def test_copy_solo_team_copies_personal_skills_when_flag_true(self, test_db):
-        """copy_skills=True: personal skill copied to group, cloned bot refs updated."""
+    def test_copy_solo_team_binds_personal_skills_when_flag_true(self, test_db):
+        """copy_skills=True: target group binds the canonical personal Skill."""
         from app.models.kind import Kind
 
         user = _create_user(test_db, "skill_team_user1", "st1@test.com")
@@ -643,7 +678,7 @@ class TestCopyTeamWithSkills:
             copy_skills=True,
         )
 
-        # Skill copied to eng-team namespace
+        # No independent Skill copy is created in the group.
         group_skill = (
             test_db.query(Kind)
             .filter(
@@ -654,9 +689,15 @@ class TestCopyTeamWithSkills:
             )
             .first()
         )
-        assert group_skill is not None
+        assert group_skill is None
+        assert skill_binding_service.is_skill_available_to_group(
+            test_db,
+            group_namespace="eng-team",
+            skill_id=personal_skill.id,
+            user_id=user.id,
+        )
 
-        # Cloned bot's skill_refs point to the new group skill (skills live in the ghost)
+        # The cloned Bot continues to reference the canonical Skill.
         cloned_bot = (
             test_db.query(Kind)
             .filter(
@@ -677,8 +718,8 @@ class TestCopyTeamWithSkills:
         )
         assert cloned_ghost is not None
         refs = cloned_ghost.json.get("spec", {}).get("skill_refs", {})
-        assert refs["my-skill"]["skill_id"] == group_skill.id
-        assert refs["my-skill"]["namespace"] == "eng-team"
+        assert refs["my-skill"]["skill_id"] == personal_skill.id
+        assert refs["my-skill"]["namespace"] == "default"
 
     def test_copy_solo_team_leaves_skills_in_personal_when_flag_false(self, test_db):
         """copy_skills=False: no skill copied, cloned bot refs stay pointing to personal."""
@@ -724,6 +765,12 @@ class TestCopyTeamWithSkills:
             .first()
         )
         assert group_skill is None
+        assert not skill_binding_service.is_skill_available_to_group(
+            test_db,
+            group_namespace="eng-team2",
+            skill_id=personal_skill.id,
+            user_id=user.id,
+        )
 
         # Cloned bot skill_refs still point to personal skill (skills live in the ghost)
         cloned_bot = (

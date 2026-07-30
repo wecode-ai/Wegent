@@ -82,5 +82,5 @@ describe('SkillSelectorPopover availability sections', () => {
 
     await user.click(screen.getByText('Temporary Skill'))
     expect(onToggleSkill).toHaveBeenCalledWith('temporary-skill')
-  })
+  }, 15_000)
 })

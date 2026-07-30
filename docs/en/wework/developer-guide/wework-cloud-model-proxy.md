@@ -42,6 +42,12 @@ When the upstream has not started a response stream and the model service return
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
 
+### Anthropic Empty-Output Recovery
+
+Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
+
+This check activates only when no model output has been observed. Responses that already produced text, thinking content, or a tool call are not replayed, and valid connection-prewarm responses with zero `output_tokens` remain unaffected.
+
 ### Namespace Tool Compatibility
 
 Codex can group child tools under a `type: "namespace"` tool when it sends an OpenAI Responses request. OpenAI Chat Completions and Anthropic Messages have no equivalent namespace field, so the executor Codex compatibility proxy applies a reversible mapping at the protocol boundary:

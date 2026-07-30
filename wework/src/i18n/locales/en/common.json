@@ -634,6 +634,8 @@
     "browser_invalid_url": "Enter a valid http or https URL",
     "browser_open_failed": "Unable to open the in-app browser",
     "browser_control_failed": "Browser action failed",
+    "browser_invalid_tls_title": "This connection has an invalid certificate",
+    "browser_invalid_tls_desc": "Wework continued to {{host}}, but the connection may be impersonated or intercepted. Do not enter sensitive information.",
     "browser_annotation_start": "Annotate page",
     "browser_annotation_active": "Annotating · {{site}}",
     "browser_annotation_close": "Exit annotation",
