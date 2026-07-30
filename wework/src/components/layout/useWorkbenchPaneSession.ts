@@ -2851,14 +2851,7 @@ function updateRuntimeSubagentStatuses(
 }
 
 function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
-  return messages.some(
-    message =>
-      message.status === 'streaming' ||
-      message.status === 'pending' ||
-      message.blocks?.some(block =>
-        ['generating_arguments', 'pending', 'streaming'].includes(block.status)
-      )
-  )
+  return messages.some(isUnsettledRuntimeMessage)
 }
 
 export function transcriptSettlesLatestSeededTurn(

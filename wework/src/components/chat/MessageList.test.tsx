@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock } from '@/types/workbench'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
@@ -1817,29 +1817,28 @@ describe('MessageList', () => {
     try {
       vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
 
-      render(
-        <MessageList
-          messages={[
+      const restoredMessages: WorkbenchMessage[] = [
+        {
+          id: 'assistant-remounted-with-process',
+          role: 'assistant',
+          content: '',
+          status: 'streaming',
+          blocks: [
             {
-              id: 'assistant-remounted-with-process',
-              role: 'assistant',
-              content: '',
+              id: 'tool-remounted',
+              type: 'tool',
+              toolName: 'Bash',
+              toolInput: { command: 'long-running-command' },
               status: 'streaming',
-              blocks: [
-                {
-                  id: 'tool-remounted',
-                  type: 'tool',
-                  toolName: 'Bash',
-                  toolInput: { command: 'long-running-command' },
-                  status: 'streaming',
-                  createdAt: Date.parse('2026-06-24T08:09:59.000Z'),
-                },
-              ],
-              createdAt: '2026-06-24T08:00:00.000Z',
+              createdAt: Date.parse('2026-06-24T08:09:59.000Z'),
             },
-          ]}
-        />
-      )
+          ],
+          createdAt: '2026-06-24T08:00:00.000Z',
+        },
+      ]
+      const { unmount } = render(<MessageList messages={restoredMessages} />)
+      unmount()
+      render(<MessageList messages={restoredMessages} />)
 
       expect(screen.getByText('10 分 0 秒')).toBeInTheDocument()
       expect(screen.queryByText('1 秒')).not.toBeInTheDocument()

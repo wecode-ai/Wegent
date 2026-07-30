@@ -304,6 +304,7 @@ function processingDurationSeconds(text) {
 async function waitForProcessingDuration(control, minimumSeconds, timeoutMs) {
   const startedAt = Date.now()
   let text = ''
+  await control.command('waitFor', PROCESSING_SUMMARY_SELECTOR, { timeoutMs })
   while (Date.now() - startedAt < timeoutMs) {
     text = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
     const duration = processingDurationSeconds(text)
