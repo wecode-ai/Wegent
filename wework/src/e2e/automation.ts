@@ -893,6 +893,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.click()
       return element.textContent?.trim() ?? ''
     }
+    case 'clickThenMacrotask': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!desktopControlElementEnabled(element)) {
+        throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      const targetSelector = command.target?.trim()
+      if (!targetSelector) throw new Error('clickThenMacrotask requires target')
+
+      element.click()
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+
+      const target = findDesktopControlElements(targetSelector)[0]
+      if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+      if (!desktopControlElementEnabled(target)) {
+        throw new Error(`Target selector "${targetSelector}" is disabled`)
+      }
+      target.click()
+      return target.textContent?.trim() ?? ''
+    }
     case 'clickIfPresent': {
       const element = findDesktopControlElements(command.selector).find(
         desktopControlElementEnabled

@@ -275,6 +275,8 @@ const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const CONVERSATION_SWITCH_RACE_PROMPT =
+  'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1: keep a second conversation running during a rapid switch.'
 const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
@@ -1556,6 +1558,62 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+
+  const taskRowsBeforeRace = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  const concurrentRequestCount = control.scenarioRequests.get('concurrent_memory')?.length ?? 0
+  control.setScenario('concurrent_memory')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await sendPrompt(control, composerSelector, CONVERSATION_SWITCH_RACE_PROMPT)
+  await control.awaitScenarioRequestCount('concurrent_memory', concurrentRequestCount + 1)
+  const runningTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeRace,
+    'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1'
+  )
+
+  await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickThenMacrotask', `[data-testid="${runningTaskRowTestId}"]`, {
+    target: `[data-testid="${shortConversationTaskRowTestId}"]`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const restoredAfterRace = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(restoredAfterRace.text, FRESH_CHAT_PROMPT) >= 2,
+    'Rapid conversation switching lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(restoredAfterRace.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'Rapid conversation switching lost an earlier assistant message'
+  )
+  await captureVerificationScreenshot(control, 'short-conversation-03-rapid-switch-restored.png')
+  control.releaseConcurrentMemoryResponses()
+  control.setScenario('fresh_chat')
 }
 
 function countTextOccurrences(value, search) {
