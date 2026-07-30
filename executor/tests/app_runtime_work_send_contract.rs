@@ -782,6 +782,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "side-chat-follow-up").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -803,7 +804,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        0
+        2
     );
     assert_eq!(
         calls
@@ -815,7 +816,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
 }
 
 #[tokio::test]
-async fn runtime_tasks_keep_thread_subscription_until_archive() {
+async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -886,6 +887,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "local-task-persistent").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 3).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -914,7 +916,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        1
+        3
     );
 
     let archived = handler
@@ -928,7 +930,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 4).await;
 }
 
 #[tokio::test]
@@ -1333,6 +1335,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
         .is_some()
     );
     wait_until_task_idle(&handler, "local-task-goal-loop").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1349,6 +1352,15 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
             .count(),
         1
     );
+    let continuation_marker = calls
+        .iter()
+        .position(|call| call["event"] == "goal-continuation-completed")
+        .expect("goal continuation should finish before the thread is released");
+    let unsubscribe = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("terminal goal turn should release its subscription");
+    assert!(continuation_marker < unsubscribe);
 }
 
 #[tokio::test]
@@ -1980,6 +1992,14 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
 
     assert_eq!(cancelled["accepted"], true);
     wait_for_method_count(&log_path, "turn/interrupt", 1).await;
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "cancellation must keep the subscription until Codex terminal output is observed"
+    );
     assert_process_alive(pid);
 }
 
@@ -2440,6 +2460,9 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread should not resume"}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
@@ -2491,7 +2514,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-goal","turnId":"turn-2","delta":"second","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-goal","turnId":"turn-2","goal":{{"threadId":"thread-goal","objective":"ship goal","status":"complete","tokenBudget":null,"tokensUsed":10,"timeUsedSeconds":2,"createdAt":1780000000,"updatedAt":1780000002}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-goal","turn":{{"id":"turn-2","status":"completed"}}}}}}'
-      exit 0
+      printf '%s\n' '{{"event":"goal-continuation-completed"}}' >> "$LOG_PATH"
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
   esac
 done

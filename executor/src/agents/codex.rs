@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -364,7 +364,9 @@ impl CodexAppServerClient {
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
         let process = {
             let mut state = self.state.lock().await;
-            if state.active_threads.len() != 1 || !state.active_threads.contains(thread_id) {
+            if state.active_threads.get(thread_id) != Some(&1)
+                || state.active_threads.values().sum::<usize>() != 1
+            {
                 return false;
             }
             state.process.take()
@@ -523,20 +525,29 @@ impl CodexAppServerClient {
     }
 
     async fn mark_thread_active(&self, thread_id: &str) {
-        self.state
-            .lock()
-            .await
+        let mut state = self.state.lock().await;
+        *state
             .active_threads
-            .insert(thread_id.to_owned());
+            .entry(thread_id.to_owned())
+            .or_insert(0) += 1;
     }
 
-    async fn mark_thread_idle(&self, thread_id: &str) {
-        self.state.lock().await.active_threads.remove(thread_id);
+    async fn mark_thread_idle(&self, thread_id: &str) -> bool {
+        let mut state = self.state.lock().await;
+        let Some(active_count) = state.active_threads.get_mut(thread_id) else {
+            return false;
+        };
+        *active_count -= 1;
+        if *active_count > 0 {
+            return false;
+        }
+        state.active_threads.remove(thread_id);
+        true
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
         let result = self
-            .request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .request_existing("thread/unsubscribe", json!({"threadId": thread_id}))
             .await
             .map(|_| ());
         if let Err(error) = result {
@@ -547,9 +558,16 @@ impl CodexAppServerClient {
         }
     }
 
+    fn unsubscribe_thread_in_background(&self, thread_id: String) {
+        let client = self.clone();
+        tokio::spawn(async move {
+            client.unsubscribe_thread(&thread_id).await;
+        });
+    }
+
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
-        state.active_threads.len() == 1 && state.active_threads.contains(thread_id)
+        state.active_threads.len() == 1 && state.active_threads.contains_key(thread_id)
     }
 
     async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -642,7 +660,7 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,
-    active_threads: HashSet<String>,
+    active_threads: HashMap<String, usize>,
     runtime_proxy_env: BTreeMap<String, String>,
 }
 
@@ -651,7 +669,7 @@ impl Default for CodexAppServerSharedState {
         Self {
             process: None,
             next_id: 1,
-            active_threads: HashSet::new(),
+            active_threads: HashMap::new(),
             runtime_proxy_env: BTreeMap::new(),
         }
     }
@@ -1169,7 +1187,10 @@ async fn run_codex_app_server_turn_on_shared_client(
     .await;
 
     if let Some(thread_id) = subscribed_thread_id {
-        client.mark_thread_idle(&thread_id).await;
+        let thread_became_idle = client.mark_thread_idle(&thread_id).await;
+        if result.is_ok() && thread_became_idle {
+            client.unsubscribe_thread_in_background(thread_id);
+        }
     }
 
     if let Err(error) = &result {
