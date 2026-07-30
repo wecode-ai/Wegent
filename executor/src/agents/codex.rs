@@ -553,10 +553,7 @@ impl CodexAppServerClient {
     }
 
     pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
-        let result = self
-            .request_existing("thread/unsubscribe", json!({"threadId": thread_id}))
-            .await
-            .map(|_| ());
+        let result = self.request_thread_unsubscribe(thread_id).await;
         if let Err(error) = result {
             log_executor_event(
                 "codex shared thread unsubscribe failed",
@@ -565,10 +562,18 @@ impl CodexAppServerClient {
         }
     }
 
+    async fn request_thread_unsubscribe(&self, thread_id: &str) -> Result<(), String> {
+        self.request_existing("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await
+            .map(|_| ())
+    }
+
     fn unsubscribe_thread_in_background(&self, thread_id: String) {
         let client = self.clone();
         tokio::spawn(async move {
-            client.unsubscribe_thread(&thread_id).await;
+            let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone());
+            let result = client.request_thread_unsubscribe(&thread_id).await;
+            observation.finish(&result);
         });
     }
 
@@ -640,6 +645,63 @@ impl CodexAppServerClient {
             .as_ref()
             .expect("persistent Codex app-server should be initialized")
             .handle())
+    }
+}
+
+struct CodexThreadUnsubscribeObservation {
+    thread_id: String,
+    started_at: Instant,
+    finished: bool,
+}
+
+impl CodexThreadUnsubscribeObservation {
+    fn new(thread_id: String) -> Self {
+        log_executor_event(
+            "codex shared thread unsubscribe background started",
+            &[("thread_id", thread_id.clone())],
+        );
+        Self {
+            thread_id,
+            started_at: Instant::now(),
+            finished: false,
+        }
+    }
+
+    fn finish(mut self, result: &Result<(), String>) {
+        let mut fields = vec![
+            ("thread_id", self.thread_id.clone()),
+            (
+                "elapsed_ms",
+                self.started_at.elapsed().as_millis().to_string(),
+            ),
+        ];
+        let event = match result {
+            Ok(()) => "codex shared thread unsubscribe background completed",
+            Err(error) => {
+                fields.push(("error", error.clone()));
+                "codex shared thread unsubscribe background failed"
+            }
+        };
+        log_executor_event(event, &fields);
+        self.finished = true;
+    }
+}
+
+impl Drop for CodexThreadUnsubscribeObservation {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        log_executor_event(
+            "codex shared thread unsubscribe background cancelled",
+            &[
+                ("thread_id", self.thread_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+            ],
+        );
     }
 }
 
