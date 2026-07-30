@@ -725,6 +725,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_popout_webview')
     case 'closeMainWindowToTray':
       return ''
+    case 'requestMainWindowClose':
+      return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -1077,6 +1079,8 @@ async function runDesktopControlClient(url: string): Promise<void> {
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
+        } else if (command.action === 'requestMainWindowClose') {
+          await getCurrentWindow().close()
         }
       } catch (error) {
         await postDesktopControlResult(url, {

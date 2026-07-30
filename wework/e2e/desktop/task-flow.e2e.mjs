@@ -3651,6 +3651,18 @@ async function verifyBackgroundTaskWindowLifecycle({
   const lifecycleScreenshotName = name => `window-lifecycle-${name}`
   setPhase('popout-window-lifecycle')
   await verifyPopoutWindowLifecycle(control, composerSelector)
+  setPhase('close-request-without-running-task')
+  await control.command('requestMainWindowClose', 'body')
+  await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+  const closeCancelledSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !closeCancelledSnapshot.testIds.includes('runtime-task-close-confirm-overlay'),
+    'The close-to-tray prompt remained open after cancelling'
+  )
   setPhase('background-streaming-task')
   control.setScenario('window_lifecycle')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -3715,7 +3727,12 @@ async function verifyBackgroundTaskWindowLifecycle({
       'The executor process was not alive before close'
     )
 
-    await control.command('closeMainWindowToTray', 'body')
+    await control.command('requestMainWindowClose', 'body')
+    await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
     await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
