@@ -1,7 +1,6 @@
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
@@ -60,14 +59,9 @@ export function WindowFrameControls({ className }: { className?: string }) {
 
   const handleClose = useCallback(async () => {
     try {
-      await invoke('close_main_window_to_tray')
+      await getCurrentWindow().close()
     } catch {
-      // Fallback to direct window close if the command is unavailable
-      try {
-        await getCurrentWindow().close()
-      } catch {
-        // Ignore
-      }
+      // Ignore
     }
   }, [])
 

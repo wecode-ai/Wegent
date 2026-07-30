@@ -55,6 +55,7 @@ pnpm --filter wework ai:verify hover --session <session-path> --selector '[data-
 pnpm --filter wework ai:verify pointer-move --session <session-path> --selector 'body'
 pnpm --filter wework ai:verify wait-for --session <session-path> --selector '[data-testid="..."]' --text '...'
 pnpm --filter wework ai:verify capture --session <session-path> --output <png-path>
+pnpm --filter wework ai:verify request-close --session <session-path>
 pnpm --filter wework ai:verify close-to-tray --session <session-path>
 pnpm --filter wework ai:verify stop --session <session-path>
 ```
@@ -65,6 +66,7 @@ pnpm --filter wework ai:verify stop --session <session-path>
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
 - Execute the complete QA test plan in the isolated Tauri session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.
 - Use `capture` after the final assertion when a visual verification artifact is required. It renders the current WebView without macOS screen-recording permission.
+- Use `request-close` to exercise the native main-window close request and its close-to-tray preference or confirmation flow.
 - Use `close-to-tray` only for window-lifecycle verification. It destroys the controlled WebView while leaving the isolated Tauri process running so native reopen behavior can be tested.
 - On failure, inspect `app.log`, `executor.log`, and Tauri logs under `test-results/ai-verify/`; do not silently downgrade to mocked verification.
 
