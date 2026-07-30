@@ -6,7 +6,71 @@ use std::env;
 
 use wegent_executor::app::cli::CliArgs;
 
+#[cfg(any(target_os = "macos", test))]
+const OPEN_FILES_SOFT_LIMIT: libc::rlim_t = 65_536;
+
+#[cfg(any(target_os = "macos", test))]
+fn open_files_soft_limit_target(
+    hard_limit: libc::rlim_t,
+    kernel_limit: Option<libc::rlim_t>,
+) -> libc::rlim_t {
+    let target = OPEN_FILES_SOFT_LIMIT.min(hard_limit);
+    kernel_limit.map_or(target, |limit| target.min(limit))
+}
+
+#[cfg(target_os = "macos")]
+fn raise_open_files_soft_limit() {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) };
+    if result != 0 {
+        eprintln!(
+            "failed to read wegent-executor open files limit: {}",
+            std::io::Error::last_os_error()
+        );
+        return;
+    }
+
+    let target = open_files_soft_limit_target(limit.rlim_max, macos_max_files_per_process());
+    if limit.rlim_cur >= target {
+        return;
+    }
+
+    let previous = limit.rlim_cur;
+    limit.rlim_cur = target;
+    let result = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) };
+    if result != 0 {
+        eprintln!(
+            "failed to raise wegent-executor open files soft limit from {previous} to {target}: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_max_files_per_process() -> Option<libc::rlim_t> {
+    let name = b"kern.maxfilesperproc\0";
+    let mut value: libc::c_int = 0;
+    let mut value_size = std::mem::size_of_val(&value);
+    let result = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr().cast(),
+            (&mut value as *mut libc::c_int).cast(),
+            &mut value_size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (result == 0 && value > 0).then_some(value as libc::rlim_t)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn raise_open_files_soft_limit() {}
+
 fn main() {
+    raise_open_files_soft_limit();
     install_termination_signal_diagnostics();
     if wegent_executor::connector_mcp::is_connector_mcp_command() {
         if let Err(error) = runtime().block_on(wegent_executor::connector_mcp::run()) {
@@ -135,5 +199,31 @@ fn append_signal_number(buffer: &mut [u8], length: &mut usize, value: libc::pid_
     }
     for digit in digits[..digit_count].iter().rev() {
         append_signal_text(buffer, length, &[*digit]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_files_target_uses_configured_limit_when_supported() {
+        assert_eq!(
+            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(245_760)),
+            OPEN_FILES_SOFT_LIMIT
+        );
+    }
+
+    #[test]
+    fn open_files_target_respects_process_hard_limit() {
+        assert_eq!(open_files_soft_limit_target(4_096, Some(245_760)), 4_096);
+    }
+
+    #[test]
+    fn open_files_target_respects_macos_kernel_limit() {
+        assert_eq!(
+            open_files_soft_limit_target(libc::RLIM_INFINITY, Some(24_576)),
+            24_576
+        );
     }
 }
