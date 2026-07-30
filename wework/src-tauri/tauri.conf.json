@@ -54,7 +54,13 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/wegent-executor", "binaries/dws"],
-    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*", "bundled-plugins/**/*"],
+    "resources": [
+      "binaries/codex/**/*",
+      "bundled-hooks/**/*",
+      "bundled-plugins/**/*",
+      "bundled-plugins/wework-personal/.agents/plugins/marketplace.json",
+      "bundled-plugins/wework-personal/.claude-plugin/marketplace.json"
+    ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
