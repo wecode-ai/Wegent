@@ -40,6 +40,7 @@ const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
+const EMBEDDED_BROWSER_PLACEHOLDER_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
@@ -334,7 +335,11 @@ fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
 
 #[cfg(target_os = "macos")]
 fn initial_browser_webview_url() -> Result<WebviewUrl, String> {
-    browser_url("about:blank").map(WebviewUrl::External)
+    browser_url(EMBEDDED_BROWSER_PLACEHOLDER_URL).map(WebviewUrl::External)
+}
+
+fn should_record_loaded_url(url: &str) -> bool {
+    url != EMBEDDED_BROWSER_PLACEHOLDER_URL
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -864,13 +869,6 @@ async fn screenshot_embedded_browser(
     let entry = get_entry(state, label)?;
     let webview = entry.ready_webview()?;
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
-    let timeout_sender = sender.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        std::thread::sleep(Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS));
-        let _ = timeout_sender.try_send(Err(
-            "Timed out capturing embedded browser snapshot".to_string()
-        ));
-    });
     webview
         .with_webview(move |platform_webview| {
             let completion = RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
@@ -919,10 +917,13 @@ async fn screenshot_embedded_browser(
             }
         })
         .map_err(|error| format!("Failed to request embedded browser snapshot: {error}"))?;
-    let png = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())??;
+    let png = tokio::time::timeout(
+        Duration::from_millis(BRIDGE_EVAL_TIMEOUT_MS),
+        receiver.recv(),
+    )
+    .await
+    .map_err(|_| "Timed out capturing embedded browser snapshot".to_string())?
+    .ok_or_else(|| "Embedded browser snapshot request was cancelled".to_string())??;
     let path = screenshot_path()?;
     std::fs::write(&path, png)
         .map_err(|error| format!("Failed to write embedded browser snapshot: {error}"))?;
@@ -1361,11 +1362,13 @@ pub async fn embedded_browser_open(
                     &native_label_for_load,
                     &loaded_url,
                 );
-                let _ = update_entry_for_native_label(
-                    &load_state_handle,
-                    &native_label_for_load,
-                    |entry| entry.url = Some(loaded_url),
-                );
+                if should_record_loaded_url(&loaded_url) {
+                    let _ = update_entry_for_native_label(
+                        &load_state_handle,
+                        &native_label_for_load,
+                        |entry| entry.url = Some(loaded_url),
+                    );
+                }
             }
         })
         .on_document_title_changed(move |_webview, title| {
@@ -1537,7 +1540,7 @@ mod tests {
     use super::{
         browser_open_action, browser_webview_url, download_event_owner,
         logical_owner_for_native_label, native_webview_label, ready_logical_entry,
-        relabel_logical_entry, remove_logical_entry_if_native_matches,
+        relabel_logical_entry, remove_logical_entry_if_native_matches, should_record_loaded_url,
         update_logical_entry_if_native_matches, wait_for_browser_ready,
         EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
         EmbeddedBrowserReadiness, EMBEDDED_BROWSER_NOT_READY_ERROR,
@@ -1558,6 +1561,12 @@ mod tests {
             browser_webview_url(app_url),
             WebviewUrl::CustomProtocol(_)
         ));
+    }
+
+    #[test]
+    fn placeholder_load_does_not_replace_the_requested_url() {
+        assert!(!should_record_loaded_url("about:blank"));
+        assert!(should_record_loaded_url("https://example.com/"));
     }
 
     #[test]
