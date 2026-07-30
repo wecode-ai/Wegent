@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
 export const LOCAL_EXECUTOR_COMMANDS = {
+  codexHomeMigrationStatus: 'local_executor_codex_home_migration_status',
   copyDebugInfo: 'local_executor_copy_debug_info',
   ensure: 'local_executor_ensure_started',
+  initializeBundledPluginMarketplace: 'local_executor_initialize_bundled_plugin_marketplace',
   status: 'local_executor_status',
   readLog: 'local_executor_read_log',
   request: 'local_executor_request',
@@ -51,13 +54,122 @@ export interface LocalExecutorBackendConnection {
   authToken: string
 }
 
+export interface BundledPluginMarketplace {
+  id: string
+  path: string
+  pluginCount: number
+}
+
+interface CodexHomeMigrationStatus {
+  shouldPromptMigration: boolean
+}
+
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
+let reconciledBundledPluginMarketplaceKey = ''
+let synchronizedCodexRuntimeConfigKey = ''
+
+async function synchronizeCodexRuntimeConfig(runtimeInstanceId?: string): Promise<void> {
+  const proxyUrl = getLocalProxyUrl().trim()
+  const synchronizationKey = `${runtimeInstanceId ?? 'current-runtime'}:${proxyUrl}`
+  if (synchronizedCodexRuntimeConfigKey === synchronizationKey) return
+  await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+    method: 'runtime.codex.runtime_config.update',
+    params: { proxyUrl: proxyUrl || null },
+  })
+  synchronizedCodexRuntimeConfigKey = synchronizationKey
+}
+
+function normalizedMarketplacePath(path: string | null | undefined): string {
+  return (path ?? '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+async function reconcileBundledPluginMarketplace(
+  marketplace: BundledPluginMarketplace,
+  runtimeInstanceId: string | undefined
+): Promise<void> {
+  const reconciliationKey = [
+    runtimeInstanceId || 'current-runtime',
+    normalizedMarketplacePath(marketplace.path),
+  ].join(':')
+  if (reconciledBundledPluginMarketplaceKey === reconciliationKey) return
+
+  const available = await invoke<{
+    marketplaces: Array<{ name: string; path?: string | null }>
+  }>(LOCAL_EXECUTOR_COMMANDS.request, {
+    method: 'codex.app_server_request',
+    params: {
+      method: 'plugin/list',
+      params: { cwds: null },
+    },
+  })
+  const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
+  if (
+    existing &&
+    normalizedMarketplacePath(existing.path) === normalizedMarketplacePath(marketplace.path)
+  ) {
+    reconciledBundledPluginMarketplaceKey = reconciliationKey
+    return
+  }
+  if (existing) {
+    await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'marketplace/remove',
+        params: { marketplaceName: marketplace.id },
+      },
+    })
+  }
+  const added = await invoke<{ marketplaceName: string }>(LOCAL_EXECUTOR_COMMANDS.request, {
+    method: 'codex.app_server_request',
+    params: {
+      method: 'marketplace/add',
+      params: {
+        source: marketplace.path,
+        refName: null,
+        sparsePaths: null,
+      },
+    },
+  })
+  if (added.marketplaceName !== marketplace.id) {
+    throw new Error(
+      `Bundled plugin marketplace resolved to ${added.marketplaceName || 'an unknown name'}`
+    )
+  }
+  reconciledBundledPluginMarketplaceKey = reconciliationKey
+}
+
+export function getInitializedBundledPluginMarketplace(): BundledPluginMarketplace | null {
+  return initializedBundledPluginMarketplace
+}
 
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
   if (!ensureLocalExecutorStartedPromise) {
-    ensureLocalExecutorStartedPromise = invoke<LocalExecutorStatus>(
-      LOCAL_EXECUTOR_COMMANDS.ensure
-    ).finally(() => {
+    ensureLocalExecutorStartedPromise = (async () => {
+      const marketplace = await invoke<BundledPluginMarketplace>(
+        LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
+      )
+      if (marketplace?.path) {
+        initializedBundledPluginMarketplace = marketplace
+      }
+      const migrationStatus = await invoke<CodexHomeMigrationStatus>(
+        LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus
+      )
+      const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure)
+      if (status.running && status.ready !== false && !status.error) {
+        await synchronizeCodexRuntimeConfig(status.runtimeInstanceId)
+      }
+      if (
+        !migrationStatus.shouldPromptMigration &&
+        status.running &&
+        status.ready !== false &&
+        !status.error &&
+        marketplace?.path
+      ) {
+        await reconcileBundledPluginMarketplace(marketplace, status.runtimeInstanceId)
+      }
+      return status
+    })().finally(() => {
       ensureLocalExecutorStartedPromise = null
     })
   }

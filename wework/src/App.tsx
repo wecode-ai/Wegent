@@ -19,6 +19,9 @@ import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
+import { AutomationsPage } from '@/pages/AutomationsPage'
+import { CloudWorkPage } from '@/pages/CloudWorkPage'
+import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -79,8 +82,20 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
+import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
+const POPOUT_WINDOW_LABEL = 'popout-window'
+
+function isPopoutWindowRuntime() {
+  if (!isTauriRuntime()) return false
+  try {
+    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
+  } catch {
+    return false
+  }
+}
 
 function hasTauriIpc() {
   const internals = (
@@ -112,8 +127,10 @@ interface AppRoutesProps {
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
+  const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
+  const experimentalFeatures = useExperimentalFeaturesState()
   const { activeTab, isNativeApp } = useChromeTabs(path)
   const resolvedActiveTab =
     activeTab?.key === 'wegent' && cloudConnection.webUrl
@@ -128,8 +145,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
+    path === '/automations' ||
+    path === '/cloud-work' ||
     path === '/sites' ||
-    path === '/apps'
+    path === '/apps' ||
+    path === '/popout' ||
+    isPopoutWindow
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
   const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
     activeIframeTab ? [activeIframeTab] : []
@@ -155,6 +176,12 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     onWorkbenchStartupReadyChange?.(true)
   }, [isLoading, isNativeApp, onWorkbenchStartupReadyChange, resolvedActiveTab?.url, user])
 
+  useEffect(() => {
+    if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
+      navigateTo('/')
+    }
+  }, [experimentalFeatures.enabled, experimentalFeatures.loaded, path])
+
   if (path === '/login') {
     return <LoginPage />
   }
@@ -171,25 +198,30 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
-  const auxiliaryPage =
-    path === '/plugins/manage' ? (
-      <PluginManagementPage />
-    ) : path === '/plugins/create' ? (
-      <PluginCreatePage />
-    ) : path === '/plugins' ? (
-      <PluginsPage />
-    ) : path === '/sites' ? (
-      <SitesPage />
-    ) : path === '/apps' ? (
-      <AppsPage />
-    ) : null
+  const auxiliaryPage = isPopoutWindow ? (
+    <PopoutWorkbenchPage />
+  ) : path === '/plugins/manage' ? (
+    <PluginManagementPage />
+  ) : path === '/plugins/create' ? (
+    <PluginCreatePage />
+  ) : path === '/plugins' ? (
+    <PluginsPage />
+  ) : path === '/cloud-work' ? (
+    <CloudWorkPage />
+  ) : path === '/sites' ? (
+    <SitesPage />
+  ) : path === '/automations' && experimentalFeatures.enabled ? (
+    <AutomationsPage />
+  ) : path === '/apps' ? (
+    <AppsPage />
+  ) : null
   // Keep the workbench mounted while another top-level surface is visible. The
   // composer, terminals and in-app browser own live, non-serializable state, so
   // reconstructing them after every route change is both lossy and expensive.
   return (
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {onOpenWeworkForAppshot ? <AppshotBridge onOpenWework={onOpenWeworkForAppshot} /> : null}
-      {hasTauriIpc() && <SystemDragBridge />}
+      {hasTauriIpc() && isPopoutWindow && <SystemDragBridge />}
       {(!isAuxiliaryRoute || hasMountedWorkbench) && (
         <div className={cn('h-full', isAuxiliaryRoute && 'hidden')} aria-hidden={isAuxiliaryRoute}>
           <WorkbenchPage />
@@ -219,6 +251,8 @@ export default function App() {
 }
 
 function MainApp() {
+  const isPopoutWindow = isPopoutWindowRuntime()
+
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
@@ -249,7 +283,7 @@ function MainApp() {
   return (
     <AppearanceProvider>
       <AppUpdateProvider>
-        <CloudConnectionProvider>
+        <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
           <AuthProvider>
             <AppShell />
           </AuthProvider>
@@ -274,12 +308,13 @@ function AppShell() {
   const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const isPopoutWindow = isPopoutWindowRuntime()
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
 
   useEffect(() => {
-    if (!isTauri) return undefined
+    if (!isTauri || isPopoutWindow) return undefined
 
     let activeBindings = mergeKeybindings([])
     let disposed = false
@@ -403,7 +438,7 @@ function AppShell() {
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
-  }, [isTauri])
+  }, [isPopoutWindow, isTauri])
 
   useEffect(() => {
     return installMacOSInputArrowKeyGuard()
@@ -436,6 +471,9 @@ function AppShell() {
   }
 
   if (isLoading) {
+    if (isPopoutWindow) {
+      return <div className="h-dvh bg-transparent" />
+    }
     return (
       <LocalRuntimeInitializer initialCloudConnection={initialCloudConnection} startupReady={false}>
         <div />
@@ -447,45 +485,54 @@ function AppShell() {
     return <AppRoutes />
   }
 
+  const shell = (
+    <div
+      className={cn(
+        'h-dvh',
+        isPopoutWindow ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-surface',
+        titlebarOverlaysContent ? 'relative' : 'flex flex-col'
+      )}
+    >
+      {showChromeTitlebar && (
+        <ChromeTitlebar
+          tabs={tabs}
+          activeKey={activeAppKey}
+          onNavigate={appKey => (appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey))}
+          beforeTabs={<TitlebarSidebarToggle />}
+          afterTabs={<AppUpdateTitlebarButton />}
+          iconOnlyTabs={isTauri}
+          className={
+            titlebarOverlaysContent ? 'absolute inset-x-0 top-0 z-system bg-transparent' : undefined
+          }
+        />
+      )}
+      <div
+        className={cn(
+          'min-h-0',
+          isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+          titlebarOverlaysContent ? 'h-full' : 'flex-1'
+        )}
+      >
+        <AppRoutes
+          onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+          onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+        />
+      </div>
+      {!isPopoutWindow && <WeworkDevInstanceBadge />}
+    </div>
+  )
+
+  if (isPopoutWindow) {
+    return shell
+  }
+
   return (
     <CodexHomeInitializer>
       <LocalRuntimeInitializer
         initialCloudConnection={initialCloudConnection}
         startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
-        <div
-          className={cn(
-            'h-dvh overflow-hidden bg-surface',
-            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-          )}
-        >
-          {showChromeTitlebar && (
-            <ChromeTitlebar
-              tabs={tabs}
-              activeKey={activeAppKey}
-              onNavigate={appKey =>
-                appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey)
-              }
-              beforeTabs={<TitlebarSidebarToggle />}
-              afterTabs={<AppUpdateTitlebarButton />}
-              iconOnlyTabs={isTauri}
-              className={
-                titlebarOverlaysContent
-                  ? 'absolute inset-x-0 top-0 z-system bg-transparent'
-                  : undefined
-              }
-            />
-          )}
-          <div
-            className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
-          >
-            <AppRoutes
-              onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-              onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
-            />
-          </div>
-          <WeworkDevInstanceBadge />
-        </div>
+        {shell}
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>
   )

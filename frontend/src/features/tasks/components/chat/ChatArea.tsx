@@ -23,10 +23,10 @@ import { ScrollbarMarkers } from './ScrollbarMarkers'
 import { GuidedQuestions } from '@/features/knowledge/document/components/GuidedQuestions'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
-import { useChatStreamHandlers } from './useChatStreamHandlers'
+import { useChatStreamHandlers, type SendMessageOptions } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
@@ -72,7 +72,10 @@ import type { QuickPresetSelection } from './quick-launch/types'
 import { useDevices } from '@/contexts/DeviceContext'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { UnifiedMessage } from '@wegent/chat-core'
+import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
+import type { KnowledgeCapabilityDraftRequest } from '@/types/knowledge-capability'
 import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
+import { removeTaskQueryParams } from '@/features/tasks/utils/task-query-params'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -106,10 +109,6 @@ function buildExternalContextId(ref: ExternalKnowledgeRef) {
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
-
-type SendMessageOptions = {
-  interactiveFormAnswer?: InteractiveFormAnswerPayload
-}
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
@@ -184,7 +183,7 @@ interface ChatAreaProps {
   onTaskCreated?: (taskId: number) => void
   /** Knowledge base ID for knowledge type tasks */
   knowledgeBaseId?: number
-  /** Selected document IDs from DocumentPanel (for notebook mode context injection) */
+  /** Selected document IDs from KnowledgeSourcePanel (for notebook mode context injection) */
   selectedDocumentIds?: number[]
   /** Reason why input is disabled (e.g., device offline). If set, input will be disabled and show this message. */
   disabledReason?: string
@@ -200,6 +199,12 @@ interface ChatAreaProps {
   emptyStateContent?: React.ReactNode
   /** Extension for team editing functionality (injected from parent to avoid module coupling) */
   extension?: ChatAreaExtension
+  /** One-shot prompt submitted through the normal chat send path. */
+  externalPromptRequest?: ArtifactPromptRequest | null
+  onExternalPromptConsumed?: (requestId: string) => void
+  /** One-shot request that opens and prefills a new task without sending. */
+  externalDraftRequest?: KnowledgeCapabilityDraftRequest | null
+  onExternalDraftConsumed?: (requestId: string) => void
 }
 
 /**
@@ -226,6 +231,10 @@ function ChatAreaContent({
   inputAlwaysAtBottom,
   emptyStateContent,
   extension,
+  externalPromptRequest,
+  onExternalPromptConsumed,
+  externalDraftRequest,
+  onExternalDraftConsumed,
 }: ChatAreaProps) {
   const { t } = useTranslation('chat')
   const { toast } = useToast()
@@ -248,11 +257,15 @@ function ChatAreaContent({
   const [pendingFormReplacementMessage, setPendingFormReplacementMessage] = useState<string | null>(
     null
   )
+  const [pendingFormReplacementOptions, setPendingFormReplacementOptions] =
+    useState<SendMessageOptions | null>(null)
   const [isPendingFormReplacementOpen, setIsPendingFormReplacementOpen] = useState(false)
   const [isPendingFormReplacementConfirming, setIsPendingFormReplacementConfirming] =
     useState(false)
   const [pendingQuickPhrase, setPendingQuickPhrase] = useState<string | null>(null)
   const [isQuickPhraseOverwriteOpen, setIsQuickPhraseOverwriteOpen] = useState(false)
+  const [pendingExternalDraft, setPendingExternalDraft] =
+    useState<KnowledgeCapabilityDraftRequest | null>(null)
   const [focusInputAtEndSignal, setFocusInputAtEndSignal] = useState(0)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
@@ -875,6 +888,9 @@ function ChatAreaContent({
   const setTaskInputMessage = chatState.setTaskInputMessage
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
+  const resetContexts = chatState.resetContexts
+  const restoreDefaultTeam = chatState.restoreDefaultTeam
+  const resetSelectedSkills = skillSelector.resetSkills
   const addExistingAttachment = chatState.addExistingAttachment
   const handleFileSelect = chatState.handleFileSelect
   const handleAttachmentRemove = chatState.handleAttachmentRemove
@@ -1020,6 +1036,7 @@ function ChatAreaContent({
 
       if (pendingInteractiveForm && !options?.interactiveFormAnswer) {
         setPendingFormReplacementMessage(trimmedMessage)
+        setPendingFormReplacementOptions(options ?? null)
         setIsPendingFormReplacementOpen(true)
         return
       }
@@ -1042,6 +1059,93 @@ function ChatAreaContent({
     ]
   )
 
+  const consumedExternalPromptRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (
+      !externalPromptRequest ||
+      consumedExternalPromptRef.current === externalPromptRequest.requestId
+    ) {
+      return
+    }
+    consumedExternalPromptRef.current = externalPromptRequest.requestId
+    onExternalPromptConsumed?.(externalPromptRequest.requestId)
+    void sendOrConfirmPendingReplacement(externalPromptRequest.message, {
+      artifactContext: externalPromptRequest.artifactContext,
+    })
+  }, [externalPromptRequest, onExternalPromptConsumed, sendOrConfirmPendingReplacement])
+
+  const consumedExternalDraftRef = useRef<string | null>(null)
+  const applyExternalDraft = useCallback(
+    (request: KnowledgeCapabilityDraftRequest) => {
+      const url = new URL(window.location.href)
+      if (removeTaskQueryParams(url.searchParams)) {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${url.pathname}${url.search}${url.hash}`
+        )
+      }
+      selectTask(null)
+      hasInitializedTeamRef.current = false
+      lastSyncedTaskIdRef.current = null
+
+      quickPresetAttachmentIdsRef.current = new Set()
+      resetAttachment()
+      resetContexts()
+      resetSelectedSkills()
+      restoreDefaultTeam()
+      applyQuickPhraseToInput(request.message)
+    },
+    [
+      applyQuickPhraseToInput,
+      resetAttachment,
+      resetContexts,
+      resetSelectedSkills,
+      restoreDefaultTeam,
+      selectTask,
+    ]
+  )
+
+  useEffect(() => {
+    if (
+      !externalDraftRequest ||
+      consumedExternalDraftRef.current === externalDraftRequest.requestId
+    ) {
+      return
+    }
+    consumedExternalDraftRef.current = externalDraftRequest.requestId
+    onExternalDraftConsumed?.(externalDraftRequest.requestId)
+
+    const hasDirtyDraft =
+      chatState.taskInputMessage.trim().length > 0 ||
+      chatState.attachmentState.attachments.length > 0 ||
+      chatState.selectedContexts.length > 0 ||
+      skillSelector.selectedSkills.length > 0
+
+    if (hasDirtyDraft) {
+      setPendingExternalDraft(externalDraftRequest)
+      return
+    }
+
+    void applyExternalDraft(externalDraftRequest)
+  }, [
+    applyExternalDraft,
+    chatState.attachmentState.attachments.length,
+    chatState.selectedContexts.length,
+    chatState.taskInputMessage,
+    externalDraftRequest,
+    onExternalDraftConsumed,
+    skillSelector.selectedSkills.length,
+  ])
+
+  const handleConfirmExternalDraft = useCallback(() => {
+    if (!pendingExternalDraft) return
+
+    const request = pendingExternalDraft
+    setPendingExternalDraft(null)
+    void applyExternalDraft(request)
+  }, [applyExternalDraft, pendingExternalDraft])
+
   const handleConfirmPendingFormReplacement = useCallback(async () => {
     if (
       !pendingFormReplacementMessage ||
@@ -1057,9 +1161,12 @@ function ChatAreaContent({
         pendingInteractiveForm,
         pendingFormReplacementMessage
       )
+      const options = pendingFormReplacementOptions
       setPendingFormReplacementMessage(null)
+      setPendingFormReplacementOptions(null)
       setIsPendingFormReplacementOpen(false)
       await streamHandlers.handleSendMessage(cancellation.message, {
+        ...options,
         interactiveFormAnswer: cancellation.answer,
       })
     } finally {
@@ -1068,6 +1175,7 @@ function ChatAreaContent({
   }, [
     isPendingFormReplacementConfirming,
     pendingFormReplacementMessage,
+    pendingFormReplacementOptions,
     pendingInteractiveForm,
     streamHandlers,
   ])
@@ -1761,6 +1869,7 @@ function ChatAreaContent({
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
               waitingMessage={compactingWaitMessage}
+              defaultSaveKnowledgeBaseId={taskType === 'knowledge' ? knowledgeBaseId : undefined}
             />
           </div>
         </div>
@@ -1925,9 +2034,38 @@ function ChatAreaContent({
             <AlertDialogAction
               data-testid="quick-phrase-overwrite-confirm"
               onClick={handleConfirmQuickPhraseOverwrite}
-              className="bg-primary text-white hover:bg-primary/90"
+              variant="primary"
             >
               {t('quick_launch.overwrite_confirm_action')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={pendingExternalDraft !== null}
+        onOpenChange={open => {
+          if (!open) {
+            setPendingExternalDraft(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[420px] max-w-[calc(100vw-32px)] rounded-2xl border-border bg-base">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('knowledge_draft.confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('knowledge_draft.confirm_description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="knowledge-draft-cancel">
+              {t('knowledge_draft.confirm_cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="knowledge-draft-confirm"
+              onClick={handleConfirmExternalDraft}
+              variant="primary"
+            >
+              {t('knowledge_draft.confirm_action')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1939,6 +2077,7 @@ function ChatAreaContent({
           setIsPendingFormReplacementOpen(open)
           if (!open) {
             setPendingFormReplacementMessage(null)
+            setPendingFormReplacementOptions(null)
           }
         }}
       >

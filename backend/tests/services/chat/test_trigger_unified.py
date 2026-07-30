@@ -9,7 +9,11 @@ import pytest
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from shared.models import ExecutionRequest
-from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
+from shared.models.knowledge import (
+    ChatContextsResult,
+    KnowledgeBaseScope,
+    KnowledgeBaseToolsResult,
+)
 
 
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
@@ -150,6 +154,8 @@ class TestBuildExecutionRequestUserSubtaskId:
             request,
             user_subtask_id,
             user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             return request
 
@@ -432,7 +438,62 @@ class TestBuildExecutionRequestUserSubtaskId:
                         request_from_builder,
                         123,
                         7,
+                        preload_selected_kb_skill=True,
                     )
+
+    async def test_artifact_task_disables_selected_kb_skill_preload(self):
+        """Artifact tasks should use scoped built-in tools without management skills."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ),
+            patch.object(
+                trigger_unified,
+                "_process_contexts",
+                new=AsyncMock(return_value=request_from_builder),
+            ) as mock_process_contexts,
+        ):
+            task = MagicMock()
+            task.id = 1
+            task.json = {
+                "metadata": {
+                    "labels": {
+                        "source": "knowledge_artifact",
+                    }
+                }
+            }
+            assistant_subtask = MagicMock()
+            assistant_subtask.id = 2
+            team = MagicMock()
+            user = MagicMock()
+            user.id = 7
+
+            await trigger_unified.build_execution_request(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message="generate artifact",
+                payload=None,
+                user_subtask_id=123,
+            )
+
+        mock_process_contexts.assert_awaited_once_with(
+            mock_db,
+            request_from_builder,
+            123,
+            7,
+            preload_selected_kb_skill=False,
+        )
 
     async def test_does_not_process_contexts_when_user_subtask_id_is_none(self):
         """When user_subtask_id is missing, contexts processing should be skipped."""
@@ -568,7 +629,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -634,7 +700,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.build.return_value = request_from_builder
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            preload_selected_kb_skill=True,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -830,6 +901,58 @@ class TestProcessContextsAttachments:
         assert result.knowledge_base_ids == [1408]
         assert result.preload_skills == ["wegent-knowledge"]
         assert result.user_selected_skills == ["wegent-knowledge"]
+
+    @pytest.mark.asyncio
+    async def test_artifact_context_does_not_preload_knowledge_management_skill(self):
+        """Artifact generation must use scoped built-in knowledge tools only."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1263,
+            subtask_id=1697,
+            prompt="generate artifact",
+            system_prompt="system",
+            model_config={},
+            preload_skills=[],
+        )
+        scope = KnowledgeBaseScope(
+            knowledge_base_id=1408,
+            scope_restricted=True,
+            document_ids=[101],
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="meta",
+                knowledge_base_ids=[1408],
+                is_user_selected_kb=True,
+                knowledge_base_scopes=[scope],
+            ),
+        )
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=AsyncMock(return_value=ctx),
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                result = await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1696,
+                    user_id=2,
+                    preload_selected_kb_skill=False,
+                )
+
+        assert result.knowledge_base_scopes == [scope]
+        assert result.preload_skills == []
+        assert result.user_selected_skills == []
 
     @pytest.mark.asyncio
     async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):

@@ -32,9 +32,18 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.schemas.subtask_history import (
+    SubtaskListResponse,
+    SubtaskRecordResponse,
+    SubtaskSummary,
+)
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.subtask_history import (
+    list_subtask_summaries,
+    read_subtask_record,
+)
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
@@ -942,6 +951,88 @@ async def get_chat_history(
     )
 
     return HistoryResponse(session_id=session_id, messages=messages)
+
+
+@router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
+@trace_async(
+    "internal.chat_storage.list_subtasks",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.offset": kwargs.get("offset", 0),
+    },
+)
+async def list_history_subtasks(
+    session_id: str,
+    limit: Optional[int] = Query(None, description="Max summaries to return"),
+    offset: int = Query(0, description="Number of summaries to skip"),
+    db: Session = Depends(get_db),
+):
+    """List the whole session's subtasks as summaries (AI history backtracking).
+
+    Unlike ``/history``, this is NOT compaction-scoped: it lists every subtask so
+    the model can page back into detail that compaction summarized away.
+    """
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    result = list_subtask_summaries(
+        db, task_id=task_id, user_id=task.user_id, limit=limit, offset=offset
+    )
+    return SubtaskListResponse(
+        session_id=session_id,
+        subtasks=[SubtaskSummary(**s) for s in result["subtasks"]],
+        total=result["total"],
+        has_more=result["has_more"],
+    )
+
+
+@router.get(
+    "/history/{session_id}/subtasks/{subtask_id}",
+    response_model=SubtaskRecordResponse,
+)
+@trace_async(
+    "internal.chat_storage.read_subtask",
+    "internal.chat_storage",
+    extract_attributes=lambda *args, **kwargs: {
+        "chat.session_id": kwargs.get("session_id", ""),
+        "chat.subtask_id": kwargs.get("subtask_id", 0),
+    },
+)
+async def read_history_subtask(
+    session_id: str,
+    subtask_id: int,
+    cursor: str = Query("0:0", description="Compound cursor '<unit>:<char_off>'"),
+    max_chars: int = Query(0, description="Per-page char budget (0 = default)"),
+    db: Session = Depends(get_db),
+):
+    """Return one page of a subtask's rendered transcript (for backtracking)."""
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
+        )
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    record = read_subtask_record(
+        db,
+        task_id=task_id,
+        subtask_id=subtask_id,
+        user_id=task.user_id,
+        cursor=cursor,
+        max_chars=max_chars,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Subtask not found in this session")
+    return SubtaskRecordResponse(**record)
 
 
 class AttachmentTextResponse(BaseModel):

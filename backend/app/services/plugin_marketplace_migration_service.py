@@ -17,7 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.plugin_marketplace import Plugin, PluginRelease
 from app.models.skill_binary import SkillBinary
-from app.services.claude_plugin_parser import claude_plugin_parser
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
     scan_plugin_package,
@@ -78,7 +78,7 @@ class PluginMarketplaceMigrationService:
         self, db: Session, row: Kind, binary: SkillBinary
     ) -> tuple[Plugin, PluginRelease, bool]:
         spec = row.json.get("spec", {}) if isinstance(row.json, dict) else {}
-        parsed = claude_plugin_parser.parse_package(binary.binary_data)
+        parsed = plugin_package_parser.parse_package(binary.binary_data)
         scan_report = scan_plugin_package(binary.binary_data)
         slug = self._slug(str(spec.get("name") or parsed.name), row.id)
         plugin = db.query(Plugin).filter(Plugin.slug == slug).first()

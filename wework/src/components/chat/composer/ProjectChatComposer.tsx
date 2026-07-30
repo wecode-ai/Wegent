@@ -7,7 +7,7 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import { useState, type DragEventHandler, type ReactNode } from 'react'
+import { useMemo, useState, type DragEventHandler, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -17,12 +17,17 @@ import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
+import {
+  resolveDataTransferWorkspacePaths,
+  resolveStoredWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
+import { mergePopoutWorkspaceProjects } from '@/features/workbench/popoutWorkspaceContext'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
   value: string
@@ -74,6 +79,7 @@ interface ProjectChatComposerProps {
   showProjectWorkBar?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  showWorkspaceMenu?: boolean
   toolbarLeadingContext?: ReactNode
 }
 
@@ -131,9 +137,14 @@ export function ProjectChatComposer({
   showProjectWorkBar = true,
   isStreaming = false,
   onPause,
+  showWorkspaceMenu,
   toolbarLeadingContext,
 }: ProjectChatComposerProps) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const workspaceMenuProjects = useMemo(
+    () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
+    [projectWork.projects, projectWork.runtimeWork]
+  )
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
@@ -153,8 +164,11 @@ export function ProjectChatComposer({
     setIsDraggingFiles(false)
     if (disabled) return
 
-    const files = Array.from(event.dataTransfer.files)
-    if (files.length > 0) onFileSelect(files)
+    void resolveDataTransferWorkspacePaths(
+      event.dataTransfer,
+      'drop',
+      workspaceTarget?.workspaceSource
+    ).then(transfer => applyWorkspacePathTransfer(value, transfer, onChange, onFileSelect))
   }
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
@@ -169,9 +183,13 @@ export function ProjectChatComposer({
     onCancelGoalDraft?.()
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
-    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
     if (phrase.attachmentPaths?.length) {
-      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -311,12 +329,32 @@ export function ProjectChatComposer({
           contextUsage={contextUsage}
           onFileSelect={onFileSelect}
           planModeActive={planModeActive}
+          onSetPlanMode={onSetPlanMode}
           onClearPlanMode={onClearPlanMode}
+          onSetGoal={onSetGoal}
           onCompactContext={onCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}
           onPause={onPause}
+          showWorkspaceMenu={showWorkspaceMenu}
+          projectWorkMenuContext={
+            showWorkspaceMenu
+              ? {
+                  branchName: projectWork.worktreeBranch ?? projectWork.branchName,
+                  currentProjectId: projectWork.currentProjectId,
+                  executionMode: projectWork.executionMode,
+                  executionModeLocked: projectWork.executionModeLocked,
+                  isGitProject: projectWork.isGitProject,
+                  projectName: projectWork.currentProject?.name,
+                  projects: workspaceMenuProjects,
+                  onCheckoutBranch: projectWork.onCheckoutBranch,
+                  onExecutionModeChange: projectWork.onExecutionModeChange,
+                  onListBranches: projectWork.onListBranches,
+                  onSelectProject: projectWork.onSelectProject,
+                }
+              : undefined
+          }
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
           leadingContext={toolbarLeadingContext}

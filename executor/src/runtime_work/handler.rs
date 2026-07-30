@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        combined_codex_developer_instructions, strip_wework_browser_instructions,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, combined_codex_developer_instructions,
+        strip_wework_browser_instructions, CodexActiveTurnCallback,
+        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -40,6 +40,7 @@ use crate::{
 };
 
 mod archives;
+mod automation_rpc;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -53,6 +54,7 @@ mod turns;
 mod workspaces;
 
 use super::{
+    automations::{AutomationRunStatus, AutomationStore},
     codex_global_state::{
         activate_codex_global_project, open_codex_global_project,
         register_codex_global_thread_workspace_root, remove_codex_global_project,
@@ -72,20 +74,18 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, retain_runtime_handle_user_messages,
-        set_runtime_handle_messages,
+        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
+        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
+        user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::{
-        full_transcript_messages, merge_missing_user_message_metadata,
-        normalized_user_request_content, transcript_messages,
-    },
+    transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},
     transcript_page::transcript_page,
     util::{
-        apply_runtime_payload_metadata, bool_field, execution_request, id_field,
+        apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, runtime_task_id, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        prompt_text, restore_cloud_project_id, runtime_task_id, string_field, timestamp_ms_field,
+        workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -102,6 +102,9 @@ const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
 const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
+const WORKTREE_AUTO_CLEANUP_BATCH_DELAY: Duration = Duration::from_secs(30);
+const WORKTREE_AUTO_CLEANUP_ERROR_DELAY: Duration = Duration::from_secs(5 * 60);
+const WORKTREE_AUTO_CLEANUP_MAX_EMPTY_ROUNDS: usize = 3;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -290,6 +293,7 @@ pub struct RuntimeWorkRpcHandler {
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
+    automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
@@ -349,6 +353,7 @@ impl RuntimeWorkRpcHandler {
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
+            automation_store: AutomationStore::from_env(),
             store: RuntimeWorkStore::from_env(),
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
@@ -371,6 +376,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
+        handler.start_automation_scheduler();
         handler
     }
 
@@ -391,6 +397,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.archive" => self.archive_task(payload).await,
             "runtime.tasks.rename" => self.rename_task(payload).await,
             "runtime.tasks.cancel" => self.cancel_task(payload).await,
+            "runtime.automations.list" => self.list_automations().await,
+            "runtime.automations.get" => self.get_automation(payload).await,
+            "runtime.automations.create" => self.create_automation(payload).await,
+            "runtime.automations.update" => self.update_automation(payload).await,
+            "runtime.automations.delete" => self.delete_automation(payload).await,
+            "runtime.automations.toggle" => self.toggle_automation(payload).await,
+            "runtime.automations.run_now" => self.run_automation_now(payload).await,
+            "runtime.automation_runs.list" => self.list_automation_runs(payload).await,
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
@@ -413,6 +427,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.runtime_config.update" => {
+                self.update_codex_runtime_config(payload).await
+            }
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,

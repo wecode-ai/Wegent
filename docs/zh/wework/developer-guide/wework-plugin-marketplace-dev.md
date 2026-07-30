@@ -106,22 +106,24 @@ description: Review a merge request and summarize risks
 
 本地创建**不会**自动上传到云端。只有显式“发布到市场”才会进入扫描和审核。
 
-### 方式 B：在仓库目录开发官方插件
+### 方式 B：在独立仓库开发官方插件
 
-推荐目录：
+WeWork 自研插件统一放在：
 
 ```text
-curated-plugins/wework/<slug>/
+https://github.com/wecode-ai/wework-plugins
 ```
 
-或放在独立插件仓库。该目录只服务开发、评审、CI；Backend / Wework **不会**在启动时扫描它。
+布局对齐 openai/plugins：检出后目录为 `<checkout>/plugins/<slug>/`，并在
+`.agents/plugins/marketplace.json` 登记。该仓库只服务开发、评审、CI；
+Backend / Wework **不会**在启动时扫描它。
 
-本地只构建扫描：
+本地只构建扫描（假设与 Wegent 同级检出）：
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
 成功时输出 `name`、`version`、`sha256`。失败时先修扫描错误，再进入发布。
@@ -170,12 +172,14 @@ pnpm --filter wework dev:mac -- --executor-isolation
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/<plugin-slug> \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
 ```
+
+`--visibility workspace`（默认）进入「企业内部」Tab；`public` 进入「国内公开」。
 
 规则：
 
@@ -260,7 +264,8 @@ GitHub 插件直接复用 OpenAI `openai/plugins` 的 `plugins/github`。仓库�
 - 目标插件：Manifest `name=github`
 - 默认同步策略：`auto_after_scan`
 - 可选审核策略：`review_required`
-- 发布身份：`source_type=mirror`、`source_provider=codex`、开发者 OpenAI
+- 发布身份：`source_type=mirror`、`source_provider=wework`、`visibility=public`
+  （国内公开；上游仍取自 `openai/plugins`，但不再归入 Codex 官方 Tab）
 - 适配版本：`<上游版本>+wegent.<适配版本>`
 
 包内不保存 OAuth token，也不使用 OpenAI connector ID 或 `.mcp.json`。Manifest 只声明：

@@ -66,7 +66,11 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
-import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
+import {
+  composerPathReference,
+  composerSkillFilePath,
+  resolveComposerMentionBrandIconUrl,
+} from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
@@ -257,6 +261,10 @@ export const MessageList = memo(function MessageList({
         : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
     [forceVirtualMessageId, visibleMessages]
   )
+  const streamingVirtualMessageIndex = useMemo(
+    () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -307,10 +315,10 @@ export const MessageList = memo(function MessageList({
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
           : defaultRangeExtractor(range)
-      if (forcedVirtualMessageIndex < 0 || indexes.includes(forcedVirtualMessageIndex)) {
-        return indexes
-      }
-      return [...indexes, forcedVirtualMessageIndex].sort((left, right) => left - right)
+      const forcedIndexes = [
+        ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
+      ].filter(index => index >= 0 && !indexes.includes(index))
+      return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
   })
@@ -1708,6 +1716,10 @@ function renderUserContent(
     const pathReference = composerPathReference(match[0])
     const mentionKind = codexMentionKind(href)
     const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+    const brandIconUrl =
+      mentionKind === 'plugin' || mentionKind === 'app'
+        ? resolveComposerMentionBrandIconUrl(href)
+        : null
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
       mentionKind === 'skill'
@@ -1733,6 +1745,8 @@ function renderUserContent(
               pathReference.directory ? { isDirectory: true } : undefined
             )
           }
+          const pluginReference = parsePluginUri(href)
+          if (pluginReference) navigateTo(buildPluginDetailRoute(pluginReference))
         }}
       >
         {mentionKind === 'folder' ? (
@@ -1751,6 +1765,13 @@ function renderUserContent(
           )
         ) : mentionKind === 'conversation' ? (
           <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : brandIconUrl ? (
+          <img
+            data-testid={iconTestId}
+            src={brandIconUrl}
+            alt=""
+            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+          />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
@@ -1803,6 +1824,7 @@ function getDisplayProcessingBlocks(
 
   return blocks
     .filter(block => {
+      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
@@ -2283,7 +2305,6 @@ function AssistantErrorCard({
 }) {
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
-  const [isDismissed, setIsDismissed] = useState(false)
   const displayError = rawError || error
   const hasErrorDetails = Boolean(displayError)
   const parsedError = parseChatError(displayError ?? '', errorType)
@@ -2308,10 +2329,6 @@ function AssistantErrorCard({
             ),
           })
 
-  if (isDismissed) {
-    return null
-  }
-
   return (
     <div
       data-testid="assistant-error-card"
@@ -2335,10 +2352,7 @@ function AssistantErrorCard({
           <button
             type="button"
             data-testid="assistant-error-retry"
-            onClick={() => {
-              setIsDismissed(true)
-              onRetry?.(message)
-            }}
+            onClick={() => onRetry?.(message)}
             className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             {t('assistant_error.actions.retry', '重试')}
@@ -2378,3 +2392,5 @@ function AssistantErrorCard({
     </div>
   )
 }
+import { buildPluginDetailRoute, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { navigateTo } from '@/lib/navigation'

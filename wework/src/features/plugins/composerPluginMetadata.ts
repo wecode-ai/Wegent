@@ -65,6 +65,58 @@ function bestPluginForApp(app: LocalDeviceApp, plugins: InstalledPlugin[]): Inst
   return best
 }
 
+function isComposerVisiblePlugin(plugin: InstalledPlugin): boolean {
+  return (
+    Boolean(plugin.spec.enabled) &&
+    (plugin.spec.installState === 'installed' || plugin.spec.installState === 'update_available')
+  )
+}
+
+function pluginMentionPath(plugin: InstalledPlugin): string | null {
+  const payload = plugin.spec.sourcePayload
+  const payloadRecord = payload && typeof payload === 'object' ? payload : {}
+  const pluginName =
+    (typeof payloadRecord.pluginName === 'string' && payloadRecord.pluginName.trim()) ||
+    (typeof payloadRecord.remotePluginId === 'string' && payloadRecord.remotePluginId.trim()) ||
+    plugin.spec.source.pluginKey
+  const marketplaceName =
+    (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
+    plugin.spec.source.marketplace ||
+    plugin.metadata.namespace
+  if (typeof pluginName !== 'string' || !pluginName.trim()) return null
+  if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
+  return `plugin://${pluginName}@${marketplaceName}`
+}
+
+function skillFilePath(path: string): string {
+  return path.endsWith('/SKILL.md') ? path : `${path.replace(/\/+$/, '')}/SKILL.md`
+}
+
+function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp | null {
+  const displayName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const pluginKey = plugin.spec.source.pluginKey || plugin.metadata.name
+  if (!displayName || !pluginKey) return null
+
+  const mentionPath = pluginMentionPath(plugin)
+  const skill = plugin.spec.components.skills.find(item => item.path && item.name)
+  const skillPath = mentionPath ?? (skill ? skillFilePath(skill.path) : null)
+  if (!skillPath) return null
+
+  const interfaceData = plugin.spec.interface
+  return {
+    id: `plugin:${pluginKey}`,
+    name: displayName,
+    description:
+      interfaceData?.shortDescription || plugin.spec.description || skill?.description || null,
+    logoUrl: interfaceData?.composerIcon || interfaceData?.logo || null,
+    isAccessible: true,
+    isEnabled: true,
+    pluginDisplayNames: [displayName],
+    source: 'installed-plugin',
+    skillPath,
+  }
+}
+
 export function enrichComposerApps(
   apps: LocalDeviceApp[],
   installedPlugins: InstalledPlugin[]
@@ -72,10 +124,7 @@ export function enrichComposerApps(
   return apps.flatMap(app => {
     const plugin = bestPluginForApp(app, installedPlugins)
     if (!plugin) return [app]
-    if (
-      !plugin.spec.enabled ||
-      (plugin.spec.installState !== 'installed' && plugin.spec.installState !== 'update_available')
-    ) {
+    if (!isComposerVisiblePlugin(plugin)) {
       return []
     }
 
@@ -93,4 +142,19 @@ export function enrichComposerApps(
       },
     ]
   })
+}
+
+/** Include enabled installed plugins that have no Codex/app entry yet (e.g. skill-only). */
+export function appendInstalledPluginsAsComposerApps(
+  apps: LocalDeviceApp[],
+  installedPlugins: InstalledPlugin[]
+): LocalDeviceApp[] {
+  const extras: LocalDeviceApp[] = []
+  for (const plugin of installedPlugins) {
+    if (!isComposerVisiblePlugin(plugin)) continue
+    if (apps.some(app => pluginMatchScore(app, plugin) > 0)) continue
+    const entry = installedPluginAsComposerApp(plugin)
+    if (entry) extras.push(entry)
+  }
+  return extras.length > 0 ? [...apps, ...extras] : apps
 }

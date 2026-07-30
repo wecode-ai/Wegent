@@ -9,7 +9,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeDocumentCreate,
@@ -1044,6 +1046,7 @@ class TestKnowledgeOrchestrator:
             "app.services.knowledge.orchestrator.KnowledgeService"
         ) as mock_service:
             mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.can_manage_knowledge_base_documents.return_value = True
             mock_service.create_document.return_value = mock_doc
 
             with patch.object(
@@ -1064,6 +1067,49 @@ class TestKnowledgeOrchestrator:
                     )
 
         mock_schedule.assert_not_called()
+
+    def test_create_document_from_attachment_requires_manage_permission(
+        self,
+        orchestrator: KnowledgeOrchestrator,
+        mock_db: Session,
+        mock_user: User,
+    ) -> None:
+        """Test attachment document creation requires document manage permission."""
+        mock_kb = MagicMock()
+        data = KnowledgeDocumentCreate(
+            attachment_id=123,
+            name="report.pdf",
+            file_extension="pdf",
+            source_type=DocumentSourceType.FILE,
+        )
+
+        with patch(
+            "app.services.knowledge.orchestrator.KnowledgeService"
+        ) as mock_service:
+            mock_service.get_knowledge_base.return_value = (mock_kb, True)
+            mock_service.can_manage_knowledge_base_documents.return_value = False
+
+            with patch.object(
+                orchestrator, "_create_and_index_document"
+            ) as mock_create:
+                with pytest.raises(
+                    ValueError,
+                    match=(
+                        "You do not have permission to add documents "
+                        "to this knowledge base"
+                    ),
+                ):
+                    orchestrator.create_document_from_attachment(
+                        db=mock_db,
+                        user=mock_user,
+                        knowledge_base_id=1,
+                        data=data,
+                    )
+
+        mock_service.can_manage_knowledge_base_documents.assert_called_once_with(
+            mock_db, 1, mock_user.id
+        )
+        mock_create.assert_not_called()
 
     def test_reindex_document_raises_for_large_excel_document(
         self, orchestrator, mock_db, mock_user

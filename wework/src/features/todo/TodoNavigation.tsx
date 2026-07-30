@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Ellipsis,
   FolderOpen,
   LayoutDashboard,
@@ -16,7 +17,8 @@ import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo } from '@/lib/navigation'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
 import type { TodoDetailItem } from './TodoDetailPanel'
@@ -269,6 +271,7 @@ export function TodoSidebar({
 }) {
   const { t } = useTranslation('common')
   const [projectActionsOpen, setProjectActionsOpen] = useState(false)
+  const [projectIdCopied, setProjectIdCopied] = useState(false)
   const selectedProject =
     projects.find(entry => entry.project.id === selectedProjectId) ?? projects[0] ?? null
   const otherProjects = projects.filter(entry => entry.project.id !== selectedProject?.project.id)
@@ -289,7 +292,7 @@ export function TodoSidebar({
         <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
         <div
           data-testid="todo-sidebar-chrome-controls"
-          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-1"
+          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-7"
         >
           <DesktopWindowControls
             sidebarCollapsed={false}
@@ -298,17 +301,7 @@ export function TodoSidebar({
           />
           <DesktopAppSwitcher
             activeApp="todo"
-            onNavigate={app =>
-              navigateTo(
-                app === 'wework'
-                  ? '/'
-                  : app === 'todo'
-                    ? '/todo'
-                    : app === 'wegent'
-                      ? '/app/wegent'
-                      : '/apps'
-              )
-            }
+            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
             testIds={{
               wework: 'todo-app-wework',
               todo: 'todo-app-current',
@@ -393,6 +386,26 @@ export function TodoSidebar({
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
                     {t('todo.open_in_wework', '在 Wework 中打开')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="todo-sidebar-copy-project-id"
+                    onClick={() => {
+                      void copyTextToClipboard(String(selectedProject.project.id)).then(() => {
+                        setProjectIdCopied(true)
+                        window.setTimeout(() => setProjectIdCopied(false), 2000)
+                      })
+                    }}
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                  >
+                    {projectIdCopied ? (
+                      <Check className="h-3.5 w-3.5 text-green-600" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    {projectIdCopied
+                      ? t('todo.project_id_copied', '项目 ID 已复制')
+                      : t('todo.copy_project_id', '复制项目 ID')}
                   </button>
                   <button
                     type="button"

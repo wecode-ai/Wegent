@@ -104,4 +104,28 @@ describe('composer mention icons', () => {
 
     expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
   })
+
+  test('falls back to bundled plugin brand icons for plugin mentions', () => {
+    const reference = '[$superpowers](plugin://superpowers@openai-official)'
+    const element = createComposerMentionElement({
+      name: 'superpowers',
+      label: 'Superpowers',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
+  })
+
+  test('keeps the generic cube icon for skill mentions without a brand logo', () => {
+    const reference = '[$gmail](/tmp/gmail/SKILL.md)'
+    const element = createComposerMentionElement({
+      name: 'gmail',
+      label: 'Gmail',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toBeNull()
+    expect(element.querySelector('svg.composer-mention-icon')).not.toBeNull()
+  })
 })

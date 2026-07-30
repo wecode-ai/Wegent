@@ -75,6 +75,8 @@ Click the model selector to override the agent's default model:
 - **Select model**: Choose from the dropdown list
 - **Force override**: When enabled, uses your selected model even if the agent has a configured model
 
+When you switch to a different model in an existing Wework conversation, Wework asks for confirmation first. Different models may interpret existing context differently and may vary in tool support, response style, and task continuity. After confirmation, the new model is used for the next message; a response already in progress continues with the previous model. No warning is shown when selecting a model for a new conversation or reselecting the model that is already chosen.
+
 #### Knowledge Base Context
 
 Click the context button to add knowledge bases:
@@ -174,6 +176,8 @@ If a task fails:
 2. **Click retry button** - Re-execute the task
 3. **Or modify and retry** - Adjust task description and resend
 
+After the retry request is accepted, the failed message turn is removed from the conversation. When the retry succeeds, the conversation keeps the original user message and the new successful response without retaining the old failure card or leaving an empty response turn. Wework applies the same rule when the task is reopened.
+
 ## Sending Follow-ups While Running
 
 While a Wework task is running, you can choose among three send modes:
@@ -183,6 +187,14 @@ While a Wework task is running, you can choose among three send modes:
 - **Interrupt and send now**: stops the current turn and immediately sends the message as a new turn in the same conversation. Press `Command/Ctrl + Shift + Enter`.
 
 After entering a message, use the down arrow on the right side of the send button to open the menu. The clock means wait for the current response, the turning arrow means guide the current response, and the lightning bolt means interrupt and send immediately. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
+
+The queue sends messages from top to bottom. When several messages are queued, drag the handle on the left of a message to reorder the list with live feedback. Stopping the current response also pauses the queue instead of immediately sending the next message. Selecting **Continue sending** restores the guidance state and sends the first queued message immediately.
+
+If you submit new composer text while the queue is paused, Wework asks how to handle the existing queue:
+
+- **Keep and continue**: sends the new composer message first, then continues the preserved queue; the composer is cleared after submission.
+- **Clear queue**: removes the existing queue and sends only the new composer message.
+- **Cancel**: sends nothing and preserves both the composer and the queue.
 
 ---
 

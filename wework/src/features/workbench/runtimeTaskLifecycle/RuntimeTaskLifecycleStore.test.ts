@@ -333,7 +333,7 @@ describe('RuntimeTaskLifecycleStore', () => {
     const listener = vi.fn()
     store.subscribe(listener)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new Error('storage unavailable')
     })
 
@@ -349,7 +349,7 @@ describe('RuntimeTaskLifecycleStore', () => {
   test('does not rewrite unchanged unread persistence on unrelated lifecycle events', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
-    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const setItem = vi.spyOn(window.localStorage, 'setItem')
 
     store.executorSettled(address)
     store.goalStatusReceived(address, 'paused')

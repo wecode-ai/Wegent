@@ -117,6 +117,17 @@ export function isSameRuntimeTaskAddress(
   )
 }
 
+export function mergeRuntimeTaskHandles(
+  base?: Record<string, unknown> | null,
+  override?: Record<string, unknown> | null
+): Record<string, unknown> | undefined {
+  if (!base && !override) return undefined
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  }
+}
+
 function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
   return workspaces.flatMap(workspace =>
     workspace.tasks.map(task => runtimeTaskAddressFromWorkspace(workspace, task))
@@ -270,19 +281,26 @@ export function findRuntimeTask(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
 ): RuntimeTaskSummary | null {
+  const workspace = findRuntimeTaskWorkspace(runtimeWork, address)
+  return workspace?.tasks.find(item => item.taskId === address?.taskId) ?? null
+}
+
+export function findRuntimeTaskWorkspace(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress | null | undefined
+): RuntimeDeviceWorkspace | null {
   if (!runtimeWork || !address) return null
   const workspaces = [
     ...runtimeWork.chats,
     ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
   ]
-
-  for (const workspace of workspaces) {
-    if (workspace.deviceId !== address.deviceId) continue
-    const task = workspace.tasks.find(item => item.taskId === address.taskId)
-    if (task) return task
-  }
-
-  return null
+  return (
+    workspaces.find(
+      workspace =>
+        workspace.deviceId === address.deviceId &&
+        workspace.tasks.some(task => task.taskId === address.taskId)
+    ) ?? null
+  )
 }
 
 export function getRememberedStandaloneDeviceId(

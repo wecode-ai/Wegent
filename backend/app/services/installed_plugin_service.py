@@ -17,13 +17,20 @@ from app.schemas.installed_plugin import (
     InstalledPluginListResponse,
     InstalledPluginPackageRef,
     InstalledPluginUpdateRequest,
+    PluginMarketplaceItem,
+    PluginMarketplaceListResponse,
     PluginUploadInfo,
 )
-from app.services.claude_plugin_parser import claude_plugin_parser
+from app.services.builtin_plugin_registry import (
+    BUILTIN_PLUGIN_NAMES,
+    BUILTIN_PLUGIN_OWNER_ID,
+    BUILTIN_PLUGINS_BY_NAME,
+)
+from app.services.plugin_package_parser import plugin_package_parser
 
 
 class InstalledPluginService:
-    """Manage user-scoped Claude Code plugin installations."""
+    """Manage user-scoped Codex and Claude Code plugin installations."""
 
     def upload_plugin(
         self,
@@ -34,7 +41,7 @@ class InstalledPluginService:
         filename: str,
         enabled: bool = True,
     ) -> InstalledPlugin:
-        parsed = claude_plugin_parser.parse_package(package_bytes)
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
         file_hash = hashlib.sha256(package_bytes).hexdigest()
         existing = self._find_uploaded_plugin(
             db, user_id=user_id, plugin_key=parsed.name
@@ -142,6 +149,239 @@ class InstalledPluginService:
         if not package or not package.binary_data:
             raise HTTPException(status_code=404, detail="Plugin package not found")
         return package.binary_data, package.file_name or self._fallback_filename(row)
+
+    def publish_marketplace_plugin(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        package_bytes: bytes,
+        filename: str,
+        visibility: str = "workspace",
+        featured: bool = False,
+    ) -> PluginMarketplaceItem:
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(package_bytes)
+        builtin_plugin = BUILTIN_PLUGINS_BY_NAME.get(parsed.name)
+        if builtin_plugin and user_id != BUILTIN_PLUGIN_OWNER_ID:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Plugin {parsed.name!r} is managed by the Wegent Backend "
+                    "and cannot be published manually"
+                ),
+            )
+        if builtin_plugin:
+            visibility = builtin_plugin.visibility
+            featured = builtin_plugin.featured
+
+        file_hash = hashlib.sha256(package_bytes).hexdigest()
+        row = self._find_marketplace_item(db, user_id=user_id, plugin_key=parsed.name)
+
+        if not row:
+            row = Kind(
+                user_id=user_id,
+                kind="PluginMarketplaceItem",
+                name=self._safe_kind_name(parsed.name),
+                namespace="default",
+                json={},
+                is_active=True,
+            )
+            db.add(row)
+            db.flush()
+
+        package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
+        row.json = self._build_marketplace_payload(
+            row_id=row.id,
+            parsed=parsed,
+            package_ref=package_ref,
+            filename=filename,
+            user_id=user_id,
+            visibility=visibility,
+            featured=featured,
+        )
+        row.is_active = True
+        flag_modified(row, "json")
+        self._upsert_package(
+            db,
+            kind_id=row.id,
+            package_bytes=package_bytes,
+            file_hash=file_hash,
+            filename=filename,
+        )
+        db.commit()
+        db.refresh(row)
+        return self._marketplace_row_to_item(db, row, user_id=user_id)
+
+    def deactivate_non_system_builtin_marketplace_items(self, db: Session) -> int:
+        """Deactivate legacy user-published entries that use reserved plugin names."""
+
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "PluginMarketplaceItem",
+                Kind.namespace == "default",
+                Kind.user_id != BUILTIN_PLUGIN_OWNER_ID,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        deactivated = 0
+        for row in rows:
+            if self._get_spec(row).get("name") not in BUILTIN_PLUGIN_NAMES:
+                continue
+            row.is_active = False
+            deactivated += 1
+        if deactivated:
+            db.commit()
+        return deactivated
+
+    def list_marketplace_plugins(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        query: str | None = None,
+        source: str | None = None,
+    ) -> PluginMarketplaceListResponse:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "PluginMarketplaceItem",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+        items = [
+            self._marketplace_row_to_item(db, row, user_id=user_id)
+            for row in rows
+            if self._can_view_marketplace_row(row, user_id=user_id)
+        ]
+        if source == "created":
+            items = [item for item in items if item.ownerUserId == user_id]
+        elif source == "featured":
+            items = [item for item in items if item.featured]
+        elif source == "workspace":
+            items = [item for item in items if item.visibility == "workspace"]
+        elif source == "personal":
+            items = [item for item in items if item.visibility == "personal"]
+
+        normalized_query = (query or "").strip().lower()
+        if normalized_query:
+            items = [
+                item
+                for item in items
+                if normalized_query in item.name.lower()
+                or normalized_query in item.displayName.lower()
+                or normalized_query in item.description.lower()
+                or any(
+                    normalized_query in str(keyword).lower()
+                    for keyword in item.manifest.get("keywords", [])
+                )
+            ]
+
+        return PluginMarketplaceListResponse(items=items)
+
+    def install_marketplace_plugin(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        marketplace_id: int,
+        enabled: bool = True,
+    ) -> InstalledPlugin:
+        row = (
+            db.query(Kind)
+            .filter(
+                Kind.id == marketplace_id,
+                Kind.kind == "PluginMarketplaceItem",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not row or not self._can_view_marketplace_row(row, user_id=user_id):
+            raise HTTPException(status_code=404, detail="Marketplace plugin not found")
+        plugin_name = self._get_spec(row).get("name")
+        if (
+            plugin_name in BUILTIN_PLUGIN_NAMES
+            and row.user_id != BUILTIN_PLUGIN_OWNER_ID
+        ):
+            raise HTTPException(status_code=404, detail="Marketplace plugin not found")
+
+        package = db.query(SkillBinary).filter(SkillBinary.kind_id == row.id).first()
+        if not package or not package.binary_data:
+            raise HTTPException(
+                status_code=404, detail="Marketplace plugin package not found"
+            )
+
+        parsed, package_bytes = plugin_package_parser.normalize_and_parse(
+            package.binary_data
+        )
+        file_hash = hashlib.sha256(package_bytes).hexdigest()
+        existing = self._find_installed_plugin(
+            db,
+            user_id=user_id,
+            source_type="marketplace",
+            plugin_key=parsed.name,
+            marketplace_id=marketplace_id,
+        )
+        if existing:
+            return self._reactivate_existing(
+                db,
+                row=existing,
+                parsed=parsed,
+                package_bytes=package_bytes,
+                file_hash=file_hash,
+                enabled=enabled,
+                filename=package.file_name or f"{parsed.name}.zip",
+                source_type="marketplace",
+                provider_key="wegent-marketplace",
+                marketplace_id=marketplace_id,
+            )
+
+        return self._create_installed_plugin(
+            db=db,
+            user_id=user_id,
+            parsed=parsed,
+            package_bytes=package_bytes,
+            file_hash=file_hash,
+            filename=package.file_name or f"{parsed.name}.zip",
+            enabled=enabled,
+            source_type="marketplace",
+            provider_key="wegent-marketplace",
+            marketplace_id=marketplace_id,
+        )
+
+    def install_builtin_plugin(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        plugin_key: str,
+    ) -> InstalledPlugin:
+        row = self._find_marketplace_item(
+            db,
+            user_id=BUILTIN_PLUGIN_OWNER_ID,
+            plugin_key=plugin_key,
+        )
+        if not row or not row.is_active:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Built-in plugin is unavailable: {plugin_key}",
+            )
+        spec = self._get_spec(row)
+        if spec.get("visibility") != "public":
+            raise HTTPException(
+                status_code=503,
+                detail=f"Built-in plugin is unavailable: {plugin_key}",
+            )
+        return self.install_marketplace_plugin(
+            db=db,
+            user_id=user_id,
+            marketplace_id=row.id,
+        )
 
     def _reactivate_existing(
         self,
@@ -270,6 +510,23 @@ class InstalledPluginService:
                 return row
         return None
 
+    def _find_marketplace_item(
+        self, db: Session, *, user_id: int, plugin_key: str
+    ) -> Optional[Kind]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "PluginMarketplaceItem",
+                Kind.namespace == "default",
+            )
+            .all()
+        )
+        for row in rows:
+            if self._get_spec(row).get("name") == plugin_key:
+                return row
+        return None
+
     def _get_active_installed_plugin(
         self, db: Session, *, user_id: int, installed_id: int
     ) -> Kind:
@@ -334,6 +591,84 @@ class InstalledPluginService:
             },
             "status": {"state": "Available"},
         }
+
+    def _build_marketplace_payload(
+        self,
+        *,
+        row_id: int,
+        parsed: PluginUploadInfo,
+        package_ref: InstalledPluginPackageRef,
+        filename: str,
+        user_id: int,
+        visibility: str,
+        featured: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "PluginMarketplaceItem",
+            "metadata": {
+                "name": self._safe_kind_name(parsed.name),
+                "namespace": "default",
+            },
+            "spec": {
+                "id": row_id,
+                "remotePluginId": f"wegent~Plugin_{row_id}",
+                "name": parsed.name,
+                "displayName": parsed.displayName,
+                "description": parsed.description,
+                "version": parsed.version,
+                "author": parsed.author,
+                "visibility": visibility,
+                "featured": featured,
+                "manifest": parsed.manifest,
+                "components": parsed.components.model_dump(exclude_none=True),
+                "interface": (
+                    parsed.interface.model_dump(exclude_none=True)
+                    if parsed.interface
+                    else None
+                ),
+                "packageRef": package_ref.model_dump(),
+                "sourcePayload": {"filename": filename},
+                "ownerUserId": user_id,
+            },
+            "status": {"state": "Available"},
+        }
+
+    def _can_view_marketplace_row(self, row: Kind, *, user_id: int) -> bool:
+        spec = self._get_spec(row)
+        visibility = spec.get("visibility", "workspace")
+        return row.user_id == user_id or visibility in {"workspace", "public"}
+
+    def _marketplace_row_to_item(
+        self, db: Session, row: Kind, *, user_id: int
+    ) -> PluginMarketplaceItem:
+        spec = self._get_spec(row)
+        installed = self._find_installed_plugin(
+            db,
+            user_id=user_id,
+            source_type="marketplace",
+            plugin_key=str(spec.get("name") or ""),
+            marketplace_id=row.id,
+        )
+        installed_spec = self._get_spec(installed) if installed else {}
+        return PluginMarketplaceItem(
+            id=row.id,
+            remotePluginId=str(spec.get("remotePluginId") or f"wegent~Plugin_{row.id}"),
+            name=str(spec.get("name") or row.name),
+            displayName=str(spec.get("displayName") or spec.get("name") or row.name),
+            description=str(spec.get("description") or ""),
+            version=spec.get("version"),
+            author=spec.get("author"),
+            visibility=spec.get("visibility", "workspace"),
+            featured=bool(spec.get("featured")),
+            installed=installed is not None and installed.is_active,
+            installedPluginId=installed.id if installed else None,
+            enabled=bool(installed_spec.get("enabled")) if installed else False,
+            interface=spec.get("interface"),
+            components=spec.get("components") or {},
+            manifest=spec.get("manifest") or {},
+            ownerUserId=int(spec.get("ownerUserId") or row.user_id),
+        )
 
     def _default_component_states(self, parsed: PluginUploadInfo) -> Dict[str, bool]:
         components = parsed.components

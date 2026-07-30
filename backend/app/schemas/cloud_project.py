@@ -5,7 +5,7 @@
 """Schemas for shared cloud projects and local execution bindings."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -16,10 +16,59 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, normalize_tags
 
 SnowflakeId = Annotated[str, BeforeValidator(str)]
+TaskProvider = Literal["local", "github", "gitlab", "dingtalk_aitable"]
+ProjectVisibility = Literal["private", "public"]
+
+
+def _normalize_repository(task_provider: str, repository: str) -> str:
+    normalized = repository.strip().strip("/")
+    if task_provider == "gitlab":
+        normalized = normalized.split("/-/", 1)[0]
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized
+
+
+def normalize_provider_config(
+    task_provider: str, provider_config: dict[str, object]
+) -> dict[str, object]:
+    config = dict(provider_config)
+    if task_provider == "local":
+        return {}
+    if task_provider == "dingtalk_aitable":
+        if "credential" in config:
+            raise ValueError("encrypted provider credentials cannot be supplied")
+        for key in ("base_id", "table_id"):
+            value = config.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"provider_config.{key} is required")
+            config[key] = value.strip()
+        if "token" in config:
+            raise ValueError("DingTalk authentication is managed by the local Executor")
+        mapping = config.get("board_mapping")
+        if mapping is not None and not isinstance(mapping, dict):
+            raise ValueError("provider_config.board_mapping must be an object")
+        return config
+    repository = config.get("repository")
+    if not isinstance(repository, str) or not repository.strip():
+        raise ValueError("provider_config.repository is required")
+    normalized_repository = _normalize_repository(task_provider, repository)
+    if not normalized_repository:
+        raise ValueError("provider_config.repository is required")
+    config["repository"] = normalized_repository
+    if "credential" in config:
+        raise ValueError("encrypted provider credentials cannot be supplied")
+    token = config.get("token")
+    if token is not None and not isinstance(token, str):
+        raise ValueError("provider token must be a string")
+    if isinstance(token, str):
+        config["token"] = token.strip()
+    return config
 
 
 class CloudProjectCreate(BaseModel):
@@ -28,23 +77,49 @@ class CloudProjectCreate(BaseModel):
     )
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
+    task_provider: TaskProvider = "local"
+    provider_config: dict[str, object] = Field(default_factory=dict)
+    visibility: ProjectVisibility = "private"
 
     @field_validator("project_key")
     @classmethod
     def normalize_project_key(cls, value: str | None) -> str | None:
         return value.upper() if value else None
 
+    @model_validator(mode="after")
+    def validate_provider(self) -> "CloudProjectCreate":
+        self.provider_config = normalize_provider_config(
+            self.task_provider, self.provider_config
+        )
+        return self
+
 
 class CloudProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
+    provider_config: dict[str, object] | None = None
+    visibility: ProjectVisibility | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
     @classmethod
     def normalize_tag_list(cls, value: object) -> object:
         return None if value is None else normalize_tags(value)
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> "CloudProjectUpdate":
+        if self.provider_config is not None:
+            # The provider kind is immutable. The service validates this config
+            # against the project's current provider before persisting it.
+            if "credential" in self.provider_config:
+                raise ValueError("encrypted provider credentials cannot be supplied")
+            token = self.provider_config.get("token")
+            if token is not None and not isinstance(token, str):
+                raise ValueError("provider token must be a string")
+            if isinstance(token, str):
+                self.provider_config["token"] = token.strip()
+        return self
 
 
 class CloudProjectResponse(BaseModel):
@@ -55,7 +130,17 @@ class CloudProjectResponse(BaseModel):
     project_key: str
     name: str
     description: str
+    project_store: Literal["backend"] = "backend"
+    # Responses must remain forward-compatible with provider kinds written by
+    # newer services. Request schemas stay strict so this service only creates
+    # provider kinds it can operate.
+    task_provider: str = "local"
+    provider_config: dict[str, object] = Field(default_factory=dict)
+    visibility: ProjectVisibility = "private"
     created_by_user_id: int
+    current_user_id: int = 0
+    current_user_name: str = ""
+    access_role: BaseRole = BaseRole.RestrictedAnalyst
     status: str
     tags: list[str] = []
     version: int
@@ -65,11 +150,22 @@ class CloudProjectResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def populate_tags(cls, value: object) -> object:
-        """Fill tags from the metadata JSON when the input has no tags key."""
-        if isinstance(value, dict) and "tags" not in value:
+        """Fill project routing fields from the metadata JSON."""
+        if isinstance(value, dict):
             metadata = value.get("metadata_json")
-            tags = metadata.get("tags") if isinstance(metadata, dict) else None
-            return {**value, "tags": normalize_tags(tags)}
+            metadata = metadata if isinstance(metadata, dict) else {}
+            return {
+                **value,
+                "project_store": "backend",
+                "task_provider": metadata.get("task_provider", "local"),
+                "provider_config": mask_provider_config(
+                    metadata.get("provider_config", {})
+                ),
+                "visibility": (
+                    "public" if metadata.get("visibility") == "public" else "private"
+                ),
+                "tags": normalize_tags(metadata.get("tags")),
+            }
         return value
 
 

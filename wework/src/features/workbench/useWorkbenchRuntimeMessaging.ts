@@ -65,6 +65,7 @@ import {
   getCommandStdoutObject,
   isRecord,
   isSameRuntimeTaskIdentity,
+  mergeRuntimeTaskHandles,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { findFileChangesBySubtaskId } from './runtimePaneMessages'
@@ -728,11 +729,15 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
+        const runtimeHandle = mergeRuntimeTaskHandles(
+          response.runtimeHandle,
+          optimisticAddress.runtimeHandle
+        )
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
           taskId: response.taskId || optimisticAddress.taskId,
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
-          runtimeHandle: response.runtimeHandle ?? optimisticAddress.runtimeHandle,
+          ...(runtimeHandle ? { runtimeHandle } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
             : {}),
@@ -991,6 +996,7 @@ export function useWorkbenchRuntimeMessaging({
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientMessageId: options?.clientMessageId,
           additionalContext: options?.additionalContext,
+          cloudProjectId: options?.cloudProjectId,
         }
       )
       if (sent) {

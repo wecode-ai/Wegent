@@ -4,14 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - ".github/workflows/wework-e2e.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "executor/**"
-      - "packages/chat-core/**"
-      - "wework/**"
   pull_request:
     branches:
       - main
@@ -21,14 +13,9 @@ on:
       - reopened
       - ready_for_review
       - labeled
-    paths:
-      - ".github/workflows/wework-e2e.yml"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "executor/**"
-      - "packages/chat-core/**"
-      - "wework/**"
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * *"
@@ -41,9 +28,41 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect Wework E2E Changes
+    runs-on: ubuntu-latest
+    outputs:
+      wework_e2e: ${{ steps.classify.outputs.wework_e2e }}
+      wework_desktop_e2e: ${{ steps.classify.outputs.wework_desktop_e2e }}
+      wework_desktop_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_e2e_matrix }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          FORCE_ALL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+        run: |
+          if [[ "$FORCE_ALL" == "true" ]]; then
+            .github/scripts/classify-ci-changes.sh --all
+            .github/scripts/classify-wework-desktop-e2e.sh --all
+          else
+            changed_files="$(mktemp)"
+            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+            .github/scripts/classify-ci-changes.sh < "$changed_files"
+            .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
+          fi
+
   wework-e2e:
     name: Wework E2E
-    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -108,31 +127,52 @@ jobs:
 
   wework-desktop-e2e:
     name: Wework Desktop E2E (${{ matrix.name }})
-    if: github.event_name != 'pull_request' || (github.event.action != 'labeled' && github.event.pull_request.draft == false)
+    needs: changes
+    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: plugins
-            name: Plugins
-            command: e2e:desktop:plugins
-          - id: core
-            name: Core
-            command: e2e:desktop
-          - id: cloud
-            name: Cloud
-            command: e2e:desktop:cloud
+      matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_e2e_matrix) }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Tauri system dependencies
+      - name: Set APT cache key
+        id: apt-cache-key
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          week="$(date -u +'%G-%V')"
+          echo "key=apt-$RUNNER_OS-$RUNNER_ARCH-wework-v1-$week" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Cache Tauri system packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/wework-apt/archives
+          key: ${{ steps.apt-cache-key.outputs.key }}
+          restore-keys: |
+            apt-${{ runner.os }}-${{ runner.arch }}-wework-v1-
+
+      - name: Install Tauri system dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt_archives="$HOME/.cache/wework-apt/archives"
+          mkdir -p "$apt_archives/partial"
+          sudo chown _apt:root "$apt_archives/partial"
+          sudo chmod 700 "$apt_archives/partial"
+
+          apt_options=(
+            -o "Dir::Cache::archives=$apt_archives/"
+            -o "Acquire::Retries=5"
+            -o "Acquire::http::Timeout=30"
+            -o "Acquire::https::Timeout=30"
+            -o "Binary::apt-get::APT::Keep-Downloaded-Packages=true"
+          )
+
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends \
             build-essential \
             libayatana-appindicator3-dev \
             libssl-dev \
@@ -141,6 +181,8 @@ jobs:
             librsvg2-dev \
             redis-server \
             xvfb
+
+          sudo chown -R "$USER:$(id -gn)" "$apt_archives"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -178,18 +220,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-wework-desktop-e2e-
 
-      - name: Prepare real Codex binary
+      - name: Prepare bundled sidecars
         working-directory: ./wework
-        run: pnpm run prepare:codex
+        run: |
+          pnpm run prepare:codex
+          pnpm run prepare:dws
 
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
           CI: true
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+          E2E_COMMAND: ${{ matrix.command }}
+          E2E_SEGMENT: ${{ matrix.segment }}
         run: |
           test -x "$CODEX_BIN"
+          args=()
+          if [[ -n "$E2E_SEGMENT" ]]; then
+            args=(-- --segment "$E2E_SEGMENT")
+          fi
           xvfb-run -a --server-args="-screen 0 1280x720x24" \
-            pnpm --filter wework ${{ matrix.command }}
+            pnpm --filter wework "$E2E_COMMAND" "${args[@]}"
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -202,9 +252,48 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  wework-e2e-summary:
+    name: Wework E2E Summary
+    needs:
+      - changes
+      - wework-e2e
+      - wework-desktop-e2e
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Wework E2E results
+        env:
+          RUN_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          RUN_DESKTOP_E2E: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')) }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
+          DESKTOP_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "Wework E2E change detection completed with: $CHANGES_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_E2E" != "true" ]]; then
+            echo "Wework E2E is not required for this pull request"
+            exit 0
+          fi
+
+          if [[ "$WEB_E2E_RESULT" != "success" ]]; then
+            echo "Wework browser E2E completed with: $WEB_E2E_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_DESKTOP_E2E" == "true" && "$DESKTOP_E2E_RESULT" != "success" ]]; then
+            echo "Wework desktop E2E completed with: $DESKTOP_E2E_RESULT"
+            exit 1
+          fi
+
   wework-desktop-memory-e2e:
     name: Wework Desktop Memory E2E
-    if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci:memory'))
+    needs: changes
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (contains(github.event.pull_request.labels.*.name, 'ci:memory') || contains(github.event.pull_request.labels.*.name, 'ci:all'))))
     runs-on: macos-14
     timeout-minutes: 30
 
@@ -240,10 +329,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-wework-desktop-memory-e2e-
 
-      - name: Prepare real Codex binary
+      - name: Prepare bundled sidecars
         working-directory: ./wework
         run: |
           pnpm run prepare:codex
+          pnpm run prepare:dws
           codex_bin="$(find "$PWD/src-tauri/binaries/codex" -type f -path '*/bin/codex' -perm -u+x -print -quit)"
           test -n "$codex_bin"
           echo "CODEX_BIN=$codex_bin" >> "$GITHUB_ENV"

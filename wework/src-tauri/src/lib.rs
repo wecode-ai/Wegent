@@ -5,7 +5,11 @@ mod embedded_browser;
 mod feedback;
 mod local_executor;
 mod local_terminal;
+#[cfg(desktop)]
+mod popout_window;
 mod process_environment;
+#[cfg(desktop)]
+mod storage_maintenance;
 mod system_drag;
 mod system_sleep;
 mod todo_store;
@@ -24,6 +28,147 @@ use tauri::Manager;
 struct PickedWorkspacePath {
     path: String,
     is_directory: bool,
+}
+
+fn inspect_workspace_path_candidates(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+
+    for raw_path in paths {
+        let path = raw_path.trim();
+        if path.is_empty() {
+            continue;
+        }
+        let path = std::path::PathBuf::from(path);
+        if !path.exists() {
+            continue;
+        }
+        let normalized = path.to_string_lossy().into_owned();
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        selected.push(PickedWorkspacePath {
+            is_directory: path.is_dir(),
+            path: normalized,
+        });
+    }
+
+    selected
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn workspace_paths_from_macos_pasteboard(
+    pasteboard: &objc2_app_kit::NSPasteboard,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    use objc2::{runtime::AnyClass, ClassType};
+    use objc2_foundation::{NSArray, NSURL};
+
+    let classes = NSArray::<AnyClass>::arrayWithObject(NSURL::class());
+    let Some(values) = (unsafe { pasteboard.readObjectsForClasses_options(&classes, None) }) else {
+        return Ok(Vec::new());
+    };
+    let mut raw_paths = Vec::new();
+    for value in values {
+        let url = value
+            .downcast::<NSURL>()
+            .map_err(|_| "The macOS clipboard contains an invalid file URL".to_string())?;
+        if let Some(path) = url.path() {
+            raw_paths.push(path.to_string());
+        }
+    }
+
+    Ok(inspect_workspace_path_candidates(raw_paths))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn clipboard_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+    let pasteboard = objc2_app_kit::NSPasteboard::generalPasteboard();
+    workspace_paths_from_macos_pasteboard(&pasteboard)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn dropped_workspace_paths_on_macos() -> Result<Vec<PickedWorkspacePath>, String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardNameDrag};
+
+    let pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
+    workspace_paths_from_macos_pasteboard(&pasteboard)
+}
+
+#[tauri::command]
+async fn read_clipboard_workspace_paths(
+    app: tauri::AppHandle,
+    fallback_paths: Option<Vec<String>>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    let fallback_paths = fallback_paths.unwrap_or_default();
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(clipboard_workspace_paths_on_macos());
+        })
+        .map_err(|error| format!("Failed to inspect the macOS clipboard: {error}"))?;
+        let native_paths = tauri::async_runtime::spawn_blocking(move || {
+            receiver
+                .recv()
+                .map_err(|_| "The macOS clipboard inspection stopped unexpectedly".to_string())?
+        })
+        .await
+        .map_err(|error| format!("Failed to join clipboard inspection: {error}"))??;
+        let mut paths = native_paths
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+        paths.extend(fallback_paths);
+        Ok(inspect_workspace_path_candidates(paths))
+    }
+
+    #[cfg(not(all(desktop, target_os = "macos")))]
+    {
+        let _ = app;
+        Ok(inspect_workspace_path_candidates(fallback_paths))
+    }
+}
+
+#[tauri::command]
+async fn read_dropped_workspace_paths(
+    app: tauri::AppHandle,
+    fallback_paths: Option<Vec<String>>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    let fallback_paths = fallback_paths.unwrap_or_default();
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(dropped_workspace_paths_on_macos());
+        })
+        .map_err(|error| format!("Failed to inspect the macOS drag pasteboard: {error}"))?;
+        let native_paths = tauri::async_runtime::spawn_blocking(move || {
+            receiver.recv().map_err(|_| {
+                "The macOS drag pasteboard inspection stopped unexpectedly".to_string()
+            })?
+        })
+        .await
+        .map_err(|error| format!("Failed to join drag pasteboard inspection: {error}"))??;
+        let mut paths = native_paths
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>();
+        paths.extend(fallback_paths);
+        Ok(inspect_workspace_path_candidates(paths))
+    }
+
+    #[cfg(not(all(desktop, target_os = "macos")))]
+    {
+        let _ = app;
+        Ok(inspect_workspace_path_candidates(fallback_paths))
+    }
+}
+
+#[tauri::command]
+fn inspect_workspace_paths(paths: Vec<String>) -> Vec<PickedWorkspacePath> {
+    inspect_workspace_path_candidates(paths)
 }
 
 #[cfg(all(desktop, target_os = "macos"))]
@@ -157,6 +302,8 @@ pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
 #[cfg(desktop)]
 const TRAY_OPEN_TASK_EVENT: &str = "wework-tray-open-task";
+#[cfg(desktop)]
+const POPOUT_OPEN_TASK_EVENT: &str = "wework-popout-open-task";
 #[cfg(desktop)]
 const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT: &str = "wework-open-local-workspace-requested";
 #[cfg(desktop)]
@@ -385,6 +532,28 @@ fn env_flag_enabled(key: &str) -> bool {
 }
 
 #[cfg(desktop)]
+const E2E_BACKGROUND_WINDOW_ENV: &str = "WEWORK_E2E_BACKGROUND_WINDOW";
+
+#[cfg(desktop)]
+fn should_activate_main_window() -> bool {
+    !env_flag_enabled(E2E_BACKGROUND_WINDOW_ENV)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn enforce_e2e_background_application_policy<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if should_activate_main_window() {
+        return;
+    }
+    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Prohibited) {
+        log::warn!("Failed to prohibit macOS activation for desktop E2E: {error}");
+    }
+    if let Err(error) = app.hide() {
+        log::warn!("Failed to hide macOS desktop E2E application: {error}");
+    }
+    set_dock_icon_visible(app, false);
+}
+
+#[cfg(desktop)]
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferences {
@@ -422,6 +591,10 @@ struct AppPreferences {
     browser_ask_before_download: bool,
     #[serde(default = "default_true")]
     appshots_play_sound: bool,
+    #[serde(default = "default_popout_window_shortcut")]
+    popout_window_shortcut: Option<String>,
+    #[serde(default)]
+    popout_window_projectless_default_enabled: bool,
     #[serde(default = "default_quick_phrases")]
     quick_phrases: Vec<QuickPhrase>,
 }
@@ -489,6 +662,11 @@ fn default_browser_local_link_target() -> String {
 }
 
 #[cfg(desktop)]
+fn default_popout_window_shortcut() -> Option<String> {
+    Some("Alt+Shift+Space".to_string())
+}
+
+#[cfg(desktop)]
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
@@ -509,8 +687,31 @@ impl Default for AppPreferences {
             browser_download_directory: None,
             browser_ask_before_download: false,
             appshots_play_sound: true,
+            popout_window_shortcut: default_popout_window_shortcut(),
+            popout_window_projectless_default_enabled: false,
             quick_phrases: default_quick_phrases(),
         }
+    }
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+enum PatchField<T> {
+    #[default]
+    Missing,
+    Value(Option<T>),
+}
+
+#[cfg(desktop)]
+impl<'de, T> serde::Deserialize<'de> for PatchField<T>
+where
+    T: serde::Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Self::Value)
     }
 }
 
@@ -535,6 +736,9 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    #[serde(default)]
+    popout_window_shortcut: PatchField<String>,
+    popout_window_projectless_default_enabled: Option<bool>,
     quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
@@ -543,6 +747,7 @@ struct AppPreferencesPatch {
 enum MainWindowOpenAction {
     Settings,
     Task(String),
+    RuntimeTask { device_id: String, task_id: String },
     LocalWorkspace,
 }
 
@@ -715,6 +920,9 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
     );
     preferences.browser_download_directory = preferences
         .browser_download_directory
+        .and_then(normalized_non_empty);
+    preferences.popout_window_shortcut = preferences
+        .popout_window_shortcut
         .and_then(normalized_non_empty);
     preferences
         .quick_phrases
@@ -1011,6 +1219,14 @@ fn update_app_preferences(
     preferences = normalize_app_preferences(preferences);
     if let Some(value) = patch.appshots_play_sound {
         preferences.appshots_play_sound = value;
+    }
+    if let PatchField::Value(value) = patch.popout_window_shortcut {
+        let shortcut = value.and_then(normalized_non_empty);
+        popout_window::configure_shortcut(&app, shortcut.as_deref())?;
+        preferences.popout_window_shortcut = shortcut;
+    }
+    if let Some(value) = patch.popout_window_projectless_default_enabled {
+        preferences.popout_window_projectless_default_enabled = value;
     }
     if let Some(value) = patch.quick_phrases {
         preferences.quick_phrases = value;
@@ -2302,6 +2518,9 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
     #[cfg(target_os = "macos")]
     {
+        if visible && !should_activate_main_window() {
+            return;
+        }
         let state = app.state::<MainWindowLifecycleState>();
         if state.dock_icon_visible.swap(visible, Ordering::SeqCst) == visible {
             return;
@@ -2323,17 +2542,32 @@ fn emit_main_window_open_action<R: tauri::Runtime>(
 ) {
     match action {
         MainWindowOpenAction::Settings => {
-            if let Err(error) = app.emit(TRAY_OPEN_SETTINGS_EVENT, ()) {
+            if let Err(error) = app.emit_to(MAIN_WINDOW_LABEL, TRAY_OPEN_SETTINGS_EVENT, ()) {
                 log::warn!("Failed to emit tray settings navigation event: {error}");
             }
         }
         MainWindowOpenAction::Task(id) => {
-            if let Err(error) = app.emit(TRAY_OPEN_TASK_EVENT, TrayTaskOpenPayload { id }) {
+            if let Err(error) = app.emit_to(
+                MAIN_WINDOW_LABEL,
+                TRAY_OPEN_TASK_EVENT,
+                TrayTaskOpenPayload { id },
+            ) {
                 log::warn!("Failed to emit tray task navigation event: {error}");
             }
         }
+        MainWindowOpenAction::RuntimeTask { device_id, task_id } => {
+            if let Err(error) = app.emit_to(
+                MAIN_WINDOW_LABEL,
+                POPOUT_OPEN_TASK_EVENT,
+                PopoutTaskOpenPayload { device_id, task_id },
+            ) {
+                log::warn!("Failed to emit Popout Window task navigation event: {error}");
+            }
+        }
         MainWindowOpenAction::LocalWorkspace => {
-            if let Err(error) = app.emit(LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ()) {
+            if let Err(error) =
+                app.emit_to(MAIN_WINDOW_LABEL, LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ())
+            {
                 log::warn!("Failed to emit local workspace open event: {error}");
             }
         }
@@ -2404,9 +2638,11 @@ fn create_main_window<R: tauri::Runtime>(
             let _ = window.set_fullscreen(true);
         }
     }
-    let _ = window.show();
-    set_dock_icon_visible(app, true);
-    let _ = window.set_focus();
+    if should_activate_main_window() {
+        let _ = window.show();
+        set_dock_icon_visible(app, true);
+        let _ = window.set_focus();
+    }
     Ok(())
 }
 
@@ -2416,10 +2652,12 @@ pub(crate) fn ensure_main_window<R: tauri::Runtime>(
     action: Option<MainWindowOpenAction>,
 ) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        set_dock_icon_visible(app, true);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        if should_activate_main_window() {
+            let _ = window.unminimize();
+            let _ = window.show();
+            set_dock_icon_visible(app, true);
+            let _ = window.set_focus();
+        }
         if let Some(action) = action {
             emit_main_window_open_action(app, action);
         }
@@ -2694,6 +2932,35 @@ fn open_settings_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 #[derive(Clone, serde::Serialize)]
 struct TrayTaskOpenPayload {
     id: String,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PopoutTaskOpenPayload {
+    device_id: String,
+    task_id: String,
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn open_popout_task_in_main(
+    app: tauri::AppHandle,
+    device_id: String,
+    task_id: String,
+) -> Result<(), String> {
+    ensure_main_window(
+        &app,
+        Some(MainWindowOpenAction::RuntimeTask { device_id, task_id }),
+    )?;
+    popout_window::hide_for_main_window(&app)?;
+    ensure_main_window(&app, None)
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn open_popout_task_in_main(_device_id: String, _task_id: String) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(desktop)]
@@ -3652,10 +3919,9 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    #[cfg(desktop)]
-    use super::should_probe_frontend_after_focus;
     use super::{
-        can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
+        can_replace_wework_cli_path, executor_home_attachment_root,
+        inspect_workspace_path_candidates, install_wework_cli_impl,
         local_workspace_opener_app_name, normalized_browser_link_target,
         parse_local_workspace_open_request, tray_template_pixel, tray_usage_icon,
         wework_cli_launcher_content,
@@ -3666,6 +3932,8 @@ mod tests {
         parse_process_snapshot_line, process_physical_footprint_kib,
         related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
     };
+    #[cfg(desktop)]
+    use super::{should_probe_frontend_after_focus, AppPreferencesPatch, PatchField};
     use std::collections::HashSet;
     #[cfg(desktop)]
     use std::time::Duration;
@@ -3685,12 +3953,53 @@ mod tests {
         assert_eq!(tray_template_pixel([20, 120, 220, 128]), [0, 0, 0, 117]);
     }
 
+    #[test]
+    fn inspects_clipboard_paths_without_reading_file_contents() {
+        let root = test_temp_dir("clipboard-paths");
+        let folder = root.join("folder");
+        let file = root.join("context.md");
+        std::fs::create_dir_all(&folder).expect("clipboard folder should be created");
+        std::fs::write(&file, "# Context\n").expect("clipboard file should be created");
+
+        let selected = inspect_workspace_path_candidates(vec![
+            folder.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+            file.to_string_lossy().into_owned(),
+            root.join("missing").to_string_lossy().into_owned(),
+        ]);
+
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].path, folder.to_string_lossy());
+        assert!(selected[0].is_directory);
+        assert_eq!(selected[1].path, file.to_string_lossy());
+        assert!(!selected[1].is_directory);
+    }
+
     #[cfg(desktop)]
     #[test]
     fn probes_frontend_only_after_a_meaningful_unfocused_interval() {
         assert!(!should_probe_frontend_after_focus(Duration::from_secs(59)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(60)));
         assert!(should_probe_frontend_after_focus(Duration::from_secs(120)));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn distinguishes_omitted_and_cleared_popout_shortcut_patches() {
+        let omitted: AppPreferencesPatch =
+            serde_json::from_value(serde_json::json!({})).expect("omitted patch should parse");
+        assert!(matches!(
+            omitted.popout_window_shortcut,
+            PatchField::Missing
+        ));
+
+        let cleared: AppPreferencesPatch =
+            serde_json::from_value(serde_json::json!({ "popoutWindowShortcut": null }))
+                .expect("clear patch should parse");
+        assert!(matches!(
+            cleared.popout_window_shortcut,
+            PatchField::Value(None)
+        ));
     }
 
     #[test]
@@ -4069,6 +4378,14 @@ pub fn run() {
                     && shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Digit2)
                 {
                     appshots::handle_shortcut(app);
+                    return;
+                }
+                if event.state == ShortcutState::Pressed
+                    && popout_window::matches_shortcut(app, shortcut)
+                {
+                    if let Err(error) = popout_window::show(app) {
+                        log::warn!("Failed to open Popout Window: {error}");
+                    }
                 }
             })
             .build(),
@@ -4095,6 +4412,7 @@ pub fn run() {
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(popout_window::PopoutWindowState::default())
         .manage(system_drag::SystemDragState::default())
         .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
@@ -4138,6 +4456,9 @@ pub fn run() {
                 get_app_log_directory(app.handle().clone()).unwrap_or_else(|error| error)
             );
 
+            #[cfg(all(desktop, target_os = "macos"))]
+            enforce_e2e_background_application_policy(app.handle());
+
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
@@ -4148,6 +4469,13 @@ pub fn run() {
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]
             appshots::setup(app.handle());
+            #[cfg(desktop)]
+            popout_window::setup(
+                app.handle(),
+                read_app_preferences_impl(app.handle())
+                    .popout_window_shortcut
+                    .as_deref(),
+            );
             #[cfg(desktop)]
             match install_wework_cli_link(app.handle()) {
                 Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
@@ -4175,6 +4503,8 @@ pub fn run() {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
             #[cfg(desktop)]
+            storage_maintenance::schedule(app.handle().clone());
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -4188,10 +4518,17 @@ pub fn run() {
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
             desktop_capture::capture_main_webview,
+            desktop_capture::capture_popout_webview,
             acknowledge_frontend_resume_probe,
             register_frontend_recovery_bridge,
             #[cfg(desktop)]
-            feedback::export_feedback_bundle,
+            feedback::preview_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::confirm_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::discard_feedback_bundle,
+            #[cfg(desktop)]
+            feedback::submit_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
@@ -4211,12 +4548,16 @@ pub fn run() {
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
             pick_workspace_paths,
+            read_clipboard_workspace_paths,
+            read_dropped_workspace_paths,
+            inspect_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
             local_executor::local_executor_codex_home_migration_status,
             local_executor::local_executor_disconnect_backend,
             local_executor::local_executor_ensure_started,
+            local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
             local_executor::local_executor_import_plugin_copy,
@@ -4266,7 +4607,16 @@ pub fn run() {
             system_drag::take_pending_system_drag_drops,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,
-            local_terminal::write_local_terminal
+            local_terminal::write_local_terminal,
+            #[cfg(desktop)]
+            popout_window::dismiss_popout_window,
+            #[cfg(desktop)]
+            popout_window::set_popout_window_expanded,
+            #[cfg(desktop)]
+            popout_window::set_popout_window_overlay_active,
+            #[cfg(desktop)]
+            popout_window::show_popout_window,
+            open_popout_task_in_main
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -4274,7 +4624,13 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Ready => {
+                enforce_e2e_background_application_policy(app_handle);
+            }
             tauri::RunEvent::Resumed => {
+                #[cfg(target_os = "macos")]
+                enforce_e2e_background_application_policy(app_handle);
                 if app_handle
                     .get_webview_window(MAIN_WINDOW_LABEL)
                     .and_then(|window| window.is_focused().ok())
@@ -4291,6 +4647,7 @@ pub fn run() {
                 if let Err(error) = ensure_main_window(app_handle, None) {
                     log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
+                enforce_e2e_background_application_policy(app_handle);
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();

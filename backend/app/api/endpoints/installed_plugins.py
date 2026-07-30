@@ -13,10 +13,11 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
-from app.models.plugin_marketplace import PluginDeviceInstallation
+from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import (
+    BuiltinPluginInstallRequest,
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
@@ -33,13 +34,17 @@ from app.schemas.installed_plugin import (
     PluginSubmissionInitResponse,
     PluginSubmissionItem,
 )
-from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
-from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.capability_sync_service import (
+    DeviceCapabilityResolutionError,
+    DeviceCapabilitySyncError,
+    device_capability_sync_service,
+)
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 
 router = APIRouter(tags=["plugins"])
@@ -289,6 +294,87 @@ async def install_marketplace_plugin(
         device_id=device_id,
     )
     return PluginMarketplaceInstallResponse(plugin=enriched.items[0])
+
+
+@router.post(
+    "/builtin/{plugin_key}/ensure-installed",
+    response_model=PluginMarketplaceInstallResponse,
+)
+async def ensure_builtin_plugin_installed(
+    plugin_key: str,
+    request: BuiltinPluginInstallRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplaceInstallResponse:
+    """Install a bundled plugin from the v2 marketplace catalog."""
+    item = db.query(Plugin).filter(Plugin.slug == plugin_key).first()
+    if not item:
+        return await _ensure_legacy_builtin_plugin_installed(
+            plugin_key=plugin_key,
+            request=request,
+            db=db,
+            user_id=current_user.id,
+        )
+    plugin = plugin_marketplace_service.install(
+        db,
+        user_id=current_user.id,
+        plugin_id=item.id,
+    )
+    installed_id = int(plugin.metadata["labels"]["id"])
+    if plugin.spec.releaseId is not None:
+        await plugin_device_installation_service.ensure_pending_for_all_devices(
+            db,
+            user_id=current_user.id,
+            installed_kind_id=installed_id,
+            desired_release_id=plugin.spec.releaseId,
+        )
+    sync = await _sync_global_capabilities(
+        db,
+        current_user.id,
+        required_device_id=request.device_id,
+        required_installed_kind_id=installed_id,
+        expect_installed=True,
+    )
+    enriched = plugin_marketplace_service.enrich_installed_list(
+        db,
+        InstalledPluginListResponse(items=[plugin]),
+        device_id=request.device_id,
+    )
+    return PluginMarketplaceInstallResponse(plugin=enriched.items[0], sync=sync)
+
+
+async def _ensure_legacy_builtin_plugin_installed(
+    *,
+    plugin_key: str,
+    request: BuiltinPluginInstallRequest,
+    db: Session,
+    user_id: int,
+) -> PluginMarketplaceInstallResponse:
+    plugin = installed_plugin_service.install_builtin_plugin(
+        db=db,
+        user_id=user_id,
+        plugin_key=plugin_key,
+    )
+    if request.device_id is None:
+        sync = await _sync_global_capabilities(db, user_id)
+        return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
+
+    installed_id = int(plugin.metadata["labels"]["id"])
+    try:
+        sync = await device_capability_sync_service.sync_installed_plugin_to_device(
+            db,
+            user_id=user_id,
+            device_id=request.device_id,
+            installed_plugin_id=installed_id,
+        )
+    except DeviceCapabilityResolutionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except DeviceCapabilitySyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
 
 
 async def _read_plugin_upload(file: UploadFile) -> bytes:

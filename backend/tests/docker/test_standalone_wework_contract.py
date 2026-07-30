@@ -4,10 +4,12 @@
 
 """Static contract tests for the standalone Wework launch path."""
 
+import json
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[3]
 STANDALONE_DOCKERFILE: Path = REPO_ROOT / "docker" / "standalone" / "Dockerfile"
+PACKAGE_JSON: Path = REPO_ROOT / "package.json"
 STANDALONE_START: Path = REPO_ROOT / "docker" / "standalone" / "start.sh"
 STANDALONE_NGINX_CONFIG: Path = REPO_ROOT / "docker" / "standalone" / "nginx.conf"
 INSTALL_SCRIPT: Path = REPO_ROOT / "install.sh"
@@ -21,6 +23,7 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
 
     assert "AS wework-builder" in dockerfile
     assert "pnpm install --frozen-lockfile --filter wework..." in dockerfile
+    assert "COPY shared/assets ./shared/assets" in dockerfile
     assert "pnpm run build" in dockerfile
     assert "COPY --from=wework-builder /app/wework/dist /app/wework/dist" in dockerfile
     assert "nginx" in dockerfile
@@ -40,6 +43,25 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert (
         "PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor" not in dockerfile
     )
+
+
+def test_standalone_wework_builder_installs_postinstall_dependencies() -> None:
+    """DingTalk CLI postinstall requires unzip in the Wework build stage."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
+    wework_builder = dockerfile.split("AS wework-builder", maxsplit=1)[1].split(
+        "AS python-base", maxsplit=1
+    )[0]
+
+    assert "apt-get install -y --no-install-recommends unzip" in wework_builder
+
+
+def test_standalone_builders_use_workspace_pnpm_version() -> None:
+    """Standalone image builds should not download a second pnpm version."""
+    dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
+    package_json = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
+    prepare_command = f"corepack prepare {package_json['packageManager']} --activate"
+
+    assert dockerfile.count(prepare_command) == 4
 
 
 def test_standalone_image_installs_codex_runtime_dependencies() -> None:

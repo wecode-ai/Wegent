@@ -54,7 +54,7 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
-from app.services.claude_plugin_parser import claude_plugin_parser
+from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
     PluginPackageScanError,
     scan_plugin_package,
@@ -795,7 +795,7 @@ class PluginMarketplaceService:
         self, package: bytes
     ) -> tuple[PluginUploadInfo, dict[str, Any]]:
         security_report = self._scan_package(package)
-        parsed = claude_plugin_parser.parse_package(package)
+        parsed = plugin_package_parser.parse_package(package)
         if not parsed.version:
             raise HTTPException(status_code=422, detail="Plugin version is required")
         self._validate_version(parsed.version)
@@ -918,7 +918,7 @@ class PluginMarketplaceService:
                 display_name=display_name,
                 listing_type=listing_type,
                 source_type="mirror",
-                source_provider="codex",
+                source_provider="wework",
                 owner_user_id=None,
                 keywords_json=[],
                 interface_json={},
@@ -928,7 +928,13 @@ class PluginMarketplaceService:
             db.add(plugin)
             db.flush()
         else:
-            controlled_sources = {("native", "wework"), ("mirror", "codex")}
+            # Accept legacy Codex-labeled mirrors so re-bootstrap can reclassify
+            # them as Wework domestic-public adaptations.
+            controlled_sources = {
+                ("native", "wework"),
+                ("mirror", "wework"),
+                ("mirror", "codex"),
+            }
             if (
                 plugin.owner_user_id is not None
                 or (plugin.source_type, plugin.source_provider)
@@ -944,8 +950,10 @@ class PluginMarketplaceService:
                     detail="Plugin listing type cannot be changed",
                 )
 
+        # Publish identity is Wework domestic public; upstream fetch still uses
+        # the Codex/OpenAI marketplace coordinates below.
         plugin.source_type = "mirror"
-        plugin.source_provider = "codex"
+        plugin.source_provider = "wework"
         plugin.name = remote_plugin_id
         plugin.display_name = display_name
         plugin.visibility = visibility
@@ -993,7 +1001,7 @@ class PluginMarketplaceService:
                 package=package,
             )
             package = adapted.package
-            parsed = claude_plugin_parser.parse_package(package)
+            parsed = plugin_package_parser.parse_package(package)
             version = parsed.version
             if not version:
                 raise ValueError("Upstream plugin version is required")
@@ -1378,7 +1386,7 @@ class PluginMarketplaceService:
             return cached
         try:
             package = plugin_package_storage.get(release.storage_key)
-            resolved = claude_plugin_parser.resolve_interface_assets(
+            resolved = plugin_package_parser.resolve_interface_assets(
                 package,
                 interface,
             )

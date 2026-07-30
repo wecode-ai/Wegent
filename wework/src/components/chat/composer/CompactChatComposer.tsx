@@ -32,12 +32,13 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
 import type { CloudProject } from '@/api/deliveries'
+import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface CompactChatComposerProps {
   value: string
@@ -161,9 +162,13 @@ export function CompactChatComposer({
     onCancelGoalDraft?.()
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
-    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+    onChange(phraseValue)
     if (phrase.attachmentPaths?.length && onFileSelect) {
-      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+      void resolveStoredWorkspacePaths(
+        phrase.attachmentPaths,
+        workspaceTarget?.workspaceSource === 'remote'
+      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -359,6 +364,7 @@ export function CompactChatComposer({
                     icon: Clock3,
                     testId: 'send-after-turn-option',
                     onSelect: () => onSubmit(value),
+                    shortcut: 'Enter',
                   },
                   {
                     label:
@@ -372,6 +378,7 @@ export function CompactChatComposer({
                     icon: CornerDownRight,
                     testId: 'guide-current-turn-option',
                     onSelect: () => onSubmit(value, { guideWhenBusy: true }),
+                    shortcut: 'Command+Enter',
                   },
                   {
                     label:
@@ -385,6 +392,7 @@ export function CompactChatComposer({
                     icon: Zap,
                     testId: 'interrupt-and-send-option',
                     onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
+                    shortcut: 'Command+Shift+Enter',
                   },
                 ]}
               />

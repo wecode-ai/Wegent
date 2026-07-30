@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Bootstrap the OpenAI GitHub plugin as a cloud mirror."""
+"""Bootstrap the adapted GitHub plugin as a Wework domestic-public mirror.
+
+Upstream bytes still come from openai/plugins, but the published marketplace
+identity is Wework (`source_provider=wework`, `visibility=public`) so the
+plugin lands under the domestic-public catalog tab instead of Codex official.
+"""
 
 from __future__ import annotations
 
@@ -54,7 +59,8 @@ def main() -> int:
                 "pluginId": upstream.pluginId,
                 "upstreamId": upstream.id,
                 "sourceType": "mirror",
-                "sourceProvider": "codex",
+                "sourceProvider": "wework",
+                "visibility": "public",
                 "syncEnabled": upstream.syncEnabled,
                 "syncPolicy": upstream.syncPolicy,
                 "lastSeenVersion": upstream.lastSeenVersion,

@@ -888,36 +888,37 @@ button:disabled {
   }
 
   .scrollbar-soft {
-    scrollbar-color: rgb(210 210 210 / 0.8) rgb(210 210 210 / 0.8);
+    scrollbar-color: rgb(170 170 170 / 0.85) transparent;
     scrollbar-width: thin;
   }
 
   .scrollbar-soft::-webkit-scrollbar {
     width: 7px;
     height: 7px;
-    background-color: rgb(210 210 210 / 0.8);
+    background-color: transparent;
   }
 
   .scrollbar-soft::-webkit-scrollbar-track {
-    background: rgb(210 210 210 / 0.8);
+    background: transparent;
   }
 
   .scrollbar-soft::-webkit-scrollbar-track-piece {
-    background: rgb(210 210 210 / 0.8);
+    background: transparent;
   }
 
   .scrollbar-soft::-webkit-scrollbar-corner {
-    background: rgb(210 210 210 / 0.8);
+    background: transparent;
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb {
-    border-radius: 0;
-    border: 0;
-    background-color: rgb(210 210 210 / 0.8);
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background-clip: content-box;
+    background-color: rgb(170 170 170 / 0.85);
   }
 
   .scrollbar-soft::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(180 180 180 / 0.55);
+    background-color: rgb(140 140 140 / 0.95);
   }
 }
 

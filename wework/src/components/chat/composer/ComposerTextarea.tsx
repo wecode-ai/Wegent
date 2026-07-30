@@ -17,12 +17,14 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
-import { resolvePluginAssetUrl } from '@/components/plugins/plugin-assets'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import {
   canOpenNativeWorkspacePathPicker,
   openNativeWorkspacePathPicker,
+  type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
+import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   ComposerProseMirrorEditor,
@@ -50,6 +52,7 @@ import {
   replaceComposerMentionTrigger,
   resolveComposerWorkspacePath,
 } from './composerMentions'
+import { workspacePathReferenceText } from './composerPathTransfer'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
@@ -151,6 +154,13 @@ export function ComposerTextarea({
       cloudMentionCandidates,
       conversationMentionCandidates
     )
+  const filteredSkillCandidates = useMemo(
+    () =>
+      filteredMentionCandidates.filter(
+        candidate => candidate.kind === 'skill' || candidate.kind === 'app'
+      ),
+    [filteredMentionCandidates]
+  )
 
   const workspaceSearch = useWorkspaceMentionSearch(
     activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
@@ -279,7 +289,13 @@ export function ComposerTextarea({
       group: pluginGroup,
       searchAliases: candidate.searchAliases,
       Icon: Plug,
-      iconUrl: resolvePluginAssetUrl(candidate.app.logoUrl),
+      iconUrl: resolvePluginLogoUrl({
+        pluginKey:
+          candidate.app.source === 'installed-plugin'
+            ? candidate.app.id.replace(/^plugin:/, '')
+            : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+        logo: candidate.app.logoUrl,
+      }),
       trailingIcon: CornerDownLeft,
       enabled: candidate.enabled,
       testId: slashAppTestId(candidate.app.id),
@@ -322,7 +338,7 @@ export function ComposerTextarea({
   const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
     if (!showSkillMenu) return []
     if (activeMenu?.kind === 'skill') {
-      return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
+      return filteredSkillCandidates.map(candidate => ({ kind: 'candidate', candidate }))
     }
     if (!activeMenu?.trigger.query.trim()) {
       const nonCloudCandidates = filteredMentionCandidates.filter(
@@ -373,6 +389,7 @@ export function ComposerTextarea({
     cloudSpaceEnabled,
     filteredCloudProjectCandidates,
     filteredMentionCandidates,
+    filteredSkillCandidates,
     onSetGoal,
     onSetPlanMode,
     planModeActive,
@@ -667,6 +684,27 @@ export function ComposerTextarea({
     return () => window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
   }, [closeAutocompleteMenu, commitEditorValue, textareaRef])
 
+  const insertPathReferences = useCallback(
+    (entries: NativeWorkspacePath[]) => {
+      if (entries.length === 0) return
+      const editor = editorRef.current
+      if (!editor) return
+
+      const references = workspacePathReferenceText(entries)
+      const current = editor.getSnapshot()
+      const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+      const nextValue =
+        current.value.slice(0, current.selectionOffset) +
+        spacer +
+        references +
+        ' ' +
+        current.value.slice(current.selectionOffset)
+      commitEditorValue(nextValue, current.selectionOffset + spacer.length + references.length + 1)
+      editor.focus()
+    },
+    [commitEditorValue]
+  )
+
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
       const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
@@ -677,7 +715,13 @@ export function ComposerTextarea({
       if (candidate.kind === 'app') {
         registerComposerMentionIcon(
           candidate.reference,
-          resolvePluginAssetUrl(candidate.app.logoUrl)
+          resolvePluginLogoUrl({
+            pluginKey:
+              candidate.app.source === 'installed-plugin'
+                ? candidate.app.id.replace(/^plugin:/, '')
+                : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+            logo: candidate.app.logoUrl,
+          })
         )
       }
       const replacement = replaceComposerMentionTrigger(
@@ -1132,35 +1176,48 @@ export function ComposerTextarea({
 
   const handlePaste = useCallback(
     (event: ClipboardEvent) => {
-      if (!onPasteFiles || !event.clipboardData) return false
-      const files = Array.from(event.clipboardData.files)
+      if (!event.clipboardData) return false
+      const clipboardData = event.clipboardData
+      const files = Array.from(clipboardData.files)
       if (files.length > 0) {
         event.preventDefault()
-        onPasteFiles(files)
+        void resolveDataTransferWorkspacePaths(
+          clipboardData,
+          'clipboard',
+          workspaceTarget?.workspaceSource
+        ).then(({ attachmentFiles, referenceEntries }) => {
+          insertPathReferences(referenceEntries)
+          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+        })
         return true
       }
-      const textAttachment = createLongPastedTextAttachment(
-        event.clipboardData.getData('text/plain')
-      )
+      if (!onPasteFiles) return false
+      const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
       if (!textAttachment) return false
       event.preventDefault()
       onPasteFiles([textAttachment])
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   const handleDrop = useCallback(
     (event: DragEvent) => {
-      if (!onPasteFiles) return false
-      const files = Array.from(event.dataTransfer?.files ?? [])
-      if (files.length === 0) return false
+      const dataTransfer = event.dataTransfer
+      if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
       event.preventDefault()
       event.stopPropagation()
-      onPasteFiles(files)
+      void resolveDataTransferWorkspacePaths(
+        dataTransfer,
+        'drop',
+        workspaceTarget?.workspaceSource
+      ).then(({ attachmentFiles, referenceEntries }) => {
+        insertPathReferences(referenceEntries)
+        if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+      })
       return true
     },
-    [onPasteFiles]
+    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
   )
 
   return (

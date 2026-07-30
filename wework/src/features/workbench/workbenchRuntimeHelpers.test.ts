@@ -4,6 +4,7 @@ import {
   findProjectDeviceWorkspace,
   getDefaultProjectDeviceWorkspaceId,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
+  mergeRuntimeTaskHandles,
   projectTaskAddresses,
   readLastProjectId,
   removeRuntimeTasks,
@@ -94,6 +95,33 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
+  })
+
+  test('merges runtime task handles without dropping existing metadata', () => {
+    expect(
+      mergeRuntimeTaskHandles(
+        {
+          modelSelection: {
+            modelName: 'local-model:luna',
+            modelType: 'runtime',
+            options: {},
+          },
+          threadId: 'pending-thread',
+        },
+        {
+          threadId: 'ready-thread',
+          turnId: 'turn-1',
+        }
+      )
+    ).toEqual({
+      modelSelection: {
+        modelName: 'local-model:luna',
+        modelType: 'runtime',
+        options: {},
+      },
+      threadId: 'ready-thread',
+      turnId: 'turn-1',
+    })
   })
 
   test('removes an archived device task even when its workspace path was normalized', () => {

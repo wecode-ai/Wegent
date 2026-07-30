@@ -52,19 +52,28 @@ The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and C
 
 ## Publishing WeWork official plugins
 
-Official plugin sources may live in a separate repository or under `curated-plugins/wework/<slug>/` in this repository. Each directory must contain `.codex-plugin/plugin.json`, capability files, and tests. It is a development and CI input only; Backend and Wework must never read it as a runtime package source.
+Official plugin sources live in
+[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins).
+Layout matches openai/plugins: each plugin lives under `plugins/<slug>/` and
+must contain `.codex-plugin/plugin.json`, capability files, and tests. It is a
+development and CI input only; Backend and Wework must never read it as a
+runtime package source.
 
-The publisher sorts paths and normalizes ZIP timestamps and permissions, runs the shared package scanner, and then creates a `source_type=native`, `source_provider=wework`, `owner_user_id=NULL` Plugin and immutable Release:
+The publisher sorts paths and normalizes ZIP timestamps and permissions, runs
+the shared package scanner, and then creates a `source_type=native`,
+`source_provider=wework`, `owner_user_id=NULL` Plugin and immutable Release
+(sibling checkout next to Wegent):
 
 ```bash
 # Build, scan, and print the SHA256 without MySQL or S3 writes.
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 
 # Run only in an approved CI release environment.
+# workspace = enterprise-internal tab; public = domestic-public tab.
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot

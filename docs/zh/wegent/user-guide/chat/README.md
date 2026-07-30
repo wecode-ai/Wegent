@@ -73,14 +73,14 @@ Wegent 提供多种对话模式以适应不同场景：
 
 任务开启后，可以在当前任务中调整后续回复使用的模型。模型切换只影响当前任务，不会修改智能体、机器人或模型的默认配置，也不会影响其他任务和后续新建会话。
 
-为保证运行时协议一致性，WeWork 会在模型选择器中限制运行中任务只能切换到相同的模型运行 family。系统会从模型 CRD 的 `modelConfig.env.model` 与 `spec.protocol` 组合推导 API 响应字段 `runtime.family`：
+为保证 Codex thread 的 provider 身份一致，Wework 不允许已启动会话在官方 Codex 模型与第三方模型之间切换：
 
-- 当前任务模型与目标模型的 `runtime.family` 值必须相同
-- 例如 `runtime.family` 同为 `claude.claude` 的 Claude、Kimi 或 DeepSeek 兼容模型可以互相切换
-- `env.model` 相同但 `spec.protocol` 不同的模型会被视为不同运行 family
-- 缺少 `runtime.family` 的模型在已运行任务中仍会展示，但会置灰不可选
+- 官方 Codex 会话中的第三方模型会置灰不可选
+- 第三方模型会话中的官方 Codex 模型会置灰不可选
+- 官方 Codex 模型之间、第三方模型之间仍可按正常流程切换
+- 新建会话不受该限制，可以选择任意可用模型
 
-不同 `runtime.family` 的模型会继续展示，但会置灰不可选。
+如果需要跨类别延续工作，可以新建会话，并通过 `@` 引用当前对话，让新模型获得原会话上下文。
 
 ---
 

@@ -106,22 +106,25 @@ description: Review a merge request and summarize risks
 
 Local creations **do not** upload automatically. Only an explicit “Publish to marketplace” action starts scanning and review.
 
-### Option B: Develop official plugins in a repo directory
+### Option B: Develop official plugins in wework-plugins
 
-Recommended layout:
+WeWork-maintained plugins live in:
 
 ```text
-curated-plugins/wework/<slug>/
+https://github.com/wecode-ai/wework-plugins
 ```
 
-You can also use a separate plugin repository. That directory is for development, review, and CI only. Backend and Wework **do not** scan it at startup.
+Layout matches openai/plugins: after checkout each plugin is
+`<checkout>/plugins/<slug>/`, registered in `.agents/plugins/marketplace.json`.
+That repository is for development, review, and CI only. Backend and Wework
+**do not** scan it at startup.
 
-Build and scan locally:
+Build and scan locally (sibling checkout next to Wegent):
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
 Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
@@ -170,12 +173,15 @@ Best for company-maintained built-in capabilities. Identity fields:
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/<plugin-slug> \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
 ```
+
+`--visibility workspace` (default) maps to the enterprise-internal tab; `public`
+maps to the domestic-public tab.
 
 Rules:
 
@@ -262,7 +268,9 @@ Backend maintains only a deterministic audited adapter:
 - selected plugin: Manifest `name=github`
 - default sync policy: `auto_after_scan`
 - optional review policy: `review_required`
-- release identity: `source_type=mirror`, `source_provider=codex`, developer OpenAI
+- release identity: `source_type=mirror`, `source_provider=wework`,
+  `visibility=public` (domestic-public tab; upstream still comes from
+  `openai/plugins`, but it is no longer labeled Codex official)
 - adapted version: `<upstream version>+wegent.<adapter version>`
 
 The package contains no OAuth token, OpenAI connector ID, or package-local

@@ -56,7 +56,11 @@ import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { resolvePluginLogoUrl } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
-import { installedPluginSourceLabel, mergeInstalledPlugins } from './installedPluginMerge'
+import {
+  installedPluginSourceLabel,
+  isCloudManagedInstalledPlugin,
+  mergeInstalledPlugins,
+} from './installedPluginMerge'
 import {
   installedPluginDistribution,
   marketplacePluginDistribution,
@@ -460,8 +464,10 @@ function isMarketplaceSourceValid(value: string): boolean {
   )
 }
 
-function isLocalCodexMarketplaceItem(item: PluginMarketplaceItem): boolean {
-  return item.sourceProvider === 'codex' || localMarketplaceIdFromItem(item) !== null
+function isLocalMarketplaceItem(item: PluginMarketplaceItem): boolean {
+  // Cloud catalog rows always carry a published release id; local Codex rows do not.
+  if (item.latestReleaseId != null) return false
+  return localMarketplaceIdFromItem(item) !== null
 }
 
 function mergeMarketplaceCatalog(
@@ -797,6 +803,7 @@ function PluginMarketplaceRow({
 }) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
   const logo = resolvePluginLogoUrl({
     pluginKey: item.name,
     logo: item.interface?.logo,
@@ -812,6 +819,17 @@ function PluginMarketplaceRow({
     deviceState === 'uninstalling'
   const actionPending = isInstalling || showSyncingState
   const actionLabel = showFailedState ? retryLabel : showSyncingState ? syncingLabel : installLabel
+
+  useEffect(() => {
+    if (!isActionMenuOpen) return
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) {
+        setIsActionMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [isActionMenuOpen])
 
   return (
     <article
@@ -862,7 +880,7 @@ function PluginMarketplaceRow({
             <span>{isInstalling ? installingLabel : syncingLabel}</span>
           </span>
         ) : showInstalledState ? (
-          <div className="relative">
+          <div ref={actionsRef} className="relative">
             <button
               type="button"
               data-testid={`plugin-marketplace-actions-${item.id}`}
@@ -1604,26 +1622,47 @@ export function PluginsWorkspace({
   }
 
   const uninstallInstalledPlugin = (id: string | number) => {
-    const plugin = installedPlugins.find(item => item.id === id)
-    if (!plugin) return
-
-    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-    setPluginMarketplaceState(previous => ({
+    const plugin = installedPlugins.find(item => String(item.id) === String(id))
+    const clearMarketplaceInstall = (
+      previous: typeof pluginMarketplaceState
+    ): typeof pluginMarketplaceState => ({
       ...previous,
       items: previous.items.map(item =>
-        String(item.installedPluginId) === String(id)
+        String(item.installedPluginId) === String(id) ||
+        (item.installed && String(item.id) === String(id))
           ? {
               ...item,
               installed: false,
               installedPluginId: null,
               enabled: false,
+              currentDeviceInstallation: null,
             }
           : item
       ),
-    }))
+    })
+
+    if (!plugin) {
+      // Local Codex marketplace installs are omitted from the merged installed list
+      // once any cloud install exists, but they still appear as installed catalog rows.
+      setPluginMarketplaceState(clearMarketplaceInstall)
+      void localPluginApi
+        .uninstallInstalledPlugin(id)
+        .then(() => notifyLocalPluginSkillsChanged())
+        .catch((error: Error) => {
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            error: error.message,
+          }))
+          setMarketplaceRefreshTick(previous => previous + 1)
+        })
+      return
+    }
+
+    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+    setPluginMarketplaceState(clearMarketplaceInstall)
     const uninstallApi =
-      plugin.origin === 'created' || !plugin.raw.spec.pluginId
+      plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
         ? localPluginApi.uninstallInstalledPlugin(id)
         : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
     uninstallApi
@@ -1633,7 +1672,9 @@ export function PluginsWorkspace({
         setPluginMarketplaceState(previous => ({
           ...previous,
           items: previous.items.map(item =>
-            item.installedPluginId === null && String(item.id) === String(plugin.id)
+            item.installedPluginId === null &&
+            (String(item.id) === String(plugin.id) ||
+              String(item.name) === String(plugin.raw.spec.source.pluginKey))
               ? {
                   ...item,
                   installed: true,
@@ -1722,13 +1763,11 @@ export function PluginsWorkspace({
         : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
           null)
     const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
-    if (isLocalCodexMarketplaceItem(item)) {
-      const marketplaceId = localMarketplaceIdFromItem(item)
-      if (marketplaceId) {
-        void localPluginApi.selectMarketplace(marketplaceId).then(() => {
-          tryLocalInstalledPluginInChat(trialPluginId)
-        })
-      }
+    const marketplaceId = localMarketplaceIdFromItem(item)
+    if (marketplaceId) {
+      void localPluginApi.selectMarketplace(marketplaceId).then(() => {
+        tryLocalInstalledPluginInChat(trialPluginId)
+      })
       return
     }
     if (!tryPluginInChat((installed ?? toMarketplaceInstalledPluginItem(item)).raw)) {
@@ -1740,8 +1779,7 @@ export function PluginsWorkspace({
   }
 
   const installMarketplacePlugin = (item: PluginMarketplaceItem, promptAfterInstall?: string) => {
-    const installFromLocal =
-      isLocalCodexMarketplaceItem(item) && localMarketplaceIdFromItem(item) !== null
+    const installFromLocal = isLocalMarketplaceItem(item)
 
     // 检查是否已登录（未登录时没有 deviceId 或 token）
     if (!installFromLocal && (!cloudToken || !currentDeviceId)) {
@@ -1803,13 +1841,11 @@ export function PluginsWorkspace({
         return
       }
       const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
-      if (isLocalCodexMarketplaceItem(item)) {
-        const marketplaceId = localMarketplaceIdFromItem(item)
-        if (marketplaceId) {
-          void localPluginApi.selectMarketplace(marketplaceId).then(() => {
-            tryLocalInstalledPluginInChat(trialPluginId)
-          })
-        }
+      const marketplaceId = localMarketplaceIdFromItem(item)
+      if (marketplaceId) {
+        void localPluginApi.selectMarketplace(marketplaceId).then(() => {
+          tryLocalInstalledPluginInChat(trialPluginId)
+        })
         return
       }
       if (!tryPluginInChat((installed ?? toMarketplaceInstalledPluginItem(item)).raw)) {
@@ -1833,7 +1869,7 @@ export function PluginsWorkspace({
     if (installingMarketplacePluginIds.has(item.id)) return
 
     const localMarketplaceId = localMarketplaceIdFromItem(item)
-    const installFromLocal = isLocalCodexMarketplaceItem(item) && localMarketplaceId !== null
+    const installFromLocal = localMarketplaceId !== null
 
     setPendingInstall(current => (current ? { ...current, phase: 'installing' } : current))
     setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
@@ -2294,7 +2330,7 @@ export function PluginsWorkspace({
             ...previous,
             items: mergeMarketplaceCatalog(
               response.items,
-              previous.items.filter(isLocalCodexMarketplaceItem)
+              previous.items.filter(isLocalMarketplaceItem)
             ),
             error: null,
           }))
@@ -2363,8 +2399,7 @@ export function PluginsWorkspace({
       : toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
 
     const marketplaceId = localMarketplaceIdFromItem(selectedMarketplacePlugin)
-    const shouldFetchLocalDetail =
-      isLocalCodexMarketplaceItem(selectedMarketplacePlugin) && Boolean(marketplaceId)
+    const shouldFetchLocalDetail = Boolean(marketplaceId)
 
     if (!shouldFetchLocalDetail) {
       setSelectedMarketplacePluginDetail(baseDetail)
@@ -2526,8 +2561,10 @@ export function PluginsWorkspace({
               : undefined
           }
           onToggle={() => {
-            const sourceType = selectedPlugin.raw.spec.source.type
-            if (sourceType === 'marketplace') {
+            const isLocalMarketplaceOnly =
+              selectedPlugin.raw.spec.source.type === 'marketplace' &&
+              !isCloudManagedInstalledPlugin(selectedPlugin.raw)
+            if (isLocalMarketplaceOnly) {
               tryLocalInstalledPluginInChat(selectedPlugin.id)
               return
             }
@@ -2654,13 +2691,11 @@ export function PluginsWorkspace({
               return
             }
             if (isInstalled && installedDetail) {
-              if (isLocalCodexMarketplaceItem(selectedMarketplacePlugin)) {
-                const marketplaceId = localMarketplaceIdFromItem(selectedMarketplacePlugin)
-                if (marketplaceId) {
-                  void localPluginApi.selectMarketplace(marketplaceId).then(() => {
-                    tryLocalInstalledPluginInChat(installedDetail.id)
-                  })
-                }
+              const marketplaceId = localMarketplaceIdFromItem(selectedMarketplacePlugin)
+              if (marketplaceId) {
+                void localPluginApi.selectMarketplace(marketplaceId).then(() => {
+                  tryLocalInstalledPluginInChat(installedDetail.id)
+                })
                 return
               }
               if (!tryPluginInChat(installedDetail.raw)) {
@@ -2680,13 +2715,13 @@ export function PluginsWorkspace({
           }}
           onUninstall={() => {
             const installedPluginId =
-              installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
-            if (installedPluginId !== null && installedPluginId !== undefined) {
-              requestUninstallPlugin(
-                installedPluginId,
-                selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
-              )
-            }
+              installedDetail?.id ??
+              selectedMarketplacePlugin.installedPluginId ??
+              selectedMarketplacePlugin.id
+            requestUninstallPlugin(
+              installedPluginId,
+              selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
+            )
           }}
           onPromptSelect={prompt => {
             if (isInstalled && installedDetail) {
@@ -3039,16 +3074,11 @@ export function PluginsWorkspace({
                     onTry={() => tryMarketplacePluginInChat(item)}
                     onManage={() => navigateTo('/plugins/manage')}
                     onUninstall={() => {
-                      const installed =
-                        item.installedPluginId === null || item.installedPluginId === undefined
-                          ? null
-                          : (installedPlugins.find(
-                              plugin => String(plugin.id) === String(item.installedPluginId)
-                            ) ?? null)
-                      requestUninstallPlugin(
-                        installed?.id ?? toMarketplaceInstalledPluginItem(item).id,
-                        item.displayName || item.name
-                      )
+                      const uninstallId =
+                        item.installedPluginId !== null && item.installedPluginId !== undefined
+                          ? item.installedPluginId
+                          : item.id
+                      requestUninstallPlugin(uninstallId, item.displayName || item.name)
                     }}
                   />
                 ))}

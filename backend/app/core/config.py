@@ -403,6 +403,7 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
     KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+    KNOWLEDGE_ARTIFACT_STALL_SECONDS: int = 600  # 10 min
 
     # --- Document Conversion Configuration ---
 
@@ -496,6 +497,7 @@ class Settings(BaseSettings):
     INIT_DATA_FORCE: bool = (
         False  # Force re-initialize YAML resources (delete and recreate)
     )
+    BUILTIN_PLUGINS_DIR: str = "/app/init_data/plugins"
 
     # Default headers forwarded to the model backend on every LLM call.
     # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
@@ -670,6 +672,10 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_WEWORK: str = (
         "wegent-wework#default"  # Default team for WeWork workbench
     )
+    # Cloud project that receives authenticated Wework feedback submissions.
+    # An empty value disables the feedback channel.
+    WEWORK_FEEDBACK_PROJECT_ID: str = ""
+    WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB: int = 250
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

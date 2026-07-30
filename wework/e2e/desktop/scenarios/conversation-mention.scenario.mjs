@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -51,15 +49,6 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-async function capture(control, resultDir, name) {
-  const dataUrl = await control.command('capture', ACTIVE_WORKBENCH_SELECTOR, {
-    timeoutMs: 30_000,
-  })
-  const prefix = 'data:image/png;base64,'
-  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
-  await writeFile(join(resultDir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'))
-}
-
 async function waitForConversationOption(control, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -91,7 +80,8 @@ async function selectConversationOption(control, timeoutMs) {
   throw new Error('The referenced conversation could not be selected from the @ menu')
 }
 
-export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+  const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let sourceRequest = null
   let targetRequest = null
 
@@ -148,12 +138,12 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         menuSnapshot.text.includes('WEWORK_CONVERSATION_REFERENCE_SOURCE'),
         'The @ menu selected an unrelated conversation'
       )
-      await capture(control, resultDir, 'conversation-mention-01-menu.png')
+      await capture(control, 'conversation-mention-01-menu.png')
       await selectConversationOption(control, uiTimeoutMs)
       await control.command('waitFor', '[data-testid^="conversation-chip-"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await capture(control, resultDir, 'conversation-mention-02-chip.png')
+      await capture(control, 'conversation-mention-02-chip.png')
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TARGET_COMPLETION,
@@ -178,7 +168,7 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs }) {
         serializedTarget.includes('ORBIT-42'),
         'The referenced conversation content was not delivered to the model'
       )
-      await capture(control, resultDir, 'conversation-mention-03-sent.png')
+      await capture(control, 'conversation-mention-03-sent.png')
     },
 
     diagnostics() {

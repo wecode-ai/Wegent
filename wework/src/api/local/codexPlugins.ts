@@ -1,6 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import {
+  ensureLocalExecutorStarted,
+  getInitializedBundledPluginMarketplace,
+  requestLocalExecutor,
+} from '@/tauri/localExecutor'
 import type {
   InstalledPlugin,
   InstalledPluginComponents,
@@ -65,6 +69,11 @@ export interface LocalPluginCopyImportResult {
   pluginPath: string
 }
 
+export interface PluginIdentityReference {
+  marketplaceName: string
+  pluginName: string
+}
+
 function normalizeMarketplaceSource(source: string): string {
   const normalized = source.trim().replace(/\\\\/g, '/')
   return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
@@ -75,7 +84,7 @@ export interface LocalCodexPluginApi {
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
   initializeCodexHome(options: {
     migrateNativeHome: boolean
-    remoteAppsEnabled: boolean
+    remoteAppsEnabled?: boolean
   }): Promise<LocalCodexHomeMigrationStatus>
   migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
@@ -220,6 +229,7 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
+const INTERNAL_DEVICE_MARKETPLACE_IDS = new Set(['wegent'])
 
 let cachedState: LocalCodexPluginsState | null = null
 
@@ -260,6 +270,42 @@ function installedPluginConfigId(plugin: InstalledPlugin, fallbackId: string | n
     (typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace.trim()) ||
     plugin.spec.source.providerKey
   return `${plugin.spec.source.pluginKey}@${marketplace}`
+}
+
+function normalizedPluginIdentity(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+export function installedPluginMatchesReference(
+  plugin: InstalledPlugin,
+  reference: PluginIdentityReference
+): boolean {
+  if (plugin.spec.installState !== 'installed') return false
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : {}
+  const pluginNames = [
+    plugin.metadata.name,
+    plugin.spec.source.pluginKey,
+    plugin.spec.manifest.name,
+    payload.pluginName,
+  ]
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.providerKey,
+    plugin.spec.source.marketplace,
+    payload.marketplaceName,
+  ]
+
+  return (
+    pluginNames.some(
+      name => normalizedPluginIdentity(name) === normalizedPluginIdentity(reference.pluginName)
+    ) &&
+    marketplaceNames.some(
+      name => normalizedPluginIdentity(name) === normalizedPluginIdentity(reference.marketplaceName)
+    )
+  )
 }
 
 function isLocalMarketplacePath(path: string): boolean {
@@ -519,6 +565,32 @@ function filteredMarketplaces(
   return marketplaces.filter(marketplace => marketplace.name === normalized)
 }
 
+function withInitializedBundledMarketplace(
+  marketplaces: CodexPluginMarketplaceEntry[]
+): CodexPluginMarketplaceEntry[] {
+  const bundled = getInitializedBundledPluginMarketplace()
+  if (!bundled || marketplaces.some(marketplace => marketplace.name === bundled.id)) {
+    return marketplaces
+  }
+  return [
+    ...marketplaces,
+    {
+      name: bundled.id,
+      path: bundled.path,
+      interface: { displayName: bundled.id },
+      plugins: [],
+    },
+  ]
+}
+
+function visibleMarketplaces(
+  marketplaces: CodexPluginMarketplaceEntry[]
+): CodexPluginMarketplaceEntry[] {
+  return marketplaces.filter(
+    marketplace => !INTERNAL_DEVICE_MARKETPLACE_IDS.has(marketplace.name.trim().toLowerCase())
+  )
+}
+
 async function readPluginDetail(
   marketplace: LocalCodexMarketplace,
   pluginName: string
@@ -568,7 +640,9 @@ async function readState(
       installSuggestionPluginNames: null,
     }),
   ])
-  const availableMarketplaces = availableResponse.marketplaces
+  const availableMarketplaces = visibleMarketplaces(
+    withInitializedBundledMarketplace(availableResponse.marketplaces)
+  )
   const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
   const selectedId = availableMarketplaces.some(
     marketplace => marketplace.name === requestedSelectedId
@@ -608,7 +682,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   const defaultCodexLocalConfig: LocalCodexLocalConfig = {
     codexHome: '',
     configPath: '',
-    remoteAppsEnabled: false,
+    remoteAppsEnabled: true,
   }
   return {
     importExternalContent(source) {
@@ -642,10 +716,13 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         })
       }
       return invoke<LocalCodexHomeMigrationStatus>('local_executor_initialize_codex_home', {
-        options,
+        options: {
+          ...options,
+          remoteAppsEnabled: options.remoteAppsEnabled ?? true,
+        },
       })
     },
-    migrateNativeCodexHome(remoteAppsEnabled = false) {
+    migrateNativeCodexHome(remoteAppsEnabled = true) {
       return this.initializeCodexHome({
         migrateNativeHome: true,
         remoteAppsEnabled,
@@ -846,15 +923,20 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       const marketplaceId =
         typeof payload?.marketplaceName === 'string'
           ? payload.marketplaceName
-          : installed.metadata.namespace
+          : typeof installed.metadata.namespace === 'string'
+            ? installed.metadata.namespace
+            : installed.spec.source.marketplace || installed.spec.source.providerKey
       const pluginName =
         typeof payload?.pluginName === 'string'
           ? payload.pluginName
           : installed.spec.source.pluginKey
       const marketplace = currentState.marketplaces.find(
         marketplace => marketplace.id === marketplaceId
-      )
-      if (!marketplace) throw new Error('Codex marketplace not found for installed plugin')
+      ) ?? {
+        id: marketplaceId,
+        name: marketplaceId,
+        path: marketplaceId,
+      }
       const summary = currentState.marketplaceItems.find(
         item => String(item.installedPluginId ?? item.id) === String(id)
       )

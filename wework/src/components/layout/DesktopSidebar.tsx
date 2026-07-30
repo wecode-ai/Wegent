@@ -1,5 +1,6 @@
 import {
   Archive,
+  AlarmClock,
   Bell,
   BellOff,
   ChevronDown,
@@ -25,12 +26,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
+  PointerEvent,
   PointerEventHandler,
   ReactNode,
   RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -55,6 +56,7 @@ import {
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
@@ -65,6 +67,7 @@ import {
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import {
   runtimeProjectToProject,
   runtimeProjectUiId,
@@ -148,10 +151,13 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'cloud-work' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
+  sidebarWidth?: number
+  resizing?: boolean
+  onResizeStart?: (event: PointerEvent<HTMLButtonElement>) => void
   onResizeCollapse?: () => void
   onResizeStateChange?: (resizing: boolean) => void
   onPointerEnter?: PointerEventHandler<HTMLElement>
@@ -191,7 +197,9 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenCloudWork?: () => void
   onOpenSites?: () => void
+  onOpenAutomation?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -503,61 +511,6 @@ function SidebarButton({
       <span>{label}</span>
     </button>
   )
-}
-
-function useSidebarWindowFocus(): boolean {
-  const [focused, setFocused] = useState(() =>
-    typeof document === 'undefined' ? true : document.hasFocus()
-  )
-
-  useEffect(() => {
-    const handleFocus = () => setFocused(true)
-    const handleBlur = () => setFocused(false)
-    const listenToBrowserFocus = () => {
-      window.addEventListener('focus', handleFocus)
-      window.addEventListener('blur', handleBlur)
-    }
-    const unlistenFromBrowserFocus = () => {
-      window.removeEventListener('focus', handleFocus)
-      window.removeEventListener('blur', handleBlur)
-    }
-
-    if (!isTauriRuntime()) {
-      listenToBrowserFocus()
-      return unlistenFromBrowserFocus
-    }
-
-    let disposed = false
-    let unlisten: (() => void) | undefined
-    let browserFallbackActive = false
-    void Promise.resolve()
-      .then(async () => {
-        const currentWindow = getCurrentWindow()
-        if (
-          typeof currentWindow?.isFocused !== 'function' ||
-          typeof currentWindow?.onFocusChanged !== 'function'
-        ) {
-          throw new Error('Tauri window focus API is unavailable')
-        }
-        setFocused(await currentWindow.isFocused())
-        unlisten = await currentWindow.onFocusChanged(event => {
-          if (!disposed) setFocused(event.payload)
-        })
-        if (disposed) unlisten()
-      })
-      .catch(() => {
-        if (disposed) return
-        browserFallbackActive = true
-        listenToBrowserFocus()
-      })
-    return () => {
-      disposed = true
-      unlisten?.()
-      if (browserFallbackActive) unlistenFromBrowserFocus()
-    }
-  }, [])
-
-  return focused
 }
 
 const DESKTOP_SIDEBAR_STORAGE_PREFIX = 'wework.desktop.sidebar'
@@ -2566,7 +2519,9 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenCloudWork,
   onOpenSites,
+  onOpenAutomation,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -2589,6 +2544,9 @@ export function DesktopSidebar({
   collapsed = false,
   containerTestId = 'desktop-sidebar',
   hideResizeHandle = false,
+  sidebarWidth: sidebarWidthProp,
+  resizing: resizingProp,
+  onResizeStart: onResizeStartProp,
   onResizeCollapse,
   onResizeStateChange,
   onPointerEnter,
@@ -2603,16 +2561,21 @@ export function DesktopSidebar({
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
-  const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
+  const internalResizable = useResizableSidebar({
     onCollapse: onResizeCollapse,
     onResizeStateChange,
   })
+  const sidebarWidth = sidebarWidthProp ?? internalResizable.sidebarWidth
+  const resizing = resizingProp ?? internalResizable.resizing
+  const handleResizeStart = onResizeStartProp ?? internalResizable.handleResizeStart
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const cloud = useOptionalCloudConnection()
   const defaultWegentBackendUrl = getRuntimeConfig().wegentBackendUrl
   const usesCloudAccount = showCloudConnectionEntry && Boolean(defaultWegentBackendUrl)
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
-  const usesOverlayTitlebar = isTauriRuntime()
+  const platform = getPlatform()
+  const usesOverlayTitlebar = isTauriRuntime() && platform === 'mac'
+  const isWindowsTauri = isTauriRuntime() && platform === 'win'
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sidebarAccount = requiresCloudLogin
@@ -2624,7 +2587,7 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const windowFocused = useSidebarWindowFocus()
+  const windowFocused = useWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -3041,11 +3004,15 @@ export function DesktopSidebar({
     <aside
       data-testid={containerTestId}
       data-window-focused={windowFocused}
+      data-sidebar-translucent={
+        isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
+      }
       aria-hidden={collapsed}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
+        'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        !isWindowsTauri && 'border-r border-black/[0.08] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -3072,7 +3039,7 @@ export function DesktopSidebar({
             <div
               data-testid="desktop-sidebar-chrome-controls"
               className={cn(
-                'absolute top-0 z-chrome flex h-[38px] items-center gap-1',
+                'absolute top-0 z-chrome flex h-[38px] items-center gap-7',
                 MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS
               )}
             >
@@ -3131,6 +3098,15 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
+              {experimentalFeaturesEnabled && (
+                <SidebarButton
+                  icon={AlarmClock}
+                  label={t('workbench.automation', '已安排')}
+                  testId="automation-button"
+                  selected={activeItem === 'automation'}
+                  onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
+                />
+              )}
               {SHOW_PLUGINS_NAVIGATION && (
                 <SidebarButton
                   icon={Sparkles}
@@ -3153,6 +3129,8 @@ export function DesktopSidebar({
                 <CloudConnectionSidebarButton
                   devices={devices}
                   cloudWorkStatus={cloudWorkStatus}
+                  selected={activeItem === 'cloud-work'}
+                  onOpenCloudWork={onOpenCloudWork ?? (() => navigateTo('/cloud-work'))}
                   onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                   onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                   onAddDevice={() => {

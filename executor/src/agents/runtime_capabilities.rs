@@ -1511,7 +1511,75 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 }
 
 fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
-    extract_claude_options(request, &BTreeMap::new()).mcp_servers
+    let mut servers = extract_claude_options(request, &BTreeMap::new()).mcp_servers;
+    preserve_explicit_mcp_approval_modes(request, &mut servers);
+    servers
+}
+
+fn preserve_explicit_mcp_approval_modes(
+    request: &ExecutionRequest,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    if request_mode(request).as_deref() == Some("coordinate") {
+        if let Some(bots) = request.bot.as_array() {
+            for bot in bots {
+                preserve_explicit_mcp_approval_modes_from_value(
+                    bot_mcp_servers_value(bot),
+                    servers,
+                );
+            }
+        }
+    } else if let Some(bot) = primary_bot(request) {
+        preserve_explicit_mcp_approval_modes_from_value(bot_mcp_servers_value(bot), servers);
+    }
+
+    preserve_explicit_mcp_approval_modes_from_value(
+        Some(&Value::Array(request.mcp_servers.clone())),
+        servers,
+    );
+}
+
+fn bot_mcp_servers_value(bot: &Value) -> Option<&Value> {
+    bot.get("mcp_servers").or_else(|| bot.get("mcpServers"))
+}
+
+fn preserve_explicit_mcp_approval_modes_from_value(
+    value: Option<&Value>,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    match value {
+        Some(Value::Object(object)) => {
+            for (name, server) in object {
+                preserve_explicit_mcp_approval_mode(name, server, servers);
+            }
+        }
+        Some(Value::Array(values)) => {
+            for server in values {
+                if let Some(name) = server.get("name").and_then(Value::as_str) {
+                    preserve_explicit_mcp_approval_mode(name, server, servers);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn preserve_explicit_mcp_approval_mode(
+    name: &str,
+    source: &Value,
+    servers: &mut BTreeMap<String, Value>,
+) {
+    let Some(mode) = source
+        .get("default_tools_approval_mode")
+        .or_else(|| source.get("defaultToolsApprovalMode"))
+        .cloned()
+    else {
+        return;
+    };
+    let Some(server) = servers.get_mut(name).and_then(Value::as_object_mut) else {
+        return;
+    };
+    server.insert("default_tools_approval_mode".to_owned(), mode);
 }
 
 fn mcp_server_headers_summary(servers: &BTreeMap<String, Value>) -> String {
@@ -1652,6 +1720,7 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
                 }
             }
         }
+        append_codex_mcp_server_approval_override(&key, object, &mut overrides);
         return overrides;
     }
     let Some(url) = object
@@ -1687,7 +1756,26 @@ fn codex_mcp_server_overrides(name: &str, server: &Value) -> Vec<String> {
             overrides.push(format!("{key}.{target_key}={}", toml_value(value)));
         }
     }
+    append_codex_mcp_server_approval_override(&key, object, &mut overrides);
     overrides
+}
+
+fn append_codex_mcp_server_approval_override(
+    key: &str,
+    object: &Map<String, Value>,
+    overrides: &mut Vec<String>,
+) {
+    let approval_mode = object
+        .get("default_tools_approval_mode")
+        .or_else(|| object.get("defaultToolsApprovalMode"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("approve");
+    overrides.push(format!(
+        "{key}.default_tools_approval_mode={}",
+        toml_value(approval_mode)
+    ));
 }
 
 fn load_global_mcp_records() -> BTreeMap<String, Value> {

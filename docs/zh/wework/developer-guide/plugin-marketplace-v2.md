@@ -109,9 +109,13 @@ erDiagram
 | 场景             | `origin`  | `sourceProvider` | UI 标记                  |
 | ---------------- | --------- | ---------------- | ------------------------ |
 | 本机创建         | `created` | 本地             | 我创建的                 |
-| Wegent 自研      | `market`  | `wegent`         | Wegent 官方              |
-| 精选 Codex 镜像  | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
-| 用户投稿审核通过 | `market`  | `user`           | 社区插件/作者            |
+| Wegent 自研 / 国内适配镜像 | `market`  | `wegent`         | Wegent 官方              |
+| 精选 Codex 镜像            | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
+| 用户投稿审核通过           | `market`  | `user`           | 社区插件/作者            |
+
+> GitHub 适配包（connectors + 汉化）走「Wegent 自研 / 国内适配镜像」身份：
+> `source_type=mirror`、`source_provider=wework`、`visibility=public`，出现在
+> 「国内公开」Tab；不要再标成 `codex`。
 
 “我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
 
@@ -175,19 +179,25 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 ### WeWork 官方插件发布
 
-官方插件源码可以位于独立仓库，或当前仓库的 `curated-plugins/wework/<slug>/`。每个目录必须包含 `.codex-plugin/plugin.json`、能力文件和测试；该源码目录只用于开发与 CI，Backend 和 Wework 运行时不得直接读取它。
+官方插件源码统一维护在
+[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)。
+布局对齐 openai/plugins：每个插件位于 `plugins/<slug>/`，必须包含
+`.codex-plugin/plugin.json`、能力文件和测试；该仓库只用于开发与 CI，Backend
+和 Wework 运行时不得直接读取它。
 
-发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入 `source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin 和不可变 Release：
+发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入
+`source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin
+和不可变 Release（假设与 Wegent 同级检出）：
 
 ```bash
 # 本地只构建、扫描并输出 SHA256，不连接 MySQL/S3
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 
-# 由受保护的 CI 环境发布
+# 由受保护的 CI 环境发布（workspace=企业内部，public=国内公开）
 uv run python scripts/publish_official_plugin.py \
-  ../curated-plugins/wework/gitlab-engineering \
-  --visibility public \
+  ../wework-plugins/plugins/<plugin-slug> \
+  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot

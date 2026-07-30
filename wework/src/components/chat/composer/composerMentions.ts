@@ -1,3 +1,6 @@
+import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
@@ -29,6 +32,28 @@ export function registerComposerMentionIcon(reference: string, iconUrl?: string 
   const normalizedIconUrl = iconUrl?.trim()
   if (!href || !normalizedIconUrl) return
   composerMentionIconUrls.set(href, normalizedIconUrl)
+}
+
+export function getComposerMentionIconUrl(href: string): string | undefined {
+  return composerMentionIconUrls.get(href)
+}
+
+/** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
+export function resolveComposerMentionBrandIconUrl(href: string): string | null {
+  const registered = getComposerMentionIconUrl(href)?.trim()
+  if (registered) return registered
+
+  const pluginReference = parsePluginUri(href)
+  if (pluginReference) {
+    return resolvePluginLogoUrl({ pluginKey: pluginReference.pluginName })
+  }
+
+  if (href.startsWith('app://')) {
+    const appId = href.slice('app://'.length).trim()
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId }) : null
+  }
+
+  return null
 }
 
 export function localSkillTestId(name: string): string {
@@ -148,15 +173,18 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   const element = document.createElement('span')
   element.className = 'composer-mention-node composer-mention-link'
   const pathReference = composerPathReference(payload.reference)
+  const pluginReference = parsePluginMentionReference(payload.reference)
   const conversationReference = payload.reference.includes('](wework-conversation://')
   const displayLabel = pathReference ? composerPathDisplayName(pathReference.path) : payload.label
   element.setAttribute(
     'data-testid',
     pathReference
       ? `composer-path-chip-${localSkillTestId(payload.name)}`
-      : conversationReference
-        ? `conversation-chip-${localSkillTestId(payload.name)}`
-        : `local-skill-chip-${localSkillTestId(payload.name)}`
+      : pluginReference
+        ? `composer-plugin-chip-${localSkillTestId(pluginReference.pluginName)}`
+        : conversationReference
+          ? `conversation-chip-${localSkillTestId(payload.name)}`
+          : `local-skill-chip-${localSkillTestId(payload.name)}`
   )
   element.setAttribute('data-composer-skill-reference', payload.reference)
   element.setAttribute('data-composer-skill-name', payload.name)
@@ -167,16 +195,21 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
     element.setAttribute('data-composer-path', pathReference.path)
     element.setAttribute('data-composer-path-kind', pathReference.directory ? 'folder' : 'file')
   }
+  if (pluginReference) {
+    element.setAttribute('data-composer-plugin-name', pluginReference.pluginName)
+    element.setAttribute('data-composer-plugin-marketplace', pluginReference.marketplaceName)
+    element.setAttribute('role', 'link')
+  }
   element.setAttribute('contenteditable', 'false')
   element.setAttribute('aria-label', displayLabel)
   element.setAttribute('spellcheck', 'false')
-  element.setAttribute('tabindex', '-1')
+  element.setAttribute('tabindex', pluginReference ? '0' : '-1')
 
   const iconSlot = document.createElement('span')
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
   const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
-  const brandIconUrl = mentionHref ? composerMentionIconUrls.get(mentionHref) : undefined
+  const brandIconUrl = mentionHref ? resolveComposerMentionBrandIconUrl(mentionHref) : null
   iconSlot.append(
     pathReference?.directory
       ? createComposerFolderIcon()
