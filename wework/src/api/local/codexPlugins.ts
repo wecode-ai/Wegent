@@ -770,14 +770,17 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       if (!marketplaceMeta) {
         throw new Error(`Codex marketplace "${normalizedMarketplaceId}" is unavailable`)
       }
-      const marketplace: CodexPluginMarketplaceEntry = {
-        name: marketplaceMeta.id,
-        path: marketplaceMeta.path,
-        interface: { displayName: marketplaceMeta.name },
-        plugins: [],
-      }
-      const detail = await readPluginDetail(marketplace, normalizedPluginName)
-      return toInstalledPlugin(marketplace, detail.summary, detail)
+      const detail = await readPluginDetail(marketplaceMeta, normalizedPluginName)
+      return toInstalledPlugin(
+        {
+          name: marketplaceMeta.id,
+          path: marketplaceMeta.path,
+          interface: { displayName: marketplaceMeta.name },
+          plugins: [],
+        },
+        detail.summary,
+        detail
+      )
     },
     async listInstalledPlugins() {
       const state = await readState()

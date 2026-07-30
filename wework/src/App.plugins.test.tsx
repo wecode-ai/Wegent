@@ -1054,9 +1054,9 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toHaveTextContent(
       'Wework 云端市场'
     )
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11')
+    expect(screen.getByTestId('plugins-create-button')).toHaveClass('plugin-market-action-button')
     expect(screen.getByTestId('plugins-create-button')).toHaveTextContent('创建')
-    expect(screen.getByTestId('plugins-marketplace-selector')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-marketplace-source-switcher')).toHaveClass('sr-only')
   })
 
   test('opens plugins from the mobile settings menu', async () => {

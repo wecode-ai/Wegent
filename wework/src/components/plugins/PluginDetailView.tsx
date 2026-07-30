@@ -302,7 +302,11 @@ function detailRows(
     plugin.spec.interface?.privacyPolicyUrl || formatManifestValue(manifest.privacyPolicy)
   const termsOfService =
     plugin.spec.interface?.termsOfServiceUrl || formatManifestValue(manifest.termsOfService)
-  const rows = [
+  const rows: Array<{
+    label: string
+    value: string
+    href?: string
+  }> = [
     {
       label: '开发者',
       value:

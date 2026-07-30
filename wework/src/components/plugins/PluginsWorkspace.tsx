@@ -2818,7 +2818,7 @@ export function PluginsWorkspace({
                         item => String(item.id) === String(plugin.id)
                       )
                       const logo = resolvePluginLogoUrl({
-                        pluginKey: plugin.raw.spec.source?.pluginKey || plugin.id,
+                        pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
                         logo: marketplaceItem?.interface?.logo || plugin.raw.spec.interface?.logo,
                         composerIcon:
                           marketplaceItem?.interface?.composerIcon ||
