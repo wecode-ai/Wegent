@@ -76,6 +76,55 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('forwards the client user message id when the runtime turn starts', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      clientUserMessageId: 'client-user-1',
+    })
+
+    expect(actions).toEqual([
+      {
+        type: 'assistant_started',
+        taskId: 'runtime-task-1',
+        subtaskId: 'codex-turn-9',
+        clientUserMessageId: 'client-user-1',
+        shellType: undefined,
+      },
+    ])
+  })
+
+  test('commits the turn terminal action before settling the task lifecycle', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const calls: string[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => calls.push(action.type),
+      onAssistantSettled: () => calls.push('lifecycle_settled'),
+    })
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(calls).toEqual(['assistant_done', 'lifecycle_settled'])
+  })
+
   test('forwards structured task-plan updates for the active runtime task', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
@@ -286,7 +335,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[1]).toMatchObject({
       type: 'assistant_done',
       subtaskId: 'runtime-task-1-context-compact',
-      content: '',
     })
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
     expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
@@ -411,7 +459,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_done',
       subtaskId: 'subtask-9',
       turnId: 'turn-9',
-      content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
     expect(info).toHaveBeenCalledWith(
       '[Wework] Runtime terminal event accepted',
@@ -726,7 +773,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: 'hello',
         status: 'done',
@@ -745,7 +792,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: '请用 $plugin:skill explain the sidebar',
         presentationReferences: [
@@ -771,7 +818,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: '@OpenAI Developers Create an API key',
         presentationReferences: [
@@ -791,140 +838,6 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
       role: 'user',
       content: '[@OpenAI Developers](plugin://openai-developers@openai-curated) Create an API key',
     })
-  })
-
-  test('replaces a failed attempt when the same user message is retried successfully', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-        createdAt: '2026-07-17T00:00:00.000Z',
-      },
-      {
-        id: 'assistant-failed',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'request failed',
-        createdAt: '2026-07-17T00:00:01.000Z',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-        createdAt: '2026-07-17T00:00:02.000Z',
-      },
-      {
-        id: 'assistant-success',
-        role: 'assistant',
-        content: 'fixed',
-        status: 'done',
-        subtaskId: 'turn-2',
-        createdAt: '2026-07-17T00:00:03.000Z',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-success',
-    ])
-    expect(messages.some(message => message.status === 'failed')).toBe(false)
-  })
-
-  test('keeps the latest failure when repeated retries continue to fail', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-1',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'first failure',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-2',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-2',
-        error: 'second failure',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-failed-2',
-    ])
-    expect(messages[1]).toMatchObject({ error: 'second failure' })
-  })
-
-  test('does not collapse an older failed turn across a newer user message', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'first request',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-1',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'first failure',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-2',
-        role: 'user',
-        content: 'second request',
-        status: 'done',
-      },
-      {
-        id: 'assistant-success-2',
-        role: 'assistant',
-        content: 'second response',
-        status: 'done',
-        subtaskId: 'turn-2',
-      },
-      {
-        id: 'provider-user-1-retry',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'first request',
-        status: 'done',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-failed-1',
-      'runtime-local-pane-2',
-      'assistant-success-2',
-      'runtime-local-pane-1',
-    ])
   })
 })
 

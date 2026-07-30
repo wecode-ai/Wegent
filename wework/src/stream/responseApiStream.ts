@@ -129,6 +129,8 @@ function eventBase(payload: Record<string, unknown>) {
   return {
     taskId: idField(payload, 'taskId') ?? idField(data, 'taskId'),
     subtaskId: idField(payload, 'subtaskId') ?? idField(data, 'subtaskId'),
+    clientUserMessageId:
+      idField(payload, 'clientUserMessageId') ?? idField(data, 'clientUserMessageId'),
     deviceId: stringField(payload, 'deviceId') ?? stringField(data, 'deviceId'),
   }
 }
@@ -683,6 +685,7 @@ export function emitResponseApiEvent(
     }
     handlers.onChatChunk?.({
       ...base,
+      itemId: idField(data, 'itemId') ?? idField(data, 'item_id'),
       content,
       ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
       result: eventResult(payload),
@@ -727,6 +730,8 @@ export function emitResponseApiEvent(
     handlers.onGuidanceApplied?.({
       ...base,
       guidanceId: stringField(data, 'guidanceId') ?? stringField(data, 'guidance_id') ?? 'guidance',
+      clientGuidanceId:
+        stringField(data, 'clientGuidanceId') ?? stringField(data, 'client_guidance_id'),
       message: stringField(data, 'message') ?? '',
       appliedAtMs:
         optionalNumberField(data, 'appliedAtMs') ??

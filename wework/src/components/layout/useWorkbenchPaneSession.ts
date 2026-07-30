@@ -8,10 +8,7 @@ import {
   updateRuntimePaneDebugSnapshot,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
-import {
-  deriveRuntimePaneStatus,
-  hasSettledAssistantMessage,
-} from '@/features/workbench/runtimePaneStatus'
+import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -23,7 +20,7 @@ import {
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
-  applyRequestUserInputResponseToMessages,
+  applyRequestUserInputResponseToBlock,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
@@ -42,7 +39,6 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
-  RuntimeGuidanceAppliedPayload,
   RuntimePlanEventPayload,
   RuntimeGoalContinuationPayload,
   RuntimeAdditionalContext,
@@ -50,7 +46,6 @@ import type {
   RuntimeSubagentActivityPayload,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
-  TurnFileChangesSummary,
 } from '@/types/api'
 import type {
   GuidanceWorkbenchMessage,
@@ -60,27 +55,29 @@ import type {
   WorkbenchMessage,
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import {
-  cacheRuntimeConversationMessages,
+  abortRuntimeConversationHydration,
+  applyRuntimeConversationAction,
+  beginRuntimeConversationHydration,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
+  clearInterruptedRuntimeConversationGuidanceExcept,
+  completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
-  getRuntimeConversationGuidanceSplitBoundaries,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
-  reduceRuntimeConversationQueue,
+  markRuntimeConversationGuidanceInterrupted,
+  removeRuntimeConversationTurn,
+  reconcileRuntimeConversationSnapshot,
+  replaceRuntimeConversationFromUserMessage,
+  runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
-  takeAppliedRuntimeConversationGuidance,
+  subscribeRuntimeConversation,
+  subscribeRuntimeTransportReplaced,
+  takeInterruptedRuntimeConversationGuidance,
+  updateRuntimeConversationBlocks,
 } from '@/features/workbench/runtimeConversationCache'
-import {
-  createAppliedRuntimeGuidanceMessage,
-  insertAppliedRuntimeGuidance,
-  transformRuntimePaneActionForGuidanceSplits,
-  type GuidanceSplitBoundaries,
-} from '@/features/workbench/runtimeGuidanceMessages'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
-import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -220,15 +217,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
   const displayedTranscriptIdentityRef = useRef<string | null>(null)
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
-  const guidanceSplitBoundariesRef = useRef<GuidanceSplitBoundaries>(new Map())
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
-  const interruptedGuidanceIdsRef = useRef(new Set<string>())
   const interruptAndSendInFlightRef = useRef(false)
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
-  const bufferedTranscriptActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
   const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
@@ -250,19 +244,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
     if (actions.length === 0) return
     setMessages(currentMessages => {
-      let nextMessages = currentMessages
-      for (const action of actions) {
-        const actionForReduction = transformRuntimePaneActionForGuidanceSplits(
-          action,
-          guidanceSplitBoundariesRef.current
-        )
-        nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
-          nextMessages,
-          actionForReduction
-        )
-      }
       const activeRuntimeTask =
         runtimeTaskLoadTargetRef.current?.address ?? currentRuntimeTaskRef.current
+      let nextMessages = currentMessages
+      for (const action of actions) {
+        if (action.type === 'reset') {
+          nextMessages = action.messages
+          continue
+        }
+        if (activeRuntimeTask) {
+          nextMessages = applyRuntimeConversationAction(activeRuntimeTask, action)
+        }
+      }
       if (activeRuntimeTask) {
         debugRuntimePaneMessageFlow('message-action', {
           address: runtimeAddressDebug(activeRuntimeTask),
@@ -306,29 +299,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [applyMessageActions, flushPendingMessageActions]
   )
-  const appendGuidanceLocalUserMessage = useCallback(
-    (queuedGuidance: RuntimePaneQueuedMessage, payload: RuntimeGuidanceAppliedPayload) => {
-      const guidanceMessage = createAppliedRuntimeGuidanceMessage(queuedGuidance, payload)
-      setMessages(currentMessages => {
-        const nextMessages = insertAppliedRuntimeGuidance(
-          currentMessages,
-          guidanceMessage,
-          guidanceSplitBoundariesRef.current
-        )
-        const activeRuntimeTask = currentRuntimeTaskRef.current
-        if (activeRuntimeTask) {
-          debugRuntimePaneMessageFlow('guidance-message-inserted', {
-            address: runtimeAddressDebug(activeRuntimeTask),
-            previousCount: currentMessages.length,
-            nextCount: nextMessages.length,
-            nextMessages: summarizeWorkbenchMessages(nextMessages),
-          })
-        }
-        return nextMessages
-      })
-    },
-    []
-  )
   const lifecycleAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskLifecycle = useRuntimeTaskLifecycle(lifecycleAddress)
   const taskGoalStatus = taskLifecycle?.goalStatus ?? null
@@ -342,6 +312,43 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [currentRuntimeTask, messages, taskLifecycle]
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
+  const handleRuntimeAssistantSettled = useCallback(
+    (address: RuntimeTaskAddress) => {
+      setSubagentStatuses(markRuntimeSubagentsSettled)
+      const requestedGoalRevision = goalRevisionRef.current
+      void getRuntimeGoalRef
+        .current(address)
+        .then(response => {
+          if (requestedGoalRevision !== goalRevisionRef.current) return
+          const loadedGoal = response.accepted ? response.goal : null
+          commitThreadGoal(loadedGoal)
+          const seededGoal = getRuntimePaneGoalSeed(address)
+          lifecycleStore.goalStatusReceived(
+            address,
+            loadedGoal?.status ?? seededGoal?.goal.status ?? null
+          )
+          if (loadedGoal?.status === 'active') {
+            void refreshWorkListsRef.current().catch(() => undefined)
+          }
+          if (loadedGoal) {
+            clearRuntimePaneGoalSeed(address)
+            const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
+            setPendingGoalState(current =>
+              current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress)
+                ? null
+                : current
+            )
+          }
+        })
+        .catch(error => {
+          console.error('[Wework] Runtime goal refresh failed', {
+            address: runtimeAddressDebug(address),
+            error,
+          })
+        })
+    },
+    [commitThreadGoal, lifecycleStore]
+  )
 
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
@@ -422,27 +429,44 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     runtimeTaskLoadTargetRef.current = runtimeTaskLoadTarget
-    guidanceSplitBoundariesRef.current = runtimeTaskLoadTarget
-      ? getRuntimeConversationGuidanceSplitBoundaries(runtimeTaskLoadTarget.address)
-      : new Map()
   }, [runtimeTaskLoadTarget])
 
-  useEffect(
-    () => () => {
-      const target = runtimeTaskLoadTargetRef.current
-      const messages = messagesRef.current
-      if (!target || messages.length === 0) return
-      cacheRuntimeConversationMessages(target.address, messages)
-    },
-    []
-  )
+  useEffect(() => {
+    if (!runtimeTaskLoadTarget) {
+      setMessages([])
+      return
+    }
+    const { address } = runtimeTaskLoadTarget
+    setMessages(getRuntimeConversationMessages(address))
+    return subscribeRuntimeConversation(address, action => {
+      setMessages(getRuntimeConversationMessages(address))
+      setQueuedMessagesState(
+        getRuntimeConversationQueuedMessagesByKey(runtimeConversationKey(address))
+      )
+      if (!action) return
+      if (action.type === 'assistant_error' && action.subtaskId) {
+        const retrySource = lastSubmittedRetryMessageRef.current
+        if (retrySource) {
+          retrySourceBySubtaskIdRef.current.set(action.subtaskId, retrySource)
+        }
+      }
+      if (action.type === 'assistant_started') {
+        setGoalContinuation(current =>
+          updateRuntimeGoalContinuation(current, { type: 'assistant_started' })
+        )
+      }
+      if (
+        action.type === 'assistant_done' ||
+        action.type === 'assistant_cancelled' ||
+        action.type === 'assistant_error'
+      ) {
+        handleRuntimeAssistantSettled(address)
+      }
+    })
+  }, [handleRuntimeAssistantSettled, runtimeTaskLoadTarget])
 
   useEffect(() => {
     messagesRef.current = messages
-    const target = runtimeTaskLoadTargetRef.current
-    if (target && messages.length > 0) {
-      cacheRuntimeConversationMessages(target.address, messages)
-    }
   }, [messages])
 
   useEffect(() => {
@@ -546,9 +570,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     let cancelled = false
-    if (rebuildingTranscriptIdentityRef.current !== runtimeTaskLoadTarget.identityKey) {
-      bufferedTranscriptActionsRef.current = []
-    }
+    const hydrationToken = beginRuntimeConversationHydration(address)
     rebuildingTranscriptRef.current = true
     rebuildingTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
     const cachedSeededMessages = getRuntimeConversationMessages(address)
@@ -584,13 +606,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!cancelled) {
           const preserveActiveTurn =
             (lifecycleStore.getTask(address)?.derived.isRunning ?? false) &&
-            !transcriptSettlesLatestSeededTurn(transcript.messages, seededMessages)
+            !runtimeConversationSnapshotSettlesLatestTurn(address, transcript.turns)
           lifecycleStore.syncTranscript(address, transcript, { preserveActiveTurn })
-          const transcriptTaskRunning = lifecycleStore.getTask(address)?.derived.isRunning ?? false
-          const nextMessages = reconcileRuntimeConversationMessages(
-            transcript.messages,
-            seededMessages,
-            transcriptTaskRunning
+          const nextMessages = completeRuntimeConversationHydration(
+            address,
+            hydrationToken,
+            transcript.turns
           )
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
@@ -612,18 +633,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           })
           rebuildingTranscriptRef.current = false
           rebuildingTranscriptIdentityRef.current = null
-          const bufferedActions = bufferedTranscriptActionsRef.current
-          bufferedTranscriptActionsRef.current = []
-          bufferedActions.forEach(dispatchMessages)
         }
       })
       .catch(error => {
         if (!cancelled) {
+          abortRuntimeConversationHydration(address, hydrationToken)
           rebuildingTranscriptRef.current = false
           rebuildingTranscriptIdentityRef.current = null
-          const bufferedActions = bufferedTranscriptActionsRef.current
-          bufferedTranscriptActionsRef.current = []
-          bufferedActions.forEach(dispatchMessages)
           loadedRuntimeTranscriptKeyRef.current = null
           setTranscriptFullContent(false)
           setTranscriptHasMoreBefore(false)
@@ -645,9 +661,84 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     return () => {
       cancelled = true
+      abortRuntimeConversationHydration(address, hydrationToken)
+      if (rebuildingTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey) {
+        rebuildingTranscriptRef.current = false
+        rebuildingTranscriptIdentityRef.current = null
+      }
     }
   }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (!runtimeTaskLoadTarget) return
+    const target = runtimeTaskLoadTarget
+    const { address, identityKey } = target
+    return subscribeRuntimeTransportReplaced(replacement => {
+      if (
+        runtimeTaskLoadTargetRef.current?.identityKey !== identityKey ||
+        rebuildingTranscriptRef.current ||
+        !hasUnsettledRuntimePaneState(messagesRef.current)
+      ) {
+        return
+      }
+
+      const hydrationToken = beginRuntimeConversationHydration(address)
+      rebuildingTranscriptRef.current = true
+      rebuildingTranscriptIdentityRef.current = identityKey
+      console.warn('[Wework] Runtime transport replaced during an active response', {
+        address: runtimeAddressDebug(address),
+        previousRuntimeInstanceId: replacement.previousRuntimeInstanceId,
+        runtimeInstanceId: replacement.runtimeInstanceId,
+        currentMessageCount: messagesRef.current.length,
+      })
+
+      void loadRuntimeTranscriptForPaneRef
+        .current(address, {
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        })
+        .then(transcript => {
+          if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
+            abortRuntimeConversationHydration(address, hydrationToken)
+            return
+          }
+
+          const nextMessages = completeRuntimeConversationHydration(
+            address,
+            hydrationToken,
+            transcript.turns
+          )
+          loadedRuntimeTranscriptKeyRef.current = target.key
+          setTranscriptFullContent(transcript.fullContent === true)
+          setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+          setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
+          setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
+          setTurnNavigation(transcript.turnNavigation ?? [])
+          dispatchMessages({ type: 'reset', messages: nextMessages })
+          lifecycleStore.syncTranscript(address, transcript)
+          console.info('[Wework] Runtime pane reconciled after transport replacement', {
+            address: runtimeAddressDebug(address),
+            running: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+            transcriptMessageCount: transcript.messages.length,
+            restoredMessageCount: nextMessages.length,
+          })
+        })
+        .catch(error => {
+          abortRuntimeConversationHydration(address, hydrationToken)
+          if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
+          console.error('[Wework] Runtime replacement transcript recovery failed', {
+            address: runtimeAddressDebug(address),
+            error,
+          })
+        })
+        .finally(() => {
+          if (rebuildingTranscriptIdentityRef.current !== identityKey) return
+          rebuildingTranscriptRef.current = false
+          rebuildingTranscriptIdentityRef.current = null
+        })
+    })
+  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
   useEffect(() => {
@@ -658,134 +749,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     const { address } = target
     const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
-      onMessageAction: action => {
-        if (action.type === 'assistant_error' && action.subtaskId) {
-          const retrySource = lastSubmittedRetryMessageRef.current
-          if (retrySource) {
-            retrySourceBySubtaskIdRef.current.set(action.subtaskId, retrySource)
-          }
-        }
-        if (rebuildingTranscriptRef.current) {
-          bufferedTranscriptActionsRef.current.push(action)
-          return
-        }
-        dispatchMessages(action)
-      },
-      onAssistantStart: () => {
-        setGoalContinuation(current =>
-          updateRuntimeGoalContinuation(current, { type: 'assistant_started' })
-        )
-      },
-      onAssistantSettled: () => {
-        setSubagentStatuses(markRuntimeSubagentsSettled)
-        const requestedGoalRevision = goalRevisionRef.current
-        void getRuntimeGoalRef
-          .current(address)
-          .then(response => {
-            if (requestedGoalRevision !== goalRevisionRef.current) return
-            const loadedGoal = response.accepted ? response.goal : null
-            commitThreadGoal(loadedGoal)
-            const seededGoal = getRuntimePaneGoalSeed(address)
-            lifecycleStore.goalStatusReceived(
-              address,
-              loadedGoal?.status ?? seededGoal?.goal.status ?? null
-            )
-            if (loadedGoal?.status === 'active') {
-              void refreshWorkListsRef.current().catch(() => undefined)
-            }
-            if (loadedGoal) {
-              clearRuntimePaneGoalSeed(address)
-              const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
-              setPendingGoalState(current =>
-                current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress)
-                  ? null
-                  : current
-              )
-            }
-          })
-          .catch(error => {
-            console.error('[Wework] Runtime goal refresh failed', {
-              address: runtimeAddressDebug(address),
-              error,
-            })
-          })
-      },
-      onRuntimeTransportReplaced: replacement => {
-        const latestTarget = runtimeTaskLoadTargetRef.current
-        if (
-          !latestTarget ||
-          latestTarget.identityKey !== target.identityKey ||
-          rebuildingTranscriptRef.current ||
-          !hasUnsettledRuntimePaneState(messagesRef.current)
-        ) {
-          return
-        }
-
-        const identityKey = target.identityKey
-        rebuildingTranscriptRef.current = true
-        rebuildingTranscriptIdentityRef.current = identityKey
-        bufferedTranscriptActionsRef.current = []
-        console.warn('[Wework] Runtime transport replaced during an active response', {
-          address: runtimeAddressDebug(address),
-          previousRuntimeInstanceId: replacement.previousRuntimeInstanceId,
-          runtimeInstanceId: replacement.runtimeInstanceId,
-          currentMessageCount: messagesRef.current.length,
-        })
-
-        void loadRuntimeTranscriptForPaneRef
-          .current(address, {
-            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
-            refresh: true,
-          })
-          .then(transcript => {
-            if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
-
-            const nextMessages =
-              transcript.messages.length > 0 ? transcript.messages : messagesRef.current
-            loadedRuntimeTranscriptKeyRef.current = target.key
-            setTranscriptFullContent(transcript.fullContent === true)
-            setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
-            setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
-            setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
-            setTurnNavigation(transcript.turnNavigation ?? [])
-            dispatchMessages({ type: 'reset', messages: nextMessages })
-            lifecycleStore.syncTranscript(address, transcript)
-            const transcriptTaskRunning =
-              lifecycleStore.getTask(address)?.derived.isRunning ?? false
-            if (!transcriptTaskRunning) {
-              if (hasUnsettledRuntimePaneState(nextMessages)) {
-                dispatchMessages({ type: 'assistant_cancelled' })
-              }
-              setSubagentStatuses(markRuntimeSubagentsSettled)
-            }
-            console.info('[Wework] Runtime pane reconciled after transport replacement', {
-              address: runtimeAddressDebug(address),
-              running: transcriptTaskRunning,
-              transcriptMessageCount: transcript.messages.length,
-              restoredMessageCount: nextMessages.length,
-            })
-          })
-          .catch(error => {
-            if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
-            console.error('[Wework] Runtime replacement transcript recovery failed', {
-              address: runtimeAddressDebug(address),
-              error,
-            })
-            if (hasUnsettledRuntimePaneState(messagesRef.current)) {
-              dispatchMessages({ type: 'assistant_cancelled' })
-            }
-            setSubagentStatuses(markRuntimeSubagentsSettled)
-            lifecycleStore.turnSettled(address)
-          })
-          .finally(() => {
-            if (rebuildingTranscriptIdentityRef.current !== identityKey) return
-            rebuildingTranscriptRef.current = false
-            rebuildingTranscriptIdentityRef.current = null
-            const bufferedActions = bufferedTranscriptActionsRef.current
-            bufferedTranscriptActionsRef.current = []
-            bufferedActions.forEach(dispatchMessages)
-          })
-      },
+      consumeConversationEvents: false,
+      onMessageAction: () => undefined,
       onRefreshWorkLists: () => {
         void refreshWorkListsRef.current().catch(() => undefined)
       },
@@ -836,32 +801,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setTaskPlan(payload.plan.length > 0 ? payload : null)
       },
       onGuidanceApplied: payload => {
-        const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
-        const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
-          ([, message]) => !payload.message || message.content === payload.message
-        )
-        if (pendingEntry) {
-          pendingAppliedGuidancesRef.current.delete(pendingEntry[0])
+        if (payload.clientGuidanceId) {
+          pendingAppliedGuidancesRef.current.delete(payload.clientGuidanceId)
         }
-        if (!guidanceMessage) return
-        if (interruptedGuidanceIdsRef.current.delete(guidanceMessage.id)) {
-          setQueuedMessages(messages =>
-            messages.filter(message => message.id !== guidanceMessage.id)
-          )
-          return
-        }
-        appendGuidanceLocalUserMessage(guidanceMessage, payload)
-        setQueuedMessages(messages =>
-          reduceRuntimeConversationQueue(messages, {
-            type: 'guidance_applied',
-            payload,
-          })
-        )
       },
     })
     return unsubscribe
   }, [
-    appendGuidanceLocalUserMessage,
     commitThreadGoal,
     dispatchMessages,
     lifecycleStore,
@@ -886,7 +832,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
         beforeCursor,
       })
-      const nextMessages = mergeRuntimeTranscriptMessages(transcript.messages, messagesRef.current)
+      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -941,7 +887,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         loadOptions.beforeCursor === undefined
           ? transcriptBeforeCursor
           : (transcript.beforeCursor ?? null)
-      const nextMessages = mergeRuntimeTranscriptMessages(transcript.messages, messagesRef.current)
+      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -976,7 +922,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         afterCursor: `offset:${gap.start}`,
       }
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
-      const nextMessages = mergeRuntimeTranscriptMessages(transcript.messages, messagesRef.current)
+      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -1002,8 +948,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         includeFullContent: true,
         refresh: true,
       })
-      const nextMessages =
-        transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
       setTranscriptFullContent(transcript.fullContent === true)
       setTranscriptHasMoreBefore(false)
       setTranscriptBeforeCursor(null)
@@ -1053,18 +998,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const applyLocalRequestUserInputResponse = useCallback(
     (response: RequestUserInputResponse) => {
-      setMessages(currentMessages => {
-        const nextMessages = applyRequestUserInputResponseToMessages(currentMessages, response)
-        if (currentRuntimeTask) {
-          debugRuntimePaneMessageFlow('request-user-input-response-applied', {
-            address: runtimeAddressDebug(currentRuntimeTask),
-            requestUserInputKey: requestUserInputResponseKey(response),
-            previousCount: currentMessages.length,
-            nextCount: nextMessages.length,
-            nextMessages: summarizeWorkbenchMessages(nextMessages),
-          })
-        }
-        return nextMessages
+      if (!currentRuntimeTask) return
+      const previousCount = messagesRef.current.length
+      const nextMessages = updateRuntimeConversationBlocks(currentRuntimeTask, block =>
+        applyRequestUserInputResponseToBlock(block, response)
+      )
+      setMessages(nextMessages)
+      debugRuntimePaneMessageFlow('request-user-input-response-applied', {
+        address: runtimeAddressDebug(currentRuntimeTask),
+        requestUserInputKey: requestUserInputResponseKey(response),
+        previousCount,
+        nextCount: nextMessages.length,
+        nextMessages: summarizeWorkbenchMessages(nextMessages),
       })
     },
     [currentRuntimeTask]
@@ -1103,7 +1048,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message: message.content,
-        clientMessageId: message.id,
+        clientUserMessageId: message.id,
         ...(message.modelId
           ? {
               modelId: message.modelId,
@@ -1130,9 +1075,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       interruptAndSendInFlightRef.current = true
       const interruptedGuidanceIds = new Set<string>()
       pendingAppliedGuidancesRef.current.forEach((_, id) => {
-        interruptedGuidanceIdsRef.current.add(id)
         interruptedGuidanceIds.add(id)
       })
+      markRuntimeConversationGuidanceInterrupted(currentRuntimeTask, interruptedGuidanceIds)
       setQueuedMessages(messages => [
         ...messages.filter(item => item.id !== message.id),
         { ...message, status: 'sending', notice: '正在打断并发送' },
@@ -1152,7 +1097,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         {
           address: currentRuntimeTask,
           message: message.content,
-          clientMessageId: message.id,
+          clientUserMessageId: message.id,
           ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
           ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
@@ -1163,9 +1108,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       interruptAndSendInFlightRef.current = false
       if (!sent) {
-        interruptedGuidanceIds.forEach(id => {
-          if (id !== message.id) interruptedGuidanceIdsRef.current.delete(id)
-        })
+        clearInterruptedRuntimeConversationGuidanceExcept(currentRuntimeTask, message.id)
         setQueuedMessages(messages =>
           messages
             .filter(item => item.id !== message.id)
@@ -1176,7 +1119,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 : item
             )
         )
-        setMessages(messages => messages.filter(item => item.id !== message.id))
+        setMessages(
+          removeRuntimeConversationTurn(currentRuntimeTask, {
+            clientUserMessageId: message.id,
+          })
+        )
         return false
       }
 
@@ -1197,6 +1144,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const retryFailedMessageInPane = useCallback(
     async (message: WorkbenchMessage): Promise<boolean> => {
       if (retryInFlightRef.current) return false
+      if (!currentRuntimeTask) return false
 
       retryInFlightRef.current = true
       setError(null)
@@ -1219,7 +1167,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           associatedRetrySource ??
           (failedMessageIndex >= 0 && retrySourcePredatesFailure ? retrySource : null)
         debugRuntimePaneMessageFlow('retry-failed-message', {
-          address: currentRuntimeTask ? runtimeAddressDebug(currentRuntimeTask) : null,
+          address: runtimeAddressDebug(currentRuntimeTask),
           failedMessageId: message.id,
           failedMessageIndex,
           retrySource: textMetrics(retrySource?.content),
@@ -1233,14 +1181,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           retryUserMessageOverride ?? undefined
         )
         if (sent) {
-          setMessages(messages =>
-            messages.filter(currentMessage => currentMessage.id !== message.id)
+          setMessages(
+            removeRuntimeConversationTurn(currentRuntimeTask, {
+              turnId: message.turnId ?? message.subtaskId,
+            })
           )
         }
         return sent
       } catch (error) {
         console.error('[Wework] Runtime failed message retry failed', {
-          address: currentRuntimeTask ? runtimeAddressDebug(currentRuntimeTask) : null,
+          address: runtimeAddressDebug(currentRuntimeTask),
           messageId: message.id,
           error,
         })
@@ -1288,7 +1238,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message,
-        ...(appendedUserMessage ? { clientMessageId: appendedUserMessage.id } : {}),
+        ...(appendedUserMessage ? { clientUserMessageId: appendedUserMessage.id } : {}),
         ...runtimeModelFields,
         ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
         ...(additionalContext ? { additionalContext } : {}),
@@ -1342,7 +1292,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const editedMessage = createLocalUserMessage(submittedContent, messageAttachments, {
         runtimeGoalRequest: message.runtimeGoalRequest === true,
       })
-      const nextMessages = [...currentMessages.slice(0, messageIndex), editedMessage]
       const request: RuntimeRollbackRequest = {
         address: currentRuntimeTask,
         message: submittedContent,
@@ -1353,17 +1302,45 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(additionalContext ? { additionalContext } : {}),
       }
 
-      dispatchMessages({ type: 'reset', messages: nextMessages })
+      const nextMessages = replaceRuntimeConversationFromUserMessage(
+        currentRuntimeTask,
+        message.id,
+        { ...editedMessage, role: 'user' }
+      )
+      setMessages(nextMessages)
       try {
         const sent = await editLastUserMessage(request)
         if (sent) {
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           return true
         }
-        dispatchMessages({ type: 'reset', messages: previousMessages })
+        const transcript = await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        })
+        removeRuntimeConversationTurn(currentRuntimeTask, {
+          clientUserMessageId: editedMessage.id,
+        })
+        const restoredMessages = reconcileRuntimeConversationSnapshot(
+          currentRuntimeTask,
+          transcript.turns
+        )
+        setMessages(restoredMessages)
         return false
       } catch (error) {
-        dispatchMessages({ type: 'reset', messages: previousMessages })
+        const transcript = await loadRuntimeTranscriptForPaneRef
+          .current(currentRuntimeTask, {
+            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+            refresh: true,
+          })
+          .catch(() => null)
+        removeRuntimeConversationTurn(currentRuntimeTask, {
+          clientUserMessageId: editedMessage.id,
+        })
+        const restoredMessages = transcript
+          ? reconcileRuntimeConversationSnapshot(currentRuntimeTask, transcript.turns)
+          : previousMessages
+        setMessages(restoredMessages)
         console.error('[Wework] Runtime last user message edit failed', {
           address: runtimeAddressDebug(currentRuntimeTask),
           messageId: message.id,
@@ -1373,13 +1350,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return false
       }
     },
-    [
-      currentRuntimeTask,
-      dispatchMessages,
-      editLastUserMessage,
-      getRuntimeModelFields,
-      paneStatus.isBusy,
-    ]
+    [currentRuntimeTask, editLastUserMessage, getRuntimeModelFields, paneStatus.isBusy]
   )
 
   const ignoreRequestUserInput = useCallback(
@@ -1412,9 +1383,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       if (!activeAssistantMessage) return
+      if (!activeAssistantMessage.turnId) return
 
       dispatchMessages({
         type: 'assistant_cancelled',
+        subtaskId: activeAssistantMessage.turnId,
       })
     },
     [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages]
@@ -1571,7 +1544,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         })
         if (!result.sent && result.code === 'no_active_turn') {
           pendingAppliedGuidancesRef.current.delete(id)
-          if (interruptedGuidanceIdsRef.current.delete(id)) return
+          if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) return
           const sent = await sendRuntimeMessage(queuedMessage)
           setQueuedMessages(messages =>
             sent
@@ -1589,7 +1562,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
         if (!result.sent) {
           pendingAppliedGuidancesRef.current.delete(id)
-          if (interruptedGuidanceIdsRef.current.delete(id)) {
+          if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
             setQueuedMessages(messages => messages.filter(message => message.id !== id))
             return
           }
@@ -1603,7 +1576,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
       } catch (error) {
         pendingAppliedGuidancesRef.current.delete(id)
-        if (interruptedGuidanceIdsRef.current.delete(id)) {
+        if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
           setQueuedMessages(messages => messages.filter(message => message.id !== id))
           return
         }
@@ -1716,7 +1689,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           })
           let seededGoalAddress: RuntimeTaskAddress | null = null
           const sent = await sendCurrentInput(submittedInput, {
-            clientMessageId: optimisticMessage.id,
+            clientUserMessageId: optimisticMessage.id,
             initialGoal,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
@@ -1743,7 +1716,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 seededCount: seededMessages.length,
                 seededMessages: summarizeWorkbenchMessages(seededMessages),
               })
-              cacheRuntimeConversationMessages(address, seededMessages)
+              applyRuntimeConversationAction(address, {
+                type: 'user_added',
+                message: optimisticMessage,
+              })
             },
           })
           if (sent) {
@@ -1833,7 +1809,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             }
           )
           const sent = await sendCurrentInput(visibleSubmittedInput, {
-            clientMessageId: optimisticMessage.id,
+            clientUserMessageId: optimisticMessage.id,
             codeCommentContexts,
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
@@ -1865,7 +1841,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 seededCount: seededMessages.length,
                 seededMessages: summarizeWorkbenchMessages(seededMessages),
               })
-              cacheRuntimeConversationMessages(address, seededMessages)
+              applyRuntimeConversationAction(address, {
+                type: 'user_added',
+                message: optimisticMessage,
+              })
             },
           })
           if (sent) {
@@ -2222,9 +2201,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     void refreshWorkLists()
 
     if (!activeAssistantMessage) return
+    if (!activeAssistantMessage.turnId) return
 
     dispatchMessages({
       type: 'assistant_cancelled',
+      subtaskId: activeAssistantMessage.turnId,
     })
   }, [
     activeAssistantMessage,
@@ -2458,6 +2439,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
     status: message.status,
     contentLength: message.content.length,
     subtaskId: message.subtaskId ?? null,
+    turnId: message.turnId ?? null,
   }))
 }
 
@@ -2503,14 +2485,6 @@ function createLocalUserMessage(
   }
 }
 
-function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]
-    if (item !== undefined && predicate(item)) return index
-  }
-  return -1
-}
-
 function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: number): boolean {
   if (targetIndex < 0 || targetIndex >= messages.length) return false
 
@@ -2525,125 +2499,6 @@ function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: nu
   return followingMessages.some(message => message.role === 'assistant')
 }
 
-export function reconcileRuntimeConversationMessages(
-  transcriptMessages: WorkbenchMessage[],
-  cachedMessages: WorkbenchMessage[],
-  transcriptRunning: boolean
-): WorkbenchMessage[] {
-  if (transcriptMessages.length === 0) return cachedMessages
-  if (transcriptRunning) {
-    return hasUnsettledRuntimePaneState(cachedMessages)
-      ? mergeRunningRuntimeConversationMessages(transcriptMessages, cachedMessages)
-      : transcriptMessages
-  }
-
-  const latestCachedTurnIdentity = latestRuntimeTurnIdentity(cachedMessages)
-  if (
-    latestCachedTurnIdentity &&
-    !hasSettledAssistantForTurn(transcriptMessages, latestCachedTurnIdentity)
-  ) {
-    return cachedMessages
-  }
-  return hasSettledAssistantMessage(transcriptMessages)
-    ? preserveSettledRuntimeBlocks(transcriptMessages, cachedMessages)
-    : transcriptMessages
-}
-
-function mergeRunningRuntimeConversationMessages(
-  transcriptMessages: WorkbenchMessage[],
-  cachedMessages: WorkbenchMessage[]
-): WorkbenchMessage[] {
-  const matchedTranscriptIndexes = new Set<number>()
-  const transcriptWithLiveMessages = [...transcriptMessages]
-  const indexedCachedMessages = [...cachedMessages]
-  const activeCachedIndexes = new Set<number>()
-
-  for (const [cachedIndex, cachedMessage] of cachedMessages.entries()) {
-    if (cachedMessage.role !== 'assistant' || !isUnsettledRuntimeMessage(cachedMessage)) continue
-    activeCachedIndexes.add(cachedIndex)
-
-    const cachedIdentity = runtimeMessageTurnIdentity(cachedMessage)
-    let transcriptIndex = transcriptMessages.findLastIndex((transcriptMessage, index) => {
-      if (
-        matchedTranscriptIndexes.has(index) ||
-        transcriptMessage.role !== 'assistant' ||
-        cachedIdentity.size === 0
-      ) {
-        return false
-      }
-      return [...runtimeMessageTurnIdentity(transcriptMessage)].some(identity =>
-        cachedIdentity.has(identity)
-      )
-    })
-    if (transcriptIndex < 0) {
-      transcriptIndex = transcriptMessages.findLastIndex(
-        (transcriptMessage, index) =>
-          !matchedTranscriptIndexes.has(index) &&
-          transcriptMessage.role === 'assistant' &&
-          isUnsettledRuntimeMessage(transcriptMessage)
-      )
-    }
-    if (transcriptIndex < 0) continue
-
-    const transcriptMessage = transcriptMessages[transcriptIndex]
-    matchedTranscriptIndexes.add(transcriptIndex)
-    const indexedCachedMessage = {
-      ...transcriptMessage,
-      ...cachedMessage,
-      runtimeMessageIndex: transcriptMessage.runtimeMessageIndex,
-      turnId: cachedMessage.turnId ?? transcriptMessage.turnId,
-      subtaskId: cachedMessage.subtaskId ?? transcriptMessage.subtaskId,
-    }
-    transcriptWithLiveMessages[transcriptIndex] = indexedCachedMessage
-    indexedCachedMessages[cachedIndex] = indexedCachedMessage
-  }
-
-  const activeCachedMessages = cachedMessagesForActiveRuntimeTurn(
-    indexedCachedMessages,
-    transcriptWithLiveMessages,
-    activeCachedIndexes
-  )
-  return mergeRuntimeTranscriptMessages(transcriptWithLiveMessages, activeCachedMessages)
-}
-
-function cachedMessagesForActiveRuntimeTurn(
-  cachedMessages: WorkbenchMessage[],
-  transcriptMessages: WorkbenchMessage[],
-  activeCachedIndexes: ReadonlySet<number>
-): WorkbenchMessage[] {
-  const activeStart = Math.min(...activeCachedIndexes)
-  if (!Number.isFinite(activeStart)) return []
-
-  let activeStartIndex = activeStart
-  for (let index = activeStartIndex - 1; index >= 0; index -= 1) {
-    if (cachedMessages[index]?.role !== 'user') continue
-    activeStartIndex = index
-    break
-  }
-
-  return cachedMessages.slice(activeStartIndex).filter(cachedMessage => {
-    if (cachedMessage.role === 'assistant' && isUnsettledRuntimeMessage(cachedMessage)) return true
-    return !transcriptMessages.some(transcriptMessage =>
-      runtimeMessagesRepresentSameTurnRole(transcriptMessage, cachedMessage)
-    )
-  })
-}
-
-function runtimeMessagesRepresentSameTurnRole(
-  left: WorkbenchMessage,
-  right: WorkbenchMessage
-): boolean {
-  if (left.id === right.id) return true
-  if (left.role !== right.role) return false
-
-  const leftIdentity = runtimeMessageTurnIdentity(left)
-  const sharesTurnIdentity = [...runtimeMessageTurnIdentity(right)].some(identity =>
-    leftIdentity.has(identity)
-  )
-  if (sharesTurnIdentity) return true
-  return left.role === 'user' && left.content === right.content
-}
-
 function isUnsettledRuntimeMessage(message: WorkbenchMessage): boolean {
   return (
     message.status === 'streaming' ||
@@ -2654,70 +2509,6 @@ function isUnsettledRuntimeMessage(message: WorkbenchMessage): boolean {
       )
     )
   )
-}
-
-function preserveSettledRuntimeBlocks(
-  transcriptMessages: WorkbenchMessage[],
-  cachedMessages: WorkbenchMessage[]
-): WorkbenchMessage[] {
-  const cachedAssistants = cachedMessages.filter(message => message.role === 'assistant')
-  const restoredSubtaskIds = new Set<string>()
-  let changed = false
-  const messages = transcriptMessages.map(message => {
-    if (message.role !== 'assistant' || !message.subtaskId) return message
-    if (restoredSubtaskIds.has(message.subtaskId)) return message
-    const cachedBlocks = collectCachedRuntimeBlocksForSubtask(cachedAssistants, message.subtaskId)
-    if (!cachedBlocks) return message
-    restoredSubtaskIds.add(message.subtaskId)
-    const blocks = mergeSettledRuntimeBlocks(message.blocks, cachedBlocks)
-    if (blocks === message.blocks) return message
-    changed = true
-    return { ...message, blocks }
-  })
-  return changed ? messages : transcriptMessages
-}
-
-function collectCachedRuntimeBlocksForSubtask(
-  cachedAssistants: WorkbenchMessage[],
-  subtaskId: string
-): WorkbenchMessage['blocks'] {
-  const orderedBlockIds: string[] = []
-  const blocksById = new Map<string, NonNullable<WorkbenchMessage['blocks']>[number]>()
-
-  cachedAssistants.forEach(message => {
-    if (message.subtaskId !== subtaskId) return
-    message.blocks?.forEach(block => {
-      if (!blocksById.has(block.id)) orderedBlockIds.push(block.id)
-      blocksById.set(block.id, block)
-    })
-  })
-
-  return orderedBlockIds.length
-    ? orderedBlockIds.map(blockId => blocksById.get(blockId)!)
-    : undefined
-}
-
-function mergeSettledRuntimeBlocks(
-  transcriptBlocks: WorkbenchMessage['blocks'],
-  cachedBlocks: WorkbenchMessage['blocks']
-): WorkbenchMessage['blocks'] {
-  const settledCachedBlocks = cachedBlocks?.filter(
-    block =>
-      (block.type === 'tool' || block.type === 'file_changes') &&
-      (block.status === 'done' || block.status === 'error')
-  )
-  if (!settledCachedBlocks?.length) return transcriptBlocks
-  if (!transcriptBlocks?.length) return settledCachedBlocks
-
-  const transcriptById = new Map(transcriptBlocks.map(block => [block.id, block]))
-  const cachedIds = new Set(settledCachedBlocks.map(block => block.id))
-  const hasMissingCachedBlock = settledCachedBlocks.some(block => !transcriptById.has(block.id))
-  if (!hasMissingCachedBlock) return transcriptBlocks
-
-  return [
-    ...settledCachedBlocks.map(block => transcriptById.get(block.id) ?? block),
-    ...transcriptBlocks.filter(block => !cachedIds.has(block.id)),
-  ]
 }
 
 function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
@@ -2760,7 +2551,12 @@ function transcriptRangeFromMessageIndexes(
   messages: WorkbenchMessage[]
 ): LoadedTranscriptRange | null {
   const indexes = messages
-    .map(getRuntimeMessageIndex)
+    .map(message =>
+      typeof message.runtimeMessageIndex === 'number' &&
+      Number.isFinite(message.runtimeMessageIndex)
+        ? message.runtimeMessageIndex
+        : null
+    )
     .filter((index): index is number => index !== null)
   if (indexes.length === 0) return null
   return {
@@ -2852,57 +2648,6 @@ function updateRuntimeSubagentStatuses(
 
 function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
   return messages.some(isUnsettledRuntimeMessage)
-}
-
-export function transcriptSettlesLatestSeededTurn(
-  transcriptMessages: WorkbenchMessage[],
-  seededMessages: WorkbenchMessage[]
-): boolean {
-  const latestSeededTurnIdentity = latestRuntimeTurnIdentity(seededMessages)
-  if (latestSeededTurnIdentity) {
-    return hasSettledAssistantForTurn(transcriptMessages, latestSeededTurnIdentity)
-  }
-
-  const latestSeededUser = [...seededMessages].reverse().find(message => message.role === 'user')
-  if (!latestSeededUser) return hasSettledAssistantMessage(transcriptMessages)
-
-  const latestMatchingUserIndex = findLastIndex(
-    transcriptMessages,
-    message => message.role === 'user' && message.id === latestSeededUser.id
-  )
-  if (latestMatchingUserIndex < 0) return false
-
-  return transcriptMessages
-    .slice(latestMatchingUserIndex + 1)
-    .some(message => message.role === 'assistant' && message.status !== 'streaming')
-}
-
-function latestRuntimeTurnIdentity(messages: WorkbenchMessage[]): ReadonlySet<string> | null {
-  const latestMessage = messages.at(-1)
-  if (!latestMessage) return null
-  const identity = runtimeMessageTurnIdentity(latestMessage)
-  return identity.size > 0 ? identity : null
-}
-
-function runtimeMessageTurnIdentity(message: WorkbenchMessage): ReadonlySet<string> {
-  return new Set(
-    [message.turnId, message.subtaskId]
-      .filter(value => value !== undefined && value !== null)
-      .map(value => String(value))
-  )
-}
-
-function hasSettledAssistantForTurn(
-  messages: WorkbenchMessage[],
-  turnIdentity: ReadonlySet<string>
-): boolean {
-  return messages.some(
-    message =>
-      message.role === 'assistant' &&
-      message.status !== 'streaming' &&
-      message.status !== 'pending' &&
-      [...runtimeMessageTurnIdentity(message)].some(identity => turnIdentity.has(identity))
-  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {

@@ -1704,6 +1704,10 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         active_root_turn_notification_id(&completed_turn, &state),
         None
     );
+    assert_eq!(
+        root_turn_notification_id(&completed_turn, &state).as_deref(),
+        Some("turn-current")
+    );
 
     let child_item = json!({
         "method": "item/started",
@@ -1715,6 +1719,20 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
+    assert_eq!(root_turn_notification_id(&child_item, &state), None);
+}
+
+#[test]
+fn turn_start_response_requires_protocol_turn_id() {
+    assert_eq!(
+        turn_start_response_turn_id(&json!({"turn": {"id": "turn-current"}})).as_deref(),
+        Some("turn-current")
+    );
+    assert_eq!(
+        turn_start_response_turn_id(&json!({"turnId": "legacy-turn"})),
+        None
+    );
+    assert_eq!(turn_start_response_turn_id(&json!({"turn": {}})), None);
 }
 
 #[test]

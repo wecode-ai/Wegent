@@ -233,7 +233,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", "2001").await;
+    wait_for_response_event(&mut events, "response.completed", "turn-1").await;
     wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
@@ -267,7 +267,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "taskId": "local-task-1"
                 },
                 "content": "continue from content",
-                "clientMessageId": "runtime-local-pane-1",
+                "clientUserMessageId": "runtime-local-pane-1",
                 "collaborationMode": "default",
                 "executionRequest": execution_request_with_model_config(
                     "continue from content",
@@ -410,7 +410,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .as_str()
         .expect("process block should have a generated id")
         .to_owned();
-    assert_eq!(process_block_id, "text-local-task-1-2001-1");
+    assert_eq!(process_block_id, "progress-2");
     assert_eq!(process_created["payload"]["data"]["block"]["type"], "text");
     assert_eq!(
         process_created["payload"]["data"]["block"]["content"],
@@ -1122,7 +1122,7 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .await
         .expect("second create should be accepted on the same shared app-server");
     assert_eq!(recovered["accepted"], true);
-    wait_for_response_event(&mut events, "response.completed", "6202").await;
+    wait_for_response_event(&mut events, "response.completed", "turn-recovered").await;
     wait_until_task_idle(&handler, "local-task-after-failure").await;
 
     let calls = read_json_lines(&log_path);
@@ -1317,7 +1317,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
     wait_for_thread_mapping(&handler, "local-task-goal-loop", "thread-goal").await;
     let goal_events = recv_events_until(&mut events, |received| {
         find_runtime_event(received, "response.completed", |event| {
-            event["payload"]["subtaskId"] == "6002"
+            event["payload"]["subtaskId"] == "turn-2"
         })
         .is_some()
             && find_runtime_event(received, "runtime.goal.updated", |event| {
@@ -1590,7 +1590,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", "2002").await;
+    wait_for_response_event(&mut events, "response.completed", "turn-1").await;
     wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
@@ -2387,17 +2387,16 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
-      progress_id='progress-1'
-      case "$line" in
-        *'"model":"gpt-4.1"'*) progress_id='progress-2' ;;
-      esac
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"item/started","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"Inspecting "}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"item_id":"'"$progress_id"'","delta":"workspace."}}}}'
-      printf '%s\n' '{{"method":"item/completed","params":{{"item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
-      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      turn_id="turn-$turn_count"
+      progress_id="progress-$turn_count"
+      final_id="final-$turn_count"
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"'"$turn_id"'","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"Inspecting "}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       if [ "$turn_count" -ge {} ]; then
         exit 0
       fi

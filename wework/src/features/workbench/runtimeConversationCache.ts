@@ -1,32 +1,39 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
+import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
+import type { RuntimeGuidanceAppliedPayload, RuntimeTaskAddress } from '@/types/api'
 import type {
-  Attachment,
-  RuntimeGuidanceAppliedPayload,
-  RuntimeTaskAddress,
-  TurnFileChangesSummary,
-} from '@/types/api'
-import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
+  RuntimeConversationTurn,
+  RuntimePaneQueuedMessage,
+  WorkbenchMessage,
+  ProcessingBlock,
+} from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
-import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import {
-  createAppliedRuntimeGuidanceMessage,
-  insertAppliedRuntimeGuidance,
-  transformRuntimePaneActionForGuidanceSplits,
-  type GuidanceSplitBoundaries,
-} from './runtimeGuidanceMessages'
+  appendRuntimeConversationGuidance,
+  mergeRuntimeConversationTurns,
+  projectRuntimeConversationTurns,
+  reduceRuntimeConversationTurns,
+} from './runtimeConversationTurns'
+import { createAppliedRuntimeGuidanceMessage } from './runtimeGuidanceMessages'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
-const messagesByConversation = new Map<string, WorkbenchMessage[]>()
+const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
+const listenersByConversation = new Map<string, Set<(action?: RuntimePaneMessageAction) => void>>()
+const runtimeTransportReplacedListeners = new Set<
+  (payload: RuntimeTransportReplacedPayload) => void
+>()
+const hydrationByConversation = new Map<
+  string,
+  {
+    token: symbol
+    bufferedActions: RuntimePaneMessageAction[]
+  }
+>()
 const queuedMessagesByConversation = new Map<string, RuntimePaneQueuedMessage[]>()
 const queuedMessagesPausedByConversation = new Map<string, boolean>()
+const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
-const guidanceSplitBoundariesByConversation = new Map<string, GuidanceSplitBoundaries>()
-
-export type RuntimeConversationQueueEvent = {
-  type: 'guidance_applied'
-  payload: RuntimeGuidanceAppliedPayload
-}
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -34,31 +41,190 @@ export interface ConversationScrollSnapshot {
 }
 
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
-  return touchEntry(messagesByConversation, runtimeConversationKey(address)) ?? []
+  const key = runtimeConversationKey(address)
+  return projectRuntimeConversationTurns(touchEntry(turnsByConversation, key) ?? [])
 }
 
-export function cacheRuntimeConversationMessages(
+export function subscribeRuntimeConversation(
   address: RuntimeTaskAddress,
-  messages: WorkbenchMessage[]
-) {
-  cacheBoundedEntry(messagesByConversation, runtimeConversationKey(address), messages)
+  listener: (action?: RuntimePaneMessageAction) => void
+): () => void {
+  const key = runtimeConversationKey(address)
+  const listeners = listenersByConversation.get(key) ?? new Set()
+  listeners.add(listener)
+  listenersByConversation.set(key, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) listenersByConversation.delete(key)
+  }
+}
+
+export function publishRuntimeTransportReplaced(payload: RuntimeTransportReplacedPayload): void {
+  runtimeTransportReplacedListeners.forEach(listener => listener(payload))
+}
+
+export function subscribeRuntimeTransportReplaced(
+  listener: (payload: RuntimeTransportReplacedPayload) => void
+): () => void {
+  runtimeTransportReplacedListeners.add(listener)
+  return () => runtimeTransportReplacedListeners.delete(listener)
+}
+
+export function beginRuntimeConversationHydration(address: RuntimeTaskAddress): symbol {
+  const key = runtimeConversationKey(address)
+  const existing = hydrationByConversation.get(key)
+  if (existing) return existing.token
+  const token = Symbol(key)
+  hydrationByConversation.set(key, { token, bufferedActions: [] })
+  return token
+}
+
+export function completeRuntimeConversationHydration(
+  address: RuntimeTaskAddress,
+  token: symbol,
+  snapshotTurns: RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  const hydration = hydrationByConversation.get(key)
+  if (hydration?.token !== token) return getRuntimeConversationMessages(address)
+
+  let turns = mergeRuntimeConversationTurns(turnsByConversation.get(key) ?? [], snapshotTurns)
+  for (const action of hydration.bufferedActions) {
+    turns = reduceRuntimeConversationTurns(turns, action)
+  }
+  hydrationByConversation.delete(key)
+  cacheBoundedEntry(turnsByConversation, key, turns)
+  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  return projectRuntimeConversationTurns(turns)
+}
+
+export function abortRuntimeConversationHydration(
+  address: RuntimeTaskAddress,
+  token: symbol
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  const hydration = hydrationByConversation.get(key)
+  if (hydration?.token !== token) return getRuntimeConversationMessages(address)
+
+  let turns = turnsByConversation.get(key) ?? []
+  for (const action of hydration.bufferedActions) {
+    turns = reduceRuntimeConversationTurns(turns, action)
+  }
+  hydrationByConversation.delete(key)
+  cacheBoundedEntry(turnsByConversation, key, turns)
+  notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
+  return projectRuntimeConversationTurns(turns)
+}
+
+export function reconcileRuntimeConversationSnapshot(
+  address: RuntimeTaskAddress,
+  snapshotTurns: RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  const localTurns = turnsByConversation.get(key) ?? []
+  const turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
+  cacheBoundedEntry(turnsByConversation, key, turns)
+  notifyRuntimeConversation(key)
+  return projectRuntimeConversationTurns(turns)
+}
+
+export function runtimeConversationSnapshotSettlesLatestTurn(
+  address: RuntimeTaskAddress,
+  snapshotTurns: RuntimeConversationTurn[]
+): boolean {
+  const localTurns = turnsByConversation.get(runtimeConversationKey(address)) ?? []
+  const latestLocalTurn = localTurns.at(-1)
+  if (!latestLocalTurn) return true
+
+  const snapshotTurn =
+    latestLocalTurn.id !== null
+      ? snapshotTurns.find(turn => turn.id === latestLocalTurn.id)
+      : snapshotTurns.find(turn =>
+          turnContainsClientUserMessage(turn, latestLocalTurn.clientUserMessageId)
+        )
+  return snapshotTurn ? !isUnsettledTurn(snapshotTurn) : false
 }
 
 export function applyRuntimeConversationAction(
   address: RuntimeTaskAddress,
   action: RuntimePaneMessageAction
-) {
+): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
-  const currentMessages = messagesByConversation.get(key) ?? []
-  const splitBoundaries = touchEntry(guidanceSplitBoundariesByConversation, key)
-  const actionForReduction = splitBoundaries
-    ? transformRuntimePaneActionForGuidanceSplits(action, splitBoundaries)
-    : action
-  cacheBoundedEntry(
-    messagesByConversation,
-    key,
-    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(currentMessages, actionForReduction)
+  const hydration = hydrationByConversation.get(key)
+  if (hydration) {
+    hydration.bufferedActions.push(action)
+    return projectRuntimeConversationTurns(turnsByConversation.get(key) ?? [])
+  }
+  const currentTurns = turnsByConversation.get(key) ?? []
+  const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
+  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  notifyRuntimeConversation(key, action)
+  return projectRuntimeConversationTurns(nextTurns)
+}
+
+export function updateRuntimeConversationBlocks(
+  address: RuntimeTaskAddress,
+  update: (block: ProcessingBlock) => ProcessingBlock
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn => ({
+      ...turn,
+      items: turn.items.map(item =>
+        item.type === 'block' ? { ...item, block: update(item.block) } : item
+      ),
+    }))
   )
+}
+
+export function removeRuntimeConversationTurn(
+  address: RuntimeTaskAddress,
+  identity: { turnId?: string; clientUserMessageId?: string }
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.filter(turn => {
+      if (identity.turnId && turn.id === identity.turnId) return false
+      if (
+        identity.clientUserMessageId &&
+        (turn.clientUserMessageId === identity.clientUserMessageId ||
+          turn.items.some(
+            item => item.type === 'user_message' && item.id === identity.clientUserMessageId
+          ))
+      ) {
+        return false
+      }
+      return true
+    })
+  )
+}
+
+export function replaceRuntimeConversationFromUserMessage(
+  address: RuntimeTaskAddress,
+  sourceClientUserMessageId: string,
+  replacement: WorkbenchMessage & { role: 'user' }
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns => {
+    const sourceTurnIndex = turns.findIndex(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === sourceClientUserMessageId)
+    )
+    if (sourceTurnIndex < 0) return turns
+    const retainedTurns = turns.slice(0, sourceTurnIndex)
+    return reduceRuntimeConversationTurns(retainedTurns, {
+      type: 'user_added',
+      message: replacement,
+    })
+  })
+}
+
+function updateRuntimeConversationTurns(
+  address: RuntimeTaskAddress,
+  update: (turns: RuntimeConversationTurn[]) => RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  const currentTurns = turnsByConversation.get(key) ?? []
+  const nextTurns = update(currentTurns)
+  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  notifyRuntimeConversation(key)
+  return projectRuntimeConversationTurns(nextTurns)
 }
 
 export function getRuntimeConversationQueuedMessages(
@@ -89,19 +255,6 @@ export function cacheRuntimeConversationQueuedMessagesByKey(
   cacheBoundedEntry(queuedMessagesByConversation, key, messages)
 }
 
-export function dispatchRuntimeConversationQueueEvent(
-  address: RuntimeTaskAddress,
-  event: RuntimeConversationQueueEvent
-) {
-  const key = runtimeConversationKey(address)
-  const messages = queuedMessagesByConversation.get(key)
-  if (!messages) return
-
-  const nextMessages = reduceRuntimeConversationQueue(messages, event)
-  if (nextMessages.length === messages.length) return
-  cacheRuntimeConversationQueuedMessagesByKey(key, nextMessages)
-}
-
 export function takeAppliedRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   payload: RuntimeGuidanceAppliedPayload
@@ -124,68 +277,86 @@ export function settleRuntimeConversationGuidance(
   address: RuntimeTaskAddress,
   payload: RuntimeGuidanceAppliedPayload
 ): RuntimePaneQueuedMessage | null {
+  const key = runtimeConversationKey(address)
+  const turns = turnsByConversation.get(key)
+  if (!turns) return null
+
   const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
   if (!guidanceMessage) return null
 
-  const key = runtimeConversationKey(address)
-  const messages = messagesByConversation.get(key) ?? []
-  if (messages.some(message => message.id === guidanceMessage.id)) return guidanceMessage
+  if (takeInterruptedRuntimeConversationGuidance(address, guidanceMessage.id)) {
+    notifyRuntimeConversation(key)
+    return guidanceMessage
+  }
+
+  if (turns.some(turn => turnContainsClientUserMessage(turn, guidanceMessage.id))) {
+    notifyRuntimeConversation(key)
+    return guidanceMessage
+  }
 
   const appliedGuidance = createAppliedRuntimeGuidanceMessage(guidanceMessage, payload)
-  cacheBoundedEntry(
-    messagesByConversation,
-    key,
-    insertAppliedRuntimeGuidance(
-      messages,
-      appliedGuidance,
-      getRuntimeConversationGuidanceSplitBoundaries(address)
-    )
-  )
+  const nextTurns = appendRuntimeConversationGuidance(turns, payload.subtaskId, appliedGuidance)
+  cacheBoundedEntry(turnsByConversation, key, nextTurns)
+  notifyRuntimeConversation(key)
   return guidanceMessage
 }
 
-export function getRuntimeConversationGuidanceSplitBoundaries(
-  address: RuntimeTaskAddress
-): GuidanceSplitBoundaries {
+export function markRuntimeConversationGuidanceInterrupted(
+  address: RuntimeTaskAddress,
+  clientGuidanceIds: Iterable<string>
+): void {
   const key = runtimeConversationKey(address)
-  const existing = touchEntry(guidanceSplitBoundariesByConversation, key)
-  if (existing) return existing
-  const boundaries: GuidanceSplitBoundaries = new Map()
-  cacheBoundedEntry(guidanceSplitBoundariesByConversation, key, boundaries)
-  return boundaries
+  const ids = interruptedGuidanceIdsByConversation.get(key) ?? new Set<string>()
+  for (const id of clientGuidanceIds) ids.add(id)
+  if (ids.size > 0) interruptedGuidanceIdsByConversation.set(key, ids)
 }
 
-export function reduceRuntimeConversationQueue(
-  messages: RuntimePaneQueuedMessage[],
-  event: RuntimeConversationQueueEvent
-): RuntimePaneQueuedMessage[] {
-  switch (event.type) {
-    case 'guidance_applied':
-      return messages.filter(message => {
-        if (message.id === event.payload.guidanceId) return false
-        return !(
-          message.status === 'sending' &&
-          message.deliveryMode === 'guidance' &&
-          Boolean(event.payload.message) &&
-          message.content === event.payload.message
-        )
-      })
+export function takeInterruptedRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  clientGuidanceId: string
+): boolean {
+  const key = runtimeConversationKey(address)
+  const ids = interruptedGuidanceIdsByConversation.get(key)
+  if (!ids?.delete(clientGuidanceId)) return false
+  if (ids.size === 0) interruptedGuidanceIdsByConversation.delete(key)
+  return true
+}
+
+export function clearInterruptedRuntimeConversationGuidanceExcept(
+  address: RuntimeTaskAddress,
+  retainedClientGuidanceId: string
+): void {
+  const key = runtimeConversationKey(address)
+  const ids = interruptedGuidanceIdsByConversation.get(key)
+  if (!ids) return
+  for (const id of ids) {
+    if (id !== retainedClientGuidanceId) ids.delete(id)
   }
+  if (ids.size === 0) interruptedGuidanceIdsByConversation.delete(key)
 }
 
 function findAppliedGuidanceMessage(
   messages: RuntimePaneQueuedMessage[],
   payload: RuntimeGuidanceAppliedPayload
 ): RuntimePaneQueuedMessage | undefined {
-  return messages.find(message => {
-    if (message.id === payload.guidanceId) return true
-    return (
-      message.status === 'sending' &&
-      message.deliveryMode === 'guidance' &&
-      Boolean(payload.message) &&
-      message.content === payload.message
-    )
-  })
+  const clientGuidanceId = payload.clientGuidanceId
+  if (!clientGuidanceId) return undefined
+  return messages.find(message => message.id === clientGuidanceId)
+}
+
+function turnContainsClientUserMessage(
+  turn: RuntimeConversationTurn,
+  clientUserMessageId: string | undefined
+): boolean {
+  if (!clientUserMessageId) return false
+  return (
+    turn.clientUserMessageId === clientUserMessageId ||
+    turn.items.some(item => item.type === 'user_message' && item.id === clientUserMessageId)
+  )
+}
+
+function isUnsettledTurn(turn: RuntimeConversationTurn): boolean {
+  return turn.status === 'pending' || turn.status === 'streaming'
 }
 
 export function getRuntimeConversationQueuePaused(address: RuntimeTaskAddress): boolean {
@@ -209,10 +380,6 @@ export function cacheRuntimeConversationQueuePausedByKey(key: string, paused: bo
 }
 
 export function runtimeConversationKey(address: RuntimeTaskAddress): string {
-  return runtimeConversationViewKey(address)
-}
-
-export function runtimeConversationViewKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
 }
 
@@ -241,30 +408,47 @@ export function cacheConversationVirtualMeasurements(key: string, measurements: 
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
-  messagesByConversation.delete(key)
+  turnsByConversation.delete(key)
+  hydrationByConversation.delete(key)
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
-  guidanceSplitBoundariesByConversation.delete(key)
-  const viewKey = runtimeConversationViewKey(address)
-  scrollSnapshotsByConversation.delete(viewKey)
-  virtualMeasurementsByConversation.delete(viewKey)
+  scrollSnapshotsByConversation.delete(key)
+  virtualMeasurementsByConversation.delete(key)
 }
 
 export function getRuntimeConversationCacheStats() {
   return {
-    messageEntries: messagesByConversation.size,
+    messageEntries: turnsByConversation.size,
     scrollSnapshotEntries: scrollSnapshotsByConversation.size,
     virtualMeasurementEntries: virtualMeasurementsByConversation.size,
   }
 }
 
 export function clearRuntimeConversationCacheForTests() {
-  messagesByConversation.clear()
+  turnsByConversation.clear()
+  listenersByConversation.clear()
+  runtimeTransportReplacedListeners.clear()
+  hydrationByConversation.clear()
   queuedMessagesByConversation.clear()
   queuedMessagesPausedByConversation.clear()
+  interruptedGuidanceIdsByConversation.clear()
   scrollSnapshotsByConversation.clear()
   virtualMeasurementsByConversation.clear()
-  guidanceSplitBoundariesByConversation.clear()
+}
+
+function notifyRuntimeConversation(key: string, action?: RuntimePaneMessageAction) {
+  listenersByConversation.get(key)?.forEach(listener => listener(action))
+}
+
+function notifyHydratedRuntimeConversation(
+  key: string,
+  bufferedActions: RuntimePaneMessageAction[]
+): void {
+  if (bufferedActions.length === 0) {
+    notifyRuntimeConversation(key)
+    return
+  }
+  bufferedActions.forEach(action => notifyRuntimeConversation(key, action))
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

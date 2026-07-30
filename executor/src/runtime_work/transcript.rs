@@ -98,6 +98,8 @@ fn transcript_messages_with_options(
             {
                 continue;
             }
+            let previous_block_count = assistant.blocks.len();
+            let previous_assistant_part_count = assistant.assistant_parts.len();
             match item_type(&item).as_str() {
                 "usermessage" => {
                     if is_internal_turn_abort_message(&item) {
@@ -323,6 +325,7 @@ fn transcript_messages_with_options(
                     }
                 }
             }
+            assistant.record_new_items(previous_block_count, previous_assistant_part_count);
         }
         push_accumulated_assistant(
             &mut messages,
@@ -874,8 +877,20 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
 struct AssistantTurnAccumulation {
     blocks: Vec<Value>,
     file_changes: Option<Value>,
-    assistant_parts: Vec<String>,
+    assistant_parts: Vec<AssistantTextPart>,
+    item_order: Vec<AssistantItemIdentity>,
     memory_citations: Vec<Value>,
+}
+
+struct AssistantTextPart {
+    id: String,
+    content: String,
+    created_at: i64,
+}
+
+enum AssistantItemIdentity {
+    Block(String),
+    Text(String),
 }
 
 impl AssistantTurnAccumulation {
@@ -884,6 +899,7 @@ impl AssistantTurnAccumulation {
             blocks: Vec::new(),
             file_changes,
             assistant_parts: Vec::new(),
+            item_order: Vec::new(),
             memory_citations: Vec::new(),
         }
     }
@@ -902,8 +918,74 @@ impl AssistantTurnAccumulation {
         self.blocks.clear();
         self.file_changes = None;
         self.assistant_parts.clear();
+        self.item_order.clear();
         self.memory_citations.clear();
     }
+
+    fn record_new_items(&mut self, previous_block_count: usize, previous_part_count: usize) {
+        let started_new_segment =
+            self.item_order.is_empty() && (previous_block_count > 0 || previous_part_count > 0);
+        let block_start = if started_new_segment {
+            0
+        } else {
+            previous_block_count.min(self.blocks.len())
+        };
+        self.item_order.extend(
+            self.blocks[block_start..]
+                .iter()
+                .filter(|block| !is_projected_guidance_block(block))
+                .filter_map(|block| string_field(block, "id"))
+                .map(AssistantItemIdentity::Block),
+        );
+
+        let part_start = if started_new_segment {
+            0
+        } else {
+            previous_part_count.min(self.assistant_parts.len())
+        };
+        self.item_order.extend(
+            self.assistant_parts[part_start..]
+                .iter()
+                .map(|part| AssistantItemIdentity::Text(part.id.clone())),
+        );
+    }
+
+    fn runtime_items(&self) -> Vec<Value> {
+        self.item_order
+            .iter()
+            .filter_map(|identity| match identity {
+                AssistantItemIdentity::Block(id) => self
+                    .blocks
+                    .iter()
+                    .find(|block| string_field(block, "id").as_deref() == Some(id.as_str()))
+                    .map(|block| {
+                        json!({
+                            "id": id,
+                            "type": "block",
+                            "block": block,
+                        })
+                    }),
+                AssistantItemIdentity::Text(id) => self
+                    .assistant_parts
+                    .iter()
+                    .find(|part| part.id == *id)
+                    .map(|part| {
+                        json!({
+                            "id": part.id,
+                            "type": "assistant_text",
+                            "content": part.content,
+                            "createdAt": part.created_at,
+                        })
+                    }),
+            })
+            .collect()
+    }
+}
+
+fn is_projected_guidance_block(block: &Value) -> bool {
+    string_field(block, "tool_name")
+        .or_else(|| string_field(block, "toolName"))
+        .is_some_and(|name| name == "conversation_guidance")
 }
 
 struct AssistantEmitContext<'a> {
@@ -939,6 +1021,7 @@ fn push_accumulated_assistant(
     } else {
         format!("{}-{}", context.turn_id, *segment_index)
     };
+    let runtime_items = assistant.runtime_items();
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         message_id: &message_id,
         turn_id: context.turn_id,
@@ -951,6 +1034,7 @@ fn push_accumulated_assistant(
         blocks: &assistant.blocks,
         file_changes: assistant.file_changes.clone(),
         assistant_parts: &assistant.assistant_parts,
+        runtime_items: &runtime_items,
         memory_citations: &assistant.memory_citations,
         options,
     }));
@@ -974,13 +1058,13 @@ fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
         "subtaskId": turn_id,
         "turnId": turn_id,
     });
-    if let Some(client_message_id) =
+    if let Some(client_user_message_id) =
         string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
     {
         if let Some(object) = message.as_object_mut() {
             object.insert(
-                "clientMessageId".to_owned(),
-                Value::String(client_message_id),
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id),
             );
         }
     }
@@ -1057,8 +1141,8 @@ pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &V
         return;
     };
     for key in [
-        "clientMessageId",
-        "client_message_id",
+        "clientUserMessageId",
+        "client_user_message_id",
         "source",
         "runtimeGoalRequest",
         "runtime_goal_request",
@@ -1325,7 +1409,11 @@ fn collect_assistant_message(
                 }
                 AssistantMessagePhase::Final => {
                     if !duplicates_completed_plan_block(&content, &assistant.blocks) {
-                        assistant.assistant_parts.push(content);
+                        assistant.assistant_parts.push(AssistantTextPart {
+                            id: item_id(item, "assistant-text"),
+                            content,
+                            created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                        });
                     }
                 }
             }
@@ -1435,7 +1523,8 @@ struct AssistantMessageDraft<'a> {
     stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
-    assistant_parts: &'a [String],
+    assistant_parts: &'a [AssistantTextPart],
+    runtime_items: &'a [Value],
     memory_citations: &'a [Value],
     options: TranscriptBuildOptions,
 }
@@ -1444,12 +1533,18 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     let mut message = json!({
         "id": format!("assistant-{}", draft.message_id),
         "role": "assistant",
-        "content": draft.assistant_parts.join("\n\n"),
+        "content": draft
+            .assistant_parts
+            .iter()
+            .map(|part| part.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         "status": draft.status,
         "subtaskId": draft.subtask_id,
         "turnId": draft.turn_id,
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
+        "runtimeItems": draft.runtime_items,
     });
     if draft.options.truncate_content {
         limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
@@ -3036,6 +3131,18 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+        assert_eq!(messages[1]["runtimeItems"][0]["id"], "commentary-1");
+        assert_eq!(messages[1]["runtimeItems"][0]["type"], "block");
+        assert_eq!(messages[1]["runtimeItems"][1]["id"], "reasoning-1");
+        assert_eq!(messages[1]["runtimeItems"][1]["type"], "block");
+        assert_eq!(messages[1]["runtimeItems"][2]["id"], "call-1");
+        assert_eq!(messages[1]["runtimeItems"][2]["type"], "block");
+        assert_eq!(messages[1]["runtimeItems"][3]["id"], "final-1");
+        assert_eq!(messages[1]["runtimeItems"][3]["type"], "assistant_text");
+        assert_eq!(
+            messages[1]["runtimeItems"][3]["createdAt"],
+            1_780_000_005_000_i64
+        );
     }
 
     #[test]
@@ -3405,7 +3512,10 @@ mod tests {
 
         assert_eq!(user_messages.len(), 1);
         assert_eq!(user_messages[0]["content"], "start app");
-        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
+        assert_eq!(
+            user_messages[0]["clientUserMessageId"],
+            "runtime-local-pane-1"
+        );
         assert!(!messages.iter().any(|message| {
             message["content"]
                 .as_str()
@@ -3454,7 +3564,10 @@ mod tests {
             user_messages[0]["content"],
             "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
         );
-        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
+        assert_eq!(
+            user_messages[0]["clientUserMessageId"],
+            "runtime-local-pane-1"
+        );
     }
 
     #[test]
@@ -4022,6 +4135,8 @@ mod tests {
             messages[3]["blocks"][1]["content"],
             "I will use the lockfile context."
         );
+        assert_eq!(messages[3]["runtimeItems"][0]["id"], "commentary-2");
+        assert_eq!(messages[3]["runtimeItems"].as_array().unwrap().len(), 1);
     }
 
     #[test]

@@ -385,6 +385,7 @@ impl CodexAppServerClient {
         &self,
         thread_id: &str,
         expected_turn_id: &str,
+        client_user_message_id: Option<String>,
         input: Value,
         additional_context: Option<Value>,
     ) -> Result<String, String> {
@@ -395,6 +396,14 @@ impl CodexAppServerClient {
             Value::String(expected_turn_id.to_owned()),
         );
         params.insert("input".to_owned(), input);
+        if let Some(client_user_message_id) =
+            client_user_message_id.filter(|value| !value.trim().is_empty())
+        {
+            params.insert(
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id),
+            );
+        }
         if let Some(additional_context) = additional_context.filter(Value::is_object) {
             params.insert("additionalContext".to_owned(), additional_context);
         }
@@ -1128,11 +1137,10 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .await);
             }
         };
-        let active_turn_id = turn_start_response_turn_id(&turn);
-        if let (Some(turn_id), Some(callback)) =
-            (active_turn_id.as_deref(), active_turn_started.as_ref())
-        {
-            callback(thread_id.clone(), turn_id.to_owned());
+        let active_turn_id = turn_start_response_turn_id(&turn)
+            .ok_or_else(|| "turn/start response is missing required turn.id".to_owned())?;
+        if let Some(callback) = active_turn_started.as_ref() {
+            callback(thread_id.clone(), active_turn_id.clone());
         }
         let outcome_result = read_shared_turn_notifications(
             client,
@@ -1142,7 +1150,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
-                active_turn_id,
+                active_turn_id: Some(active_turn_id),
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -1535,19 +1543,43 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
+        log_codex_raw_turn_message(&message);
+
+        if let (Some(active_turn_id), Some(notification_turn_id)) = (
+            options.active_turn_id.as_deref(),
+            root_turn_notification_id(&message, state),
+        ) {
+            if notification_turn_id != active_turn_id {
+                log_executor_event(
+                    "codex stale turn notification dropped",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("active_turn_id", active_turn_id.to_owned()),
+                        ("notification_turn_id", notification_turn_id),
+                        (
+                            "method",
+                            message
+                                .get("method")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<none>")
+                                .to_owned(),
+                        ),
+                    ],
+                );
+                continue;
+            }
+        }
         if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
         {
             waiting_for_initial_progress = false;
         }
-        log_codex_raw_turn_message(&message);
-
         if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
-            if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
+            if options.active_turn_id.is_none() {
                 if let Some(callback) = options.active_turn_started.as_ref() {
                     callback(thread_id.to_owned(), turn_id.clone());
                 }
+                options.active_turn_id = Some(turn_id);
             }
-            options.active_turn_id = Some(turn_id);
         }
 
         if let Some(sender) = &options.notifications {
@@ -1766,14 +1798,16 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
     response
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
-        .or_else(|| string_value(response, "turnId"))
-        .or_else(|| string_value(response, "turn_id"))
 }
 
 fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
     if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
         return None;
     }
+    root_turn_notification_id(message, state)
+}
+
+fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
     let params = message_params(message);
     if state.is_subagent_message(params) {
         return None;

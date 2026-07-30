@@ -132,6 +132,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       taskId?: string
       subtaskId?: string
+      clientUserMessageId?: string
       shellType?: string
     }
   | {
@@ -146,6 +147,7 @@ export type WorkbenchMessageAction<
       type: 'assistant_chunk'
       messageId?: string
       subtaskId?: string
+      itemId?: string
       content: string
       offset?: number
       reasoningChunk?: string

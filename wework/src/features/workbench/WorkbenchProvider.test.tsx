@@ -31,7 +31,7 @@ import {
   type WorkbenchPaneIdentity,
 } from '@/components/layout/workbenchPaneIdentity'
 import {
-  cacheRuntimeConversationMessages,
+  applyRuntimeConversationAction,
   cacheRuntimeConversationQueuedMessages,
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
@@ -45,8 +45,10 @@ import type {
   RuntimeTaskCreateResponse,
   RuntimeGoal,
   RuntimeGuidanceResponse,
+  NormalizedRuntimeMessage,
   RuntimeTranscriptResponse,
   RuntimeTranscriptRequest,
+  RuntimeTranscriptTurn,
   TurnFileChangesSummary,
   RuntimeWorkListResponse,
   UnifiedModel,
@@ -243,7 +245,7 @@ function createLocalImageAttachment(overrides: Partial<Attachment> = {}): Attach
 }
 
 function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
-  return {
+  const api = {
     listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
     upsertDeviceWorkspace: vi.fn(),
     prepareDeviceWorkspace: vi.fn(),
@@ -375,6 +377,113 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
     forkRuntimeTask: vi.fn(),
     ...overrides,
   }
+  const getRuntimeTranscript = api.getRuntimeTranscript as (
+    request: RuntimeTranscriptRequest
+  ) => Promise<RuntimeTranscriptResponse>
+  api.getRuntimeTranscript = vi.fn(async (request: RuntimeTranscriptRequest) =>
+    withCanonicalTranscriptTurns(await getRuntimeTranscript(request))
+  )
+  return api
+}
+
+function withCanonicalTranscriptTurns(
+  transcript: RuntimeTranscriptResponse
+): RuntimeTranscriptResponse {
+  if (Array.isArray(transcript.turns)) return transcript
+  return {
+    ...transcript,
+    turns: canonicalTranscriptTurnsFromMessages(transcript.messages ?? []),
+  }
+}
+
+function canonicalTranscriptTurnsFromMessages(
+  messages: NormalizedRuntimeMessage[]
+): RuntimeTranscriptTurn[] {
+  const turns: RuntimeTranscriptTurn[] = []
+  const turnsById = new Map<string, RuntimeTranscriptTurn>()
+  let pendingUsers: NormalizedRuntimeMessage[] = []
+
+  const getTurn = (turnId: string) => {
+    const existing = turnsById.get(turnId)
+    if (existing) return existing
+    const turn: RuntimeTranscriptTurn = {
+      id: turnId,
+      items: [],
+      status: 'done',
+      runtimeStatus: 'done',
+    }
+    turnsById.set(turnId, turn)
+    turns.push(turn)
+    return turn
+  }
+
+  const appendUser = (turn: RuntimeTranscriptTurn, message: NormalizedRuntimeMessage) => {
+    const clientUserMessageId = message.clientUserMessageId ?? message.id
+    turn.items.push({
+      id: clientUserMessageId,
+      type: 'user_message',
+      message: {
+        ...message,
+        clientUserMessageId,
+        subtaskId: turn.id,
+        turnId: turn.id,
+      },
+    })
+  }
+
+  for (const message of messages) {
+    const explicitTurnId = message.turnId ?? message.subtaskId
+    if (message.role === 'user' && explicitTurnId === undefined) {
+      pendingUsers.push(message)
+      continue
+    }
+
+    const turnId = String(explicitTurnId ?? `fixture-turn:${message.id}`)
+    const turn = getTurn(turnId)
+    pendingUsers.forEach(user => appendUser(turn, user))
+    pendingUsers = []
+
+    if (message.role === 'user') {
+      appendUser(turn, message)
+      continue
+    }
+    if (message.role !== 'assistant') continue
+
+    if (message.content) {
+      turn.items.push({
+        id: message.id,
+        type: 'assistant_text',
+        content: message.content,
+        createdAt: message.createdAt,
+      })
+    }
+    for (const block of message.blocks ?? []) {
+      if (!block.id) continue
+      turn.items.push({
+        id: String(block.id),
+        type: 'block',
+        block:
+          block.createdAt !== undefined || block.created_at !== undefined
+            ? block
+            : {
+                ...block,
+                createdAt: Date.parse(message.createdAt ?? new Date().toISOString()),
+              },
+      })
+    }
+    turn.status = message.status ?? 'done'
+    turn.runtimeStatus = message.runtimeStatus ?? message.status ?? 'done'
+    turn.completedAt = message.completedAt
+    turn.error = message.error
+    turn.errorType = message.errorType
+    turn.stoppedNotice = message.stoppedNotice
+    turn.fileChanges = message.fileChanges
+  }
+
+  for (const user of pendingUsers) {
+    appendUser(getTurn(`fixture-turn:${user.id}`), user)
+  }
+  return turns
 }
 
 function createWorkbenchServices(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices {
@@ -475,12 +584,13 @@ function renderWorkbenchWithDefaultServices(children: React.ReactNode) {
 
 function hasRuntimeStreamHandler(handlers: ChatStreamHandlers): boolean {
   return Boolean(
-    handlers.onChatStart ||
-    handlers.onChatChunk ||
-    handlers.onChatDone ||
-    handlers.onChatError ||
-    handlers.onBlockCreated ||
-    handlers.onBlockUpdated
+    !handlers.scope &&
+    (handlers.onChatStart ||
+      handlers.onChatChunk ||
+      handlers.onChatDone ||
+      handlers.onChatError ||
+      handlers.onBlockCreated ||
+      handlers.onBlockUpdated)
   )
 }
 
@@ -1828,7 +1938,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('keeps a background runtime task settled when its terminal refresh is stale', async () => {
     let backgroundStreamHandlers: ChatStreamHandlers | null = null
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.scope?.taskId === 'runtime-a') {
+      if (hasRuntimeStreamHandler(handlers)) {
         backgroundStreamHandlers = handlers
       }
       return vi.fn()
@@ -1911,7 +2021,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     }
     let backgroundStreamHandlers: ChatStreamHandlers | null = null
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.scope?.taskId === address.taskId) {
+      if (hasRuntimeStreamHandler(handlers)) {
         backgroundStreamHandlers = handlers
       }
       return vi.fn()
@@ -1965,6 +2075,17 @@ describe('WorkbenchProvider runtime tasks', () => {
         createdAt: '2026-07-27T00:00:00.000Z',
       },
     ])
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'assistant-item-1',
+      content: '正在检查',
+    })
 
     renderWorkbench(<RuntimeRunningTasksProbe />, services)
 
@@ -1977,22 +2098,19 @@ describe('WorkbenchProvider runtime tasks', () => {
       backgroundStreamHandlers?.onGuidanceApplied?.({
         taskId: address.taskId,
         deviceId: address.deviceId,
+        subtaskId: 'turn-1',
         guidanceId: 'client-guidance-1',
+        clientGuidanceId: 'client-guidance-1',
         message: '继续检查后台任务',
         appliedAtMs: Date.now(),
       })
     })
 
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
-    expect(getRuntimeConversationMessages(address)).toEqual([
-      {
-        id: 'client-guidance-1',
-        role: 'user',
-        content: '继续检查后台任务',
-        status: 'done',
-        createdAt: expect.any(String),
-        runtimeGuidance: true,
-      },
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      '正在检查',
+      '继续检查后台任务',
+      '',
     ])
   })
 
@@ -3927,7 +4045,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
-        clientMessageId: expect.stringMatching(/^runtime-local-pane-/),
+        clientUserMessageId: expect.stringMatching(/^runtime-local-pane-/),
       })
     )
     await waitFor(() =>
@@ -4862,6 +4980,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       const chunkPayload = {
         taskId: request.taskId,
         subtaskId: '102',
+        itemId: 'assistant-streamed-answer',
         content: 'streamed answer',
         offset: 0,
         deviceId: 'device-1',
@@ -4975,7 +5094,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     let createdClientMessageId: string | undefined
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => {
-        createdClientMessageId = request.clientMessageId
+        createdClientMessageId = request.clientUserMessageId
         return {
           accepted: true,
           deviceId: 'device-1',
@@ -4995,7 +5114,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'user',
             content: '修复 CI',
             status: 'done',
-            clientMessageId: createdClientMessageId,
+            clientUserMessageId: createdClientMessageId,
           },
           {
             id: `${address.taskId}:assistant:1`,
@@ -5941,15 +6060,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       taskId: 'runtime-worktree',
       workspacePath: '/workspace/worktrees/9/project-alpha',
     }
-    cacheRuntimeConversationMessages(archivedAddress, [
-      {
+    applyRuntimeConversationAction(archivedAddress, {
+      type: 'user_added',
+      message: {
         id: 'cached-assistant',
-        role: 'assistant',
+        role: 'user',
         content: 'cached archived transcript',
         status: 'done',
         createdAt: '2026-07-24T00:00:00.000Z',
       },
-    ])
+    })
 
     renderWorkbench(<ArchiveRuntimeTaskProbe />, services)
 
@@ -6333,6 +6453,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: request.taskId,
         subtaskId: '102',
+        itemId: 'assistant-streamed-answer',
         content: 'streamed answer',
         offset: 0,
         deviceId: 'device-1',
@@ -6571,11 +6692,11 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-block-times')).toHaveTextContent(
-        '1780617600000|1780617606000'
+        '1780617606000|1780617600000'
       )
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
-      'text:处理完成:done|thinking:读取历史记录:done'
+      'thinking:读取历史记录:done|text:处理完成:done'
     )
   })
 
@@ -7215,7 +7336,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -7395,6 +7516,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        itemId: 'assistant-retained-1',
         offset: 0,
         content: 'retained stream output',
         deviceId: 'device-1',
@@ -7558,7 +7680,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -8076,11 +8198,9 @@ describe('WorkbenchProvider runtime tasks', () => {
   })
 
   test('restores queued follow-ups after switching away from a streaming task', async () => {
-    const streamHandlersByTask = new Map<string, ChatStreamHandlers>()
+    let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (hasRuntimeStreamHandler(handlers) && handlers.scope?.taskId) {
-        streamHandlersByTask.set(handlers.scope.taskId, handlers)
-      }
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
@@ -8114,9 +8234,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<FollowUpProbe />, services)
 
     await userEvent.click(await screen.findByText('open follow-up runtime a'))
-    await waitFor(() => expect(streamHandlersByTask.get('runtime-a')).toBeDefined())
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     act(() => {
-      streamHandlersByTask.get('runtime-a')?.onChatStart?.({
+      streamHandlers.onChatStart?.({
         taskId: 'runtime-a',
         subtaskId: '101',
         shellType: 'Chat',
@@ -8154,7 +8274,7 @@ describe('WorkbenchProvider runtime tasks', () => {
   test('refreshes runtime work when the current runtime task starts streaming', async () => {
     let streamHandlers: Parameters<WorkbenchServices['chatStream']['subscribe']>[0] | null = null
     const subscribe = vi.fn(handlers => {
-      streamHandlers = handlers
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
     const listRuntimeWork = vi.fn().mockResolvedValue(createRuntimeWork())
@@ -8504,7 +8624,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             id: 'runtime-a:assistant:1',
             role: 'assistant',
             content: '已经输出的中间内容',
-            status: 'streaming',
+            status: 'done',
             subtaskId: '101',
           },
         ],
@@ -8627,7 +8747,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('accepts current runtime stream blocks when device id is omitted', async () => {
+  test('accepts current runtime stream blocks with their full task address', async () => {
     let streamHandlers: Parameters<WorkbenchServices['chatStream']['subscribe']>[0] | null = null
     const subscribe = vi.fn(handlers => {
       if (handlers.onBlockCreated) streamHandlers = handlers
@@ -8664,6 +8784,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
         subtaskId: '101',
         shellType: 'Codex',
+        deviceId: 'device-1',
       })
     })
 
@@ -8673,6 +8794,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers?.onBlockCreated?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        deviceId: 'device-1',
         block: {
           id: 'tool-1',
           type: 'tool',
@@ -8904,7 +9026,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -9047,7 +9169,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -9198,6 +9320,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'assistant',
             content: 'working',
             status: 'streaming',
+            subtaskId: '101',
           },
         ],
       }),
@@ -9234,6 +9357,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        itemId: 'assistant-before-guidance',
         content: 'before ',
         offset: 0,
         deviceId: 'device-1',
@@ -9241,7 +9365,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-        'first message|working|before '
+        'first message|working\n\nbefore '
       )
     )
     await userEvent.click(screen.getByText('set follow-up'))
@@ -9263,7 +9387,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-      'first message|working|before '
+      'first message|working\n\nbefore '
     )
     expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
@@ -9290,13 +9414,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         subtaskId: '101',
         deviceId: 'device-1',
         guidanceId: 'raw-guidance-item',
+        clientGuidanceId: queuedMessageId ?? undefined,
         message: '继续修',
         appliedAtMs: Date.now(),
       })
     })
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-      'first message|working|before |继续修|'
+      'first message|working\n\nbefore |继续修|'
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
       'tool:conversation_guidance:done'
@@ -9307,6 +9432,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        itemId: 'assistant-after-guidance',
         content: 'after',
         offset: 0,
         deviceId: 'device-1',
@@ -9314,7 +9440,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-        'first message|working|before |继续修|after'
+        'first message|working\n\nbefore |继续修|after'
       )
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
@@ -9324,6 +9450,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: 'runtime-a',
         subtaskId: '101',
+        itemId: 'assistant-after-guidance',
         content: ' more',
         offset: 5,
         deviceId: 'device-1',
@@ -9345,7 +9472,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-        'first message|working|before |继续修|after more'
+        'first message|working\n\nbefore |继续修|after more'
       )
     )
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
@@ -9416,6 +9543,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'assistant',
             content: 'working',
             status: 'streaming',
+            subtaskId: '101',
           },
         ],
       }),
@@ -9454,6 +9582,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set follow-up'))
     await userEvent.click(screen.getByText('add local image attachment'))
     await userEvent.click(screen.getByText('send follow-up as guidance'))
+    const queuedMessageId = screen.getByTestId('queued-message-ids').textContent
 
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     expect(setRuntimeGoal).toHaveBeenCalledWith({
@@ -9471,6 +9600,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subtaskId: '101',
         deviceId: 'device-1',
         guidanceId: 'raw-guidance-item',
+        clientGuidanceId: queuedMessageId ?? undefined,
         message: '继续修',
         appliedAtMs: Date.now(),
       })
@@ -9598,6 +9728,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       streamHandlers.onChatChunk?.({
         taskId: 'runtime-a',
         subtaskId: '102',
+        itemId: 'assistant-replacement',
         content: 'replacement',
         offset: 0,
         deviceId: 'device-1',
@@ -9609,22 +9740,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
 
-    cacheRuntimeConversationMessages(
-      {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-a',
-      },
-      [
-        {
-          id: 'runtime-a:assistant:1',
-          role: 'assistant',
-          content: 'working',
-          status: 'streaming',
-          createdAt: '2026-07-27T00:00:00.000Z',
-        },
-      ]
-    )
     await act(async () => {
       streamHandlers.onGuidanceApplied?.({
         taskId: 'runtime-a',
@@ -9993,7 +10108,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -10104,6 +10219,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'assistant',
             content: 'working',
             status: 'streaming',
+            subtaskId: '101',
           },
         ],
       }),
@@ -10263,6 +10379,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set ls follow-up'))
     await userEvent.click(screen.getByText('send follow-up'))
     await userEvent.click(screen.getByText('guide first queued'))
+    const queuedMessageId = screen.getByTestId('queued-message-ids').textContent
 
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     expect(guideRuntimeTask).toHaveBeenCalledWith({
@@ -10280,6 +10397,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         subtaskId: '101',
         deviceId: 'device-1',
         guidanceId: 'raw-guidance-item',
+        clientGuidanceId: queuedMessageId ?? undefined,
         message: '执行ls',
         appliedAtMs: Date.now(),
       })
@@ -10335,7 +10453,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
       attachmentIds: [45],
@@ -10385,7 +10503,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
-      clientMessageId: expect.any(String),
+      clientUserMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
       attachments: [
@@ -10552,6 +10670,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         shellType: 'Codex',
         deviceId: 'device-1',
       })
+      streamHandlers.onChatChunk?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        itemId: 'stale-runtime-a-message',
+        content: 'stale runtime a output',
+        offset: 0,
+        deviceId: 'device-1',
+      })
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
         subtaskId: '101',
@@ -10563,6 +10689,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-b',
         subtaskId: '102',
         shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatChunk?.({
+        taskId: 'runtime-b',
+        subtaskId: '102',
+        itemId: 'current-runtime-b-message',
+        content: 'current runtime b output',
+        offset: 0,
         deviceId: 'device-1',
       })
       streamHandlers.onChatDone?.({

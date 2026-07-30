@@ -17,9 +17,16 @@ import type {
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
+  RuntimeTranscriptTurn,
   TurnFileChangesSummary,
 } from '@/types/api'
-import type { MessageSource, ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type {
+  MessageSource,
+  ProcessingBlock,
+  RuntimeConversationItem,
+  RuntimeConversationTurn,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
@@ -30,6 +37,7 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
+  consumeConversationEvents?: boolean
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
@@ -43,13 +51,68 @@ export interface RuntimeTaskStreamHandlers {
   onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
 }
 
+export interface RuntimeConversationStreamHandlers {
+  onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
+  onAssistantStart?: (address: RuntimeTaskAddress) => void
+  onAssistantSettled?: (address: RuntimeTaskAddress) => void
+  onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
+  onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
+  onGuidanceApplied?: (address: RuntimeTaskAddress, payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
+}
+
+export function createRuntimeConversationStreamHandlers(
+  handlers: RuntimeConversationStreamHandlers
+): ChatStreamHandlers {
+  const taskHandlers = new Map<string, ChatStreamHandlers>()
+
+  const resolve = (payload: { deviceId?: string; taskId?: string }): ChatStreamHandlers | null => {
+    if (!payload.deviceId || !payload.taskId) {
+      console.warn('[Wework] Dropped runtime event without task address', {
+        deviceId: payload.deviceId ?? null,
+        taskId: payload.taskId ?? null,
+      })
+      return null
+    }
+    const address = {
+      deviceId: payload.deviceId,
+      taskId: payload.taskId,
+    }
+    const key = `${address.deviceId}:${address.taskId}`
+    const existing = taskHandlers.get(key)
+    if (existing) return existing
+
+    const created = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => handlers.onMessageAction(address, action),
+      onAssistantStart: () => handlers.onAssistantStart?.(address),
+      onAssistantSettled: () => handlers.onAssistantSettled?.(address),
+      onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
+      onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
+      onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
+    })
+    taskHandlers.set(key, created)
+    return created
+  }
+
+  return {
+    onChatStart: payload => resolve(payload)?.onChatStart?.(payload),
+    onChatChunk: payload => resolve(payload)?.onChatChunk?.(payload),
+    onChatDone: payload => resolve(payload)?.onChatDone?.(payload),
+    onChatError: payload => resolve(payload)?.onChatError?.(payload),
+    onBlockCreated: payload => resolve(payload)?.onBlockCreated?.(payload),
+    onBlockUpdated: payload => resolve(payload)?.onBlockUpdated?.(payload),
+    onGuidanceApplied: payload => resolve(payload)?.onGuidanceApplied?.(payload),
+    onRuntimeTransportReplaced: payload => handlers.onRuntimeTransportReplaced?.(payload),
+  }
+}
+
 export function createRuntimeTaskStreamHandlers(
   address: RuntimeTaskAddress,
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
 
-  return {
+  const streamHandlers: ChatStreamHandlers = {
     scope: {
       deviceId: address.deviceId,
       taskId: address.taskId,
@@ -67,6 +130,7 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_started',
         taskId: payload.taskId,
         subtaskId: identity.subtaskId,
+        clientUserMessageId: payload.clientUserMessageId,
         shellType: payload.shellType,
       })
       handlers.onRefreshWorkLists?.()
@@ -110,6 +174,7 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onMessageAction({
         type: 'assistant_chunk',
         subtaskId: identity.subtaskId,
+        itemId: payload.itemId,
         content: payload.content,
         offset: payload.offset,
         reasoningChunk,
@@ -140,7 +205,6 @@ export function createRuntimeTaskStreamHandlers(
         hasFileChanges: Boolean(fileChanges),
         blockCount: blocks?.length ?? 0,
       })
-      handlers.onAssistantSettled?.()
       if (payload.result.contextUsage) {
         handlers.onContextUsageUpdated?.(payload.result.contextUsage)
       }
@@ -153,10 +217,10 @@ export function createRuntimeTaskStreamHandlers(
             : typeof payload.result.turn_id === 'string'
               ? payload.result.turn_id
               : undefined,
-        content: doneContent(payload.result),
         blocks,
         fileChanges,
       })
+      handlers.onAssistantSettled?.()
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
@@ -178,7 +242,6 @@ export function createRuntimeTaskStreamHandlers(
       logAcceptedRuntimeTerminalEvent('chat:error', address, payload, {
         errorType: payload.type ?? null,
       })
-      handlers.onAssistantSettled?.()
       if (isCancelledRuntimeError(payload)) {
         handlers.onMessageAction({
           type: 'assistant_cancelled',
@@ -192,6 +255,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
+      handlers.onAssistantSettled?.()
       streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
@@ -227,7 +291,6 @@ export function createRuntimeTaskStreamHandlers(
         handlers.onMessageAction({
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
-          content: '',
         })
         handlers.onAssistantSettled?.()
         handlers.onRefreshWorkLists?.()
@@ -334,6 +397,17 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onRuntimeTransportReplaced?.(payload)
     },
   }
+  if (handlers.consumeConversationEvents !== false) return streamHandlers
+  return {
+    scope: streamHandlers.scope,
+    onSubagentActivity: streamHandlers.onSubagentActivity,
+    onRuntimeGoalUpdated: streamHandlers.onRuntimeGoalUpdated,
+    onRuntimeGoalCleared: streamHandlers.onRuntimeGoalCleared,
+    onRuntimeGoalContinuation: streamHandlers.onRuntimeGoalContinuation,
+    onRuntimePlanUpdated: streamHandlers.onRuntimePlanUpdated,
+    onGuidanceApplied: streamHandlers.onGuidanceApplied,
+    onRuntimeTransportReplaced: streamHandlers.onRuntimeTransportReplaced,
+  }
 }
 
 function isStandaloneCompletedContextCompaction(
@@ -359,44 +433,81 @@ function normalizeToolName(toolName: string): string {
 export function runtimeMessagesToWorkbenchMessages(
   messages: NormalizedRuntimeMessage[]
 ): WorkbenchMessage[] {
-  return collapseRetriedFailedTurns(messages.map(runtimeMessageToWorkbenchMessage))
+  return messages.map(runtimeMessageToWorkbenchMessage)
 }
 
-function collapseRetriedFailedTurns(messages: WorkbenchMessage[]): WorkbenchMessage[] {
-  const collapsed: WorkbenchMessage[] = []
-  let latestUserId: string | null = null
-  let latestUserIndex = -1
-
-  for (const message of messages) {
-    if (message.role !== 'user') {
-      collapsed.push(message)
-      continue
+export function runtimeTranscriptTurnsToConversationTurns(
+  turns: RuntimeTranscriptTurn[]
+): RuntimeConversationTurn[] {
+  return turns.flatMap(turn => {
+    if (typeof turn.id !== 'string' || !turn.id.trim() || !Array.isArray(turn.items)) return []
+    const items: RuntimeConversationItem[] = []
+    for (const item of turn.items) {
+      if (!item || typeof item.id !== 'string' || !item.id.trim()) return []
+      switch (item.type) {
+        case 'user_message': {
+          const message = runtimeMessageToWorkbenchMessage(item.message)
+          if (message.role === 'user') {
+            items.push({
+              id: item.id,
+              type: 'user_message',
+              message: { ...message, role: 'user' },
+            })
+          }
+          break
+        }
+        case 'assistant_text': {
+          if (typeof item.content === 'string') {
+            items.push({
+              id: item.id,
+              type: 'assistant_text',
+              content: stripCodexUiDirectives(item.content),
+              createdAt: runtimeTimestampToIso(item.createdAt),
+            })
+          }
+          break
+        }
+        case 'block': {
+          const block = normalizeProcessingBlock(turn.id, item.block, 0)
+          if (block) items.push({ id: item.id, type: 'block', block })
+          break
+        }
+      }
     }
-
-    const latestAttempt = collapsed.slice(latestUserIndex + 1)
-    const retriesLatestFailedTurn =
-      latestUserId === message.id &&
-      latestAttempt.some(
-        candidate => candidate.role === 'assistant' && candidate.status === 'failed'
-      )
-    if (retriesLatestFailedTurn) {
-      collapsed.splice(latestUserIndex + 1)
-      continue
-    }
-
-    latestUserId = message.id
-    latestUserIndex = collapsed.length
-    collapsed.push(message)
-  }
-
-  return collapsed
+    const normalizedStatus = String(turn.runtimeStatus ?? turn.status ?? '').toLowerCase()
+    const status: RuntimeConversationTurn['status'] =
+      normalizedStatus === 'cancelled'
+        ? 'cancelled'
+        : normalizedStatus === 'failed'
+          ? 'failed'
+          : isRuntimeStreamingStatus(normalizedStatus)
+            ? 'streaming'
+            : 'done'
+    return [
+      {
+        id: turn.id,
+        clientUserMessageId: items.find(item => item.type === 'user_message')?.id,
+        items,
+        status,
+        completedAt: turn.completedAt,
+        error: turn.error ?? undefined,
+        errorType: turn.errorType ?? undefined,
+        stoppedNotice: turn.stoppedNotice,
+        fileChanges: normalizeTurnFileChanges(turn.fileChanges),
+        references: turn.references ?? undefined,
+        memoryCitations: turn.memoryCitations ?? undefined,
+      },
+    ]
+  })
 }
 
 export function findFileChangesBySubtaskId(
   messages: WorkbenchMessage[],
   subtaskId: string
 ): TurnFileChangesSummary | undefined {
-  return messages.find(message => message.subtaskId === subtaskId)?.fileChanges
+  return messages.find(
+    message => message.subtaskId === subtaskId && message.fileChanges !== undefined
+  )?.fileChanges
 }
 
 export function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -474,7 +585,8 @@ function runtimeStreamTaskSubtaskIdentity(
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {
   const role = message.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const clientMessageId = message.clientMessageId ?? message.client_message_id ?? undefined
+  const clientUserMessageId =
+    message.clientUserMessageId ?? message.client_user_message_id ?? undefined
   const subtaskId = runtimeMessageSubtaskId(message)
   const normalizedStatus = String(message.status ?? '').toLowerCase()
   const status: WorkbenchMessage['status'] =
@@ -512,7 +624,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
           message.presentationReferences ?? message.presentation_references
         )
   return {
-    id: role === 'user' && clientMessageId ? clientMessageId : message.id,
+    id: role === 'user' && clientUserMessageId ? clientUserMessageId : message.id,
     role,
     subtaskId,
     turnId: message.turnId ?? message.turn_id ?? undefined,
@@ -592,6 +704,11 @@ function runtimeMessageOriginalChars(message: NormalizedRuntimeMessage): number 
 
 function runtimeContentCharacterCount(content: string): number {
   return Array.from(content).length
+}
+
+function runtimeTimestampToIso(value: string | number | null | undefined): string {
+  const timestamp = typeof value === 'number' ? value : Date.parse(value ?? '')
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString()
 }
 
 function warnAndDropRuntimeStreamEvent(
@@ -1006,13 +1123,6 @@ function rememberStreamedFileChanges(
     summaries.set(subtaskId, blocks)
   }
   blocks.set(blockId, fileChanges)
-}
-
-function doneContent(result: unknown): string | undefined {
-  if (!isRecord(result)) return undefined
-  if (typeof result.value !== 'string') return undefined
-  const content = stripCodexUiDirectives(result.value)
-  return content.length > 0 ? content : undefined
 }
 
 function getReasoningChunk(result: unknown): string | undefined {

@@ -482,7 +482,7 @@ export function useWorkbenchRuntimeMessaging({
       activeDeviceId?: string,
       options?: Pick<
         SendCurrentInputOptions,
-        | 'clientMessageId'
+        | 'clientUserMessageId'
         | 'initialGoal'
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
@@ -611,7 +611,9 @@ export function useWorkbenchRuntimeMessaging({
         teamId: payload.team_id,
         runtime,
         message: payload.message,
-        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+        ...(options?.clientUserMessageId
+          ? { clientUserMessageId: options.clientUserMessageId }
+          : {}),
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
@@ -915,7 +917,9 @@ export function useWorkbenchRuntimeMessaging({
           {
             address: state.currentRuntimeTask,
             message: payloadMessage,
-            ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+            ...(options?.clientUserMessageId
+              ? { clientUserMessageId: options.clientUserMessageId }
+              : {}),
             ...runtimeModelFields,
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
@@ -995,7 +999,7 @@ export function useWorkbenchRuntimeMessaging({
           initialGoal: options?.initialGoal,
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
-          clientMessageId: options?.clientMessageId,
+          clientUserMessageId: options?.clientUserMessageId,
           additionalContext: options?.additionalContext,
           cloudProjectId: options?.cloudProjectId,
         }
@@ -1068,7 +1072,7 @@ export function useWorkbenchRuntimeMessaging({
         return sendRuntimePaneMessage({
           address: state.currentRuntimeTask,
           message: previousUserMessage.content,
-          clientMessageId: previousUserMessage.id,
+          clientUserMessageId: previousUserMessage.id,
           ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),

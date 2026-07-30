@@ -236,6 +236,7 @@ impl RuntimeWorkRpcHandler {
                 before_cursor,
                 after_cursor,
                 full_content: include_full_content,
+                turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
         };
 
@@ -299,6 +300,7 @@ impl RuntimeWorkRpcHandler {
                 after_cursor
             },
             full_content: include_full_content,
+            turn_item_source: TranscriptTurnItemSource::CodexItems,
         }))
     }
 }

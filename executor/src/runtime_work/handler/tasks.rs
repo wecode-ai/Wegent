@@ -460,6 +460,7 @@ impl RuntimeWorkRpcHandler {
             .steer_turn(
                 &active_turn.thread_id,
                 &active_turn.turn_id,
+                Some(guidance_id.clone()),
                 Value::Array(steer_input),
                 additional_context,
             )

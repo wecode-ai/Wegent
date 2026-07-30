@@ -88,6 +88,21 @@ pub(crate) fn emit_response_event(
             "runtime": "codex",
         },
     });
+    if let Some(client_user_message_id) = request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
+            payload_object.insert(
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id.to_owned()),
+            );
+        }
+    }
     if let Some(source) = request.extra.get("source") {
         if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
             payload_object.insert("source".to_owned(), source.clone());
@@ -551,6 +566,8 @@ impl CodexNotificationEventMapper {
             context.request,
             json!({
                 "guidanceId": item_id(item, "guidance"),
+                "clientGuidanceId": string_field(item, "clientId")
+                    .or_else(|| string_field(item, "client_id")),
                 "message": extract_text(item).unwrap_or_default(),
                 "appliedAtMs": params
                     .get("completedAtMs")
@@ -652,10 +669,14 @@ impl CodexNotificationEventMapper {
         }
 
         self.process_text_count += 1;
-        let id = format!(
-            "text-{}-{}-{}",
-            emit_context.local_task_id, emit_context.request.subtask_id, self.process_text_count
-        );
+        let id = item_id.clone().unwrap_or_else(|| {
+            format!(
+                "text-{}-{}-{}",
+                emit_context.local_task_id,
+                emit_context.request.subtask_id,
+                self.process_text_count
+            )
+        });
         self.process_text = Some(ProcessTextStream {
             id: id.clone(),
             block_type: block_type.to_owned(),
@@ -714,10 +735,14 @@ impl CodexNotificationEventMapper {
         }
 
         self.process_text_count += 1;
-        let id = format!(
-            "text-{}-{}-{}",
-            emit_context.local_task_id, emit_context.request.subtask_id, self.process_text_count
-        );
+        let id = item_id.clone().unwrap_or_else(|| {
+            format!(
+                "text-{}-{}-{}",
+                emit_context.local_task_id,
+                emit_context.request.subtask_id,
+                self.process_text_count
+            )
+        });
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -790,7 +815,11 @@ impl CodexNotificationEventMapper {
                     "response.output_text.delta",
                     emit_context.local_task_id,
                     emit_context.request,
-                    json!({"delta": delta, "offset": offset}),
+                    json!({
+                        "delta": delta,
+                        "offset": offset,
+                        "itemId": self.final_message_id,
+                    }),
                 );
                 true
             }
@@ -834,7 +863,11 @@ impl CodexNotificationEventMapper {
                         "response.output_text.delta",
                         emit_context.local_task_id,
                         emit_context.request,
-                        json!({"delta": text, "offset": 0}),
+                        json!({
+                            "delta": text,
+                            "offset": 0,
+                            "itemId": self.final_message_id,
+                        }),
                     );
                 } else {
                     log_text_mapping(
@@ -1797,12 +1830,36 @@ fn collab_agent_status(status: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Map};
     use tokio::sync::broadcast;
 
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn emits_client_user_message_id_with_runtime_response_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(1);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "codex-turn-1".to_owned(),
+            extra: Map::from_iter([("client_user_message_id".to_owned(), json!("client-user-1"))]),
+            ..ExecutionRequest::default()
+        };
+
+        emit_response_event(
+            &Some(event_tx),
+            "device-1",
+            "response.created",
+            "local-task-1",
+            &request,
+            json!({"response": {"status": "in_progress"}}),
+        );
+
+        let event = event_rx.try_recv().expect("response event");
+        assert_eq!(event["payload"]["subtaskId"], "codex-turn-1");
+        assert_eq!(event["payload"]["clientUserMessageId"], "client-user-1");
+    }
 
     #[test]
     fn emits_one_transient_block_while_codex_reconnects() {

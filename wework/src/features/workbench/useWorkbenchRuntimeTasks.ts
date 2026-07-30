@@ -24,6 +24,7 @@ import {
   createRuntimeTaskStreamHandlers,
   runtimeAddressDebug,
   runtimeMessagesToWorkbenchMessages,
+  runtimeTranscriptTurnsToConversationTurns,
   runtimeTranscriptDebug,
   type RuntimeTaskStreamHandlers,
 } from './runtimePaneMessages'
@@ -130,18 +131,20 @@ export function useWorkbenchRuntimeTasks({
       const request = executorClient.runtime
         .getRuntimeTranscript(transcriptRequest)
         .then(transcript => {
-          if (!Array.isArray(transcript.messages)) {
-            console.error('[Wework] Runtime pane transcript response missing messages array', {
+          if (!Array.isArray(transcript.turns)) {
+            console.error('[Wework] Runtime pane transcript response missing canonical turns', {
               address: runtimeAddressDebug(address),
               response: runtimeTranscriptDebug(transcript),
               transcriptKey,
             })
+            throw new Error('Runtime transcript response is missing canonical turns')
           }
 
           return {
             messages: runtimeMessagesToWorkbenchMessages(
               Array.isArray(transcript.messages) ? transcript.messages : []
             ),
+            turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns),
             running: typeof transcript.running === 'boolean' ? transcript.running : undefined,
             contextUsage: transcript.contextUsage ?? null,
             turnNavigation: Array.isArray(transcript.turnNavigation)
