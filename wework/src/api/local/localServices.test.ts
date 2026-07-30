@@ -1317,6 +1317,53 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  test('does not reuse an in-flight catalog confirmation after the catalog changes', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-changing',
+      displayName: 'Cloud Changing',
+      modelId: 'changing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const confirmations: Array<(confirmed: boolean) => void> = []
+    const requestModelCatalogSync = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          confirmations.push(resolve)
+        })
+    )
+    const runtimeApi = createRuntimeWorkApiFromIpc(vi.fn(), async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+    })
+
+    const firstPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-changing',
+    })
+    await vi.waitFor(() => expect(requestModelCatalogSync).toHaveBeenCalledTimes(1))
+
+    saveLocalModelConfig({
+      id: 'cloud-changing',
+      displayName: 'Cloud Changing v2',
+      modelId: 'changing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const secondPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-changing',
+    })
+    await vi.waitFor(() => expect(requestModelCatalogSync).toHaveBeenCalledTimes(2))
+
+    confirmations[0](false)
+    confirmations[1](false)
+    await expect(firstPrepare).resolves.toBe(false)
+    await expect(secondPrepare).resolves.toBe(false)
+  })
+
   test('reports a busy cloud Codex without forcing a restart', async () => {
     saveLocalModelConfig({
       id: 'cloud-busy',

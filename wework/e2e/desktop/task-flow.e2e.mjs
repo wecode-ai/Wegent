@@ -9818,6 +9818,7 @@ async function verifyModelProtocolMatrix({
   startIndex = 0,
   workspacePath,
 }) {
+  let hasConfirmedCatalogSync = false
   for (const [caseIndex, model] of cases.entries()) {
     const matrixIndex = startIndex + caseIndex
     console.log(
@@ -9838,16 +9839,20 @@ async function verifyModelProtocolMatrix({
     })
     await selectE2EModel(control, model.optionId, model.label)
 
+    const confirmCloudModelCatalogSync =
+      !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
     await sendPromptWithButton(
       control,
       composerSelector,
       matrixTextPrompt(model),
       MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
       {
-        confirmCloudModelCatalogSync:
-          model.execution === 'cloud' && model.source === 'local' && caseIndex === 0,
+        confirmCloudModelCatalogSync,
       }
     )
+    if (confirmCloudModelCatalogSync) {
+      hasConfirmedCatalogSync = true
+    }
     await waitForMatrixStage(control, model, 'tool')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: matrixTextCompletion(model),

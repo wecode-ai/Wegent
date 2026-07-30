@@ -78,4 +78,40 @@ describe('CloudModelCatalogSyncDialogHost', () => {
     )
     expect(screen.getByTestId('cloud-model-catalog-sync-dialog')).toBeInTheDocument()
   })
+
+  test('traps focus, cancels with Escape, and restores focus', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <button type="button">Before dialog</button>
+        <CloudModelCatalogSyncDialogHost />
+      </>
+    )
+    const beforeDialog = screen.getByRole('button', { name: 'Before dialog' })
+    beforeDialog.focus()
+
+    let result!: Promise<boolean>
+    act(() => {
+      result = requestCloudModelCatalogSync({
+        deviceId: 'cloud-device',
+        deviceName: 'Cloud Executor',
+        modelName: 'Local Responses',
+        sync: vi.fn(),
+      })
+    })
+
+    const cancelButton = await screen.findByTestId('cloud-model-catalog-sync-cancel-button')
+    const confirmButton = screen.getByTestId('cloud-model-catalog-sync-confirm-button')
+    await waitFor(() => expect(cancelButton).toHaveFocus())
+
+    await user.tab({ shift: true })
+    expect(confirmButton).toHaveFocus()
+    await user.tab()
+    expect(cancelButton).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+
+    await expect(result).resolves.toBe(false)
+    await waitFor(() => expect(beforeDialog).toHaveFocus())
+  })
 })

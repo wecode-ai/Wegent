@@ -1841,7 +1841,7 @@ export function createRuntimeWorkApiFromIpc(
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
   let syncedModelCatalogKey = ''
-  let modelCatalogSyncInFlight: Promise<boolean> | null = null
+  const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1897,7 +1897,8 @@ export function createRuntimeWorkApiFromIpc(
       .sort()
       .join('|')
     if (catalogKey === syncedModelCatalogKey) return true
-    if (modelCatalogSyncInFlight) return modelCatalogSyncInFlight
+    const pendingSync = modelCatalogSyncInFlight.get(catalogKey)
+    if (pendingSync) return pendingSync
 
     const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
     const sync = async () => {
@@ -1935,19 +1936,29 @@ export function createRuntimeWorkApiFromIpc(
     if (!confirmation) {
       throw new Error(i18n.t('workbench.cloud_model_catalog_sync_failed'))
     }
-    modelCatalogSyncInFlight = confirmation({
+    const syncPromise = confirmation({
       deviceId,
       deviceName: options.resolveDeviceName?.(deviceId) ?? deviceId,
       modelName: selectedModel.displayName,
       sync,
     }).then(confirmed => {
-      if (confirmed) syncedModelCatalogKey = catalogKey
+      const currentCatalogKey = listLocalModelConfigs()
+        .filter(model => model.catalogEntry)
+        .map(model => `${model.id}:${model.updatedAt}`)
+        .sort()
+        .join('|')
+      if (confirmed && currentCatalogKey === catalogKey) {
+        syncedModelCatalogKey = catalogKey
+      }
       return confirmed
     })
+    modelCatalogSyncInFlight.set(catalogKey, syncPromise)
     try {
-      return await modelCatalogSyncInFlight
+      return await syncPromise
     } finally {
-      modelCatalogSyncInFlight = null
+      if (modelCatalogSyncInFlight.get(catalogKey) === syncPromise) {
+        modelCatalogSyncInFlight.delete(catalogKey)
+      }
     }
   }
 

@@ -93,7 +93,7 @@ wework /path/to/project
 
 ## 本地模型配置
 
-本地模型配置存储在浏览器本机存储中，不作为 Model CRD 写入 Backend，也不会成为账号级持久化配置。配置字段包括：
+本地模型的非敏感元数据存储在浏览器本机存储中，不作为 Model CRD 写入 Backend，也不会成为账号级持久化配置。API Key 只在当前 Wework 进程内存中持有，不写入浏览器存储；升级后首次读取旧配置时，Wework 会把已有的本地存储 API Key 迁入当前进程内存，并立即清除持久副本。需要跨 Wework 重启保留的生产凭据，应通过 Codex provider 的 `env_key` 和目标 Executor 的环境变量配置，不应继续保存在本地模型元数据中。配置字段包括：
 
 - 显示名。
 - 模型 ID。

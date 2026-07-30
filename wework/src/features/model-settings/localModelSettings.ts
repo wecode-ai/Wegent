@@ -72,6 +72,8 @@ export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
 export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
 
+const localModelApiKeys = new Map<string, string>()
+
 export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
   if (apiFormat === 'openai-chat-completions') {
     return DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
@@ -118,7 +120,24 @@ function readStoredConfigs(): LocalModelConfig[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isLocalModelConfig).map(normalizeStoredLocalModelConfig)
+    const storedConfigs = parsed.filter(isLocalModelConfig)
+    let migratedLegacyApiKey = false
+    for (const config of storedConfigs) {
+      if (!config.apiKey) continue
+      localModelApiKeys.set(config.id, config.apiKey)
+      migratedLegacyApiKey = true
+    }
+    if (migratedLegacyApiKey) {
+      globalThis.localStorage?.setItem(
+        LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+        JSON.stringify(storedConfigs.map(persistableLocalModelConfig))
+      )
+    }
+    return storedConfigs.map(config => {
+      const normalized = normalizeStoredLocalModelConfig(config)
+      const apiKey = localModelApiKeys.get(normalized.id)
+      return apiKey ? { ...normalized, apiKey } : normalized
+    })
   } catch {
     return []
   }
@@ -248,8 +267,17 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
-  globalThis.localStorage?.setItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY, JSON.stringify(configs))
+  globalThis.localStorage?.setItem(
+    LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+    JSON.stringify(configs.map(persistableLocalModelConfig))
+  )
   dispatchChanged(configs)
+}
+
+function persistableLocalModelConfig(config: LocalModelConfig): Omit<LocalModelConfig, 'apiKey'> {
+  const persistableConfig = { ...config }
+  delete persistableConfig.apiKey
+  return persistableConfig
 }
 
 function dispatchChanged(configs: LocalModelConfig[]): void {
@@ -479,6 +507,11 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     enabled: input.enabled ?? previous?.enabled ?? true,
     updatedAt: nextLocalModelUpdatedAt(previous),
   }
+  if (apiKey) {
+    localModelApiKeys.set(id, apiKey)
+  } else {
+    localModelApiKeys.delete(id)
+  }
   const index = existing.findIndex(config => config.id === id)
   const configs =
     index >= 0 ? existing.map(config => (config.id === id ? next : config)) : [...existing, next]
@@ -521,11 +554,13 @@ export function deleteLocalModelConfig(id: string): boolean {
   const configs = readStoredConfigs()
   const next = configs.filter(config => config.id !== id)
   if (next.length === configs.length) return false
+  localModelApiKeys.delete(id)
   writeStoredConfigs(next)
   return true
 }
 
 export function clearLocalModelConfigs(): void {
+  localModelApiKeys.clear()
   globalThis.localStorage?.removeItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
   dispatchChanged([])
 }
