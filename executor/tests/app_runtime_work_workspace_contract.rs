@@ -1513,7 +1513,7 @@ async fn runtime_task_list_keeps_distinct_tasks_with_matching_titles() {
 }
 
 #[tokio::test]
-async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
+async fn runtime_task_list_ignores_persisted_running_state_for_unmapped_tasks() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-pending-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1563,7 +1563,6 @@ async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
     let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["taskId"], "unmapped-pending");
-    assert_eq!(tasks[0]["status"], "active");
     assert_eq!(tasks[0]["running"], false);
 }
 

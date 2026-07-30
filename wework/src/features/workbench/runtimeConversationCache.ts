@@ -6,6 +6,7 @@ import type {
   TurnFileChangesSummary,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
+import { persistAttachmentReferences } from '@/lib/attachments'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 
@@ -106,6 +107,36 @@ export function takeAppliedRuntimeConversationGuidance(
     key,
     queuedMessages.filter(message => message.id !== guidanceMessage.id)
   )
+  return guidanceMessage
+}
+
+export function settleRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  payload: RuntimeGuidanceAppliedPayload
+): RuntimePaneQueuedMessage | null {
+  const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
+  if (!guidanceMessage) return null
+
+  const key = runtimeConversationKey(address)
+  const messages = messagesByConversation.get(key) ?? []
+  if (messages.some(message => message.id === guidanceMessage.id)) return guidanceMessage
+
+  cacheBoundedEntry(messagesByConversation, key, [
+    ...messages,
+    {
+      id: guidanceMessage.id,
+      role: 'user',
+      content: guidanceMessage.content,
+      attachments: guidanceMessage.attachments
+        ? persistAttachmentReferences(guidanceMessage.attachments)
+        : undefined,
+      status: 'done',
+      createdAt: new Date(payload.appliedAtMs).toISOString(),
+      runtimeGoalRequest: guidanceMessage.runtimeGoalRequest ? true : undefined,
+      runtimeGuidance: true,
+      codeComments: guidanceMessage.codeComments?.length ? guidanceMessage.codeComments : undefined,
+    },
+  ])
   return guidanceMessage
 }
 

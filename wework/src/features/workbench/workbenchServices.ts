@@ -17,6 +17,7 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createAutomationApi } from '@/api/automations'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -94,6 +95,7 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  automationApi?: ReturnType<typeof createAutomationApi>
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>

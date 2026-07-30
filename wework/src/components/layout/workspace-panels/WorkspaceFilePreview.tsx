@@ -6,10 +6,12 @@ import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
+import { isMarkdownFile } from './workspaceFileTypes'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -41,18 +43,22 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   }
   [data-code] {
     scrollbar-width: thin;
-    scrollbar-color: rgb(224 224 224 / 0.55) transparent;
+    scrollbar-color: rgb(170 170 170 / 0.85) transparent;
+    scrollbar-gutter: stable;
   }
   [data-code]::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 7px;
+    height: 7px;
   }
   [data-code]::-webkit-scrollbar-track {
     background: transparent;
   }
   [data-code]::-webkit-scrollbar-thumb {
-    background-color: rgb(224 224 224 / 0.55);
+    background-color: rgb(170 170 170 / 0.85);
     border-radius: 999px;
+  }
+  [data-code]::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(140 140 140 / 0.95);
   }
   [data-gutter] {
     border-right: 1px solid rgb(224 224 224);
@@ -95,6 +101,7 @@ interface WorkspaceFilePreviewProps {
   editedContent?: string
   onEditedContentChange?: (content: string) => void
   onSave?: () => void
+  markdownMode?: 'preview' | 'source'
 }
 
 const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
@@ -204,6 +211,26 @@ function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
         sandbox="allow-forms allow-popups allow-scripts"
         className="h-full w-full border-0 bg-white"
       />
+    </section>
+  )
+}
+
+function WorkspaceMarkdownPreview({ file }: { file: WorkspaceTextFileResponse }) {
+  const { t } = useTranslation('common')
+
+  return (
+    <section
+      data-testid="workspace-markdown-preview"
+      className="scrollbar-soft min-w-0 flex-1 overflow-y-scroll bg-background"
+    >
+      <div className="mx-auto max-w-4xl px-8 py-6 text-base leading-7 text-text-primary">
+        <AssistantMarkdown content={file.content} />
+      </div>
+      {file.truncated && (
+        <div className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-2 text-xs text-amber-700 backdrop-blur-sm">
+          {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
+        </div>
+      )}
     </section>
   )
 }
@@ -343,27 +370,25 @@ function WorkspaceFilePreviewContent({
           selectedLines={selectedLines}
           onSelectedLinesChange={captureLineSelection}
           options={{
-            disableFileHeader: false,
+            disableFileHeader: true,
             enableLineSelection: true,
             lineHoverHighlight: 'both',
             overflow: 'scroll',
-            stickyHeaders: true,
+            stickyHeaders: false,
             layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
             theme: { dark: 'pierre-dark', light: 'pierre-light' },
             themeType: 'light',
             unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
           }}
-          renderHeaderMetadata={() =>
-            file.truncated ? (
-              <span className="text-xs text-amber-700">
-                {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
-              </span>
-            ) : null
-          }
           className="h-full min-h-0 w-full scrollbar-soft"
           style={{ height: '100%', overflow: 'auto' }}
         />
       </div>
+      {file.truncated && (
+        <div className="shrink-0 border-t border-border bg-background px-4 py-2 text-xs text-amber-700">
+          {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
+        </div>
+      )}
       {activeSelection && (
         <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-background p-3 shadow-xl">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
@@ -424,6 +449,7 @@ export function WorkspaceFilePreview({
   editedContent = '',
   onEditedContentChange,
   onSave,
+  markdownMode = 'preview',
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
 
@@ -500,6 +526,10 @@ export function WorkspaceFilePreview({
 
   if (isHtmlFile(file)) {
     return <WorkspaceHtmlPreview file={file} />
+  }
+
+  if (isMarkdownFile(file.name) && markdownMode === 'preview') {
+    return <WorkspaceMarkdownPreview file={file} />
   }
 
   return (

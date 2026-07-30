@@ -32,6 +32,18 @@ When **Show main window on launch** is enabled, Wework opens the main window whe
 
 When the main window is not visible, click the system tray icon to reopen it.
 
+## Popout Window
+
+Open **Settings → General → Popout Window** to configure the lightweight input window that is independent of the main interface. The default global shortcut is `⌥⇧Space`. Select the pencil to record another modifier-plus-main-key combination, or select delete to disable the global shortcut.
+
+Wework prewarms the Popout Window in the background after launch, so the first display and later reopens reuse the same WebView. The window is not resizable. Drag any visible surface outside the text input to move it, and press `Esc` to hide it without activating the main window. The transparent area around the visible surface does not receive pointer events, so clicks continue to the application behind it.
+
+Enable **Settings → General → Popout Window → System drag panel** to show a compact action panel at the top of the current screen while dragging files or text from another application. Selecting **Create new chat** activates the Popout Window and adds the dropped content to a new task. Disable the setting to keep the system drag panel hidden.
+
+New tasks start without a project. Use the project menu at the bottom of the composer to choose one, then use the more menu to select the current workspace or a new worktree, switch branches, and configure permissions. Wework remembers the user's latest selection the next time the Popout Window opens. After the first message is sent, the input window expands into a separate conversation window. **View in main window** closes the Popout Window and opens the current task in the main window, while **New message** returns to a fresh input state.
+
+Tasks created from the Popout Window still run on the local execution device and appear in the main window's task list. The Popout Window and main window are separate native windows, so hiding or moving one does not reposition the other.
+
 ## Tray Display
 
 **Settings → General → Tray display** controls unread completions, running tasks, and Codex quota independently. When **Codex quota** is enabled, the 5-hour and 7-day remaining quota appears next to the tray icon only when local Codex is available and its quota was read successfully. Wework does not show empty quota placeholders when Codex is unavailable. The tray tooltip and settings menu identify the data as Codex quota.

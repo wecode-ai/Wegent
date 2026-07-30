@@ -30,6 +30,10 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     let fake_codex = write_fake_codex(&log_path);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
+        task_id: "task-525".to_owned(),
+        auth_token: Some("task-jwt".to_owned()),
+        skill_identity_token: Some("skill-jwt".to_owned()),
+        user_name: Some("alice".to_owned()),
         prompt: json!("implement feature"),
         bot: json!([{"shell_type": "ClaudeCode"}]),
         model_config: json!({
@@ -66,6 +70,22 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert_eq!(messages[2]["params"]["model"], "gpt-5");
     assert_eq!(messages[2]["params"]["cwd"], "/tmp/wegent/project");
     assert_eq!(messages[2]["params"]["permissions"], ":danger-full-access");
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        messages[2]["params"]["config"]["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
     assert_eq!(messages[3]["method"], "turn/start");
     assert_eq!(messages[3]["params"]["threadId"], "thread-1");
     assert_eq!(messages[3]["params"]["model"], "gpt-5");
@@ -681,6 +701,68 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
 }
 
 #[tokio::test]
+async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_with_pending_request();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request_client = client.clone();
+    let pending_request =
+        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending app-server request should be observed");
+
+    client.restart().await;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending_request)
+        .await
+        .expect("forced restart should settle the pending request")
+        .expect("pending request task should join");
+    assert_eq!(result.unwrap_err(), "codex app-server was restarted");
+}
+
+#[tokio::test]
+async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_with_pending_request();
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request_client = client.clone();
+    let pending_request =
+        tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
+
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending app-server request should be observed");
+
+    assert!(client
+        .configure_runtime_proxy_for_restart(Some("http://127.0.0.1:7890"))
+        .await
+        .expect("runtime proxy should update"));
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending_request)
+        .await
+        .expect("proxy restart should settle the pending request")
+        .expect("pending request task should join");
+    assert_eq!(
+        result.unwrap_err(),
+        "codex app-server was restarted after its runtime proxy changed"
+    );
+}
+
+#[tokio::test]
 async fn codex_app_server_engine_times_out_turn_without_progress() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
@@ -953,6 +1035,40 @@ done
         log_path.display()
     );
     fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_with_pending_request() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-pending-request-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{"protocolVersion":1}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"plugin/list"'*)
+      sleep 30
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();

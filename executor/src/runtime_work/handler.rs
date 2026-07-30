@@ -40,6 +40,7 @@ use crate::{
 };
 
 mod archives;
+mod automation_rpc;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -53,6 +54,7 @@ mod turns;
 mod workspaces;
 
 use super::{
+    automations::{AutomationRunStatus, AutomationStore},
     codex_global_state::{
         activate_codex_global_project, open_codex_global_project,
         register_codex_global_thread_workspace_root, remove_codex_global_project,
@@ -291,6 +293,7 @@ pub struct RuntimeWorkRpcHandler {
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
+    automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
@@ -350,6 +353,7 @@ impl RuntimeWorkRpcHandler {
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
+            automation_store: AutomationStore::from_env(),
             store: RuntimeWorkStore::from_env(),
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
@@ -372,6 +376,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
+        handler.start_automation_scheduler();
         handler
     }
 
@@ -392,6 +397,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.archive" => self.archive_task(payload).await,
             "runtime.tasks.rename" => self.rename_task(payload).await,
             "runtime.tasks.cancel" => self.cancel_task(payload).await,
+            "runtime.automations.list" => self.list_automations().await,
+            "runtime.automations.get" => self.get_automation(payload).await,
+            "runtime.automations.create" => self.create_automation(payload).await,
+            "runtime.automations.update" => self.update_automation(payload).await,
+            "runtime.automations.delete" => self.delete_automation(payload).await,
+            "runtime.automations.toggle" => self.toggle_automation(payload).await,
+            "runtime.automations.run_now" => self.run_automation_now(payload).await,
+            "runtime.automation_runs.list" => self.list_automation_runs(payload).await,
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,

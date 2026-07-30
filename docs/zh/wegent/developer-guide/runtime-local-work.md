@@ -143,7 +143,7 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
-Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的消息必须修复 Codex 事件记录或 transcript 解析主路径。前端在当前 pane 中可以用实时事件维护尚未持久化的视图，但后台收到引导成功事件时只能结算引导队列，不能把同一条用户消息写入另一份缓存 transcript。重新打开对话后，消息完全由 `thread/read` 恢复。
+Codex 原生任务的持久消息只以 Codex rollout 和 `thread/read` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存合并进 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或 transcript 解析主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 `thread/read` 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由 `thread/read` 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 

@@ -1,9 +1,12 @@
 import { useEffect, type RefObject } from 'react'
 
+const NO_ADDITIONAL_REFS: Array<RefObject<HTMLElement | null>> = []
+
 export function useOutsideClick(
   ref: RefObject<HTMLElement | null>,
   active: boolean,
   onOutsideClick: () => void,
+  additionalRefs: Array<RefObject<HTMLElement | null>> = NO_ADDITIONAL_REFS
 ) {
   useEffect(() => {
     if (!active) return
@@ -11,7 +14,11 @@ export function useOutsideClick(
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target
 
-      if (!(target instanceof Node) || ref.current?.contains(target)) {
+      if (
+        !(target instanceof Node) ||
+        ref.current?.contains(target) ||
+        additionalRefs.some(additionalRef => additionalRef.current?.contains(target))
+      ) {
         return
       }
 
@@ -23,5 +30,5 @@ export function useOutsideClick(
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown)
     }
-  }, [active, onOutsideClick, ref])
+  }, [active, additionalRefs, onOutsideClick, ref])
 }

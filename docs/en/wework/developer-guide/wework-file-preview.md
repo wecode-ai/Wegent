@@ -4,13 +4,19 @@ sidebar_position: 34
 
 # Workspace File Preview
 
-The Wework file panel sends code and text files to Pierre CodeView and binary files to Flyfish Viewer browser-side renderers. Preview data is read only from authorized local workspaces and is never uploaded to third-party services.
+The Wework file panel renders Markdown documents as formatted content, sends other code and text files to Pierre CodeView, and sends binary files to Flyfish Viewer browser-side renderers. Preview data is read only from authorized local workspaces and is never uploaded to third-party services.
 
 ## Supported Formats
 
 The initial viewer enables the office and lite capabilities: PDF, Word, Excel, PowerPoint, images, HTML, Markdown, code, audio, and video. Unknown formats or rendering failures can be opened with the system default application in the macOS Tauri app.
 
 HTML must remain sandboxed and must not allow preview content to access Wework's same-origin state.
+
+## Markdown Preview
+
+`.md` and `.markdown` files open as rendered documents by default and provide a Source/Preview switch. Source mode continues to support line selection and local comments, but it must not render Pierre's file header. The file path appears only in the file-panel toolbar so scrolling cannot produce a duplicate sticky header or flicker.
+
+Both the Markdown preview and source view must own a vertical scrolling region. The soft scrollbar uses a transparent track and a sufficiently contrasting gray thumb so the current scroll position remains visible.
 
 ## Data Transfer
 
@@ -30,4 +36,4 @@ The file panel determines workspace changes from the target's `deviceId`, `path`
 
 ## Validation
 
-When changing the viewer, validate PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, and HTML, along with file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.
+When changing the viewer, validate Markdown's default preview, source switching, long-document scrolling, and single-header behavior, plus PDF, DOCX, XLSX, CSV, PPTX, PNG/JPEG/WebP, HTML, file switching, cancellation, directory expansion, symlinked workspaces, and workspace-boundary rejection. Also observe an open text preview during task streaming and confirm that rerenders with an equivalent workspace target neither reread nor flicker the preview.

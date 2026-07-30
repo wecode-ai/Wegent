@@ -707,9 +707,22 @@ function dispatchDesktopControlPaths(
 }
 
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
+  const getWindowFocusSnapshot = async () => {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const popoutWindow = await WebviewWindow.getByLabel('popout-window')
+    return JSON.stringify({
+      mainFocused: await getCurrentWindow().isFocused(),
+      popoutExists: Boolean(popoutWindow),
+      popoutFocused: popoutWindow ? await popoutWindow.isFocused() : false,
+      popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
+    })
+  }
+
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
+    case 'capturePopoutWindow':
+      return invoke<string>('capture_popout_webview')
     case 'closeMainWindowToTray':
       return ''
     case 'dispatchLocalModelSettingsChanged':
@@ -738,6 +751,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await getCurrentWindow().show()
       await getCurrentWindow().unminimize()
       await getCurrentWindow().setFocus()
+      return ''
+    case 'getWindowFocusSnapshot':
+      return getWindowFocusSnapshot()
+    case 'completeSystemDragDrop':
+      await invoke('complete_system_drag_drop', {
+        payload: JSON.parse(command.value ?? '{}'),
+      })
+      await new Promise(resolve => window.setTimeout(resolve, 250))
+      return getWindowFocusSnapshot()
+    case 'dismissPopoutWindow':
+      await invoke('dismiss_popout_window')
+      return ''
+    case 'showPopoutWindow':
+      await invoke('show_popout_window')
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
@@ -1069,6 +1096,12 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
-  if (!url || window.location.pathname.startsWith('/system-drag')) return
+  if (
+    !url ||
+    getCurrentWindow().label !== 'main' ||
+    window.location.pathname.startsWith('/system-drag')
+  ) {
+    return
+  }
   void runDesktopControlClient(url)
 }

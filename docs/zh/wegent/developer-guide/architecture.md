@@ -380,6 +380,8 @@ Codex 失败轮次不保证在线程 transcript 中生成 assistant item。execu
 
 Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。未配置时，Codex 上下文窗口默认为 256K（262144 tokens），代理输出限制默认为 96000 tokens。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
 
+Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
+
 云端模型执行会把 Model spec 中的 `modelConfig.env.model_id` 作为独立的 Codex catalog model id 传给 executor。若该 id 与 Codex 官方 catalog 中的模型匹配，Codex 会继承其完整能力元数据和基础指令；模型网关仍使用资源名定位云端 Model CRD，因此 catalog 映射不会改变上游路由。
 
 `apply_patch` 不是模型服务或系统 shell 自动提供的命令。只有 `custom` 或 `function` 工具模式生成的 Codex model catalog 才会让 Codex 在模型请求中发布该工具；直接调用 Responses API 时，调用方也必须在 `tools` 中提供相应的 custom tool 定义和 grammar。`shell` 模式不会发布它。补丁执行失败后，本地模型代理保留原始校验错误，并按错误类型补充 grammar 解释、正确的 Update/Add File 示例和重新调用要求；原生 Responses、Chat Completions 与 Anthropic Messages 转换必须保持同一纠错语义，成功结果不得追加提示。

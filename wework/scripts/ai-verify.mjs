@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|drop-file|drop-paths|fill|hover|navigate|paste-paths|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|click|close-to-tray|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -382,20 +382,27 @@ async function main() {
   }
   const action = {
     capture: 'capture',
+    'capture-popout': 'capturePopoutWindow',
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    'dismiss-popout': 'dismissPopoutWindow',
     drag: 'drag',
     'drop-file': 'dropFile',
     'drop-paths': 'dropPaths',
     fill: 'fill',
     hover: 'hover',
+    metrics: 'getElementMetrics',
     navigate: 'navigate',
     'paste-paths': 'pastePaths',
     'pointer-move': 'pointerMove',
     press: 'press',
+    'scroll-into-view': 'scrollIntoView',
     'select-text': 'selectText',
+    'show-popout': 'showPopoutWindow',
+    'system-drag-drop': 'completeSystemDragDrop',
     'wait-for': 'waitFor',
+    'window-focus-snapshot': 'getWindowFocusSnapshot',
     text: 'getText',
   }[command]
   if (!action) {
@@ -406,10 +413,15 @@ async function main() {
   const selector =
     options.selector ??
     (command === 'capture' ||
+    command === 'capture-popout' ||
     command === 'snapshot' ||
     command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
+    command === 'dismiss-popout' ||
+    command === 'show-popout' ||
+    command === 'system-drag-drop' ||
+    command === 'window-focus-snapshot' ||
     command === 'close-to-tray'
       ? 'body'
       : null)
@@ -438,7 +450,7 @@ async function main() {
     stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: options.timeout ? Number(options.timeout) : undefined,
   })
-  if (command === 'capture') {
+  if (command === 'capture' || command === 'capture-popout') {
     if (!options.output) throw new Error('--output is required')
     const prefix = 'data:image/png;base64,'
     if (!value.value?.startsWith(prefix)) throw new Error('Invalid screenshot payload')

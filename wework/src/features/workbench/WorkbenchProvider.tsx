@@ -81,7 +81,7 @@ import {
 } from './runtimeTaskLifecycle'
 import {
   applyRuntimeConversationAction,
-  takeAppliedRuntimeConversationGuidance,
+  settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
@@ -1234,7 +1234,7 @@ export function WorkbenchProvider({
     const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {
         onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onGuidanceApplied: payload => takeAppliedRuntimeConversationGuidance(address, payload),
+        onGuidanceApplied: payload => settleRuntimeConversationGuidance(address, payload),
         onAssistantStart: () => lifecycleStore.turnStarted(address),
         onAssistantSettled: () => lifecycleStore.turnSettled(address),
         onRefreshWorkLists: () => {

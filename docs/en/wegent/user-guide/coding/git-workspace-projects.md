@@ -86,13 +86,13 @@ Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. 
 
 The macOS desktop app enables the system drag panel by default. When you start dragging files, images, web links, or selected text, Wework shows a compact always-on-top panel at the top of the display containing the pointer. Drop the content onto one of these targets:
 
-- **New chat** opens a new chat and appends the content to its draft. If a new-chat draft is already open, Wework preserves and appends to its existing content.
-- **Follow up** appears only while a conversation is open and appends the content to that conversation's composer.
+- **New chat** activates the Popout Window and appends the content to a new-task draft. If a new-task draft is already open, Wework preserves and appends to its existing content.
+- **Follow up** appears only while the Popout Window contains a conversation and appends the content to that conversation's composer.
 - **Temporary stash** saves the dropped content in the stash above the quick-phrase list.
 
 A drop occurs only after you drag content and release the pointer over the panel. Clicking the panel area does not create a chat, add a follow-up, or stash content.
 
-The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Stashed content is retained for at most seven days and is removed automatically after it expires. Select **Clear** in the upper-right corner of the stash to remove every stashed item at once without affecting regular quick phrases. Web links retain both the page title and URL. Turn the feature off or back on under **Settings > General > System drag panel**.
+The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Stashed content is retained for at most seven days and is removed automatically after it expires. Select **Clear** in the upper-right corner of the stash to remove every stashed item at once without affecting regular quick phrases. Web links retain both the page title and URL. Dropping content activates the Popout Window without opening or activating the main window. Turn the feature off or back on under **Settings > General > Popout Window > System drag panel**.
 
 ## Commit and Push Changes
 

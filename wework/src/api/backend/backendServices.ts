@@ -9,6 +9,7 @@ import { createImSessionApi } from '@/api/imSessions'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { createAutomationApi } from '@/api/automations'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
@@ -47,6 +48,7 @@ export function createBackendWorkbenchServices(
   const deviceApi = createDeviceApi(client)
   const projectApi = createProjectApi(client)
   const runtimeWorkApi = createRuntimeWorkApi(client)
+  const automationApi = createAutomationApi(client)
   const taskApi = createTaskApi(client)
   const deliveryApi = createDeliveryApi(client)
   const socketClient = createSocketClient({
@@ -74,6 +76,7 @@ export function createBackendWorkbenchServices(
     },
     imSessionApi: createImSessionApi(client),
     runtimeWorkApi,
+    automationApi,
     executorClient: createExecutorClientFromApis({
       transportKind,
       deviceApi,

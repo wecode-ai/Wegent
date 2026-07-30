@@ -3,13 +3,27 @@ pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, Strin
     capture_main_webview_impl(app).await
 }
 
+#[tauri::command]
+pub async fn capture_popout_webview(app: tauri::AppHandle) -> Result<String, String> {
+    capture_webview_impl(app, "popout-window", false).await
+}
+
 #[cfg(target_os = "macos")]
 async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, String> {
+    capture_webview_impl(app, "main", true).await
+}
+
+#[cfg(target_os = "macos")]
+async fn capture_webview_impl(
+    app: tauri::AppHandle,
+    label: &str,
+    restore_after_capture: bool,
+) -> Result<String, String> {
     use tauri::Manager;
 
     let webview = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Main webview is unavailable".to_string())?;
+        .get_webview_window(label)
+        .ok_or_else(|| format!("Webview {label} is unavailable"))?;
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
 
     webview
@@ -17,14 +31,17 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
             let result = unsafe { capture_macos_webview(platform_webview) };
             let _ = sender.try_send(result);
         })
-        .map_err(|error| format!("Failed to access main webview: {error}"))?;
+        .map_err(|error| format!("Failed to access webview {label}: {error}"))?;
 
     let snapshot_result = receiver
         .recv()
         .await
-        .ok_or_else(|| "Main webview snapshot was cancelled".to_string())
+        .ok_or_else(|| format!("Webview {label} snapshot was cancelled"))
         .and_then(|result| result);
-    let restore_result = restore_main_webview(&webview);
+    if !restore_after_capture {
+        return snapshot_result;
+    }
+    let restore_result = restore_webview(&webview, label);
 
     match (snapshot_result, restore_result) {
         (Ok(snapshot), Ok(())) => Ok(snapshot),
@@ -37,16 +54,16 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
 }
 
 #[cfg(target_os = "macos")]
-fn restore_main_webview(webview: &tauri::WebviewWindow) -> Result<(), String> {
+fn restore_webview(webview: &tauri::WebviewWindow, label: &str) -> Result<(), String> {
     let mut errors = Vec::new();
     if let Err(error) = webview.show() {
-        errors.push(format!("Failed to show main webview: {error}"));
+        errors.push(format!("Failed to show webview {label}: {error}"));
     }
     if let Err(error) = webview.unminimize() {
-        errors.push(format!("Failed to unminimize main webview: {error}"));
+        errors.push(format!("Failed to unminimize webview {label}: {error}"));
     }
     if let Err(error) = webview.set_focus() {
-        errors.push(format!("Failed to focus main webview: {error}"));
+        errors.push(format!("Failed to focus webview {label}: {error}"));
     }
 
     if errors.is_empty() {
@@ -95,4 +112,13 @@ fn ns_data_bytes(data: &objc2_foundation::NSData) -> Vec<u8> {
 #[cfg(not(target_os = "macos"))]
 async fn capture_main_webview_impl(_app: tauri::AppHandle) -> Result<String, String> {
     Err("Main webview snapshots are currently supported on macOS only".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn capture_webview_impl(
+    _app: tauri::AppHandle,
+    _label: &str,
+    _restore_after_capture: bool,
+) -> Result<String, String> {
+    Err("Webview snapshots are currently supported on macOS only".to_string())
 }

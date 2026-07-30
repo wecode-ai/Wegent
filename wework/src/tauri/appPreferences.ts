@@ -19,6 +19,8 @@ export interface AppPreferences {
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  popoutWindowShortcut: string | null
+  popoutWindowProjectlessDefaultEnabled: boolean
   quickPhrases: QuickPhrase[]
 }
 
@@ -71,6 +73,8 @@ export interface AppPreferencesPatch {
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  popoutWindowShortcut?: string | null
+  popoutWindowProjectlessDefaultEnabled?: boolean
   quickPhrases?: QuickPhrase[]
 }
 
@@ -113,6 +117,8 @@ export const defaultAppPreferences: AppPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  popoutWindowShortcut: 'Alt+Shift+Space',
+  popoutWindowProjectlessDefaultEnabled: false,
   quickPhrases: defaultQuickPhrases,
 }
 
@@ -213,6 +219,16 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    popoutWindowShortcut:
+      typeof record.popoutWindowShortcut === 'string' && record.popoutWindowShortcut.trim()
+        ? record.popoutWindowShortcut.trim()
+        : Object.prototype.hasOwnProperty.call(record, 'popoutWindowShortcut')
+          ? null
+          : defaultAppPreferences.popoutWindowShortcut,
+    popoutWindowProjectlessDefaultEnabled:
+      typeof record.popoutWindowProjectlessDefaultEnabled === 'boolean'
+        ? record.popoutWindowProjectlessDefaultEnabled
+        : defaultAppPreferences.popoutWindowProjectlessDefaultEnabled,
     quickPhrases: Array.isArray(record.quickPhrases)
       ? record.quickPhrases
           .flatMap(item => normalizeQuickPhrase(item))
@@ -276,11 +292,17 @@ export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<
     return preferences
   }
 
-  const nativePatch =
-    Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
+  const nativePatch = {
+    ...patch,
+    ...(Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
     patch.browserDownloadDirectory === null
-      ? { ...patch, browserDownloadDirectory: '' }
-      : patch
+      ? { browserDownloadDirectory: '' }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut') &&
+    patch.popoutWindowShortcut === null
+      ? { popoutWindowShortcut: '' }
+      : {}),
+  }
   const preferences = mergeAppPreferences(
     await invoke('update_app_preferences', { patch: nativePatch })
   )

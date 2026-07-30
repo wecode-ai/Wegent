@@ -244,7 +244,52 @@ describe('ComposerProseMirrorEditor', () => {
     expect(editorRef.current?.getSnapshot().value).toBe(value)
   })
 
-  test('keeps Command-Left at the real start of text before a skill', () => {
+  test.each(['ArrowLeft', 'ArrowRight'])(
+    'does not override modified %s visual line navigation',
+    key => {
+      const value = `first line\nsecond line with ${GMAIL_REFERENCE} content\nthird line`
+      const mentionOffset = value.indexOf(GMAIL_REFERENCE)
+      const { editorRef } = renderEditor(value)
+      const editor = screen.getByTestId('composer-editor')
+
+      act(() => {
+        editorRef.current?.setValue(value, mentionOffset)
+        editorRef.current?.focus()
+      })
+
+      expect(
+        fireEvent.keyDown(editor, {
+          key,
+          code: key,
+          keyCode: key === 'ArrowLeft' ? 37 : 39,
+          metaKey: true,
+        })
+      ).toBe(true)
+      expect(editorRef.current?.getSnapshot().selectionOffset).toBe(mentionOffset)
+    }
+  )
+
+  test.each([
+    ['a', 65],
+    ['e', 69],
+  ])('does not override macOS Control-%s visual line navigation', (key, keyCode) => {
+    const value = `first line\nsecond line with ${GMAIL_REFERENCE} content\nthird line`
+    const mentionOffset = value.indexOf(GMAIL_REFERENCE)
+    const { editorRef } = renderEditor(value)
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => {
+      editorRef.current?.setValue(value, mentionOffset)
+      editorRef.current?.focus()
+    })
+
+    expect(
+      fireEvent.keyDown(editor, { key, code: `Key${key.toUpperCase()}`, keyCode, ctrlKey: true })
+    ).toBe(true)
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(mentionOffset)
+  })
+
+  test('keeps unmodified arrow navigation protected at a skill boundary', () => {
     const value = `DF${GMAIL_REFERENCE} `
     const { editorRef } = renderEditor(value)
     const editor = screen.getByTestId('composer-editor')
@@ -254,16 +299,10 @@ describe('ComposerProseMirrorEditor', () => {
       editorRef.current?.focus()
     })
 
-    expect(
-      fireEvent.keyDown(editor, {
-        key: 'ArrowLeft',
-        code: 'ArrowLeft',
-        keyCode: 37,
-        metaKey: true,
-      })
-    ).toBe(false)
-    fireEvent.keyUp(editor, { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37, metaKey: true })
-    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(0)
+    expect(fireEvent.keyDown(editor, { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 })).toBe(
+      false
+    )
+    expect(editorRef.current?.getSnapshot().selectionOffset).toBe(2 + GMAIL_REFERENCE.length)
   })
 
   test('copies the complete markdown value after Command-A', () => {

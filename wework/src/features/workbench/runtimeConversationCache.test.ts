@@ -14,6 +14,7 @@ import {
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  settleRuntimeConversationGuidance,
   takeAppliedRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 
@@ -144,7 +145,7 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
   })
 
-  test('settles background guidance without writing a second transcript source', () => {
+  test('settles background guidance into the conversation cache until transcript refresh', () => {
     cacheRuntimeConversationMessages(address, [
       {
         id: 'assistant-1',
@@ -164,7 +165,7 @@ describe('runtimeConversationCache', () => {
       },
     ])
 
-    const settled = takeAppliedRuntimeConversationGuidance(address, {
+    const settled = settleRuntimeConversationGuidance(address, {
       taskId: address.taskId,
       deviceId: address.deviceId,
       guidanceId: 'runtime-guidance-1',
@@ -174,8 +175,22 @@ describe('runtimeConversationCache', () => {
 
     expect(settled?.id).toBe('client-guidance-1')
     expect(getRuntimeConversationQueuedMessages(address)).toEqual([])
-    expect(getRuntimeConversationMessages(address)).toMatchObject([
-      { id: 'assistant-1', role: 'assistant' },
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'working',
+        status: 'streaming',
+        createdAt: '2026-07-27T00:00:00.000Z',
+      },
+      {
+        id: 'client-guidance-1',
+        role: 'user',
+        content: 'follow the updated direction',
+        status: 'done',
+        createdAt: '2026-07-27T00:00:02.000Z',
+        runtimeGuidance: true,
+      },
     ])
   })
 
