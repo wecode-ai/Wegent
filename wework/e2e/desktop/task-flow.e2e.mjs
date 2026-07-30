@@ -9959,6 +9959,7 @@ async function main() {
     {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
+      executorHome,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -10144,6 +10145,18 @@ async function main() {
       phase = 'system-drag-panel-layout'
       await verifySystemDragPanelLayout(control)
       console.log(`Wework desktop system-drag-panel E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
       return
     }
 
