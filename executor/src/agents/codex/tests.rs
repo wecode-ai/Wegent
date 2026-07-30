@@ -1056,6 +1056,49 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
 }
 
 #[test]
+fn goal_continuation_turn_started_replaces_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "turn/started",
+        "params": {
+            "threadId": "thread-1",
+            "turn": { "id": "turn-2", "status": "inProgress" }
+        }
+    });
+
+    assert_eq!(
+        replacement_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        replacement_active_turn_id(Some("turn-2"), &notification, &state),
+        None
+    );
+}
+
+#[test]
+fn item_notification_cannot_replace_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-2",
+            "item": {
+                "id": "message-1",
+                "type": "agentMessage",
+                "text": "done"
+            }
+        }
+    });
+
+    assert_eq!(
+        replacement_active_turn_id(Some("turn-1"), &notification, &state),
+        None
+    );
+}
+
+#[test]
 fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
     let mut state = CodexRunState::default();
 

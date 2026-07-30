@@ -1734,9 +1734,17 @@ async fn read_shared_turn_notifications(
         }
         log_codex_raw_turn_message(&message);
 
-        if let (Some(active_turn_id), Some(notification_turn_id)) = (
+        let notification_turn_id = root_turn_notification_id(&message, state);
+        if let Some(turn_id) =
+            replacement_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+        {
+            if let Some(callback) = options.active_turn_started.as_ref() {
+                callback(thread_id.to_owned(), turn_id.clone());
+            }
+            options.active_turn_id = Some(turn_id);
+        } else if let (Some(active_turn_id), Some(notification_turn_id)) = (
             options.active_turn_id.as_deref(),
-            root_turn_notification_id(&message, state),
+            notification_turn_id.as_deref(),
         ) {
             if notification_turn_id != active_turn_id {
                 log_executor_event(
@@ -1744,7 +1752,7 @@ async fn read_shared_turn_notifications(
                     &[
                         ("thread_id", thread_id.to_owned()),
                         ("active_turn_id", active_turn_id.to_owned()),
-                        ("notification_turn_id", notification_turn_id),
+                        ("notification_turn_id", notification_turn_id.to_owned()),
                         (
                             "method",
                             message
@@ -1994,6 +2002,18 @@ fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> O
         return None;
     }
     root_turn_notification_id(message, state)
+}
+
+fn replacement_active_turn_id(
+    active_turn_id: Option<&str>,
+    message: &Value,
+    state: &CodexRunState,
+) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+        return None;
+    }
+    root_turn_notification_id(message, state)
+        .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
 }
 
 fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
