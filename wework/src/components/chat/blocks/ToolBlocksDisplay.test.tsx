@@ -453,6 +453,49 @@ describe('ToolBlocksDisplay', () => {
     ).toBeInTheDocument()
   })
 
+  test('renders reversed diff lines for a created file as additions', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            ...completedFileChangesBlock,
+            fileChanges: {
+              ...completedFileChangesBlock.fileChanges,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'shot-list.md',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+              diff: [
+                'diff --git a/shot-list.md b/shot-list.md',
+                '--- a/shot-list.md',
+                '+++ /dev/null',
+                '@@ -1 +0,0 @@',
+                '-课程标题：云端工作模式实战',
+              ].join('\n'),
+            },
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /编辑 1 个文件 已处理/ }))
+    fireEvent.click(screen.getByRole('button', { name: /创建 shot-list.md/ }))
+
+    const content = screen.getByText('课程标题：云端工作模式实战')
+    const line = content.parentElement
+
+    expect(line).toHaveClass('border-green-500', 'bg-green-500/10')
+    expect(line).not.toHaveClass('border-red-500', 'bg-red-500/10')
+  })
+
   test('shows each file change duration from its matching edit tool', () => {
     const firstEdit: ProcessingBlock = {
       id: 'edit-first',
