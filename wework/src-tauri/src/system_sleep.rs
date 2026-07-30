@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+#[cfg(not(target_os = "windows"))]
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
@@ -157,41 +158,39 @@ fn is_runtime_state_event(event: &str) -> bool {
     is_start_response_event(event) || is_terminal_response_event(event)
 }
 
+#[cfg(target_os = "windows")]
+type SleepInhibitorHandle = ();
+
+#[cfg(not(target_os = "windows"))]
+type SleepInhibitorHandle = Child;
+
 struct SleepInhibitor {
-    child: Child,
+    #[allow(dead_code)]
+    handle: SleepInhibitorHandle,
 }
 
 impl SleepInhibitor {
     fn acquire() -> Result<Self, String> {
-        let mut command = sleep_inhibitor_command()?;
-        let child = command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("failed to start sleep inhibitor: {error}"))?;
-        Ok(Self { child })
-    }
-}
-
-impl Drop for SleepInhibitor {
-    fn drop(&mut self) {
-        if let Err(error) = self.child.kill() {
-            log::warn!("Failed to stop system sleep inhibitor: {error}");
-        }
-        let _ = self.child.wait();
+        let handle = sleep_inhibitor_handle()?;
+        Ok(Self { handle })
     }
 }
 
 #[cfg(target_os = "macos")]
-fn sleep_inhibitor_command() -> Result<Command, String> {
+fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
     let mut command = Command::new("/usr/bin/caffeinate");
     command.arg("-i");
-    Ok(command)
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("failed to start sleep inhibitor: {error}"))?;
+    Ok(child)
 }
 
 #[cfg(target_os = "linux")]
-fn sleep_inhibitor_command() -> Result<Command, String> {
+fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
     let mut command = Command::new("systemd-inhibit");
     command.args([
         "--what=sleep",
@@ -201,23 +200,56 @@ fn sleep_inhibitor_command() -> Result<Command, String> {
         "sleep",
         "infinity",
     ]);
-    Ok(command)
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("failed to start sleep inhibitor: {error}"))?;
+    Ok(child)
 }
 
 #[cfg(target_os = "windows")]
-fn sleep_inhibitor_command() -> Result<Command, String> {
-    let mut command = Command::new("powershell.exe");
-    command.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Add-Type -Namespace Wework -Name Sleep -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern uint SetThreadExecutionState(uint flags);'; [Wework.Sleep]::SetThreadExecutionState(0x80000001); while ($true) { Start-Sleep -Seconds 3600 }",
-    ]);
-    Ok(command)
+fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
+    // Call SetThreadExecutionState directly so no console window is created.
+    // ES_AWAYMODE_REQUIRED (0x00000040) keeps the system running while the
+    // thread is active; ES_CONTINUOUS (0x80000000) keeps the state in effect
+    // until reset. Reset happens in Drop by calling again with ES_CONTINUOUS.
+    unsafe {
+        let result = windows_sys::Win32::System::Power::SetThreadExecutionState(
+            windows_sys::Win32::System::Power::ES_AWAYMODE_REQUIRED
+                | windows_sys::Win32::System::Power::ES_CONTINUOUS,
+        );
+        if result == 0 {
+            return Err("SetThreadExecutionState returned zero".to_owned());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for SleepInhibitor {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::System::Power::SetThreadExecutionState(
+                windows_sys::Win32::System::Power::ES_CONTINUOUS,
+            );
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl Drop for SleepInhibitor {
+    fn drop(&mut self) {
+        if let Err(error) = self.handle.kill() {
+            log::warn!("Failed to stop system sleep inhibitor: {error}");
+        }
+        let _ = self.handle.wait();
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn sleep_inhibitor_command() -> Result<Command, String> {
+fn sleep_inhibitor_handle() -> Result<SleepInhibitorHandle, String> {
     Err("system sleep inhibition is not supported on this platform".to_owned())
 }
 
@@ -253,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn late_terminal_event_does_not_settle_an_unrelated_running_task() {
+    fn late_terminal_event_does_not_settle_an_unrelated_task() {
         let mut tasks = RunningTaskState::default();
         tasks.observe(["current-task".to_owned()]);
 
