@@ -6,6 +6,8 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
+const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
@@ -18,6 +20,7 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
@@ -248,20 +251,25 @@ function requestContainsToolRegressionPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
 }
 
+function requestContainsTimerPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
+}
+
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
 }
 
-function selectShellTool(body, workspacePath) {
+function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
   if (names.has('exec_command')) {
     return {
       name: 'exec_command',
       arguments: {
-        cmd: 'pwd',
+        cmd: command,
         workdir: workspacePath,
-        yield_time_ms: 1_000,
+        timeout_ms: timeoutMs,
+        yield_time_ms: timeoutMs,
       },
     }
   }
@@ -269,9 +277,9 @@ function selectShellTool(body, workspacePath) {
   return {
     name: 'shell_command',
     arguments: {
-      command: 'pwd',
+      command,
       workdir: workspacePath,
-      timeout_ms: 1_000,
+      timeout_ms: timeoutMs,
     },
   }
 }
@@ -284,6 +292,27 @@ async function getSingleElementMetrics(control, selector, description) {
 
 function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function processingDurationSeconds(text) {
+  const hours = Number(text.match(/(\d+)\s*(?:小时|h)/)?.[1] ?? 0)
+  const minutes = Number(text.match(/(\d+)\s*(?:分钟|分|m)/)?.[1] ?? 0)
+  const seconds = Number(text.match(/(\d+)\s*(?:秒|s)/)?.[1] ?? 0)
+  return hours * 3_600 + minutes * 60 + seconds
+}
+
+async function waitForProcessingDuration(control, minimumSeconds, timeoutMs) {
+  const startedAt = Date.now()
+  let text = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    text = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
+    const duration = processingDurationSeconds(text)
+    if (duration >= minimumSeconds) return duration
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `The running processing duration did not reach ${minimumSeconds}s; latest header: ${text}`
+  )
 }
 
 async function waitForBottom(control, description, timeoutMs) {
@@ -387,6 +416,7 @@ export function createDesktopScenario({
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let toolRegressionStage = 'initial'
+  let timerStage = 'initial'
   let releaseAppend
   let releaseResponse
   let resolveRequest
@@ -410,6 +440,18 @@ export function createDesktopScenario({
 
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        timerStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(TIMER_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         toolRegressionStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -421,6 +463,23 @@ export function createDesktopScenario({
           ])
         )
         return true
+      }
+
+      if (requestContainsTimerPrompt(body)) {
+        if (timerStage === 'initial') {
+          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          timerStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        throw new Error(`Unexpected running-timer stage: ${timerStage}`)
       }
 
       if (requestContainsPrompt(body)) {
@@ -522,6 +581,42 @@ export function createDesktopScenario({
         false,
         'The completed response still rendered a reasoning disclosure'
       )
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const knownTimerTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
+      await control.command('fill', COMPOSER_SELECTOR, { value: TIMER_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      const timerTaskRowTestId = await waitForNewTaskRow(
+        control,
+        knownTimerTaskRows,
+        TIMER_PROMPT,
+        uiTimeoutMs
+      )
+      const processingDurationBeforeSwitch = await waitForProcessingDuration(
+        control,
+        3,
+        uiTimeoutMs
+      )
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const processingDurationAfterSwitch = await waitForProcessingDuration(control, 1, uiTimeoutMs)
+      assert.ok(
+        processingDurationAfterSwitch >= processingDurationBeforeSwitch,
+        `The running processing timer reset from ${processingDurationBeforeSwitch}s to ${processingDurationAfterSwitch}s after switching pages`
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TIMER_COMPLETION,
+        timeoutMs: 25_000,
+      })
+
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const knownTaskRows = new Set(
