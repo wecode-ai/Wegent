@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use tokio::time::sleep;
 
 use crate::{
@@ -285,6 +285,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
     codex_app_server: CodexAppServerClient,
+    codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
@@ -300,6 +301,12 @@ pub struct RuntimeWorkRpcHandler {
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
     connectors: ConnectorRuntime,
+}
+
+#[derive(Default)]
+struct CodexRuntimeProxyConfig {
+    initialized: bool,
+    proxy_url: Option<String>,
 }
 
 struct ActiveTurnCancellation {
@@ -345,6 +352,9 @@ impl RuntimeWorkRpcHandler {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
+            codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
+                CodexRuntimeProxyConfig::default(),
+            )),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),

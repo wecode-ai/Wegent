@@ -892,7 +892,7 @@ fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
     let combined = combined_codex_developer_instructions("用中文回复");
 
     assert!(combined.contains("用中文回复"));
-    assert!(combined.contains("browser_navigate"));
+    assert!(combined.contains("browser_open"));
     assert!(combined.contains("Wework built-in browser"));
     assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
 }

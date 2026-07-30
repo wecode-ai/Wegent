@@ -4,7 +4,7 @@ sidebar_position: 38
 
 # Embedded Browser
 
-Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through a CDP-backed Browser Session. It is not a screenshot preview, and it should not open a separate external Chrome window.
+Wework's embedded browser displays an interactive web page inside the desktop workbench right panel and lets the local runtime control the same page through the WKWebView bridge. It is not a screenshot preview, and it should not open a separate external Chrome window.
 
 ## Architecture
 
@@ -12,11 +12,41 @@ The embedded browser has three layers:
 
 - The Wework Tauri native layer creates the embedded WebView and updates its bounds, navigation URL, and visibility through commands.
 - The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, and annotation state.
-- `deps/browser/relay-server` exposes the browser MCP tools used by Codex. Tool names describe the capability as the Wework embedded browser, avoiding implementation details such as Playwright.
+- `executor/src/browser_mcp` exposes browser MCP tools to Codex and uses the Wework bridge to operate the WKWebView bound to the current task.
 
-When Executor launches Codex, it injects the relay server configuration. Browser tool calls from the model go through the relay server, which uses Wework local IPC to operate the embedded browser bound to the current task.
+When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules WKWebView navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
 
-Each Wework process binds an independent random local bridge port at startup and passes the resolved address to the Executor it launches. It must not reuse a bridge address inherited from a parent process, because concurrently running Wework instances could otherwise route browser requests to the wrong window.
+Each Wework process binds an independent random local bridge port and atomically writes the bridge identity to `runtime/embedded-browser-bridge.json` under the active Executor home. The identity contains a schema version, process PID, loopback address, authentication token, and start time. Directory and file permissions should be restricted to the current user, and the token must not be logged. The MCP server reads the latest identity before each request and accepts only loopback addresses, so multiple Wework instances do not route browser requests to the wrong window.
+
+Bridge requests must include the authentication token. `open` and `navigate` allow only safe web schemes; do not allow `file:`, `javascript:`, or other URLs that could read local files or execute arbitrary script through the Agent navigation path.
+
+The bridge supports limited concurrency. A long `waitFor` request must not block independent `click`, `fill`, or `inspect` requests; when the concurrency limit is reached, return an explicit busy error instead of waiting forever.
+
+## Agent Browser Capabilities
+
+The model sees browser action tools, not raw WebKit APIs. Common capabilities include:
+
+- `browser_open` / `browser_navigate`: open or navigate pages.
+- `browser_inspect`: return a structured page inspection result.
+- `browser_click`, `browser_type`, `browser_fill`, `browser_press_key`, `browser_hover`, `browser_focus`: operate page elements.
+- `browser_scroll`, `browser_scroll_into_view`, `browser_select_option`, `browser_set_checked`: cover common scrolling and form controls.
+- `browser_wait`: wait for page stability, URL conditions, text, or element state.
+- `browser_take_screenshot`: capture a real browser screenshot.
+- `browser_capabilities`, `browser_native_input_probe`, `browser_ax_probe`, `browser_present_probe`: report WKWebView capability boundaries and diagnostics.
+
+Combined tools may collapse frequent flows into one model call, such as `browser_open_and_inspect`, `browser_click_and_inspect`, and `browser_wait_and_inspect`. Combined tools must appear in MCP `tools/list` so the protocol remains self-describing.
+
+`inspect` means structured page inspection, while `screenshot` means an actual image capture. Do not reuse `snapshot` for structured DOM output because that conflicts with real screenshot semantics.
+
+Structured inspect results should include at least the page URL, title, viewport, node list, and text summary. Nodes should consistently include:
+
+- `ref` and `index`: used by later actions for targeting.
+- `role`, `name`, `text`, and `value`: used by the model to understand semantics.
+- `rect`, `visible`, `disabled`, and `actionable`: used to decide whether the node can be operated.
+- `frameId`, `selector`, or other diagnostic locator data: useful for debugging, but the model should not depend on fragile selectors.
+- `warnings`: occlusion, invisibility, sensitive input, cross-frame limits, or other risks.
+
+Action tools should prefer `ref` values produced by `inspect`. If page re-rendering invalidates a `ref`, return a recoverable error that asks the model to inspect again instead of silently guessing a selector. Action results should describe the observed effect, such as value change, DOM change, URL change, or only dispatching an event without an observed effect.
 
 ## Task Binding
 
@@ -39,9 +69,11 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 ## WebView Compatibility
 
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
+- Browser WebViews use a Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
+- Popups, OAuth, SSO, and payment flows may use `window.open` or new-window navigation. Implementations should route them to a controlled browser window or explicitly hand them to the system; the Agent must not operate invisible hidden pages.
 - The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.
 - Page-load events write the current URL into application state. Do not synchronously read the native WebView URL while handling IPC or custom protocols because macOS WebKit may temporarily have no URL while creating or destroying a WebView.
-- The embedded browser uses a standard Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
+- Page action scripts may only perform behavior that matches the current tool semantics. Do not wrap arbitrary DOM mutations in internal evaluate calls to bypass safety checks.
 - macOS App Transport Security permits HTTP only for embedded web content. An invalid server certificate must first fail system trust evaluation; only then may the browser continue that server-trust challenge and publish risk state containing the native WebView identity and origin to the frontend. Register the TLS handler before the first navigation so initial loading cannot race asynchronous `with_webview` configuration. Keep the warning across same-origin pages, and clear it after cross-origin navigation or WebView closure.
 
 ## Optional Cloud Desktop Extension
@@ -69,13 +101,13 @@ After changing embedded browser code, run at least:
 ```bash
 pnpm --filter wework typecheck
 pnpm --filter wework lint
-cd wework && pnpm vitest run src/lib/embedded-browser.test.ts src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx
-cd wework/src-tauri && cargo check
-cd deps/browser/relay-server && npm run test:mcp
+cargo check --manifest-path executor/Cargo.toml
+cargo check --manifest-path wework/src-tauri/Cargo.toml
+cargo test --manifest-path executor/Cargo.toml browser_mcp
+cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
+pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
-When the Executor Codex launch configuration changes, also run:
+When the browser change touches Tauri commands, native WebView behavior, IPC, or the Agent action path, also start an isolated real Tauri session with `pnpm --filter wework ai:verify start` and record evidence for opening a page, inspect, actions, and screenshot. If the full E2E is too slow locally, document why it was not run and make sure CI runs `e2e:desktop:embedded-browser`.
 
-```bash
-cd executor && cargo test codex_launch_config_includes_cdp_browser_mcp_server
-```
+When the Executor Codex launch configuration changes, also run the matching Codex launch config unit tests to verify that the browser MCP server is injected correctly.
