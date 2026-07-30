@@ -1003,6 +1003,25 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const activeGuidanceUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const activeGuidanceAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const activeGuidance = activeGuidanceUserMessages.at(-1)
+  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  assert.ok(activeGuidance, 'The active background guidance message was not rendered')
+  assert.ok(
+    activeAssistantContinuation,
+    'The active assistant continuation after background guidance was not rendered'
+  )
+  assert.ok(
+    activeGuidance.top < activeAssistantContinuation.top,
+    'The active background guidance message was appended after the running assistant'
+  )
   control.releaseInitialCompletionResponse()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: COMPLETION_TEXT,
@@ -2672,11 +2691,6 @@ async function verifyCloudWorkPage(control) {
 
 async function initializeBlankCodexHome({ codexHome, control }) {
   const configPath = join(codexHome, 'config.toml')
-  assert.equal(
-    await pathExists(configPath),
-    false,
-    'The isolated Wework Codex home was not blank before initialization'
-  )
   await control.command('waitFor', '[data-testid="codex-home-initializer-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -9474,6 +9488,11 @@ async function main() {
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
   if (RUNS_PLUGIN_E2E) {
+    assert.equal(
+      await pathExists(join(codexHome, 'config.toml')),
+      false,
+      'The isolated Wework Codex home was not blank before application startup'
+    )
     await createOfficialPluginMarketplaceFixture({
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
@@ -10509,13 +10528,13 @@ async function main() {
           Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
         )
       }
-      await verifyViewImageProcessingBlock(control)
       await control.command('click', '[data-testid="processing-summary-toggle"]')
       await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
         text: '+1',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       if (VIEW_IMAGE_ONLY) {
+        await verifyViewImageProcessingBlock(control)
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
