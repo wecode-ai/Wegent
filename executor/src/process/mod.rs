@@ -7,7 +7,7 @@ use std::{
     env, fs,
     future::Future,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
     sync::{
@@ -1565,8 +1565,15 @@ fn debug_claude_stdout_path_for_spec(
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (spec.program == "claude" && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+    (is_claude_program(&spec.program) && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
+}
+
+fn is_claude_program(program: &str) -> bool {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("claude")
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -1753,6 +1760,15 @@ mod tests {
         let spec = CommandSpec::new("claude");
 
         assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_none());
+    }
+
+    #[test]
+    fn debug_claude_stdout_accepts_resolved_claude_path() {
+        let _lock = env_lock();
+        let _debug = EnvGuard::set(DEBUG_CLAUDE_STDOUT_ENV, "1");
+        let spec = CommandSpec::new("/usr/bin/claude");
+
+        assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_some());
     }
 
     #[test]

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
+import { createServer as createTcpServer } from 'node:net'
 import {
   access,
   appendFile,
@@ -125,6 +126,9 @@ const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context win
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RATE_LIMIT_PROMPT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT: recover from one model 429.'
 const RATE_LIMIT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RATE_LIMIT_COMPLETE'
+const ANTHROPIC_EMPTY_PROMPT =
+  'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY: recover when Kimi reports tokens without output.'
+const ANTHROPIC_EMPTY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ANTHROPIC_EMPTY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
@@ -272,6 +276,8 @@ const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const CONVERSATION_SWITCH_RACE_PROMPT =
+  'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1: keep a second conversation running during a rapid switch.'
 const SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET = 160
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
@@ -647,6 +653,67 @@ async function reservePort() {
   return address.port
 }
 
+class BlockingNetworkProxy {
+  constructor() {
+    this.requests = []
+    this.sockets = new Set()
+    this.released = false
+    this.server = createTcpServer(socket => {
+      this.sockets.add(socket)
+      socket.on('close', () => this.sockets.delete(socket))
+      socket.on('error', () => this.sockets.delete(socket))
+      if (this.released) {
+        socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+        return
+      }
+      let request = ''
+      socket.on('data', chunk => {
+        if (request) return
+        request = chunk.toString('utf8').split(/\r?\n/, 1)[0]?.trim() ?? ''
+        if (request) this.requests.push(request)
+      })
+    })
+  }
+
+  async start() {
+    await new Promise((resolvePromise, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(0, '127.0.0.1', resolvePromise)
+    })
+    const address = this.server.address()
+    assert.ok(address && typeof address !== 'string', 'Unable to start blocking network proxy')
+    this.url = `http://127.0.0.1:${address.port}`
+  }
+
+  async waitForRequest(timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    return this.waitForRequestAfter(0, timeoutMs)
+  }
+
+  async waitForRequestAfter(requestCount, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      if (this.requests.length > requestCount) return this.requests[requestCount]
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+    }
+    throw new Error('Codex did not reach the blocking network proxy')
+  }
+
+  release() {
+    if (this.released) return
+    this.released = true
+    for (const socket of this.sockets) {
+      socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+    }
+  }
+
+  async stop() {
+    this.release()
+    for (const socket of this.sockets) socket.destroy()
+    this.sockets.clear()
+    await new Promise(resolvePromise => this.server.close(resolvePromise))
+  }
+}
+
 async function waitForUrl(url, message, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -1003,6 +1070,25 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const activeGuidanceUserMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  const activeGuidanceAssistantMessages = await getElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+  )
+  const activeGuidance = activeGuidanceUserMessages.at(-1)
+  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  assert.ok(activeGuidance, 'The active background guidance message was not rendered')
+  assert.ok(
+    activeAssistantContinuation,
+    'The active assistant continuation after background guidance was not rendered'
+  )
+  assert.ok(
+    activeGuidance.top < activeAssistantContinuation.top,
+    'The active background guidance message was appended after the running assistant'
+  )
   control.releaseInitialCompletionResponse()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: COMPLETION_TEXT,
@@ -1534,6 +1620,88 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     messageTopOffset <= SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
     `The short conversation left ${messageTopOffset}px of blank space above its first message`
   )
+
+  const taskRowsBeforeRace = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  const concurrentRequestCount = control.scenarioRequests.get('concurrent_memory')?.length ?? 0
+  control.setScenario('concurrent_memory')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await sendPrompt(control, composerSelector, CONVERSATION_SWITCH_RACE_PROMPT)
+  await control.awaitScenarioRequestCount('concurrent_memory', concurrentRequestCount + 1)
+  const runningTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeRace,
+    'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1'
+  )
+
+  await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await ensureTaskRowVisible(control, runningTaskRowTestId)
+  await control.command('clickThenMacrotask', `[data-testid="${runningTaskRowTestId}"]`, {
+    target: `[data-testid="${shortConversationTaskRowTestId}"]`,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const restoredAfterRace = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(restoredAfterRace.text, FRESH_CHAT_PROMPT) >= 2,
+    'Rapid conversation switching lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(restoredAfterRace.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'Rapid conversation switching lost an earlier assistant message'
+  )
+  await captureVerificationScreenshot(control, 'short-conversation-03-rapid-switch-restored.png')
+  control.releaseConcurrentMemoryResponses()
+  const runningTaskId = runningTaskRowTestId.replace('runtime-local-task-row-', '')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`runtime-local-task-running-${runningTaskId}`),
+    'The rapid-switch background task did not settle after its response was released'
+  )
+  const settledAfterRace = JSON.parse(
+    await control.command(
+      'snapshot',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
+    )
+  )
+  assert.ok(
+    countTextOccurrences(settledAfterRace.text, FRESH_CHAT_PROMPT) >= 2,
+    'The settled rapid switch lost an earlier user message'
+  )
+  assert.ok(
+    countTextOccurrences(settledAfterRace.text, FRESH_CHAT_COMPLETION_TEXT) >= 2,
+    'The settled rapid switch lost an earlier assistant message'
+  )
+  assert.equal(
+    settledAfterRace.text.includes(CONVERSATION_SWITCH_RACE_PROMPT),
+    false,
+    'The late background transcript leaked into the restored conversation'
+  )
+  control.setScenario('fresh_chat')
+  return shortConversationTaskRowTestId
 }
 
 function countTextOccurrences(value, search) {
@@ -2672,11 +2840,6 @@ async function verifyCloudWorkPage(control) {
 
 async function initializeBlankCodexHome({ codexHome, control }) {
   const configPath = join(codexHome, 'config.toml')
-  assert.equal(
-    await pathExists(configPath),
-    false,
-    'The isolated Wework Codex home was not blank before initialization'
-  )
   await control.command('waitFor', '[data-testid="codex-home-initializer-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -2690,6 +2853,61 @@ async function initializeBlankCodexHome({ codexHome, control }) {
     false,
     'Creating a blank Codex home unexpectedly migrated native Codex content'
   )
+}
+
+async function waitForBundledMarketplaceRegistration(codexHome) {
+  const configPath = join(codexHome, 'config.toml')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    if (await pathExists(configPath)) {
+      const config = await readFile(configPath, 'utf8')
+      if (
+        config.includes('[marketplaces.wework-personal]') &&
+        config.includes('source_type = "local"')
+      ) {
+        return
+      }
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error('The bundled local plugin marketplace was not registered in the background')
+}
+
+async function verifyStartupIgnoresBlockedCodexNetwork({
+  blockingNetworkProxy,
+  codexNetworkProbeEnabledPath,
+  control,
+  restartDesktopApp,
+}) {
+  await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+  await writeFile(codexNetworkProbeEnabledPath, 'enabled\n', 'utf8')
+  await restartDesktopApp()
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const blockedRequest = await blockingNetworkProxy.waitForRequest()
+  await rm(codexNetworkProbeEnabledPath, { force: true })
+  assert.match(
+    blockedRequest,
+    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
+    'The blocking proxy did not capture an HTTP request'
+  )
+  blockingNetworkProxy.release()
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('setLocalProxyUrl', 'body', { value: '' })
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    snapshot.testIds.includes('desktop-workbench-main'),
+    'Blocked Codex network traffic hid the ready workbench'
+  )
+
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 async function verifyOfficialPluginSource(repositoryRoot) {
@@ -3651,6 +3869,18 @@ async function verifyBackgroundTaskWindowLifecycle({
   const lifecycleScreenshotName = name => `window-lifecycle-${name}`
   setPhase('popout-window-lifecycle')
   await verifyPopoutWindowLifecycle(control, composerSelector)
+  setPhase('close-request-without-running-task')
+  await control.command('requestMainWindowClose', 'body')
+  await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="runtime-task-close-cancel-button"]')
+  const closeCancelledSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !closeCancelledSnapshot.testIds.includes('runtime-task-close-confirm-overlay'),
+    'The close-to-tray prompt remained open after cancelling'
+  )
   setPhase('background-streaming-task')
   control.setScenario('window_lifecycle')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -3715,7 +3945,12 @@ async function verifyBackgroundTaskWindowLifecycle({
       'The executor process was not alive before close'
     )
 
-    await control.command('closeMainWindowToTray', 'body')
+    await control.command('requestMainWindowClose', 'body')
+    await control.command('waitFor', '[data-testid="runtime-task-close-confirm-overlay"]', {
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
     await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
@@ -4706,6 +4941,49 @@ async function verifyRateLimitRecovery({ composerSelector, control }) {
   )
 }
 
+async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control }) {
+  const anthropicModel = CLOUD_MODEL_CASES.find(model => model.protocol === 'anthropic')
+  assert.ok(anthropicModel, 'The Anthropic cloud model fixture is missing')
+  control.setScenario('anthropic_empty_response')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, anthropicModel.optionId, anthropicModel.label)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    ANTHROPIC_EMPTY_PROMPT,
+    'anthropic_empty_response'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('anthropic_empty_response', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Codex did not retry the empty Anthropic response'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: ANTHROPIC_EMPTY_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  assert.equal(
+    control.scenarioRequests.get('anthropic_empty_response')?.length,
+    2,
+    'The empty Anthropic response did not recover with exactly one retry'
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('assistant-error-card'),
+    false,
+    'The recovered Anthropic response rendered an assistant error'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'anthropic-empty-01-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -5683,6 +5961,42 @@ class RealCloudEnvironment {
     throw new Error('The real cloud backend still returned the removed project')
   }
 
+  async aliasCloudDeviceToCurrentApp() {
+    const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const localCandidates = (devices.items ?? []).filter(
+      device => device.device_id !== CLOUD_DEVICE_ID && device.status === 'online'
+    )
+    const localDevice =
+      localCandidates.find(device => device.device_type === 'app') ?? localCandidates[0]
+    assert.ok(localDevice?.device_id, 'The connected local app device was not registered')
+    assert.match(
+      localDevice.device_id,
+      /^[A-Za-z0-9._-]+$/,
+      'The connected local app device ID is not safe for the SQLite fixture'
+    )
+
+    await runChecked('sqlite3', [
+      this.databasePath,
+      [
+        'UPDATE kinds',
+        `SET json = json_set(json, '$.spec.appDeviceId', '${localDevice.device_id}')`,
+        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
+      ].join(' '),
+    ])
+
+    const updated = await fetchJson(`${this.backendUrl}/api/devices`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const cloudDevice = updated.items?.find(device => device.device_id === CLOUD_DEVICE_ID)
+    assert.equal(
+      cloudDevice?.app_device_id,
+      localDevice.device_id,
+      'The cloud route was not associated with the connected local app device'
+    )
+  }
+
   async cancelRunningTasks() {
     if (!this.backendUrl || !this.authToken) return
     const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
@@ -6006,6 +6320,7 @@ class DesktopE2EServer {
         'queue_management',
         'retry',
         'rate_limit',
+        'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
         'fresh_chat',
@@ -6540,6 +6855,52 @@ class DesktopE2EServer {
 
     if (requestKind === 'prewarm') {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'anthropic_empty_response') {
+      assert.equal(protocol, 'anthropic', 'The empty-response regression used the wrong protocol')
+      assert.equal(
+        body.model,
+        CLOUD_MODEL_CASES.find(model => model.protocol === 'anthropic')?.modelId,
+        'The empty-response regression used the wrong cloud model'
+      )
+      this.recordScenarioRequest('anthropic_empty_response', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(ANTHROPIC_EMPTY_PROMPT),
+        'The Anthropic empty-response request lost the user prompt'
+      )
+      const requests = this.scenarioRequests.get('anthropic_empty_response') ?? []
+      if (requests.length === 1) {
+        this.writeAnthropicSse(response, [
+          [
+            'message_start',
+            {
+              type: 'message_start',
+              message: {
+                id: 'anthropic-empty-response',
+                type: 'message',
+                role: 'assistant',
+                content: [],
+                model: 'kimi-k2.5',
+                stop_reason: null,
+                usage: { input_tokens: 1, output_tokens: 0 },
+              },
+            },
+          ],
+          [
+            'message_delta',
+            {
+              type: 'message_delta',
+              delta: { stop_reason: 'end_turn', stop_sequence: null },
+              usage: { output_tokens: 157 },
+            },
+          ],
+          ['message_stop', { type: 'message_stop' }],
+        ])
+        return
+      }
+      this.writeAnthropicMessage(response, ANTHROPIC_EMPTY_COMPLETION_TEXT)
       return
     }
 
@@ -8611,7 +8972,7 @@ class DesktopE2EServer {
         {
           type: 'message_delta',
           delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: 1 },
+          usage: { output_tokens: text ? 1 : 0 },
         },
       ],
       ['message_stop', { type: 'message_stop' }],
@@ -8687,6 +9048,68 @@ async function writeCodexConfig(
     `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
     'utf8'
   )
+}
+
+async function createBlockingCodexLauncher(realCodexBinary, expectedProxyUrl, resultDir) {
+  const launcherPath = join(resultDir, 'codex-network-probe.mjs')
+  const enabledPath = join(resultDir, 'codex-network-probe.enabled')
+  await writeFile(
+    launcherPath,
+    `#!/usr/bin/env node
+import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { connect } from 'node:net'
+
+const realCodexBinary = ${JSON.stringify(realCodexBinary)}
+const expectedProxyUrl = ${JSON.stringify(expectedProxyUrl)}
+const enabledPath = ${JSON.stringify(enabledPath)}
+const args = process.argv.slice(2)
+let delegated = false
+
+function delegateToRealCodex() {
+  if (delegated) return
+  delegated = true
+  const child = spawn(realCodexBinary, args, {
+    env: process.env,
+    stdio: 'inherit',
+  })
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => child.kill(signal))
+  }
+  child.once('error', error => {
+    console.error(error)
+    process.exitCode = 1
+  })
+  child.once('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal)
+      return
+    }
+    process.exit(code ?? 1)
+  })
+}
+
+if (!args.includes('app-server') || !existsSync(enabledPath)) {
+  delegateToRealCodex()
+} else {
+  const proxy = new URL(expectedProxyUrl)
+  const socket = connect({
+    host: proxy.hostname,
+    port: Number(proxy.port),
+  })
+  socket.once('connect', () => {
+    socket.write(
+      'CONNECT chatgpt.com:443 HTTP/1.1\\r\\nHost: chatgpt.com:443\\r\\nConnection: keep-alive\\r\\n\\r\\n'
+    )
+  })
+  socket.once('close', delegateToRealCodex)
+  socket.once('error', delegateToRealCodex)
+}
+`,
+    'utf8'
+  )
+  await chmod(launcherPath, 0o755)
+  return { enabledPath, launcherPath }
 }
 
 function codexUpstreamApiFormat(protocol) {
@@ -8933,7 +9356,7 @@ async function verifyConnectedModelsOnLocalExecution({
   )
 }
 
-async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) {
+async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath) {
   const composerSelector = ACTIVE_COMPOSER_SELECTOR
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -9179,6 +9602,8 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
   await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
+  await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
+
   await verifyModelProtocolMatrix({
     cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
@@ -9219,6 +9644,51 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The removed cloud project remained visible in the workbench'
   )
   await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
+
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: CLOUD_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'cloud-executor-home'),
+    'The duplicate regression remote picker did not load the cloud executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'The duplicate regression cloud project was not created'
+  )
+
+  await cloudEnvironment.aliasCloudDeviceToCurrentApp()
+  await createSingleRootLocalProject(control, workspacePath, 'workspace')
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'Creating a local project while cloud work was connected exposed duplicate projects',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'cloud-08-local-project-deduplicated.png')
+
+  await restartDesktopApp()
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.filter(testId => testId.startsWith('project-menu-')).length === 1,
+    'Restarting Wework changed the deduplicated local and cloud project into multiple rows',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await captureVerificationScreenshot(control, 'cloud-09-local-project-deduplicated-restart.png')
 }
 
 async function verifyRetryFailureRestoration(control, composerSelector) {
@@ -9457,6 +9927,11 @@ async function main() {
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
   if (RUNS_PLUGIN_E2E) {
+    assert.equal(
+      await pathExists(join(codexHome, 'config.toml')),
+      false,
+      'The isolated Wework Codex home was not blank before application startup'
+    )
     await createOfficialPluginMarketplaceFixture({
       marketplaceRoot: pluginMarketplacePath,
       repositoryRoot: officialPluginRepositoryPath,
@@ -9498,10 +9973,15 @@ async function main() {
   const modelSwitchVerification = []
   let app
   let appBundlePath
+  let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
   try {
     await control.start()
+    if (RUNS_PLUGIN_E2E) {
+      blockingNetworkProxy = new BlockingNetworkProxy()
+      await blockingNetworkProxy.start()
+    }
     const codexBinary = await resolveExecutable(
       process.env.CODEX_BIN ?? process.env.CODEX_BINARY_PATH,
       'codex',
@@ -9510,6 +9990,10 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
+    const blockingCodexLauncher = RUNS_PLUGIN_E2E
+      ? await createBlockingCodexLauncher(codexBinary, blockingNetworkProxy.url, resultDir)
+      : null
+    const appCodexBinary = blockingCodexLauncher?.launcherPath ?? codexBinary
 
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     const executorBinary = await buildExecutor()
@@ -9537,7 +10021,7 @@ async function main() {
 
     const appEnvironment = {
       ...process.env,
-      CODEX_BIN: codexBinary,
+      CODEX_BIN: appCodexBinary,
       HOME: homePath,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -9648,12 +10132,14 @@ async function main() {
         codexHome,
         control,
       })
-      await restartDesktopApp(() =>
-        writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
-      )
-      await control.command('waitFor', '[data-testid="projects-create-button"]', {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      await writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      await verifyStartupIgnoresBlockedCodexNetwork({
+        blockingNetworkProxy,
+        codexNetworkProbeEnabledPath: blockingCodexLauncher.enabledPath,
+        control,
+        restartDesktopApp,
       })
+      await waitForBundledMarketplaceRegistration(codexHome)
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -9689,7 +10175,7 @@ async function main() {
         workspacePath,
       })
       phase = 'cloud-project-flow'
-      await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
+      await verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopApp, workspacePath)
       await writeFile(
         join(resultDir, 'model-requests.json'),
         `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -10505,13 +10991,13 @@ async function main() {
           Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
         )
       }
-      await verifyViewImageProcessingBlock(control)
       await control.command('click', '[data-testid="processing-summary-toggle"]')
       await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
         text: '+1',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       if (VIEW_IMAGE_ONLY) {
+        await verifyViewImageProcessingBlock(control)
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -11041,11 +11527,6 @@ async function main() {
       }
       phase = 'fresh-chat'
       control.setScenario('fresh_chat')
-      const taskRowsBeforeFreshChat = new Set(
-        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-          testId.startsWith('runtime-local-task-row-')
-        )
-      )
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -11057,23 +11538,12 @@ async function main() {
         false,
         'The new conversation retained the previous task'
       )
-      await verifyShortConversationLayout({ composerSelector, control })
+      const secondTaskRowTestId = await verifyShortConversationLayout({
+        composerSelector,
+        control,
+      })
 
       phase = 'task-draft-isolation'
-      const secondTaskSnapshot = await waitForSnapshot(
-        control,
-        snapshot =>
-          snapshot.testIds.some(
-            testId =>
-              testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
-          ),
-        'The second task was not available for task draft isolation'
-      )
-      const secondTaskRowTestId = secondTaskSnapshot.testIds.find(
-        testId =>
-          testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
-      )
-      assert.ok(secondTaskRowTestId, 'The second task row was not found')
       await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
       await waitForPersistedComposerInput(
         control,
@@ -11546,6 +12016,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
+    await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
     if (appBundlePath) {

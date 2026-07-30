@@ -101,7 +101,6 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
         "get_team_by_id",
         fake_get_team_by_id,
     )
-
     response = await users_endpoint.get_user_quick_launch(
         db=db,
         current_user=current_user,

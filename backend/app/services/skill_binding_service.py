@@ -38,6 +38,7 @@ class SkillBindingContext:
     mode: str | None = None
     agent_id: int | str | None = None
     project_id: int | str | None = None
+    group_namespace: str | None = None
 
 
 class SkillBindingService:
@@ -65,15 +66,181 @@ class SkillBindingService:
         if not skill:
             raise HTTPException(status_code=404, detail="Skill not found")
 
-        if skill.user_id in {user_id, 0}:
+        if self.can_user_access_skill(db, skill=skill, user_id=user_id):
             return skill
+
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    def can_user_access_skill(
+        self,
+        db: Session,
+        *,
+        skill: Kind,
+        user_id: int,
+    ) -> bool:
+        """Return whether the user currently has access to an active Skill."""
+        if not skill.is_active:
+            return False
+
+        capability = self._get_capability(skill)
+        if skill.user_id in {user_id, 0} or (
+            capability.get("visibility") == "public"
+            and capability.get("publishStatus") == "published"
+        ):
+            return True
 
         if skill.namespace != "default":
             user_role = get_effective_role_in_group(db, user_id, skill.namespace)
             if user_role and has_permission(user_role, GroupRole.Reporter):
-                return skill
+                return True
 
-        raise HTTPException(status_code=404, detail="Skill not found")
+        return False
+
+    def build_group_name(self, group_namespace: str, skill_id: int) -> str:
+        """Return the stable Kind name for a group's binding to a Skill."""
+        return f"group-skill-{skill_id}"
+
+    def add_group_skill(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        skill_id: int,
+        created_by: int,
+        commit: bool = True,
+    ) -> Kind:
+        """Create or restore a SkillBinding shared by a group."""
+        from app.services.group_permission import check_group_permission
+
+        if not check_group_permission(
+            db, created_by, group_namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Developer role is required to add a group Skill",
+            )
+
+        skill = self.get_accessible_skill(db, skill_id, created_by)
+        binding_name = self.build_group_name(group_namespace, skill_id)
+        binding_json = self._build_binding_json(
+            binding_name=binding_name,
+            binding_namespace=group_namespace,
+            skill=skill,
+            target_type=SkillBindingTargetType.GROUP,
+            target_id=group_namespace,
+            created_by=created_by,
+        )
+        binding = self._get_group_binding(
+            db,
+            group_namespace=group_namespace,
+            skill_id=skill_id,
+            include_inactive=True,
+        )
+        if binding:
+            binding.json = binding_json
+            binding.is_active = True
+            flag_modified(binding, "json")
+        else:
+            binding = Kind(
+                user_id=created_by,
+                kind=SKILL_BINDING_KIND,
+                name=binding_name,
+                namespace=group_namespace,
+                json=binding_json,
+                is_active=True,
+            )
+            db.add(binding)
+
+        db.flush()
+        if commit:
+            db.commit()
+            db.refresh(binding)
+        return binding
+
+    def list_group_bindings(
+        self, db: Session, group_namespace: str, user_id: int
+    ) -> list[Kind]:
+        """Return active SkillBindings available through a group."""
+        role = get_effective_role_in_group(db, user_id, group_namespace)
+        if not role or not has_permission(role, GroupRole.Reporter):
+            return []
+
+        bindings = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == SKILL_BINDING_KIND,
+                Kind.namespace == group_namespace,
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+        return [
+            binding
+            for binding in bindings
+            if self._is_group_binding(binding, group_namespace)
+            and self._extract_skill_id(binding) is not None
+        ]
+
+    def remove_group_skill(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        skill_id: int,
+        removed_by: int,
+        commit: bool = True,
+    ) -> None:
+        """Soft-delete a SkillBinding shared by a group."""
+        from app.services.group_permission import check_group_permission
+
+        if not check_group_permission(
+            db, removed_by, group_namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Developer role is required to remove a group Skill",
+            )
+
+        binding = self._get_group_binding(
+            db,
+            group_namespace=group_namespace,
+            skill_id=skill_id,
+            include_inactive=False,
+        )
+        if binding:
+            binding.is_active = False
+            db.flush()
+
+        if commit:
+            db.commit()
+
+    def list_group_skill_ids(
+        self, db: Session, group_namespace: str, user_id: int
+    ) -> set[int]:
+        """Return active Skill ids installed in a group."""
+        skill_ids: set[int] = set()
+        for binding in self.list_group_bindings(db, group_namespace, user_id):
+            skill_id = self._extract_skill_id(binding)
+            if skill_id is None or not self._get_active_skill(db, skill_id):
+                continue
+            skill_ids.add(skill_id)
+        return skill_ids
+
+    def is_skill_available_to_group(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        skill_id: int,
+        user_id: int,
+    ) -> bool:
+        """Return whether a group has an active binding to a Skill."""
+        return skill_id in self.list_group_skill_ids(
+            db,
+            group_namespace,
+            user_id,
+        )
 
     def add_user_default_skill(
         self,
@@ -204,9 +371,10 @@ class SkillBindingService:
             if skill_id is None:
                 continue
 
-            try:
-                self.get_accessible_skill(db, skill_id, user_id)
-            except HTTPException:
+            skill = self._get_active_skill(db, skill_id)
+            if not skill or not self.can_user_access_skill(
+                db, skill=skill, user_id=user_id
+            ):
                 continue
 
             accessible_bindings.append(binding)
@@ -230,16 +398,25 @@ class SkillBindingService:
     ) -> list[dict[str, Any]]:
         """Return active runtime Skill refs for the user's default enabled Skills."""
         refs: list[dict[str, Any]] = []
-        for binding in self.list_user_default_bindings(db, user_id):
+        bindings = list(self.list_user_default_bindings(db, user_id))
+        if context and context.group_namespace:
+            bindings.extend(
+                self.list_group_bindings(db, context.group_namespace, user_id)
+            )
+
+        seen_skill_ids: set[int] = set()
+        for binding in bindings:
             skill_id = self._extract_skill_id(binding)
-            if skill_id is None:
+            if skill_id is None or skill_id in seen_skill_ids:
                 continue
+            seen_skill_ids.add(skill_id)
 
             if self._is_excluded_by_context(binding, context):
                 continue
 
-            skill = self.get_accessible_skill(db, skill_id, user_id)
-
+            skill = self._get_active_skill(db, skill_id)
+            if not skill:
+                continue
             ref = {
                 "skill_id": skill.id,
                 "name": skill.name,
@@ -291,6 +468,23 @@ class SkillBindingService:
 
         return query.first()
 
+    def _get_group_binding(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        skill_id: int,
+        include_inactive: bool,
+    ) -> Kind | None:
+        query = db.query(Kind).filter(
+            Kind.kind == SKILL_BINDING_KIND,
+            Kind.namespace == group_namespace,
+            Kind.name == self.build_group_name(group_namespace, skill_id),
+        )
+        if not include_inactive:
+            query = query.filter(Kind.is_active == True)
+        return query.first()
+
     def _build_user_default_json(
         self,
         *,
@@ -299,12 +493,31 @@ class SkillBindingService:
         target_id: str,
         created_by: int,
     ) -> dict[str, Any]:
+        return self._build_binding_json(
+            binding_name=binding_name,
+            binding_namespace=SKILL_BINDING_NAMESPACE,
+            skill=skill,
+            target_type=SkillBindingTargetType.USER,
+            target_id=target_id,
+            created_by=created_by,
+        )
+
+    def _build_binding_json(
+        self,
+        *,
+        binding_name: str,
+        binding_namespace: str,
+        skill: Kind,
+        target_type: SkillBindingTargetType,
+        target_id: str,
+        created_by: int,
+    ) -> dict[str, Any]:
         return {
             "apiVersion": "agent.wecode.io/v1",
             "kind": SKILL_BINDING_KIND,
             "metadata": {
                 "name": binding_name,
-                "namespace": SKILL_BINDING_NAMESPACE,
+                "namespace": binding_namespace,
             },
             "spec": {
                 "skillRef": {
@@ -313,7 +526,7 @@ class SkillBindingService:
                     "namespace": skill.namespace,
                     "isPublic": skill.user_id == 0,
                 },
-                "targetType": SkillBindingTargetType.USER.value,
+                "targetType": target_type.value,
                 "targetId": target_id,
                 "createdBy": created_by,
                 "exceptions": [],
@@ -394,11 +607,36 @@ class SkillBindingService:
         spec = binding_json.get("spec", {})
         return spec if isinstance(spec, dict) else {}
 
+    def _get_capability(self, skill: Kind) -> dict[str, Any]:
+        payload = skill.json if isinstance(skill.json, dict) else {}
+        spec = payload.get("spec", {})
+        capability = spec.get("capability", {}) if isinstance(spec, dict) else {}
+        return capability if isinstance(capability, dict) else {}
+
+    def _get_active_skill(self, db: Session, skill_id: int) -> Kind | None:
+        """Resolve an already-bound Skill even after its listing is archived."""
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
     def _is_user_default_binding(self, binding: Kind, target_id: str) -> bool:
         spec = self._get_spec(binding)
         return (
             spec.get("targetType") == SkillBindingTargetType.USER.value
             and spec.get("targetId") == target_id
+        )
+
+    def _is_group_binding(self, binding: Kind, group_namespace: str) -> bool:
+        spec = self._get_spec(binding)
+        return (
+            spec.get("targetType") == SkillBindingTargetType.GROUP.value
+            and spec.get("targetId") == group_namespace
         )
 
 

@@ -21,6 +21,7 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     Security,
     UploadFile,
     status,
@@ -60,6 +61,12 @@ from app.services.skill_binding_service import skill_binding_service
 router = APIRouter(prefix="/kinds/skills")
 
 
+class GroupSkillBindingBatchRequest(BaseModel):
+    """Groups that should receive access to a Skill."""
+
+    group_names: List[str] = Field(min_length=1, max_length=100)
+
+
 def _release_read_transaction(db: Session) -> None:
     """Release read-only DB transactions before slow response streaming."""
     db.rollback()
@@ -74,6 +81,63 @@ def _etag_matches(if_none_match: Optional[str], etag: str) -> bool:
         return False
     candidates = [value.strip() for value in if_none_match.split(",")]
     return "*" in candidates or etag in candidates
+
+
+def _is_runtime_skill_download(request: Request) -> bool:
+    """Return whether a validated request uses an executor credential."""
+    from app.core.auth_utils import is_api_key
+    from app.services.auth.task_token import verify_task_token
+
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key and is_api_key(api_key):
+        return True
+
+    authorization = request.headers.get("Authorization", "")
+    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    return bool(token and (is_api_key(token) or verify_task_token(token)))
+
+
+def _ensure_system_skill_download_allowed(
+    request: Request,
+    current_user: User,
+) -> None:
+    """Restrict system Skill archives to admins and executor credentials."""
+    if current_user.role == "admin" or _is_runtime_skill_download(request):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="System skills cannot be downloaded by individual users",
+    )
+
+
+def _get_skill_archive_by_id(
+    db: Session,
+    skill_id: int,
+) -> tuple[Optional[Skill], Optional[bytes]]:
+    """Load an active Skill archive after the caller has authorized its use."""
+    skill_kind = (
+        db.query(Kind)
+        .filter(
+            Kind.id == skill_id,
+            Kind.kind == "Skill",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if not skill_kind:
+        return None, None
+
+    skill = skill_kinds_service.get_skill_by_id_in_namespace(
+        db=db,
+        skill_id=skill_id,
+        namespace=skill_kind.namespace,
+    )
+    binary_data = skill_kinds_service.get_skill_binary_in_namespace(
+        db=db,
+        skill_id=skill_id,
+        namespace=skill_kind.namespace,
+    )
+    return skill, binary_data
 
 
 def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
@@ -852,6 +916,7 @@ async def update_public_skill_with_upload(
 @router.get("/public/{skill_id}/download")
 def download_public_skill(
     skill_id: int,
+    request: Request,
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     db: Session = Depends(get_db),
 ):
@@ -859,8 +924,10 @@ def download_public_skill(
     Download a public Skill ckage.
 
     Validates that the skill_id corresponds to a public skill (user_id=0).
-    Any authenticated user can download public skills.
+    Administrators and executor credentials can download public skills.
     """
+    _ensure_system_skill_download_allowed(request, current_user)
+
     # Verify this is a public skill (user_id=0)
     skill = (
         db.query(Kind)
@@ -1110,6 +1177,9 @@ def list_unified_skills(
     user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
         db, current_user.id
     )
+    bound_skill_ids = (
+        set(user_default_skill_ids) if scope in {"personal", "all"} else set()
+    )
 
     # Build optimized query based on scope
     if scope == "personal":
@@ -1147,6 +1217,13 @@ def list_unified_skills(
                 .order_by(Kind.created_at.desc())
                 .all()
             )
+            bound_skill_ids.update(
+                skill_binding_service.list_group_skill_ids(
+                    db,
+                    group_name,
+                    current_user.id,
+                )
+            )
         else:
             # Query all user's groups (excluding default)
             user_groups = get_user_groups(db, current_user.id)
@@ -1164,6 +1241,14 @@ def list_unified_skills(
                 )
             else:
                 skill_kinds = []
+            for group_namespace in group_namespaces:
+                bound_skill_ids.update(
+                    skill_binding_service.list_group_skill_ids(
+                        db,
+                        group_namespace,
+                        current_user.id,
+                    )
+                )
     else:  # scope == "all"
         # Query personal + all user's groups in a single query
         user_groups = get_user_groups(db, current_user.id)
@@ -1189,6 +1274,29 @@ def list_unified_skills(
             .order_by(Kind.created_at.desc())
             .all()
         )
+        for group_namespace in group_namespaces:
+            bound_skill_ids.update(
+                skill_binding_service.list_group_skill_ids(
+                    db,
+                    group_namespace,
+                    current_user.id,
+                )
+            )
+
+    direct_skill_ids = {skill.id for skill in skill_kinds}
+    missing_bound_skill_ids = bound_skill_ids - direct_skill_ids
+    if missing_bound_skill_ids:
+        bound_skills = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(missing_bound_skill_ids),
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+            .all()
+        )
+        skill_kinds.extend(bound_skills)
 
     # Convert Kind objects to response format
     for kind in skill_kinds:
@@ -1396,6 +1504,59 @@ def remove_skill_from_my_default(
     return None
 
 
+@router.post(
+    "/{skill_id}/bindings/groups",
+    response_model=List[SkillBindingResponse],
+)
+def add_skill_to_groups(
+    skill_id: int,
+    request: GroupSkillBindingBatchRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add a Skill to one or more groups managed by the current user."""
+    group_names = list(
+        dict.fromkeys(name.strip() for name in request.group_names if name.strip())
+    )
+    if not group_names:
+        raise HTTPException(status_code=400, detail="At least one group is required")
+
+    bindings = [
+        skill_binding_service.add_group_skill(
+            db,
+            group_namespace=group_name,
+            skill_id=skill_id,
+            created_by=current_user.id,
+            commit=False,
+        )
+        for group_name in group_names
+    ]
+    db.commit()
+    for binding in bindings:
+        db.refresh(binding)
+    return [skill_binding_service.to_response(binding) for binding in bindings]
+
+
+@router.delete(
+    "/{skill_id}/bindings/groups",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_skill_from_group(
+    skill_id: int,
+    group_name: str = Query(..., min_length=1),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a Skill from a group managed by the current user."""
+    skill_binding_service.remove_group_skill(
+        db,
+        group_namespace=group_name,
+        skill_id=skill_id,
+        removed_by=current_user.id,
+    )
+    return None
+
+
 # ============================================================================
 # Dynamic Skill Endpoints (with path parameter)
 # NOTE: These routes MUST be defined AFTER all static routes to avoid
@@ -1421,6 +1582,7 @@ def get_skill(
 @router.get("/{skill_id}/download")
 def download_skill(
     skill_id: int,
+    request: Request,
     namespace: str = Query("default", description="Namespace for group skill lookup"),
     task_id: int = Query(
         None,
@@ -1437,9 +1599,10 @@ def download_skill(
     Used by Executor to download Skills for deployment.
     Search order:
     1. User's personal skill (user_id=current_user)
-    2. Group skill in namespace (if namespace != 'default')
-    3. Task owner's skill (if task_id provided and user is task member)
-    4. Public skill (user_id=0)
+    2. Skill bound to the user's personal defaults
+    3. Group skill or Skill bound to an accessible group
+    4. Task owner's or task group's Skill (if the user is a task member)
+    5. Public skill (user_id=0)
 
     Task-based authorization:
     When task_id is provided, the API will also search for skills owned by the
@@ -1458,8 +1621,24 @@ def download_skill(
             db=db, skill_id=skill_id, user_id=current_user.id
         )
 
-    # 2. If not found and namespace is not default, search group skill
-    if not skill and namespace != "default":
+    # 2. A marketplace Skill remains owned by its publisher. A personal binding
+    # grants download access without copying the source Kind or archive.
+    if not skill and skill_id in skill_binding_service.list_user_default_skill_ids(
+        db, current_user.id
+    ):
+        skill, binary_data = _get_skill_archive_by_id(db, skill_id)
+
+    # 3. Group Skills and group bindings require at least Reporter access.
+    if (
+        not skill
+        and namespace != "default"
+        and check_group_permission(
+            db,
+            current_user.id,
+            namespace,
+            GroupRole.Reporter,
+        )
+    ):
         skill = skill_kinds_service.get_skill_by_id_in_namespace(
             db=db, skill_id=skill_id, namespace=namespace
         )
@@ -1467,8 +1646,16 @@ def download_skill(
             binary_data = skill_kinds_service.get_skill_binary_in_namespace(
                 db=db, skill_id=skill_id, namespace=namespace
             )
+        elif skill_binding_service.is_skill_available_to_group(
+            db,
+            group_namespace=namespace,
+            skill_id=skill_id,
+            user_id=current_user.id,
+        ):
+            skill, binary_data = _get_skill_archive_by_id(db, skill_id)
 
-    # 3. If not found and task_id provided, search team owner's skill
+    # 4. If not found and task_id provided, search the task group's bindings and
+    # then the team owner's Skills.
     # This enables shared team scenarios where executor downloads skills
     # owned by the original team owner
     if not skill and task_id:
@@ -1489,11 +1676,27 @@ def download_skill(
             if task:
                 # Get team owner user_id from task's teamRef
                 task_crd = Task.model_validate(task.json)
+                team_namespace = task_crd.spec.teamRef.namespace or "default"
+                if (
+                    team_namespace != "default"
+                    and skill_binding_service.is_skill_available_to_group(
+                        db,
+                        group_namespace=team_namespace,
+                        skill_id=skill_id,
+                        user_id=current_user.id,
+                    )
+                ):
+                    skill, binary_data = _get_skill_archive_by_id(db, skill_id)
+
                 team_owner_user_id = task_crd.spec.teamRef.user_id
 
                 # If teamRef.user_id is set and different from current user,
                 # search skill owned by team owner
-                if team_owner_user_id and team_owner_user_id != current_user.id:
+                if (
+                    not skill
+                    and team_owner_user_id
+                    and team_owner_user_id != current_user.id
+                ):
                     skill = skill_kinds_service.get_skill_by_id(
                         db=db, skill_id=skill_id, user_id=team_owner_user_id
                     )
@@ -1502,10 +1705,12 @@ def download_skill(
                             db=db, skill_id=skill_id, user_id=team_owner_user_id
                         )
 
-    # 4. If still not found, search public skill (user_id=0)
+    # 5. If still not found, search system skill (user_id=0).
+    # Individual users may reference system Skills but cannot export their ZIP files.
     if not skill:
         skill = skill_kinds_service.get_skill_by_id(db=db, skill_id=skill_id, user_id=0)
         if skill:
+            _ensure_system_skill_download_allowed(request, current_user)
             binary_data = skill_kinds_service.get_skill_binary(
                 db=db, skill_id=skill_id, user_id=0
             )

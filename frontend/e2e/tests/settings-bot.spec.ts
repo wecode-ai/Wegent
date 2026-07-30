@@ -2,16 +2,17 @@ import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 
 const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&scope=personal'
-const TEAM_LIST_TITLE = 'h2:has-text("Team List"), h2:has-text("智能体列表")'
 
 async function expectAgentResourcePage(page: Page) {
   await expect(page).toHaveURL(/\/resource-library/)
   await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
-  await expect(page.locator('[data-testid="managed-resource-agent-tab"]')).toHaveAttribute(
+  await expect(page.locator('[data-testid="resource-type-agent-filter"]')).toHaveAttribute(
     'aria-pressed',
     'true'
   )
-  await expect(page.locator(TEAM_LIST_TITLE)).toBeVisible({ timeout: 15000 })
+  await expect(page.locator('[data-testid="resource-library-content"]')).toBeVisible({
+    timeout: 15000,
+  })
 }
 
 async function expectTeamListHasContentOrEmptyState(page: Page) {
@@ -33,9 +34,11 @@ async function expectTeamListHasContentOrEmptyState(page: Page) {
 }
 
 async function openCreateAgentDialog(page: Page) {
-  const createButton = page.locator('[data-testid="create-team-button"]')
-  await expect(createButton).toBeVisible({ timeout: 20000 })
-  await createButton.click()
+  await page.locator('[data-testid="new-capability-button"]').click()
+  await expect(page.locator('[data-testid="new-capability-menu"]')).toBeVisible({
+    timeout: 10000,
+  })
+  await page.locator('[data-testid="new-capability-type-agent"]').click()
 
   const dialog = page.locator('[role="dialog"]')
   await expect(dialog).toBeVisible({ timeout: 10000 })
@@ -51,11 +54,10 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
   })
 
   test('should access bot-backed agent management in resource library', async ({ page }) => {
-    await expect(page.locator('[data-testid="create-team-button"]')).toBeVisible({
-      timeout: 20000,
+    await expect(page.locator('[data-testid="new-capability-button"]')).toBeVisible({
+      timeout: 15000,
     })
-    await expect(page.locator('[data-testid="create-team-wizard-button"]')).toBeVisible()
-    await expect(page.locator('[data-testid="team-mode-filter"]')).toBeVisible()
+    await expect(page.locator('[data-testid="resource-library-mode-select"]')).toBeVisible()
   })
 
   test('should display agent list or empty state', async ({ page }) => {

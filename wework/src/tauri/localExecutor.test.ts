@@ -6,10 +6,12 @@ import {
   LOCAL_EXECUTOR_EVENT,
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
+  ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getLocalExecutorStatus,
   getInitializedBundledPluginMarketplace,
   requestLocalExecutor,
+  resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
 } from './localExecutor'
 
@@ -26,6 +28,7 @@ const listenMock = vi.mocked(listen)
 
 describe('localExecutor', () => {
   beforeEach(() => {
+    resetLocalExecutorStateForTests()
     invokeMock.mockReset()
     listenMock.mockReset()
   })
@@ -51,12 +54,6 @@ describe('localExecutor', () => {
         })
       }
       if (command === LOCAL_EXECUTOR_COMMANDS.request) {
-        const request = invokeMock.mock.calls.at(-1)?.[1] as
-          | { params?: { method?: string } }
-          | undefined
-        if (request?.params?.method === 'plugin/list') {
-          return Promise.resolve({ marketplaces: [] })
-        }
         return Promise.resolve({ marketplaceName: 'wework-personal' })
       }
       return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
@@ -75,38 +72,12 @@ describe('localExecutor', () => {
     })
     expect(invokeMock.mock.calls).toEqual([
       [LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace],
-      [LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus],
       [LOCAL_EXECUTOR_COMMANDS.ensure],
       [
         LOCAL_EXECUTOR_COMMANDS.request,
         {
           method: 'runtime.codex.runtime_config.update',
           params: { proxyUrl: null },
-        },
-      ],
-      [
-        LOCAL_EXECUTOR_COMMANDS.request,
-        {
-          method: 'codex.app_server_request',
-          params: {
-            method: 'plugin/list',
-            params: { cwds: null },
-          },
-        },
-      ],
-      [
-        LOCAL_EXECUTOR_COMMANDS.request,
-        {
-          method: 'codex.app_server_request',
-          params: {
-            method: 'marketplace/add',
-            params: {
-              source:
-                '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
-              refName: null,
-              sparsePaths: null,
-            },
-          },
         },
       ],
     ])
@@ -130,19 +101,139 @@ describe('localExecutor', () => {
         })
       }
       if (command === LOCAL_EXECUTOR_COMMANDS.request) {
-        return Promise.resolve({
-          marketplaces: [{ name: 'wework-personal', path: `${path}/` }],
-        })
+        return Promise.resolve({ marketplaceName: 'wework-personal' })
       }
       return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
     })
 
     await ensureLocalExecutorStarted()
 
-    expect(invokeMock).toHaveBeenCalledTimes(5)
+    expect(invokeMock).toHaveBeenCalledTimes(3)
   })
 
-  test('defers bundled marketplace registration until Codex home initialization finishes', async () => {
+  test('does not start bundled marketplace registration before reporting ready', async () => {
+    const path =
+      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-background'
+    let finishMarketplaceRegistration: (value: { marketplaceName: string }) => void = () =>
+      undefined
+    const marketplaceRegistration = new Promise<{ marketplaceName: string }>(resolve => {
+      finishMarketplaceRegistration = resolve
+    })
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({ id: 'wework-personal', path, pluginCount: 0 })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus) {
+        return Promise.resolve({ shouldPromptMigration: false })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-background',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.status) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          runtimeInstanceId: 'runtime-background',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.request) {
+        const request = invokeMock.mock.calls.at(-1)?.[1] as
+          | { params?: { method?: string } }
+          | undefined
+        if (request?.params?.method === 'marketplace/add') {
+          return marketplaceRegistration
+        }
+        return Promise.resolve(undefined)
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    await expect(ensureLocalExecutorStarted()).resolves.toMatchObject({
+      running: true,
+      ready: true,
+      runtimeInstanceId: 'runtime-background',
+    })
+
+    expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: expect.anything(),
+    })
+    const registration = ensureBundledPluginMarketplaceRegistered()
+    finishMarketplaceRegistration({ marketplaceName: 'wework-personal' })
+    await registration
+  })
+
+  test('repairs a stale bundled marketplace using local-only discovery', async () => {
+    const path =
+      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-repaired'
+    let addAttempts = 0
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({ id: 'wework-personal', path, pluginCount: 0 })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.codexHomeMigrationStatus) {
+        return Promise.resolve({ shouldPromptMigration: false })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-repaired',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.status) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          runtimeInstanceId: 'runtime-repaired',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.request) {
+        const request = invokeMock.mock.calls.at(-1)?.[1] as
+          | { params?: { method?: string } }
+          | undefined
+        if (request?.params?.method === 'marketplace/add') {
+          addAttempts += 1
+          return addAttempts === 1
+            ? Promise.reject(new Error('marketplace name already exists'))
+            : Promise.resolve({ marketplaceName: 'wework-personal' })
+        }
+        if (request?.params?.method === 'plugin/list') {
+          return Promise.resolve({
+            marketplaces: [{ name: 'wework-personal', path: '/Users/test/old-marketplace' }],
+          })
+        }
+        if (request?.params?.method === 'marketplace/remove') {
+          return Promise.resolve(undefined)
+        }
+        return Promise.resolve(undefined)
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    await ensureLocalExecutorStarted()
+    await ensureBundledPluginMarketplaceRegistered()
+    expect(addAttempts).toBe(2)
+
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
+      method: 'codex.app_server_request',
+      params: {
+        method: 'plugin/list',
+        params: {
+          cwds: null,
+          marketplaceKinds: ['local'],
+        },
+      },
+    })
+  })
+
+  test('defers bundled marketplace registration until it is explicitly requested', async () => {
     const path =
       '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-deferred'
     let shouldPromptMigration = true
@@ -158,6 +249,13 @@ describe('localExecutor', () => {
           running: true,
           ready: true,
           deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-deferred',
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.status) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
           runtimeInstanceId: 'runtime-deferred',
         })
       }
@@ -185,7 +283,7 @@ describe('localExecutor', () => {
     })
 
     shouldPromptMigration = false
-    await ensureLocalExecutorStarted()
+    await ensureBundledPluginMarketplaceRegistered()
 
     expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
       method: 'codex.app_server_request',

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
@@ -313,6 +313,43 @@ describe('CloudConnectionProvider', () => {
 
     await waitFor(() => expect(httpMocks.get).toHaveBeenCalledWith('/plugins/installed'))
     expect(httpMocks.post).not.toHaveBeenCalled()
+  })
+
+  it('keeps the cached cloud connection when the initial refresh times out', async () => {
+    vi.useFakeTimers()
+    try {
+      saveStoredCloudConnection({
+        backendUrl: 'https://cloud.example.com',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'wss://backend-socket.example.com',
+        socketPath: '/socket.io',
+        webUrl: 'https://cloud.example.com',
+        token: 'cloud-token',
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      })
+      httpMocks.get.mockReturnValue(new Promise(() => undefined))
+
+      render(
+        <CloudConnectionProvider initializeSitesPlugin={false}>
+          <CloudSocketProbe />
+        </CloudConnectionProvider>
+      )
+
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8000)
+      })
+
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').token).toBe(
+        'cloud-token'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('uses the configured Socket URL for the packaged Backend', async () => {

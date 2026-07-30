@@ -49,9 +49,10 @@ def test_download_skill_releases_transaction_before_streaming_response(monkeypat
 
     skills_endpoint.download_skill(
         skill_id=42,
+        request=SimpleNamespace(headers={}),
         namespace="default",
         task_id=None,
-        current_user=current_user,
+        current_user=SimpleNamespace(id=current_user.id, role="user"),
         db=db,
     )
 
@@ -79,10 +80,11 @@ def test_download_skill_returns_not_modified_for_matching_etag(monkeypatch):
 
     response = skills_endpoint.download_skill(
         skill_id=42,
+        request=SimpleNamespace(headers={}),
         namespace="default",
         task_id=None,
         if_none_match=f'"sha256:{expected_hash}"',
-        current_user=current_user,
+        current_user=SimpleNamespace(id=current_user.id, role="user"),
         db=db,
     )
 
@@ -115,7 +117,8 @@ def test_download_public_skill_releases_transaction_before_streaming_response(
 
     skills_endpoint.download_public_skill(
         skill_id=42,
-        current_user=SimpleNamespace(id=7),
+        request=SimpleNamespace(headers={}),
+        current_user=SimpleNamespace(id=7, role="admin"),
         db=db,
     )
 
@@ -136,7 +139,8 @@ def test_download_public_skill_encodes_content_disposition_filename(monkeypatch)
 
     response = skills_endpoint.download_public_skill(
         skill_id=42,
-        current_user=SimpleNamespace(id=7),
+        request=SimpleNamespace(headers={}),
+        current_user=SimpleNamespace(id=7, role="admin"),
         db=db,
     )
 

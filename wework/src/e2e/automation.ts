@@ -17,12 +17,14 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -725,9 +727,22 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invoke<string>('capture_popout_webview')
     case 'closeMainWindowToTray':
       return ''
+    case 'requestMainWindowClose':
+      return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'storeLocalProxyUrl':
+      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'setLocalProxyUrl': {
+      const proxyUrl = command.value?.trim() ?? ''
+      const config = saveLocalProxyUrl(proxyUrl)
+      await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+        method: 'runtime.codex.runtime_config.update',
+        params: { proxyUrl: proxyUrl || null },
+      })
+      return JSON.stringify(config)
+    }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
       window.dispatchEvent(event)
@@ -890,6 +905,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       element.click()
       return element.textContent?.trim() ?? ''
+    }
+    case 'clickThenMacrotask': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!desktopControlElementEnabled(element)) {
+        throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      const targetSelector = command.target?.trim()
+      if (!targetSelector) throw new Error('clickThenMacrotask requires target')
+
+      element.click()
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+
+      const target = findDesktopControlElements(targetSelector)[0]
+      if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+      if (!desktopControlElementEnabled(target)) {
+        throw new Error(`Target selector "${targetSelector}" is disabled`)
+      }
+      target.click()
+      return target.textContent?.trim() ?? ''
     }
     case 'clickIfPresent': {
       const element = findDesktopControlElements(command.selector).find(
@@ -1077,6 +1112,8 @@ async function runDesktopControlClient(url: string): Promise<void> {
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
+        } else if (command.action === 'requestMainWindowClose') {
+          await getCurrentWindow().close()
         }
       } catch (error) {
         await postDesktopControlResult(url, {

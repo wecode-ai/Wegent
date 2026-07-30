@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.schemas.base_role import BaseRole
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
 from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
 from app.services.adapters.shell_utils import (
@@ -27,7 +28,9 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.group_permission import check_group_permission
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
@@ -60,6 +63,26 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         "DIFY_API_KEY",
         # Add more sensitive keys here as needed
     ]
+
+    def _require_bot_permission(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        user_id: int,
+        required_role: BaseRole,
+    ) -> None:
+        """Require ownership or the requested role in the Bot namespace."""
+        if bot.user_id == user_id:
+            return
+        if bot.namespace != "default" and check_group_permission(
+            db,
+            user_id,
+            bot.namespace,
+            required_role,
+        ):
+            return
+        raise HTTPException(status_code=403, detail="Access denied")
 
     def _validate_default_knowledge_bases(
         self,
@@ -329,7 +352,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     # Use get_shell_info_by_name from shell_utils instead
 
     def create_with_user(
-        self, db: Session, *, obj_in: BotCreate, user_id: int
+        self,
+        db: Session,
+        *,
+        obj_in: BotCreate,
+        user_id: int,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         Create user Bot using kinds table.
@@ -362,11 +390,30 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 detail="Bot name already exists, please modify the name",
             )
 
-        # Validate skills if provided
-        if obj_in.skills:
-            self._validate_skills(db, obj_in.skills, user_id, namespace)
-        if obj_in.preload_skills:
-            self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
+        skill_refs = (
+            self._resolve_skill_refs(
+                db=db,
+                skill_names=obj_in.skills,
+                user_id=user_id,
+                namespace=namespace,
+                provided_refs=obj_in.skill_refs,
+                target_group_names=obj_in.target_group_names,
+            )
+            if obj_in.skills
+            else {}
+        )
+        preload_skill_refs = (
+            self._resolve_skill_refs(
+                db=db,
+                skill_names=obj_in.preload_skills,
+                user_id=user_id,
+                namespace=namespace,
+                provided_refs=obj_in.preload_skill_refs,
+                target_group_names=obj_in.target_group_names,
+            )
+            if obj_in.preload_skills
+            else {}
+        )
         self._validate_default_knowledge_bases(
             db,
             obj_in.default_knowledge_base_refs,
@@ -388,31 +435,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             ]
         if obj_in.skills:
             ghost_spec["skills"] = obj_in.skills
-            skill_refs = self._resolve_skill_refs(
-                db=db,
-                skill_names=obj_in.skills,
-                user_id=user_id,
-                namespace=namespace,
-                provided_refs=obj_in.skill_refs,
-            )
             if skill_refs:
                 ghost_spec["skill_refs"] = {
                     name: ref.model_dump() for name, ref in skill_refs.items()
                 }
         if obj_in.preload_skills:
             ghost_spec["preload_skills"] = obj_in.preload_skills
-            preload_skill_refs = self._resolve_skill_refs(
-                db=db,
-                skill_names=obj_in.preload_skills,
-                user_id=user_id,
-                namespace=namespace,
-                provided_refs=obj_in.preload_skill_refs,
-            )
-            if len(preload_skill_refs) != len(set(obj_in.preload_skills)):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Failed to resolve preload_skills to skill refs",
-                )
             if preload_skill_refs:
                 ghost_spec["preload_skill_refs"] = {
                     name: ref.model_dump() for name, ref in preload_skill_refs.items()
@@ -545,7 +573,10 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         )
         db.add(bot)
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(bot)
 
         # Get the referenced model for response
@@ -749,6 +780,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
+        self._require_bot_permission(
+            db,
+            bot=bot,
+            user_id=user_id,
+            required_role=BaseRole.Developer,
+        )
+
         # Get related Ghost, Shell, Model (use bot.user_id for component queries)
         ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
@@ -789,6 +827,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
+
+        self._require_bot_permission(
+            db,
+            bot=bot,
+            user_id=user_id,
+            required_role=BaseRole.Developer,
+        )
 
         update_data = obj_in.model_dump(exclude_unset=True)
         logger.info(f"[DEBUG] update_with_user: update_data={update_data}")
@@ -1079,10 +1124,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.add(ghost)
 
         if "skills" in update_data and ghost:
-            # Validate that all referenced skills exist for this user
             skills = update_data["skills"] or []
-            if skills:
-                self._validate_skills(db, skills, user_id, bot.namespace or "default")
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.skills = skills
             if skills:
@@ -1092,6 +1134,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     user_id=user_id,
                     namespace=bot.namespace or "default",
                     provided_refs=provided_skill_refs,
+                    target_group_names=obj_in.target_group_names,
                 )
                 if skill_refs:
                     ghost_crd.spec.skill_refs = {
@@ -1106,10 +1149,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if "preload_skills" in update_data and ghost:
             # Update preload_skills in Ghost CRD
             preload_skills = update_data["preload_skills"] or []
-            if preload_skills:
-                self._validate_skills(
-                    db, preload_skills, user_id, bot.namespace or "default"
-                )
             ghost_crd = Ghost.model_validate(ghost.json)
             ghost_crd.spec.preload_skills = preload_skills
             if preload_skills:
@@ -1119,12 +1158,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     user_id=user_id,
                     namespace=bot.namespace or "default",
                     provided_refs=provided_preload_skill_refs,
+                    target_group_names=obj_in.target_group_names,
                 )
-                if len(preload_skill_refs) != len(set(preload_skills)):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Failed to resolve preload_skills to skill refs",
-                    )
                 if preload_skill_refs:
                     ghost_crd.spec.preload_skill_refs = {
                         name: ref.model_dump()
@@ -1246,6 +1281,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
+        self._require_bot_permission(
+            db,
+            bot=bot,
+            user_id=user_id,
+            required_role=BaseRole.Developer,
+        )
+
         bot_name = bot.name
         bot_namespace = bot.namespace
 
@@ -1290,6 +1332,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
+
+        self._require_bot_permission(
+            db,
+            bot=bot,
+            user_id=user_id,
+            required_role=BaseRole.Developer,
+        )
 
         bot_name = bot.name
         bot_namespace = bot.namespace
@@ -1860,7 +1909,51 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 )
                 existing_skill_names.update(skill.name for skill in group_skills)
 
-        # 3. Query public/system skills (user_id=0)
+        # 3. Query Skills installed into the target group.
+        if namespace != "default":
+            remaining_names = [
+                name for name in skill_names if name not in existing_skill_names
+            ]
+            bound_skill_ids = skill_binding_service.list_group_skill_ids(
+                db,
+                namespace,
+                user_id,
+            )
+            if remaining_names and bound_skill_ids:
+                bound_skills = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(bound_skill_ids),
+                        Kind.kind == "Skill",
+                        Kind.name.in_(remaining_names),
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                existing_skill_names.update(skill.name for skill in bound_skills)
+
+        # 4. Query Skills installed into the user's defaults.
+        if namespace == "default":
+            remaining_names = [
+                name for name in skill_names if name not in existing_skill_names
+            ]
+            user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+                db, user_id
+            )
+            if remaining_names and user_default_skill_ids:
+                default_skills = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(user_default_skill_ids),
+                        Kind.kind == "Skill",
+                        Kind.name.in_(remaining_names),
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                existing_skill_names.update(skill.name for skill in default_skills)
+
+        # 5. Query public/system skills (user_id=0)
         remaining_names = [
             name for name in skill_names if name not in existing_skill_names
         ]
@@ -1965,7 +2058,53 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
-        # 3. Query public/system skills (user_id=0)
+        # 3. Resolve Skills installed into the target group.
+        if remaining_names and namespace != "default":
+            bound_skill_ids = skill_binding_service.list_group_skill_ids(
+                db,
+                namespace,
+                user_id,
+            )
+            if bound_skill_ids:
+                bound_skills = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(bound_skill_ids),
+                        Kind.kind == "Skill",
+                        Kind.name.in_(remaining_names),
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                for skill in bound_skills:
+                    if skill.name not in remaining_names:
+                        continue
+                    skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
+                    remaining_names.remove(skill.name)
+
+        # 4. Resolve Skills installed into the user's defaults.
+        if remaining_names:
+            user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+                db, user_id
+            )
+            if user_default_skill_ids:
+                default_skills = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id.in_(user_default_skill_ids),
+                        Kind.kind == "Skill",
+                        Kind.name.in_(remaining_names),
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                for skill in default_skills:
+                    if skill.name not in remaining_names:
+                        continue
+                    skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
+                    remaining_names.remove(skill.name)
+
+        # 5. Query public/system skills (user_id=0)
         if remaining_names:
             public_skills = (
                 db.query(Kind)
@@ -1994,14 +2133,61 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         user_id: int,
         namespace: str,
         provided_refs: Optional[Dict[str, SkillRefMeta]],
+        target_group_names: Optional[List[str]] = None,
     ) -> Dict[str, SkillRefMeta]:
         """Resolve skill refs from request payload or fallback by skill name."""
         unique_skill_names = list(dict.fromkeys(skill_names or []))
+        normalized_group_names = list(
+            dict.fromkeys(
+                group_name.strip()
+                for group_name in target_group_names or []
+                if group_name.strip() and group_name.strip() != "default"
+            )
+        )
+        unauthorized_groups = [
+            group_name
+            for group_name in normalized_group_names
+            if not check_group_permission(
+                db,
+                user_id,
+                group_name,
+                BaseRole.Reporter,
+            )
+        ]
+        if unauthorized_groups:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Group access denied: {', '.join(sorted(unauthorized_groups))}",
+            )
         if not unique_skill_names:
             return {}
 
         if not provided_refs:
-            return self._get_skill_refs(db, unique_skill_names, user_id, namespace)
+            lookup_namespace = (
+                normalized_group_names[0] if normalized_group_names else namespace
+            )
+            resolved_refs = self._get_skill_refs(
+                db, unique_skill_names, user_id, lookup_namespace
+            )
+            missing_names = [
+                name for name in unique_skill_names if name not in resolved_refs
+            ]
+            if missing_names:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "The following Skills do not exist: "
+                        f"{', '.join(missing_names)}"
+                    ),
+                )
+            return self._resolve_skill_refs(
+                db=db,
+                skill_names=unique_skill_names,
+                user_id=user_id,
+                namespace=namespace,
+                provided_refs=resolved_refs,
+                target_group_names=normalized_group_names,
+            )
 
         provided_keys = set(provided_refs.keys())
         expected_keys = set(unique_skill_names)
@@ -2050,7 +2236,34 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 accessible_group = (
                     namespace != "default" and skill.namespace == namespace
                 )
-                if not (accessible_personal or accessible_group):
+                accessible_binding = skill.id in (
+                    skill_binding_service.list_user_default_skill_ids(db, user_id)
+                )
+                if namespace != "default" and not accessible_binding:
+                    accessible_binding = (
+                        skill_binding_service.is_skill_available_to_group(
+                            db,
+                            group_namespace=namespace,
+                            skill_id=skill.id,
+                            user_id=user_id,
+                        )
+                    )
+                accessible_target_groups = bool(normalized_group_names) and all(
+                    skill.namespace == group_name
+                    or skill_binding_service.is_skill_available_to_group(
+                        db,
+                        group_namespace=group_name,
+                        skill_id=skill.id,
+                        user_id=user_id,
+                    )
+                    for group_name in normalized_group_names
+                )
+                if not (
+                    accessible_personal
+                    or accessible_group
+                    or accessible_binding
+                    or accessible_target_groups
+                ):
                     raise HTTPException(
                         status_code=403,
                         detail=f"Permission denied for skill '{skill_name}'",
@@ -2059,12 +2272,14 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             resolved[skill_name] = SkillRefMeta(**build_skill_ref_meta(skill))
 
         if missing_names:
-            fallback_refs = self._get_skill_refs(db, missing_names, user_id, namespace)
-            if len(fallback_refs) != len(missing_names):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to resolve skill refs for: {', '.join(missing_names)}",
-                )
+            fallback_refs = self._resolve_skill_refs(
+                db=db,
+                skill_names=missing_names,
+                user_id=user_id,
+                namespace=namespace,
+                provided_refs=None,
+                target_group_names=normalized_group_names,
+            )
             resolved.update(fallback_refs)
 
         return resolved
@@ -2108,6 +2323,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         new_name: str,
         namespace: str = "default",
         skill_id_mapping: Optional[Dict[int, int]] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         Clone an existing bot with a new name.
@@ -2185,7 +2401,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             namespace=namespace,
         )
 
-        return self.create_with_user(db=db, obj_in=bot_create, user_id=user_id)
+        return self.create_with_user(
+            db=db,
+            obj_in=bot_create,
+            user_id=user_id,
+            commit=commit,
+        )
 
 
 bot_kinds_service = BotKindsService(Kind)

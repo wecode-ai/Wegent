@@ -407,6 +407,7 @@ class SkillKindsService:
         skill_id: int,
         target_namespace: str,
         user_id: int,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """Copy a skill to a target namespace.
 
@@ -446,19 +447,30 @@ class SkillKindsService:
                 "was_copied": False,
             }
 
+        # A copied asset is not a second marketplace publication. Keep its
+        # provenance, but remove publication metadata inherited from the source.
+        copied_json = deepcopy(source.json) if isinstance(source.json, dict) else {}
+        copied_spec = copied_json.setdefault("spec", {})
+        if isinstance(copied_spec, dict):
+            copied_spec.pop("capability", None)
+        copied_metadata = copied_json.setdefault("metadata", {})
+        if not isinstance(copied_metadata, dict):
+            copied_metadata = {}
+            copied_json["metadata"] = copied_metadata
+        copied_annotations = copied_metadata.setdefault("annotations", {})
+        if not isinstance(copied_annotations, dict):
+            copied_annotations = {}
+            copied_metadata["annotations"] = copied_annotations
+        copied_annotations["capability.wecode.io/source-kind-id"] = str(source.id)
+        copied_metadata["namespace"] = target_namespace
+
         # Copy the Kind record
         new_skill = Kind(
             user_id=user_id,
             kind="Skill",
             name=source.name,
             namespace=target_namespace,
-            json={
-                **source.json,
-                "metadata": {
-                    **source.json.get("metadata", {}),
-                    "namespace": target_namespace,
-                },
-            },
+            json=copied_json,
             is_active=True,
         )
         db.add(new_skill)
@@ -479,7 +491,10 @@ class SkillKindsService:
             )
             db.add(new_binary)
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(new_skill)
 
         return {

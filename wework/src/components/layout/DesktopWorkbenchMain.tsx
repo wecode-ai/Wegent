@@ -32,6 +32,7 @@ import {
 } from '@/lib/workspace-target'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
+  isClaudeCodeDevice,
   isDeviceBelowWeWorkVersion,
   isWeWorkCompatibleDevice,
   isCloudDevice,
@@ -1420,9 +1421,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
-  const activeDeviceSupportsGoal = Boolean(
-    activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
-  )
+  const activeDeviceSupportsGoal = Boolean(activeDevice && isClaudeCodeDevice(activeDevice))
   const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
   const canEditLastUserMessage = Boolean(
     currentRuntimeTask && activeDeviceSupportsGoal && !paneSession.status.isBusy

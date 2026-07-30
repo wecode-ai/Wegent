@@ -4,6 +4,7 @@
 
 import pytest
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
@@ -88,6 +89,31 @@ class TestCopySkillToNamespace:
         )
         assert sb is not None
         assert sb.binary_data == b"fake-zip-content"
+
+    def test_copied_skill_does_not_inherit_publication(self, test_db: Session):
+        """A copied Skill asset is not another marketplace publication."""
+        user = _create_user(test_db, "skill_copy_user4", "sc4@test.com")
+        skill = _create_skill(test_db, user_id=user.id, name="published-helper")
+        skill.json["spec"]["capability"] = {
+            "visibility": "public",
+            "publishStatus": "published",
+            "publishedBy": user.id,
+        }
+        flag_modified(skill, "json")
+        test_db.commit()
+
+        result = skill_kinds_service.copy_skill_to_namespace(
+            test_db,
+            skill_id=skill.id,
+            target_namespace="eng-team",
+            user_id=user.id,
+        )
+
+        copied = test_db.query(Kind).filter(Kind.id == result["target_id"]).one()
+        assert "capability" not in copied.json["spec"]
+        assert copied.json["metadata"]["annotations"][
+            "capability.wecode.io/source-kind-id"
+        ] == str(skill.id)
 
     def test_skips_copy_when_same_name_exists_in_target(self, test_db: Session):
         """If target namespace already has same-name skill, skip copy and return existing."""

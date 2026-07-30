@@ -100,6 +100,7 @@ class TeamInDB(TeamBase):
     recommended_mode: Optional[str] = (
         None  # 'chat', 'code', or 'both' - derived from bind_mode
     )
+    publication_status: Optional[str] = None
 
     class Config:
         from_attributes = True

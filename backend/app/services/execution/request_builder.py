@@ -617,6 +617,7 @@ class TaskRequestBuilder:
             mode=self._derive_task_mode(task),
             agent_id=team.id,
             project_id=getattr(task, "project_id", None),
+            group_namespace=(team.namespace if team.namespace != "default" else None),
         )
 
     def _derive_task_mode(self, task: TaskResource) -> str:
@@ -1307,14 +1308,20 @@ class TaskRequestBuilder:
         ghost_preload_skill_refs = ghost_crd.spec.preload_skill_refs or {}
         if ghost_crd.spec.skills:
             for skill_name in ghost_crd.spec.skills:
-                skill = self._find_skill(skill_name, team)
+                ghost_skill_ref = ghost_skill_refs.get(skill_name)
+                if ghost_skill_ref:
+                    skill = self._find_attached_skill_by_ref(
+                        skill_name,
+                        skill_id=ghost_skill_ref.skill_id,
+                    )
+                else:
+                    skill = self._find_skill(skill_name, team)
                 if skill:
                     skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
 
                     # Build skill_refs entry (prefer Ghost stored refs for precision)
-                    ghost_skill_ref = ghost_skill_refs.get(skill_name)
                     if ghost_skill_ref:
                         ref_meta = ghost_skill_ref.model_dump()
                         ref_meta["content_hash"] = ref_meta.get("content_hash") or (
@@ -1361,11 +1368,13 @@ class TaskRequestBuilder:
                     skill_name = add_skill.name
                     skill_namespace = getattr(add_skill, "namespace", "default")
                     is_public = getattr(add_skill, "is_public", False)
+                    skill_id = getattr(add_skill, "skill_id", None)
                 else:
                     # Dict - use .get() method
                     skill_name = add_skill.get("name")
                     skill_namespace = add_skill.get("namespace", "default")
                     is_public = add_skill.get("is_public", False)
+                    skill_id = add_skill.get("skill_id")
 
                 # Check if already processed from Ghost skills
                 if skill_name in existing_skill_names:
@@ -1382,6 +1391,7 @@ class TaskRequestBuilder:
                         is_public,
                         user_id,
                         team_namespace=team_namespace,
+                        skill_id=skill_id,
                     )
                     if resolved_selected_skill:
                         skill_refs[skill_name] = build_skill_ref_meta(
@@ -1400,6 +1410,7 @@ class TaskRequestBuilder:
                     is_public,
                     user_id,
                     team_namespace=team_namespace,
+                    skill_id=skill_id,
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill, user=user)
@@ -1433,10 +1444,12 @@ class TaskRequestBuilder:
                     skill_name = avail_skill.name
                     skill_namespace = getattr(avail_skill, "namespace", "default")
                     is_public = getattr(avail_skill, "is_public", False)
+                    skill_id = getattr(avail_skill, "skill_id", None)
                 else:
                     skill_name = avail_skill.get("name")
                     skill_namespace = avail_skill.get("namespace", "default")
                     is_public = avail_skill.get("is_public", False)
+                    skill_id = avail_skill.get("skill_id")
 
                 # Skip if already in skills list
                 if skill_name in existing_skill_names:
@@ -1453,6 +1466,7 @@ class TaskRequestBuilder:
                     is_public,
                     user_id,
                     team_namespace=team_namespace,
+                    skill_id=skill_id,
                 )
                 if skill:
                     skill_data = self._build_skill_data(skill, user=user)
@@ -1509,6 +1523,7 @@ class TaskRequestBuilder:
         is_public: bool,
         user_id: int,
         team_namespace: str | None = None,
+        skill_id: int | None = None,
     ) -> Kind | None:
         """Find skill by name, namespace, and public flag.
 
@@ -1538,6 +1553,25 @@ class TaskRequestBuilder:
             is_public=is_public,
             user_id=user_id,
             team_namespace=team_namespace,
+            skill_id=skill_id,
+        )
+
+    def _find_attached_skill_by_ref(
+        self,
+        skill_name: str,
+        *,
+        skill_id: int,
+    ) -> Kind | None:
+        """Resolve an exact Skill dependency already validated on Agent save."""
+        return (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.kind == "Skill",
+                Kind.name == skill_name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
         )
 
     @staticmethod
@@ -2293,12 +2327,9 @@ Response template:
 
                 skill_ref = (bot_config.get("skill_refs") or {}).get(skill_name)
                 if skill_ref:
-                    skill = self._find_skill_by_ref(
+                    skill = self._find_attached_skill_by_ref(
                         skill_name,
-                        skill_ref.get("namespace", "default"),
-                        skill_ref.get("is_public", False),
-                        user.id,
-                        team_namespace=team.namespace or "default",
+                        skill_id=skill_ref.get("skill_id"),
                     )
                 else:
                     skill = self._find_skill(skill_name, team)
