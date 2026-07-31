@@ -1007,6 +1007,16 @@ async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() 
         }))
         .await
         .expect("runtime proxy configuration should succeed");
+    let startup = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.ensure_started",
+            "payload": {}
+        }))
+        .await
+        .expect("Codex startup barrier should succeed");
+    assert_eq!(startup["ready"], true);
+    assert_eq!(startup["started"], true);
+    assert!(startup["initializeElapsedMs"].as_u64().is_some());
     handler
         .handle_runtime_rpc(json!({
             "method": "runtime.codex.rate_limits.read",

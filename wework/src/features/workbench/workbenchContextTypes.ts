@@ -96,13 +96,15 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
-  project: ProjectWithTasks
+  project?: ProjectWithTasks | null
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface RuntimePaneActionOptions {

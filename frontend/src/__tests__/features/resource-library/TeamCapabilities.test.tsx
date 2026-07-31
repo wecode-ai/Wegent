@@ -51,6 +51,9 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
 
 jest.mock('@/features/resource-library/components/GroupInstalledSkills', () => ({
   GroupInstalledSkills: () => <div data-testid="group-installed-skills" />,
+  GroupInstalledSkillsSkeleton: () => (
+    <div data-testid="group-installed-skills-loading">团队技能加载中</div>
+  ),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -101,6 +104,15 @@ describe('TeamCapabilities', () => {
       items: [makeGroup(1, 'platform', 'Platform')],
       total: 1,
     })
+  })
+
+  it('uses the skill card skeleton while teams are loading', () => {
+    mockedListGroups.mockReturnValue(new Promise(() => undefined))
+
+    render(<TeamCapabilities resourceType="skill" />)
+
+    expect(screen.getByTestId('group-installed-skills-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('team-capabilities-loading')).not.toBeInTheDocument()
   })
 
   it('uses the top resource filter without rendering a second type navigation', async () => {
@@ -162,15 +174,15 @@ describe('TeamCapabilities', () => {
     expect(screen.getByTestId('team-capability-group-filter')).toHaveTextContent('Platform')
   })
 
-  it('does not offer marketplace add for foundation resource types', async () => {
+  it('offers marketplace add for foundation resource types', async () => {
     render(
       <TeamCapabilities resourceType="model" modelCategoryFilter="embedding" hideGlobalControls />
     )
 
     await waitFor(() => expect(screen.getByTestId('team-resource-manager')).toBeInTheDocument())
     expect(screen.getByTestId('team-resource-manager')).toHaveAttribute('data-types', 'model')
-    expect(screen.queryByTestId('team-capability-add-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('team-capability-mode-switch')).not.toBeInTheDocument()
+    expect(screen.getByTestId('team-capability-add-button')).toBeInTheDocument()
+    expect(screen.getByTestId('team-capability-mode-switch')).toBeInTheDocument()
     expect(screen.getByTestId('team-resource-manager')).toHaveAttribute(
       'data-model-category-filter',
       'embedding'

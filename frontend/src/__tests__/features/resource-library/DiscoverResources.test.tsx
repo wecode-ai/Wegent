@@ -69,7 +69,14 @@ jest.mock('@/hooks/useTranslation', () => ({
         'fields.publisher': '发布者',
         'fields.official_publisher': 'Wegent 官方',
         'fields.updated_at': '更新时间',
+        'modes.chat': '聊天',
+        'modes.code': '编码',
+        'modes.task': '设备',
+        'common:teams.go_to_chat': '去聊天',
+        'common:teams.go_to_code': '去编码',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'sort.default': '默认',
         'sort.popular': '热门',
         'sort.latest': '最新',
@@ -108,6 +115,7 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
     },
     install_count: 4,
     is_installed: false,
+    bind_modes: [],
     created_at: '2026-05-27T00:00:00',
     updated_at: '2026-05-27T00:00:00',
     ...overrides,
@@ -224,7 +232,10 @@ describe('DiscoverResources', () => {
     const toolbar = await screen.findByTestId('leading-team-filter')
     expect(toolbar).toBeInTheDocument()
     expect(screen.getByTestId('marketplace-toolbar')).toHaveClass('rounded-xl', 'bg-surface')
-    expect(screen.getByTestId('resource-library-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
   })
 
   it('persists an applied search in the URL and reloads the marketplace', async () => {
@@ -339,13 +350,98 @@ describe('DiscoverResources', () => {
 
     render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去使用 Wegent Chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: '去聊天 Wegent Chat' }))
 
     expect(screen.getByTestId('resource-listing-footer-81')).toHaveTextContent(
       'Wegent 官方2026-05-27'
     )
     expect(mockPush).toHaveBeenCalledWith('/chat?teamId=81')
     expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['model', 84, 'System Model'],
+    ['shell', 85, 'System Executor'],
+    ['retriever', 86, 'System Retriever'],
+  ] as const)(
+    'does not offer installation for a directly available system %s',
+    async (resourceType, id, displayName) => {
+      const systemCapability = createListing({
+        id,
+        resource_type: resourceType,
+        name: `system-${resourceType}`,
+        display_name: displayName,
+        publisher_user_id: 0,
+        is_installed: true,
+      })
+      mockResourceLibraryApi.listListings.mockResolvedValue({
+        items: [systemCapability],
+        has_more: false,
+        next_cursor: null,
+        limit: 20,
+      })
+      mockResourceLibraryApi.getListing.mockResolvedValue(systemCapability)
+
+      render(<DiscoverResources resourceType={resourceType} />)
+
+      expect(await screen.findByText(displayName)).toBeVisible()
+      expect(screen.queryByTestId(`install-resource-${id}-button`)).not.toBeInTheDocument()
+      expect(screen.getByTestId(`system-resource-${id}-available`)).toHaveTextContent(
+        'actions.system_available'
+      )
+
+      fireEvent.click(screen.getByTestId(`view-resource-${id}-button`))
+      await screen.findByTestId('resource-detail-dialog')
+      expect(screen.queryByTestId('resource-detail-install-button')).not.toBeInTheDocument()
+      expect(screen.getAllByText('actions.system_available')).toHaveLength(2)
+      expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+    }
+  )
+
+  it('opens a system coding agent in code mode', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 83,
+          resource_type: 'agent',
+          name: 'dev-team',
+          display_name: 'Coding Agent',
+          publisher_user_id: 0,
+          bind_modes: ['code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去编码 Coding Agent' }))
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=83')
+    expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+  })
+
+  it('shows the default destination for a multi-mode marketplace agent', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 85,
+          resource_type: 'agent',
+          name: 'multi-mode-agent',
+          display_name: 'Multi-mode Agent',
+          bind_modes: ['chat', 'code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    expect(await screen.findByRole('button', { name: '去聊天 Multi-mode Agent' })).toBeVisible()
   })
 
   it('uses a marketplace agent without showing an installation success toast', async () => {
@@ -382,7 +478,7 @@ describe('DiscoverResources', () => {
 
     render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去使用 Published Agent' }))
+    fireEvent.click(await screen.findByRole('button', { name: '去聊天 Published Agent' }))
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/chat?teamId=128')
@@ -391,6 +487,48 @@ describe('DiscoverResources', () => {
       targetNamespace: 'default',
     })
     expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('opens an installed marketplace coding agent in code mode', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 84,
+          resource_type: 'agent',
+          name: 'published-code-agent',
+          display_name: 'Published Code Agent',
+          publisher_user_id: 3,
+          bind_modes: ['code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+    mockResourceLibraryApi.installListing.mockResolvedValue({
+      id: 11,
+      listing_id: 84,
+      version_id: 10,
+      user_id: 2,
+      resource_type: 'agent',
+      installed_kind_id: 14,
+      installed_reference: {
+        namespace: 'default',
+        name: 'published-code-agent',
+        team_id: 129,
+      },
+      install_status: 'installed',
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去编码 Published Code Agent' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=129')
+    })
   })
 
   it('does not offer globally available system agents to a group', async () => {

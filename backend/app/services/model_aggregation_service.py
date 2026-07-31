@@ -24,6 +24,10 @@ from app.models.user import User
 from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
+from app.services.capability_reference_service import (
+    get_referenced_capability,
+    list_referenced_capabilities,
+)
 from app.services.kind import kind_service
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import (
@@ -110,10 +114,12 @@ class UnifiedModel:
         max_output_tokens: Optional[int] = None,
         cost_index: Optional[str] = None,
         model_capabilities: Optional[Dict[str, bool]] = None,
+        resource_id: Optional[int] = None,
         resource_user_id: Optional[int] = None,
         runtime_family: Optional[str] = None,
         created_at: Optional[Any] = None,
         updated_at: Optional[Any] = None,
+        is_reference: bool = False,
     ):
         self.name = name
         self.type = model_type
@@ -133,9 +139,11 @@ class UnifiedModel:
         self.max_output_tokens = max_output_tokens
         self.cost_index = cost_index
         self.model_capabilities = model_capabilities
+        self.resource_id = resource_id
         self.resource_user_id = resource_user_id
         self.created_at = created_at
         self.updated_at = updated_at
+        self.is_reference = is_reference
         self.runtime_family = runtime_family or build_model_runtime_family(
             provider, self.config
         )
@@ -180,6 +188,8 @@ class UnifiedModel:
             "config": safe_config,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "isReference": self.is_reference,
+            "listingId": self.resource_id if self.is_reference else None,
         }
         if self.resource_user_id is not None:
             result["resourceUserId"] = self.resource_user_id
@@ -578,6 +588,19 @@ class ModelAggregationService:
                 )
                 user_model_resources = group_model_resources
                 resource_type = ModelType.GROUP  # Group models
+            referenced_models = list_referenced_capabilities(
+                db,
+                kind="Model",
+                user_id=current_user.id,
+                namespace=namespace,
+            )
+            referenced_ids = {resource.id for resource in referenced_models}
+            existing_ids = {resource.id for resource in user_model_resources}
+            user_model_resources.extend(
+                resource
+                for resource in referenced_models
+                if resource.id not in existing_ids
+            )
 
             for resource in user_model_resources:
                 # Format the resource to get the full CRD data
@@ -623,7 +646,7 @@ class ModelAggregationService:
                     model_id=info["model_id"],
                     config=info["config"],
                     is_active=resource.is_active,
-                    namespace=resource.namespace,
+                    namespace=namespace,
                     model_category_type=info.get("model_category_type", "llm"),
                     is_advanced=info.get("is_advanced", False),
                     model_group=info.get("model_group"),
@@ -632,9 +655,11 @@ class ModelAggregationService:
                     max_output_tokens=info.get("max_output_tokens"),
                     cost_index=info.get("cost_index"),
                     model_capabilities=info.get("model_capabilities"),
+                    resource_id=resource.id,
                     resource_user_id=resource.user_id,
                     created_at=resource.created_at,
                     updated_at=resource.updated_at,
+                    is_reference=resource.id in referenced_ids,
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -744,6 +769,14 @@ class ModelAggregationService:
             resource = kind_service.get_resource(
                 user_id=current_user.id, kind="Model", namespace="default", name=name
             )
+            if resource is None:
+                resource = get_referenced_capability(
+                    db,
+                    kind="Model",
+                    name=name,
+                    user_id=current_user.id,
+                    namespace="default",
+                )
 
             if resource:
                 model_data = kind_service._format_resource("Model", resource)
@@ -765,6 +798,35 @@ class ModelAggregationService:
                     model_capabilities=info.get("model_capabilities"),
                     resource_user_id=resource.user_id,
                     created_at=resource.created_at,
+                    updated_at=resource.updated_at,
+                ).to_full_dict()
+
+        elif model_type == ModelType.GROUP:
+            from app.services.group_permission import get_user_groups
+
+            for namespace in get_user_groups(db, current_user.id):
+                resource = get_referenced_capability(
+                    db,
+                    kind="Model",
+                    name=name,
+                    user_id=current_user.id,
+                    namespace=namespace,
+                )
+                if resource is None:
+                    continue
+                model_data = kind_service._format_resource("Model", resource)
+                info = self._extract_model_info_from_crd(model_data)
+                return UnifiedModel(
+                    name=resource.name,
+                    model_type=ModelType.GROUP,
+                    display_name=info["display_name"],
+                    provider=info["provider"],
+                    model_id=info["model_id"],
+                    config=info["config"],
+                    is_active=resource.is_active,
+                    namespace=namespace,
+                    model_category_type=info.get("model_category_type", "llm"),
+                    resource_user_id=resource.user_id,
                     updated_at=resource.updated_at,
                 ).to_full_dict()
 

@@ -10,10 +10,44 @@
 // Field management (add/rename/delete) requires a Developer-or-higher role.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  AllCommunityModule,
+  ModuleRegistry,
+  colorSchemeVariable,
+  themeQuartz,
+  type ColDef,
+  type ICellRendererParams,
+  type IHeaderParams,
+} from 'ag-grid-community'
+import { AgGridReact } from 'ag-grid-react'
 import { Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import type { AITableApi, AITableDescription, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudProject } from '@/api/deliveries'
+
+ModuleRegistry.registerModules([AllCommunityModule])
+
+const aitableGridTheme = themeQuartz.withPart(colorSchemeVariable).withParams({
+  accentColor: 'rgb(var(--color-primary))',
+  backgroundColor: 'rgb(var(--color-bg-base))',
+  borderColor: 'rgb(var(--color-border))',
+  browserColorScheme: 'inherit',
+  cellHorizontalPadding: 12,
+  columnBorder: true,
+  fontFamily: 'var(--font-ui)',
+  fontSize: 'var(--text-sm)',
+  foregroundColor: 'rgb(var(--color-text-primary))',
+  headerBackgroundColor: 'rgb(var(--color-muted))',
+  headerFontSize: 'var(--text-sm)',
+  headerFontWeight: 500,
+  headerTextColor: 'rgb(var(--color-text-secondary))',
+  oddRowBackgroundColor: 'rgb(var(--color-bg-base))',
+  rowBorder: true,
+  rowHoverColor: 'rgb(var(--color-muted) / 0.4)',
+  selectedRowBackgroundColor: 'rgb(var(--color-primary) / 0.08)',
+  spacing: 4,
+  wrapperBorder: false,
+})
 
 const EDITABLE_TYPES = new Set([
   'text',
@@ -25,7 +59,6 @@ const EDITABLE_TYPES = new Set([
   'date',
   'checkbox',
   'url',
-  'user',
   'phone',
   'email',
 ])
@@ -79,10 +112,60 @@ function cellText(value: unknown): string {
   return String(value)
 }
 
+function gridValue(field: AITableField, value: unknown): string | number | Date | null {
+  if (value === null || value === undefined || value === '') return null
+  if (field.type === 'number') {
+    const number = typeof value === 'number' ? value : Number(cellText(value))
+    return Number.isFinite(number) ? number : cellText(value)
+  }
+  if (field.type === 'date') {
+    const date = new Date(typeof value === 'number' ? value : cellText(value))
+    return Number.isNaN(date.getTime()) ? cellText(value) : date
+  }
+  return cellText(value)
+}
+
 function selectValues(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(item => cellText(item)).filter(Boolean)
   const single = cellText(value)
   return single ? [single] : []
+}
+
+function editorText(field: AITableField, value: unknown): string {
+  if (field.type !== 'date') return cellText(value)
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value).toISOString().slice(0, 10)
+  }
+  const text = cellText(value)
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/)
+  return match?.[0] ?? text
+}
+
+function viewValue(view: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = view[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return ''
+}
+
+function viewColumns(view: Record<string, unknown> | undefined): string[] {
+  const columns = view?.columns ?? view?.fieldIds
+  return Array.isArray(columns)
+    ? columns.filter((column): column is string => typeof column === 'string')
+    : []
+}
+
+function viewHiddenFields(view: Record<string, unknown> | undefined): Set<string> {
+  const custom = view?.custom
+  if (typeof custom !== 'object' || custom === null) return new Set()
+  const hidden = (custom as Record<string, unknown>).hiddenFields
+  if (typeof hidden !== 'object' || hidden === null) return new Set()
+  return new Set(
+    Object.entries(hidden as Record<string, unknown>)
+      .filter(([, value]) => value === true)
+      .map(([fieldId]) => fieldId)
+  )
 }
 
 interface CellEditorProps {
@@ -97,6 +180,7 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const type = field.type
+  const displayText = editorText(field, raw)
 
   async function commit(value: unknown) {
     setSaving(true)
@@ -177,13 +261,13 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
         type="button"
         data-testid={`aitable-cell-edit-${record.id}-${field.id}`}
         onClick={() => {
-          setDraft(cellText(raw))
+          setDraft(displayText)
           setEditing(true)
         }}
         className="block w-full truncate rounded px-1 py-0.5 text-left text-sm hover:bg-muted"
-        title={cellText(raw)}
+        title={displayText}
       >
-        {cellText(raw) || <span className="text-text-muted">—</span>}
+        {displayText || <span className="text-text-muted">—</span>}
       </button>
     )
   }
@@ -205,6 +289,81 @@ function CellEditor({ field, record, onCommit }: CellEditorProps) {
   )
 }
 
+interface GridCellContext {
+  canEditRecords: boolean
+  commitCell: (record: AITableRecord, fieldId: string, value: unknown) => Promise<void>
+}
+
+function GridCellRenderer({ data, colDef, context }: ICellRendererParams<AITableRecord>) {
+  const record = data
+  const field = colDef?.context as AITableField | undefined
+  const gridContext = context as GridCellContext
+  if (!record || !field) return null
+
+  return (
+    <CellEditor
+      field={gridContext.canEditRecords ? field : { ...field, type: 'readonly' }}
+      record={record}
+      onCommit={(fieldId, value) => gridContext.commitCell(record, fieldId, value)}
+    />
+  )
+}
+
+interface FieldHeaderContext {
+  canManageFields: boolean
+  removeField: (field: AITableField) => Promise<void>
+}
+
+function FieldHeader({ displayName, column, context }: IHeaderParams<AITableRecord>) {
+  const field = column.getColDef().context as AITableField | undefined
+  const headerContext = context as FieldHeaderContext
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1">
+      <span className="truncate" title={field ? `${field.name} (${field.type})` : displayName}>
+        {displayName}
+      </span>
+      {field && headerContext.canManageFields ? (
+        <button
+          type="button"
+          data-testid={`aitable-field-delete-${field.id}`}
+          onClick={event => {
+            event.stopPropagation()
+            void headerContext.removeField(field)
+          }}
+          className="shrink-0 text-text-muted hover:text-destructive"
+          title="删除字段"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      ) : null}
+    </span>
+  )
+}
+
+interface RecordActionsContext {
+  canEditRecords: boolean
+  removeRecord: (record: AITableRecord) => Promise<void>
+}
+
+function RecordActions({ data, context }: ICellRendererParams<AITableRecord>) {
+  const record = data
+  const actionContext = context as RecordActionsContext
+  if (!record || !actionContext.canEditRecords) return null
+
+  return (
+    <button
+      type="button"
+      data-testid={`aitable-record-delete-${record.id}`}
+      onClick={() => void actionContext.removeRecord(record)}
+      className="text-text-muted hover:text-destructive"
+      title="删除记录"
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+  )
+}
+
 export function AITableView({ api, project }: { api: AITableApi; project: CloudProject }) {
   const [description, setDescription] = useState<AITableDescription | null>(null)
   const [records, setRecords] = useState<AITableRecord[]>([])
@@ -218,20 +377,21 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [mutationBusy, setMutationBusy] = useState(false)
+  const [selectedViewId, setSelectedViewId] = useState(project.provider_config.view_id ?? '')
   const canManageFields = ['Owner', 'Maintainer', 'Developer'].includes(
     project.access_role ?? 'Owner'
   )
   const canEditRecords = canManageFields
 
   const load = useCallback(
-    async (keyword?: string) => {
+    async (keyword?: string, viewId = selectedViewId) => {
       setLoading(true)
       setError(null)
       try {
         await api.configureProject(project)
         const [schema, page] = await Promise.all([
           api.describe(project.id),
-          api.listRecords(project.id, { query: keyword, limit: 100 }),
+          api.listRecords(project.id, { query: keyword, limit: 100, viewId: viewId || undefined }),
         ])
         setDescription(schema)
         setRecords(page.items)
@@ -243,7 +403,7 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
         setLoading(false)
       }
     },
-    [api, project]
+    [api, project, selectedViewId]
   )
 
   useEffect(() => {
@@ -252,12 +412,18 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
       setError(null)
       try {
         await api.configureProject(project)
-        const [schema, page] = await Promise.all([
-          api.describe(project.id),
-          api.listRecords(project.id, { limit: 100 }),
-        ])
+        const initialViewId = project.provider_config.view_id ?? ''
+        const schema = await api.describe(project.id)
+        const resolvedViewId =
+          initialViewId ||
+          (schema.views?.length ? viewValue(schema.views[0], ['viewId', 'view_id', 'id']) : '')
+        const page = await api.listRecords(project.id, {
+          limit: 100,
+          viewId: resolvedViewId || undefined,
+        })
         if (cancelled) return
         setDescription(schema)
+        setSelectedViewId(resolvedViewId)
         setRecords(page.items)
         setCursor(page.cursor)
         setHasMore(page.has_more)
@@ -273,6 +439,23 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   }, [api, project])
 
   const fields = useMemo(() => description?.fields ?? [], [description])
+  const selectedView = useMemo(
+    () =>
+      description?.views?.find(
+        view => viewValue(view, ['viewId', 'view_id', 'id']) === selectedViewId
+      ),
+    [description, selectedViewId]
+  )
+  const visibleFields = useMemo(() => {
+    const columns = viewColumns(selectedView)
+    const hidden = viewHiddenFields(selectedView)
+    const available = fields.filter(field => !hidden.has(field.id))
+    if (!columns.length) return available
+    const positions = new Map(columns.map((fieldId, index) => [fieldId, index]))
+    return available
+      .filter(field => positions.has(field.id))
+      .sort((left, right) => positions.get(left.id)! - positions.get(right.id)!)
+  }, [fields, selectedView])
 
   async function commitCell(record: AITableRecord, fieldId: string, value: unknown) {
     setError(null)
@@ -326,6 +509,7 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
         query: query || undefined,
         limit: 100,
         cursor,
+        viewId: selectedViewId || undefined,
       })
       setRecords(current => [...current, ...page.items])
       setCursor(page.cursor)
@@ -362,6 +546,53 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除字段失败')
     }
+  }
+
+  const columnDefs = useMemo<ColDef<AITableRecord>[]>(
+    () => [
+      ...visibleFields.map((field): ColDef<AITableRecord> => {
+        const filter =
+          field.type === 'number'
+            ? 'agNumberColumnFilter'
+            : field.type === 'date'
+              ? 'agDateColumnFilter'
+              : 'agTextColumnFilter'
+        return {
+          colId: field.id,
+          context: field,
+          filter,
+          filterValueGetter: params => gridValue(field, params.data?.cells[field.id]),
+          headerComponentParams: { innerHeaderComponent: FieldHeader },
+          headerName: field.name,
+          minWidth: 160,
+          sortable: true,
+          suppressHeaderMenuButton: false,
+          valueGetter: params => gridValue(field, params.data?.cells[field.id]),
+          cellRenderer: GridCellRenderer,
+        }
+      }),
+      {
+        colId: 'record-actions',
+        cellRenderer: RecordActions,
+        filter: false,
+        headerName: '',
+        maxWidth: 48,
+        minWidth: 48,
+        pinned: 'right',
+        resizable: false,
+        sortable: false,
+        suppressHeaderMenuButton: true,
+      },
+    ],
+    [visibleFields]
+  )
+
+  const gridContext = {
+    canEditRecords,
+    canManageFields,
+    commitCell,
+    removeField,
+    removeRecord,
   }
 
   return (
@@ -408,80 +639,29 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
         </div>
       ) : null}
 
-      <div className="flex-1 overflow-auto">
+      <div className="min-h-0 flex-1">
         {loading ? (
           <div className="flex h-32 items-center justify-center text-text-muted">
             <Loader2 className="h-5 w-5 animate-spin" />
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-muted">
-              <tr>
-                {fields.map(field => (
-                  <th
-                    key={field.id}
-                    className="border-b border-border px-3 py-2 text-left font-medium text-text-secondary"
-                  >
-                    <span className="flex items-center gap-1">
-                      <span className="truncate" title={`${field.name} (${field.type})`}>
-                        {field.name}
-                      </span>
-                      {canManageFields ? (
-                        <button
-                          type="button"
-                          data-testid={`aitable-field-delete-${field.id}`}
-                          onClick={() => void removeField(field)}
-                          className="text-text-muted hover:text-destructive"
-                          title="删除字段"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      ) : null}
-                    </span>
-                  </th>
-                ))}
-                <th className="w-10 border-b border-border" />
-              </tr>
-            </thead>
-            <tbody>
-              {records.map(record => (
-                <tr key={record.id} className="border-b border-border/60 hover:bg-muted/40">
-                  {fields.map(field => (
-                    <td key={field.id} className="max-w-56 px-3 py-1.5 align-top">
-                      <CellEditor
-                        field={canEditRecords ? field : { ...field, type: 'readonly' }}
-                        record={record}
-                        onCommit={(fieldId, value) => commitCell(record, fieldId, value)}
-                      />
-                    </td>
-                  ))}
-                  <td className="px-2 py-1.5 text-right">
-                    {canEditRecords ? (
-                      <button
-                        type="button"
-                        data-testid={`aitable-record-delete-${record.id}`}
-                        onClick={() => void removeRecord(record)}
-                        className="text-text-muted hover:text-destructive"
-                        title="删除记录"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-              {records.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={fields.length + 1}
-                    className="px-3 py-10 text-center text-text-muted"
-                  >
-                    暂无记录
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+          <div className="h-full" data-testid="aitable-grid">
+            <AgGridReact<AITableRecord>
+              columnDefs={columnDefs}
+              context={gridContext}
+              defaultColDef={{
+                flex: 1,
+                resizable: true,
+                suppressMovable: false,
+              }}
+              getRowId={params => params.data.id}
+              headerHeight={40}
+              overlayNoRowsTemplate="暂无记录"
+              rowData={records}
+              rowHeight={40}
+              theme={aitableGridTheme}
+            />
+          </div>
         )}
       </div>
 

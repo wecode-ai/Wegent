@@ -1,5 +1,6 @@
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
+import i18n from '@/i18n'
 import type {
   ArchivedConversationsListRequest,
   ArchivedConversationsListResponse,
@@ -21,6 +22,7 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeLocalProjectUpsertResponse,
   RuntimeGoalClearRequest,
@@ -104,6 +106,7 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
+  ensureLocalModelApiKeysHydrated,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -400,6 +403,14 @@ interface RuntimeWorkIpcOptions {
   cloudModelGateway?: CloudModelGateway
   user?: User
   transportLabel?: 'Local' | 'Cloud'
+  syncConfiguredModelCatalog?: boolean
+  requestModelCatalogSync?: (request: {
+    deviceId: string
+    deviceName: string
+    modelName: string
+    sync: () => Promise<void>
+  }) => Promise<boolean>
+  resolveDeviceName?: (deviceId: string) => string | undefined
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -769,7 +780,16 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
+function wecodeExecutorForRuntime(runtime: string): string {
+  const normalized = runtime
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+  return normalized === 'claude' || normalized === 'claudecode' ? 'claudecode' : normalized
+}
+
 function localRuntimeModelConfig(
+  runtime: string,
   modelName?: string,
   modelType?: string | null,
   modelOptions?: Record<string, string>,
@@ -853,6 +873,8 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+        'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
@@ -1255,6 +1277,7 @@ function buildLocalRuntimeExecutionRequest(
   const taskId = input.taskId || derivedTaskId
   const modelConfig = applyRuntimeModelOptions(
     localRuntimeModelConfig(
+      input.runtime,
       input.modelId,
       input.modelType,
       input.modelOptions,
@@ -1265,6 +1288,9 @@ function buildLocalRuntimeExecutionRequest(
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
+  const requiredSkillNames = input.additionalContext?.dingtalkAITableProject ? ['dws'] : []
+  const deployedSkillNames = Array.from(new Set([...skillNames, ...requiredSkillNames]))
+  const preloadSkills = [...(input.additionalSkills ?? []), ...requiredSkillNames]
   const workspaceProject = input.workspacePath
     ? {
         source: input.workspaceSource,
@@ -1301,9 +1327,9 @@ function buildLocalRuntimeExecutionRequest(
     prompt: messageWithApplicationContext(input.message, input.additionalContext),
     enable_tools: true,
     enable_deep_thinking: true,
-    skill_names: skillNames,
-    preload_skills: input.additionalSkills ?? [],
-    user_selected_skills: input.additionalSkills ?? [],
+    skill_names: deployedSkillNames,
+    preload_skills: preloadSkills,
+    user_selected_skills: preloadSkills,
     ...(workspaceProject
       ? {
           workspace: {
@@ -1830,6 +1856,9 @@ export function createRuntimeWorkApiFromIpc(
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
+  const syncedModelCatalogKeys = new Set<string>()
+  const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
+  const modelCatalogSyncQueues = new Map<string, Promise<void>>()
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -1874,7 +1903,137 @@ export function createRuntimeWorkApiFromIpc(
     }
   }
 
+  const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
+    let selectedModel = findLocalModelConfigByModelName(data.modelId)
+    try {
+      await ensureLocalModelApiKeysHydrated()
+      selectedModel = findLocalModelConfigByModelName(data.modelId)
+    } catch (error) {
+      if (selectedModel?.apiKeyConfigured && !selectedModel.apiKey) throw error
+    }
+    if (!options.syncConfiguredModelCatalog) return true
+    if (!selectedModel?.catalogEntry) return true
+
+    const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+    const catalogKey = catalogModels
+      .map(model => `${model.id}:${model.updatedAt}`)
+      .sort()
+      .join('|')
+    const deviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+    const deviceCatalogKey = `${deviceId}\0${catalogKey}`
+    if (syncedModelCatalogKeys.has(deviceCatalogKey)) return true
+    const pendingSync = modelCatalogSyncInFlight.get(deviceCatalogKey)
+    if (pendingSync) return pendingSync
+    let appliedCatalogKey = ''
+    const sync = async () => {
+      const previousSync = modelCatalogSyncQueues.get(deviceId) ?? Promise.resolve()
+      const queuedSync = previousSync
+        .catch(() => undefined)
+        .then(async () => {
+          const currentCatalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+          const currentCatalogKey = currentCatalogModels
+            .map(model => `${model.id}:${model.updatedAt}`)
+            .sort()
+            .join('|')
+          const currentDeviceCatalogKey = `${deviceId}\0${currentCatalogKey}`
+          if (syncedModelCatalogKeys.has(currentDeviceCatalogKey)) {
+            appliedCatalogKey = currentCatalogKey
+            return
+          }
+          const currentSelectedModel = findLocalModelConfigByModelName(data.modelId)
+          const expectedModelId =
+            currentSelectedModel?.codexCatalogModelId ??
+            (typeof currentSelectedModel?.catalogEntry?.slug === 'string'
+              ? currentSelectedModel.catalogEntry.slug
+              : undefined)
+          await request(
+            'runtime.codex.catalog.custom.write',
+            {
+              models: currentCatalogModels.flatMap(model =>
+                model.catalogEntry ? [model.catalogEntry] : []
+              ),
+            },
+            deviceId
+          )
+          let restart: {
+            restarted?: boolean
+            requiresConfirmation?: boolean
+          }
+          try {
+            restart = await request('runtime.codex.app_server.restart', { ifIdle: true }, deviceId)
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('codex_catalog_not_loaded')) {
+              throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'), {
+                cause: error,
+              })
+            }
+            throw error
+          }
+          if (!restart.restarted) {
+            throw new Error(
+              restart.requiresConfirmation
+                ? i18n.t('workbench.cloud_model_catalog_sync_busy')
+                : i18n.t('workbench.cloud_model_catalog_sync_failed')
+            )
+          }
+          const models = await request<{
+            data?: Array<{ id?: string }>
+          }>('runtime.codex.models.list', { includeHidden: true }, deviceId)
+          if (!expectedModelId || !models.data?.some(model => model.id === expectedModelId)) {
+            throw new Error(i18n.t('workbench.cloud_model_catalog_sync_verify_failed'))
+          }
+          appliedCatalogKey = currentCatalogKey
+          syncedModelCatalogKeys.add(currentDeviceCatalogKey)
+        })
+      const queueTail = queuedSync.then(
+        () => undefined,
+        () => undefined
+      )
+      modelCatalogSyncQueues.set(deviceId, queueTail)
+      try {
+        await queuedSync
+      } finally {
+        if (modelCatalogSyncQueues.get(deviceId) === queueTail) {
+          modelCatalogSyncQueues.delete(deviceId)
+        }
+      }
+    }
+
+    const confirmation = options.requestModelCatalogSync
+    if (!confirmation) {
+      throw new Error(i18n.t('workbench.cloud_model_catalog_sync_failed'))
+    }
+    const syncPromise = confirmation({
+      deviceId,
+      deviceName: options.resolveDeviceName?.(deviceId) ?? deviceId,
+      modelName: selectedModel.displayName,
+      sync,
+    }).then(confirmed => {
+      const currentCatalogKey = listLocalModelConfigs()
+        .filter(model => model.catalogEntry)
+        .map(model => `${model.id}:${model.updatedAt}`)
+        .sort()
+        .join('|')
+      if (confirmed && appliedCatalogKey && currentCatalogKey === appliedCatalogKey) {
+        syncedModelCatalogKeys.add(`${deviceId}\0${appliedCatalogKey}`)
+      }
+      return confirmed
+    })
+    modelCatalogSyncInFlight.set(deviceCatalogKey, syncPromise)
+    try {
+      return await syncPromise
+    } finally {
+      if (modelCatalogSyncInFlight.get(deviceCatalogKey) === syncPromise) {
+        modelCatalogSyncInFlight.delete(deviceCatalogKey)
+      }
+    }
+  }
+
+  const modelCatalogSyncCancelled = () =>
+    new Error(i18n.t('workbench.cloud_model_catalog_sync_cancelled'))
+
   return {
+    prepareRuntimeModel,
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -1929,6 +2088,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -1952,6 +2114,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -2010,6 +2175,9 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeInterruptAndSendRequest
     ): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
       const payload = createLocalRuntimeSendPayload(
         data,
         localDeviceId,
@@ -2176,6 +2344,9 @@ export function createRuntimeWorkApiFromIpc(
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+        throw modelCatalogSyncCancelled()
+      }
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,

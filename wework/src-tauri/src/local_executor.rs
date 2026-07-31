@@ -96,6 +96,7 @@ struct LocalExecutorInner {
     runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
+    codex_initialize_elapsed_ms: Option<u64>,
     generation: u64,
 }
 
@@ -376,6 +377,8 @@ pub struct LocalExecutorStatus {
     device_id: Option<String>,
     #[serde(rename = "runtimeInstanceId")]
     runtime_instance_id: Option<String>,
+    #[serde(rename = "codexInitializeElapsedMs")]
+    codex_initialize_elapsed_ms: Option<u64>,
     version: Option<String>,
     error: Option<String>,
 }
@@ -748,6 +751,7 @@ fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
         ready: inner.ready,
         device_id: inner.device_id.clone(),
         runtime_instance_id: inner.runtime_instance_id.clone(),
+        codex_initialize_elapsed_ms: inner.codex_initialize_elapsed_ms,
         version: inner.version.clone(),
         error: inner.error.clone(),
     }
@@ -1768,6 +1772,7 @@ fn register_spawned_child(
     inner.child = Some(child);
     inner.running = true;
     inner.ready = false;
+    inner.codex_initialize_elapsed_ms = None;
     inner.device_id = Some(
         inner
             .device_id
@@ -2352,8 +2357,39 @@ pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> 
 pub async fn local_executor_ensure_started(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
+    proxy_url: Option<String>,
 ) -> Result<LocalExecutorStatus, String> {
-    start_executor_if_needed(app, &state).await?;
+    start_executor_if_needed(app.clone(), &state).await?;
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.runtime_config.update".to_string(),
+            params: json!({"proxyUrl": proxy_url}),
+        },
+    )
+    .await?;
+    let startup = send_executor_request(
+        app,
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.ensure_started".to_string(),
+            params: json!({}),
+        },
+    )
+    .await?;
+    if startup
+        .get("started")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let elapsed_ms = startup.get("initializeElapsedMs").and_then(Value::as_u64);
+        state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?
+            .codex_initialize_elapsed_ms = elapsed_ms;
+    }
     status_from_state(&state)
 }
 

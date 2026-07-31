@@ -105,6 +105,16 @@ impl LocalTaskStore {
             "project_store": ProjectStoreKind::Local,
             "task_provider": input.task_provider,
             "provider_config": provider_config,
+            "board_config": {
+                "group_by": "status",
+                "statuses": [
+                    {"id": "inbox", "name": "收集箱", "color": "gray"},
+                    {"id": "pending", "name": "待开始", "color": "blue"},
+                    {"id": "in_progress", "name": "进行中", "color": "orange"},
+                    {"id": "in_review", "name": "待确认", "color": "purple"},
+                    {"id": "completed", "name": "已完成", "color": "green"}
+                ]
+            },
             "tags": [],
         });
         let connection = self.connection()?;
@@ -284,6 +294,12 @@ impl LocalTaskStore {
                 provider_config,
             )?;
         }
+        if let Some(board_config) = input.board_config {
+            metadata["board_config"] = board_config;
+        }
+        if let Some(card_display) = input.card_display {
+            metadata["card_display"] = card_display;
+        }
         let connection = self.connection()?;
         let updated = connection.execute(
             "UPDATE loop_items
@@ -308,6 +324,22 @@ impl LocalTaskStore {
         }
         drop(connection);
         self.get_project(project_id)
+    }
+
+    pub fn archive_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {
+        let connection = self.connection()?;
+        let archived_at = now();
+        let updated = connection.execute(
+            "UPDATE loop_items
+             SET deleted_at = ?1, updated_at = ?1, version = version + 1
+             WHERE id = ?2 AND resource_type = 'project' AND version = ?3
+               AND deleted_at IS NULL",
+            params![archived_at, project_id, version],
+        )?;
+        if updated != 1 {
+            return Err(TaskRuntimeError::VersionConflict);
+        }
+        Ok(())
     }
 
     pub fn list_tasks(&self, project_id: &str) -> Result<Vec<LoopItem>, TaskRuntimeError> {
@@ -467,6 +499,32 @@ impl LocalTaskStore {
         transaction.commit()?;
         drop(connection);
         self.get_item(task_id, "task")
+    }
+
+    pub fn archive_task(&self, project_id: &str, task_id: &str) -> Result<(), TaskRuntimeError> {
+        self.get_task(project_id, task_id)?;
+        let connection = self.connection()?;
+        let archived_at = now();
+        let updated = connection.execute(
+            "WITH RECURSIVE task_tree(id) AS (
+                 SELECT id FROM loop_items
+                 WHERE id = ?1 AND resource_type = 'task'
+                   AND cloud_project_id = ?2 AND deleted_at IS NULL
+                 UNION ALL
+                 SELECT child.id FROM loop_items child
+                 JOIN task_tree parent ON child.parent_id = parent.id
+                 WHERE child.resource_type = 'task'
+                   AND child.cloud_project_id = ?2 AND child.deleted_at IS NULL
+             )
+             UPDATE loop_items
+             SET deleted_at = ?3, updated_at = ?3, version = version + 1
+             WHERE id IN (SELECT id FROM task_tree)",
+            params![task_id, project_id, archived_at],
+        )?;
+        if updated == 0 {
+            return Err(TaskRuntimeError::TaskNotFound);
+        }
+        Ok(())
     }
 
     pub fn reorder_tasks(

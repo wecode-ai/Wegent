@@ -488,7 +488,9 @@ impl GlobalCapabilityStore {
             }
         }
         if let Some(previous_codex_link) = previous_codex_link {
-            if previous_codex_link != codex_link {
+            if previous_codex_link != codex_link
+                && previous_codex_link.starts_with(&self.codex_plugins_dir)
+            {
                 self.remove_codex_plugin_runtime_path(&previous_codex_link)?;
             }
         }

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.services.capability_reference_service import get_referenced_capability
 from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.models.execution import ExecutionRequest
@@ -695,6 +696,16 @@ def _find_model_with_namespace(
         )
         return user_model, user_model.json.get("spec", {})
 
+    referenced_model = get_referenced_capability(
+        db,
+        kind="Model",
+        name=model_name,
+        user_id=user_id,
+        namespace="default",
+    )
+    if referenced_model and referenced_model.json:
+        return referenced_model, referenced_model.json.get("spec", {})
+
     # Search group models
     from app.services.group_permission import get_user_groups
 
@@ -716,6 +727,16 @@ def _find_model_with_namespace(
                 f"Found model '{model_name}' in group models (namespace: {group_model.namespace})"
             )
             return group_model, group_model.json.get("spec", {})
+        for group_name in user_groups:
+            referenced_model = get_referenced_capability(
+                db,
+                kind="Model",
+                name=model_name,
+                user_id=user_id,
+                namespace=group_name,
+            )
+            if referenced_model and referenced_model.json:
+                return referenced_model, referenced_model.json.get("spec", {})
 
     # Search public models
     public_model = (

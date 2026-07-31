@@ -102,8 +102,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
 
 - 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。
-- 云端执行覆盖 Codex 内置模型和云端 Model CRD 的三种协议，共 6 个完整文本与工具链路。
-- 本机自定义模型不能用于云端执行；对应三种协议的 3 个组合断言模型不会出现在云端项目的选择器中。
+- 云端执行同样覆盖本机自定义模型、Codex 内置模型和云端 Model CRD 的三种协议，共 9 个完整文本与工具链路。
+- 第一个“本机自定义模型 → 云端设备”组合会验证同步确认框、目标 Executor 模型目录写入和云端 Codex 重启；随后三个本机模型协议都必须完成文本与 `apply_patch` 工具链路。
 
 矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
@@ -120,8 +120,10 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
-矩阵；共享桌面基础设施、主分支、merge queue、定时任务和 `ci:all` 仍运行完整桌面
-套件。映射规则位于 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
+矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
+merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
+重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
+`.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
 必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
@@ -363,6 +365,9 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
 真实 Tauri、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
+三类场景会注入不同的构建期 Vite 环境变量，因此 Tauri/Cargo 编译缓存必须按
+E2E 命令隔离。plugins 场景不得恢复 core 或 cloud 场景生成的应用二进制，否则
+编译进应用的 Codex Home 初始化开关可能不匹配当前测试。
 
 Linux 桌面场景会把 Tauri 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存
@@ -378,8 +383,10 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
-普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。macOS 内存门禁默认只在 `main`、
-定时任务和手动任务中运行；需要在 PR 中验证内存边界时，添加 `ci:memory` 标签。
+普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。merge queue 会在提交进入 `main`
+之前运行完整浏览器和 Linux 桌面套件；`main` 不再重复运行已经通过的合并队列
+检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证内存
+边界时，添加 `ci:memory` 标签。
 添加该标签只触发内存门禁，不会重复运行浏览器或 Linux 桌面 E2E。workflow 每天
 UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、Linux 桌面和
 macOS 内存 E2E，即使 PR 的改动路径通常不会触发 Wework E2E。

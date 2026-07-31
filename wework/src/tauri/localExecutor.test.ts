@@ -14,6 +14,7 @@ import {
   resetLocalExecutorStateForTests,
   subscribeLocalExecutorEvents,
 } from './localExecutor'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -28,6 +29,7 @@ const listenMock = vi.mocked(listen)
 
 describe('localExecutor', () => {
   beforeEach(() => {
+    localStorage.clear()
     resetLocalExecutorStateForTests()
     invokeMock.mockReset()
     listenMock.mockReset()
@@ -51,6 +53,7 @@ describe('localExecutor', () => {
           ready: true,
           deviceId: 'local-device',
           runtimeInstanceId: 'runtime-1',
+          codexInitializeElapsedMs: 57,
         })
       }
       if (command === LOCAL_EXECUTOR_COMMANDS.request) {
@@ -64,6 +67,7 @@ describe('localExecutor', () => {
       ready: true,
       deviceId: 'local-device',
       runtimeInstanceId: 'runtime-1',
+      codexInitializeElapsedMs: 57,
     })
     expect(getInitializedBundledPluginMarketplace()).toEqual({
       id: 'wework-personal',
@@ -72,15 +76,36 @@ describe('localExecutor', () => {
     })
     expect(invokeMock.mock.calls).toEqual([
       [LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace],
-      [LOCAL_EXECUTOR_COMMANDS.ensure],
-      [
-        LOCAL_EXECUTOR_COMMANDS.request,
-        {
-          method: 'runtime.codex.runtime_config.update',
-          params: { proxyUrl: null },
-        },
-      ],
+      [LOCAL_EXECUTOR_COMMANDS.ensure, { proxyUrl: null }],
     ])
+  })
+
+  test('passes the configured proxy into the executor startup barrier', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    invokeMock.mockImplementation(command => {
+      if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
+        return Promise.resolve({
+          id: 'wework-personal',
+          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          pluginCount: 0,
+        })
+      }
+      if (command === LOCAL_EXECUTOR_COMMANDS.ensure) {
+        return Promise.resolve({
+          running: true,
+          ready: true,
+          deviceId: 'local-device',
+          runtimeInstanceId: 'runtime-proxy',
+        })
+      }
+      return Promise.reject(new Error(`Unexpected command: ${String(command)}`))
+    })
+
+    await ensureLocalExecutorStarted()
+
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.ensure, {
+      proxyUrl: 'http://127.0.0.1:7890',
+    })
   })
 
   test('keeps an initialized bundled marketplace without adding it again', async () => {
@@ -108,7 +133,7 @@ describe('localExecutor', () => {
 
     await ensureLocalExecutorStarted()
 
-    expect(invokeMock).toHaveBeenCalledTimes(3)
+    expect(invokeMock).toHaveBeenCalledTimes(2)
   })
 
   test('does not start bundled marketplace registration before reporting ready', async () => {
@@ -273,9 +298,8 @@ describe('localExecutor', () => {
 
     await ensureLocalExecutorStarted()
 
-    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
-      method: 'runtime.codex.runtime_config.update',
-      params: { proxyUrl: null },
+    expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.ensure, {
+      proxyUrl: null,
     })
     expect(invokeMock).not.toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
       method: 'codex.app_server_request',

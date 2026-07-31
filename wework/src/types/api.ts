@@ -1117,6 +1117,11 @@ export interface RuntimeTaskCreateResponse {
   error?: string | null
 }
 
+export interface RuntimeModelPrepareRequest {
+  deviceId: string
+  modelId?: string
+}
+
 export interface RuntimeTaskForkTarget {
   deviceId: string
   workspacePath: string

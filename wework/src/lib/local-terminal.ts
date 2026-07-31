@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import i18n from '@/i18n'
 import type { LocalWorkspaceOpenerId } from './local-workspace-openers'
 import { isTauriRuntime } from './runtime-environment'
 
@@ -14,8 +15,9 @@ export function isLocalTerminalAvailable(): boolean {
   const isIosLike =
     /iPad|iPhone|iPod/.test(userAgent) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   const isMacOs = platform.startsWith('Mac') || userAgent.includes('Mac OS X')
+  const isWindows = platform.startsWith('Win') || /Windows NT/.test(userAgent)
 
-  return isTauriRuntime() && isMacOs && !isIosLike
+  return isTauriRuntime() && (isMacOs || isWindows) && !isIosLike
 }
 
 export async function getLocalExecutorDeviceId(
@@ -72,7 +74,7 @@ export async function startLocalTerminal({
   env,
 }: StartLocalTerminalOptions = {}): Promise<string> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local terminal is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_terminal_unavailable'))
   }
 
   const trimmedCwd = cwd?.trim()
@@ -117,7 +119,7 @@ export async function openLocalWorkspace({
   path,
 }: OpenLocalWorkspaceOptions): Promise<void> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local workspace opening is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_workspace_opening_unavailable'))
   }
 
   const trimmedPath = path?.trim()
@@ -133,7 +135,7 @@ export async function openLocalWorkspace({
 
 export async function openLocalFile(path?: string): Promise<void> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local file opening is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))
   }
 
   const trimmedPath = path?.trim()
@@ -148,7 +150,7 @@ export async function openLocalFile(path?: string): Promise<void> {
 
 export async function revealLocalFile(path?: string): Promise<void> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local file revealing is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_file_revealing_unavailable'))
   }
 
   const trimmedPath = path?.trim()
@@ -172,7 +174,7 @@ export interface LocalFileOpeners {
 
 export async function listLocalFileOpeners(path?: string): Promise<LocalFileOpeners> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local file opening is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))
   }
 
   const trimmedPath = path?.trim()
@@ -185,7 +187,7 @@ export async function listLocalFileOpeners(path?: string): Promise<LocalFileOpen
 
 export async function getLocalFileOpenerIcon(iconPath?: string): Promise<string> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local application icons are unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_app_icons_unavailable'))
   }
 
   const trimmedIconPath = iconPath?.trim()
@@ -221,7 +223,7 @@ export async function openLocalFileWithApplication(
   path?: string
 ): Promise<void> {
   if (!isLocalTerminalAvailable()) {
-    throw new Error('Local file opening is unavailable outside the macOS Tauri app')
+    throw new Error(i18n.t('localRuntime:local_file_opening_unavailable'))
   }
 
   const trimmedPath = path?.trim()

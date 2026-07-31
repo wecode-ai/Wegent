@@ -67,6 +67,8 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
