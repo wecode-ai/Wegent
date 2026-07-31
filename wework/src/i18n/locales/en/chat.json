@@ -53,7 +53,10 @@
     "edited_file": "Edited {{filename}}",
     "created_file": "Created {{filename}}",
     "deleted_file": "Deleted {{filename}}",
-    "renamed_file": "Renamed {{filename}}"
+    "renamed_file": "Renamed {{filename}}",
+    "view_file": "View {{filename}}",
+    "view_file_fallback": "View file",
+    "git_status": "git status"
   },
   "assistant_status": {
     "stopped": "Stopped",

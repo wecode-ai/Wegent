@@ -19,6 +19,7 @@ use tokio::{
 use crate::{
     agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::git::{is_worktree, resolve_merge_base, run_git},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
@@ -34,8 +35,6 @@ use crate::{
 };
 
 #[cfg(windows)]
-use crate::local::command::build_env;
-
 const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -1398,10 +1397,165 @@ async fn handle_builtin_device_command(
         "git_is_worktree" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
+            let env = string_env(params.get("env")).ok()?;
             Some((
-                CommandResult::ok(if git_is_worktree(path) { "true" } else { "" }),
+                CommandResult::ok(if is_worktree(path, &env) { "true" } else { "" }),
                 None,
             ))
+        }
+        "git_branch" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((run_git(&path, &["branch", "--show-current"], &env).into_command_result(true), None))
+        }
+        "git_branch_list" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((
+                run_git(&path, &["branch", "--format=%(refname:short)"], &env).into_command_result(true),
+                None,
+            ))
+        }
+        "git_status_porcelain" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((
+                run_git(&path, &["status", "--porcelain"], &env).into_command_result(true),
+                None,
+            ))
+        }
+        "git_remote_url" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((
+                run_git(&path, &["remote", "get-url", "origin"], &env).into_command_result(true),
+                None,
+            ))
+        }
+        "git_diff_shortstat" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((
+                run_git(&path, &["diff", "--shortstat"], &env).into_command_result(true),
+                None,
+            ))
+        }
+        "git_checkout" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let args = string_list(params.get("args")).ok()?;
+            let env = string_env(params.get("env")).ok()?;
+            let mut git_args = vec!["checkout"];
+            git_args.extend(args.iter().map(String::as_str));
+            Some((run_git(&path, &git_args, &env).into_command_result(false), None))
+        }
+        "git_checkout_new" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let args = string_list(params.get("args")).ok()?;
+            let env = string_env(params.get("env")).ok()?;
+            let mut git_args = vec!["checkout", "-b"];
+            git_args.extend(args.iter().map(String::as_str));
+            Some((run_git(&path, &git_args, &env).into_command_result(false), None))
+        }
+        "git_add_all" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((run_git(&path, &["add", "--all"], &env).into_command_result(false), None))
+        }
+        "git_commit" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let args = string_list(params.get("args")).ok()?;
+            let env = string_env(params.get("env")).ok()?;
+            let mut git_args = vec!["commit"];
+            git_args.extend(args.iter().map(String::as_str));
+            Some((run_git(&path, &git_args, &env).into_command_result(false), None))
+        }
+        "git_push" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            let branch = run_git(&path, &["branch", "--show-current"], &env).stdout.trim().to_owned();
+            if branch.is_empty() {
+                return Some((CommandResult::error("Cannot push detached HEAD".to_owned(), 0.0, false), None));
+            }
+            Some((run_git(&path, &["push", "-u", "origin", &branch], &env).into_command_result(false), None))
+        }
+        "git_diff_unstaged" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((run_git(&path, &["diff", "--binary", "--"], &env).into_command_result(true), None))
+        }
+        "git_diff_staged" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((run_git(&path, &["diff", "--binary", "--cached", "--"], &env).into_command_result(true), None))
+        }
+        "git_diff_last_commit" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            Some((
+                run_git(&path, &["diff", "--binary", "HEAD~1..HEAD", "--"], &env).into_command_result(true),
+                None,
+            ))
+        }
+        "git_branch_diff_shortstat" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            let base = resolve_merge_base(&path, &env);
+            let args: Vec<&str> = match base.as_deref() {
+                Some(base) => vec!["diff", "--shortstat", base],
+                None => vec!["diff", "--shortstat", "HEAD", "--"],
+            };
+            Some((run_git(&path, &args, &env).into_command_result(true), None))
+        }
+        "git_branch_diff" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            let base = resolve_merge_base(&path, &env);
+            let mut output = String::new();
+            let tracked = if run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"], &env).success() {
+                let args: Vec<&str> = match base.as_deref() {
+                    Some(base) => vec!["diff", "--binary", base],
+                    None => vec!["diff", "--binary", "HEAD", "--"],
+                };
+                run_git(&path, &args, &env).stdout
+            } else {
+                run_git(&path, &["diff", "--binary", "--"], &env).stdout
+            };
+            output.push_str(&tracked);
+
+            let untracked = run_git(&path, &["ls-files", "--others", "--exclude-standard"], &env).stdout;
+            for file in untracked.lines() {
+                if file.is_empty() {
+                    continue;
+                }
+                let file_diff = run_git(&path, &["diff", "--binary", "--no-index", "--", "/dev/null", file], &env);
+                if file_diff.success() {
+                    output.push_str(&file_diff.stdout);
+                }
+            }
+            Some((CommandResult::ok(output), None))
+        }
+        "git_diff" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            let env = string_env(params.get("env")).ok()?;
+            let mut output = String::new();
+            let tracked = if run_git(&path, &["rev-parse", "--verify", "--quiet", "HEAD"], &env).success() {
+                run_git(&path, &["diff", "--binary", "HEAD", "--"], &env).stdout
+            } else {
+                run_git(&path, &["diff", "--binary", "--"], &env).stdout
+            };
+            output.push_str(&tracked);
+
+            let untracked = run_git(&path, &["ls-files", "--others", "--exclude-standard"], &env).stdout;
+            for file in untracked.lines() {
+                if file.is_empty() {
+                    continue;
+                }
+                let file_diff = run_git(&path, &["diff", "--binary", "--no-index", "--", "/dev/null", file], &env);
+                if file_diff.success() {
+                    output.push_str(&file_diff.stdout);
+                }
+            }
+            Some((CommandResult::ok(output), None))
         }
         _ => None,
     }
@@ -1413,31 +1567,6 @@ async fn handle_builtin_device_command(
     _params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     None
-}
-
-#[cfg(windows)]
-fn git_is_worktree(path: &str) -> bool {
-    git_stdout(path, &["rev-parse", "--is-inside-work-tree"])
-        .map(|output| output.trim() == "true")
-        .unwrap_or(false)
-        || git_stdout(path, &["rev-parse", "--git-dir"]).is_some()
-}
-
-#[cfg(windows)]
-fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
 }
 
 #[cfg(windows)]

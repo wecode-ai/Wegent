@@ -320,7 +320,7 @@ export function getToolActivityGroupKind(blocks: ToolBlock[]): ToolActivityKind 
   return primaryKinds.every(kind => kind === firstKind) ? firstKind : 'tool'
 }
 
-function getCommandActivityKind(command?: string): ToolActivityKind {
+export function getCommandActivityKind(command?: string): ToolActivityKind {
   const executable = getCommandExecutable(command)
   if (!executable) return 'command'
   if (SEARCH_COMMANDS.has(executable)) return 'search'
@@ -551,7 +551,7 @@ function getExecutableWordIndex(words: string[]): number {
   return index
 }
 
-function splitShellWords(command: string): string[] {
+export function splitShellWords(command: string): string[] {
   const words: string[] = []
   let current = ''
   let quote: '"' | "'" | null = null
@@ -619,7 +619,7 @@ function splitShellWords(command: string): string[] {
   return words
 }
 
-function getCommandExecutable(command?: string): string {
+export function getCommandExecutable(command?: string): string {
   const innerCommand = unwrapShellCommand(command ?? '')
   const match = innerCommand.match(
     /^(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:sudo\s+)?([^\s]+)/
@@ -628,9 +628,15 @@ function getCommandExecutable(command?: string): string {
   return executable?.toLowerCase() ?? ''
 }
 
-function unwrapShellCommand(command: string): string {
-  const match = command.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1/)
-  return (match?.[2] ?? command).trim()
+export function unwrapShellCommand(command: string): string {
+  const lcMatch = command.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1/)
+  if (lcMatch) return lcMatch[2].trim()
+  // Codex on Windows wraps shell commands as: pwsh -c "..." or powershell /c "..."
+  const shellMatch = command.match(
+    /^(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?(?:\s+[-\/][cC])\s+(['"])([\s\S]*)\1\s*$/i
+  )
+  if (shellMatch) return shellMatch[2].trim()
+  return command.trim()
 }
 
 function isCompletedToolBlock(block: ToolBlock): boolean {

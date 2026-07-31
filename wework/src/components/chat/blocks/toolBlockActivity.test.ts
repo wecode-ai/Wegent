@@ -3,6 +3,7 @@ import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
   buildProcessingDisplayRows,
   getToolActivityFilePaths,
+  getToolActivityKind,
   getToolActivitySearchItem,
   summarizeToolBlocks,
 } from './toolBlockActivity'
@@ -114,7 +115,27 @@ describe('toolBlockActivity', () => {
     ).toBe('已搜索代码')
   })
 
-  test('extracts read file paths from shell read commands', () => {
+  test('unwraps Windows PowerShell wrapper commands', () => {
+    expect(
+      getToolActivityFilePaths(
+        tool(
+          'pwsh-cat',
+          'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "cat src/app.ts"'
+        )
+      )
+    ).toEqual(['src/app.ts'])
+
+    expect(
+      getToolActivityKind(
+        tool(
+          'pwsh-rg',
+          'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"'
+        )
+      )
+    ).toBe('search')
+  })
+
+    test('extracts read file paths from shell read commands', () => {
     expect(
       getToolActivityFilePaths(
         tool('nl-1', 'nl -ba wework/src/components/chat/blocks/toolBlockActivity.ts')

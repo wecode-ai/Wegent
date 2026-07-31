@@ -50,7 +50,10 @@
     "edited_file": "编辑 {{filename}}",
     "created_file": "创建 {{filename}}",
     "deleted_file": "删除 {{filename}}",
-    "renamed_file": "重命名 {{filename}}"
+    "renamed_file": "重命名 {{filename}}",
+    "view_file": "查看 {{filename}}",
+    "view_file_fallback": "查看文件",
+    "git_status": "git status"
   },
   "assistant_status": {
     "stopped": "已停止",

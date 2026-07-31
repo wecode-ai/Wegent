@@ -13,6 +13,7 @@ import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
   getToolActivityKind,
+  getCommandExecutable,
   isWebSearchToolName,
 } from './toolBlockActivity'
 import {
@@ -137,6 +138,9 @@ export function ToolBlockItem({
     searchRunning: t('tool_activity.search_running'),
     searchDone: t('tool_activity.search_done'),
     searchError: t('tool_activity.search_error'),
+    viewFile: filename => t('tool_activity.view_file', { filename }),
+    viewFileFallback: t('tool_activity.view_file_fallback'),
+    gitStatus: t('tool_activity.git_status'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
   })
@@ -954,6 +958,9 @@ type GenericToolLabels = {
   searchRunning: string
   searchDone: string
   searchError: string
+  viewFile: (filename: string) => string
+  viewFileFallback: string
+  gitStatus: string
   imageView: (filename: string) => string
   imageViewFallback: string
 }
@@ -966,32 +973,7 @@ function getBlockLabel(
   const prefix = getToolStatusPrefix(block)
 
   if (isCommandToolName(name)) {
-    const activityKind = getToolActivityKind(block)
-    if (activityKind === 'file') {
-      const paths = getToolActivityFilePaths(block)
-      const target =
-        paths.length === 1
-          ? basename(paths[0])
-          : paths.length > 1
-            ? genericLabels.fileCount(paths.length)
-            : genericLabels.fileFallback
-      return { icon: <FileIcon />, label: `${prefix.read} ${target}` }
-    }
-    if (activityKind === 'search') {
-      const action =
-        block.status === 'error'
-          ? genericLabels.searchError
-          : block.status === 'done'
-            ? genericLabels.searchDone
-            : genericLabels.searchRunning
-      return {
-        icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
-        label: action,
-      }
-    }
-    const command = getInputField(block, 'command', 'cmd', 'commandLine')
-    const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
-    return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
+    return getCommandToolLabel(block, prefix, genericLabels)
   }
   if (isFileCreateToolName(name)) {
     return { icon: <FileIcon />, label: getFileToolLabel(prefix.create, block, '新增') }
@@ -1020,6 +1002,63 @@ function getBlockLabel(
   }
 
   return getGenericToolLabel(block, genericLabels)
+}
+
+function getCommandToolLabel(
+  block: ToolBlock,
+  prefix: ReturnType<typeof getToolStatusPrefix>,
+  genericLabels: GenericToolLabels
+): { icon: React.ReactNode; label: string } {
+  const activityKind = getToolActivityKind(block)
+  if (activityKind === 'file') {
+    const paths = getToolActivityFilePaths(block)
+    const target =
+      paths.length === 1
+        ? basename(paths[0])
+        : paths.length > 1
+          ? genericLabels.fileCount(paths.length)
+          : genericLabels.fileFallback
+    return { icon: <FileIcon />, label: `${prefix.read} ${target}` }
+  }
+  if (activityKind === 'search') {
+    const action =
+      block.status === 'error'
+        ? genericLabels.searchError
+        : block.status === 'done'
+          ? genericLabels.searchDone
+          : genericLabels.searchRunning
+    return {
+      icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
+      label: action,
+    }
+  }
+
+  const command = getInputField(block, 'command', 'cmd', 'commandLine')
+  const innerCommand = command ? command.split('\n')[0] : undefined
+  const executable = innerCommand ? getCommandExecutable(innerCommand) : ''
+
+  // Git commands get a clean, recognizable label.
+  if (executable === 'git') {
+    const gitLabel = getGitCommandLabel(innerCommand, genericLabels)
+    if (gitLabel) return { icon: <TerminalIcon />, label: `${prefix.running} ${gitLabel}` }
+  }
+
+  const shortCmd = innerCommand ? truncate(innerCommand, 40) : block.toolName
+  return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
+}
+
+function getGitCommandLabel(
+  command: string | undefined,
+  genericLabels: GenericToolLabels
+): string | undefined {
+  if (!command) return undefined
+  const words = command.trim().split(/\s+/)
+  const subcommand = words[1]
+  if (!subcommand) return undefined
+  if (subcommand === 'status') return genericLabels.gitStatus
+  // Keep other git commands compact but readable.
+  const tail = words.slice(2).join(' ')
+  return tail ? `git ${subcommand} ${truncate(tail, 32)}` : `git ${subcommand}`
 }
 
 function getGenericToolLabel(
