@@ -14,6 +14,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Union
 
 import requests
@@ -723,9 +724,9 @@ class K8sExecutor(Executor):
                 "pod_name": pod_name,
             }
         except ApiException as e:
-            # HTTP 409 AlreadyExists: the pod was left by a prior prepare whose
-            # response was cut off (e.g. gateway timeout).
-            already_exists = e.status == 409
+            # The pod was left by a prior prepare whose response was cut off
+            # (e.g. gateway timeout).
+            already_exists = e.status == HTTPStatus.CONFLICT
             if already_exists and allow_reconcile:
                 return self._reconcile_existing_pod(
                     core_v1, pod, namespace, pod_name, task_id
@@ -735,6 +736,9 @@ class K8sExecutor(Executor):
             )
             return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
         except Exception as e:
+            # Intentional catch-all: any unexpected error must surface as a
+            # "failed" result dict instead of propagating, so the caller can
+            # report the failure and clean up consistently.
             logger.error(
                 f"Failed to create Kubernetes pod '{pod_name}' for task {task_id}: {e}"
             )
@@ -751,7 +755,7 @@ class K8sExecutor(Executor):
         try:
             existing = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 logger.info(
                     f"Pod '{pod_name}' disappeared after 409; recreating for task {task_id}"
                 )
@@ -826,7 +830,7 @@ class K8sExecutor(Executor):
             try:
                 core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
             except ApiException as e:
-                if e.status == 404:
+                if e.status == HTTPStatus.NOT_FOUND:
                     return True
                 logger.warning(
                     f"Error while waiting for pod '{pod_name}' deletion: {e}"
@@ -1153,7 +1157,7 @@ class K8sExecutor(Executor):
             )
             return {"status": "success"}
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 logger.warning(
                     "Pod '%s' not found in namespace %s",
                     pod_name,
@@ -1209,7 +1213,7 @@ class K8sExecutor(Executor):
             logger.info(f"Deleted SandboxClaim '{sandbox_claim_name}'")
             return {"status": "success"}
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 logger.warning(
                     f"SandboxClaim '{sandbox_claim_name}' not found in namespace {K8S_NAMESPACE}"
                 )
@@ -1302,7 +1306,7 @@ class K8sExecutor(Executor):
                         f"found by task_id label '{task_id}'"
                     )
                 except ApiException as e:
-                    if e.status != 404:
+                    if e.status != HTTPStatus.NOT_FOUND:
                         logger.error(f"Failed to delete pod '{pod_name}': {e}")
 
             if deleted_pods:
@@ -1346,7 +1350,7 @@ class K8sExecutor(Executor):
                 return pod.metadata.labels.get("aigc.weibo.com/task-id")
             return None
         except ApiException as e:
-            if e.status != 404:
+            if e.status != HTTPStatus.NOT_FOUND:
                 logger.warning(f"Error getting task_id for pod '{executor_name}': {e}")
             return None
         except Exception as e:
@@ -1834,7 +1838,7 @@ class K8sExecutor(Executor):
             }
 
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 return {
                     "exists": False,
                     "status": "not_found",
