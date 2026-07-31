@@ -76,6 +76,7 @@ for (const protocol of [
     path: '/v1/responses',
     modelId: 'mock-response-model',
     expectedToolType: 'custom',
+    expectedToolName: 'apply_patch',
   },
   {
     name: 'Responses shell profile function capability',
@@ -84,6 +85,7 @@ for (const protocol of [
     path: '/v1/responses',
     modelId: 'mock-response-shell-model',
     expectedToolType: 'function',
+    expectedToolName: 'wework_capability_probe',
   },
   {
     name: 'Chat Completions function tools',
@@ -92,6 +94,7 @@ for (const protocol of [
     path: '/v1/chat/completions',
     modelId: 'mock-chat-model',
     expectedToolType: 'function',
+    expectedToolName: 'wework_capability_probe',
   },
   {
     name: 'Anthropic Messages function tools',
@@ -100,6 +103,7 @@ for (const protocol of [
     path: '/v1/messages',
     modelId: 'mock-anthropic-model',
     expectedToolType: undefined,
+    expectedToolName: 'wework_capability_probe',
   },
 ]) {
   test(`runs an Agent capability probe through ${protocol.name}`, async ({ page }) => {
@@ -125,12 +129,13 @@ for (const protocol of [
     expect(result).toEqual({ status: 200, toolCalling: true })
     const body = request.postDataJSON()
     expect(body.model).toBe(protocol.modelId)
-    expect(request.postData()).toContain('wework_capability_probe')
+    expect(request.postData()).toContain(protocol.expectedToolName)
     expect(body.tool_choice).toBeUndefined()
     if (protocol.expectedToolType) {
       expect(body.tools[0].type).toBe(protocol.expectedToolType)
+      expect(body.tools[0].name ?? body.tools[0].function?.name).toBe(protocol.expectedToolName)
     } else {
-      expect(body.tools[0].name).toBe('wework_capability_probe')
+      expect(body.tools[0].name).toBe(protocol.expectedToolName)
       expect(body.tools[0].input_schema).toBeTruthy()
     }
   })

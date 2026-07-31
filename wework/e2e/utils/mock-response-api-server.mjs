@@ -102,15 +102,16 @@ function capabilityProbeName(request) {
   const tools = Array.isArray(request?.tools) ? request.tools : []
   return tools
     .map(tool => tool?.name || tool?.function?.name)
-    .find(name => name === 'wework_capability_probe')
+    .find(name => name === 'wework_capability_probe' || name === 'apply_patch')
 }
 
 function capabilityRequestError(req, request, apiFormat) {
   const tools = Array.isArray(request?.tools) ? request.tools : []
-  const tool = tools.find(
-    candidate => (candidate?.name || candidate?.function?.name) === 'wework_capability_probe'
-  )
-  if (!tool) return 'Missing wework_capability_probe tool'
+  const tool = tools.find(candidate => {
+    const name = candidate?.name || candidate?.function?.name
+    return name === 'wework_capability_probe' || name === 'apply_patch'
+  })
+  if (!tool) return 'Missing capability probe tool'
   if (!String(req.headers.authorization || '').startsWith('Bearer ')) {
     return 'Missing bearer authorization'
   }
@@ -124,9 +125,11 @@ function capabilityRequestError(req, request, apiFormat) {
     if (request?.tool_choice !== undefined) return 'Responses probe must not force a tool'
     if (tool.type === 'custom') {
       if (
+        tool.name !== 'apply_patch' ||
         tool.format?.type !== 'grammar' ||
         tool.format?.syntax !== 'lark' ||
-        tool.format?.definition !== 'start: "PING"'
+        !tool.format?.definition?.includes('begin_patch: "*** Begin Patch" LF') ||
+        !tool.format?.definition?.includes('end_patch: "*** End Patch" LF?')
       ) {
         return 'Responses custom tool grammar is incorrect'
       }
@@ -185,8 +188,9 @@ function responsesCapabilityBody(request) {
             id: `tool_probe_${createdAt}`,
             type: 'custom_tool_call',
             call_id: `call_probe_${createdAt}`,
-            name: 'wework_capability_probe',
-            input: 'PING',
+            name: 'apply_patch',
+            input:
+              '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n',
           }
         : {
             id: `tool_probe_${createdAt}`,
