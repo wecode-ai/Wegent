@@ -16,7 +16,13 @@ import {
   getResourceCardClassName,
   getResourceGridClassName,
 } from '@/components/common/resourceCardLayout'
-import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
+import {
+  CommandLineIcon,
+  PencilIcon,
+  TrashIcon,
+  GlobeAltIcon,
+  LinkSlashIcon,
+} from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
@@ -34,9 +40,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { shellApis, UnifiedShell } from '@/apis/shells'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import { getReferencedBotNames } from '@/features/resource-library/capabilityReferenceErrors'
 import {
   buildGroupDisplayNameMap,
   filterResourceLibraryItemsByGroups,
@@ -50,6 +58,7 @@ import {
   type ResourceCreateTarget,
   type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
+import { UnbindInUseDialog } from '@/features/resource-library/components/UnbindInUseDialog'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 interface ShellListProps {
@@ -102,6 +111,8 @@ const ShellList: React.FC<ShellListProps> = ({
   const [editingShell, setEditingShell] = useState<UnifiedShell | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null)
+  const [referencedBotNames, setReferencedBotNames] = useState<string[]>([])
+  const [checkingReferenceUsageName, setCheckingReferenceUsageName] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const handledCreateRequestId = useRef<number | null>(null)
@@ -178,25 +189,68 @@ const ShellList: React.FC<ShellListProps> = ({
 
     setIsDeleting(true)
     try {
-      await shellApis.deleteShell(deleteConfirmShell.name)
+      if (deleteConfirmShell.isReference && deleteConfirmShell.listingId) {
+        await resourceLibraryApi.uninstallListing(
+          deleteConfirmShell.listingId,
+          deleteConfirmShell.namespace
+        )
+      } else {
+        await shellApis.deleteShell(deleteConfirmShell.name)
+      }
       toast({
-        title: t('common:shells.delete_success'),
+        title: t(
+          deleteConfirmShell.isReference
+            ? 'common:actions.unbind_success'
+            : 'common:shells.delete_success'
+        ),
       })
       setDeleteConfirmShell(null)
       fetchShells()
     } catch (error) {
+      const referencedBotNames = getReferencedBotNames(error)
       toast({
         variant: 'destructive',
-        title: t('common:shells.errors.delete_failed'),
-        description: (error as Error).message,
+        title: t(
+          deleteConfirmShell.isReference
+            ? 'common:actions.unbind_failed'
+            : 'common:shells.errors.delete_failed'
+        ),
+        description:
+          referencedBotNames.length > 0
+            ? t('common:actions.unbind_in_use_message', {
+                names: referencedBotNames.join('、'),
+              })
+            : (error as Error).message,
       })
     } finally {
       setIsDeleting(false)
     }
   }
 
+  const handleUnbindRequest = async (shell: UnifiedShell) => {
+    if (!shell.listingId || checkingReferenceUsageName) return
+
+    setCheckingReferenceUsageName(shell.name)
+    try {
+      const usage = await resourceLibraryApi.getReferenceUsage(
+        shell.listingId,
+        shell.namespace || 'default'
+      )
+      setReferencedBotNames(usage.referenced_bots.map(bot => bot.name))
+      setDeleteConfirmShell(shell)
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('common:actions.unbind_failed'),
+        description: (error as Error).message,
+      })
+    } finally {
+      setCheckingReferenceUsageName(null)
+    }
+  }
+
   const handleEdit = (shell: UnifiedShell) => {
-    if (shell.type === 'public') return
+    if (shell.type === 'public' || shell.isReference) return
 
     // Notify parent to update group selector if editing a group resource
     if (onEditResource && shell.namespace && shell.namespace !== 'default') {
@@ -243,7 +297,7 @@ const ShellList: React.FC<ShellListProps> = ({
   }
 
   const canEditShell = (shell: UnifiedShell) => {
-    if (shell.type === 'public') return false
+    if (shell.type === 'public' || shell.isReference) return false
     if (shell.type === 'group') return canEditGroupResource(shell.namespace || 'default')
     return true
   }
@@ -252,12 +306,18 @@ const ShellList: React.FC<ShellListProps> = ({
     shell.shellType.toLocaleLowerCase() !== (shell.displayName || shell.name).toLocaleLowerCase()
 
   const canDeleteShell = (shell: UnifiedShell) => {
-    if (shell.type === 'public') return false
+    if (shell.type === 'public' || shell.isReference) return false
     if (shell.type === 'group') return canDeleteGroupResource(shell.namespace || 'default')
     return true
   }
 
-  const hasShellActions = (shell: UnifiedShell) => canEditShell(shell) || canDeleteShell(shell)
+  const canUnbindShell = (shell: UnifiedShell) =>
+    shell.isReference === true &&
+    !!shell.listingId &&
+    (shell.type === 'user' || canEditGroupResource(shell.namespace || 'default'))
+
+  const hasShellActions = (shell: UnifiedShell) =>
+    canEditShell(shell) || canDeleteShell(shell) || canUnbindShell(shell)
 
   const createAction =
     !hideCreateActions && hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
@@ -416,6 +476,23 @@ const ShellList: React.FC<ShellListProps> = ({
                             <TrashIcon className="w-4 h-4" />
                           </Button>
                         )}
+                        {canUnbindShell(shell) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => void handleUnbindRequest(shell)}
+                            disabled={checkingReferenceUsageName === shell.name}
+                            title={t('common:actions.unbind')}
+                            data-testid={`unbind-shell-${shell.name}-button`}
+                          >
+                            {checkingReferenceUsageName === shell.name ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <LinkSlashIcon className="w-4 h-4" />
+                            )}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -434,18 +511,46 @@ const ShellList: React.FC<ShellListProps> = ({
         toast={toast}
         scope={editingShell ? scope : createTarget.scope}
         groupName={createTarget.scope === 'group' ? createTarget.groupName : groupName}
+        publicationGroups={groups}
+      />
+
+      <UnbindInUseDialog
+        open={!!deleteConfirmShell && referencedBotNames.length > 0}
+        onOpenChange={open => {
+          if (!open) {
+            setDeleteConfirmShell(null)
+            setReferencedBotNames([])
+          }
+        }}
+        consumerType="agent"
+        consumerNames={referencedBotNames}
       />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog
-        open={!!deleteConfirmShell}
-        onOpenChange={open => !open && !isDeleting && setDeleteConfirmShell(null)}
+        open={!!deleteConfirmShell && referencedBotNames.length === 0}
+        onOpenChange={open => {
+          if (!open && !isDeleting) {
+            setDeleteConfirmShell(null)
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('common:shells.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(
+                deleteConfirmShell?.isReference
+                  ? 'common:actions.unbind_confirm_title'
+                  : 'common:shells.delete_confirm_title'
+              )}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t('common:shells.delete_confirm_message', { name: deleteConfirmShell?.name })}
+              {t(
+                deleteConfirmShell?.isReference
+                  ? 'common:actions.unbind_confirm_message'
+                  : 'common:shells.delete_confirm_message',
+                { name: deleteConfirmShell?.name }
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -479,10 +584,18 @@ const ShellList: React.FC<ShellListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('common:actions.deleting')}
+                  {t(
+                    deleteConfirmShell?.isReference
+                      ? 'common:actions.unbinding'
+                      : 'common:actions.deleting'
+                  )}
                 </div>
               ) : (
-                t('common:actions.delete')
+                t(
+                  deleteConfirmShell?.isReference
+                    ? 'common:actions.unbind'
+                    : 'common:actions.delete'
+                )
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -20,6 +20,8 @@ export interface UnifiedShell {
   requiresWorkspace?: boolean // Whether this shell requires a workspace (default: true for local_engine)
   created_at?: string | null
   updated_at?: string | null
+  isReference?: boolean
+  listingId?: number | null
 }
 
 export interface UnifiedShellListResponse {

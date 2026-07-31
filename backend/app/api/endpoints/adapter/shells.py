@@ -20,6 +20,10 @@ from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
+from app.services.capability_reference_service import (
+    get_referenced_capability,
+    list_referenced_capabilities,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -61,6 +65,8 @@ class UnifiedShell(BaseModel):
     )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    isReference: bool = False
+    listingId: Optional[int] = None
 
 
 class ShellCreateRequest(BaseModel):
@@ -155,13 +161,19 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
     )
 
 
-def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
+def _user_shell_to_unified(
+    kind: Kind,
+    visible_namespace: str | None = None,
+    *,
+    is_reference: bool = False,
+) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
 
     # Determine resource type based on namespace
-    resource_type = "group" if kind.namespace != "default" else "user"
+    namespace = visible_namespace or kind.namespace
+    resource_type = "group" if namespace != "default" else "user"
 
     return UnifiedShell(
         name=kind.name,
@@ -172,10 +184,12 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
-        namespace=kind.namespace,
+        namespace=namespace,
         requiresWorkspace=shell_crd.spec.requiresWorkspace,
         created_at=kind.created_at,
         updated_at=kind.updated_at,
+        isReference=is_reference,
+        listingId=kind.id if is_reference else None,
     )
 
 
@@ -285,13 +299,28 @@ def list_unified_shells(
                 .order_by(Kind.name.asc())
                 .all()
             )
+        referenced_shells = list_referenced_capabilities(
+            db,
+            kind="Shell",
+            user_id=current_user.id,
+            namespace=namespace,
+        )
+        referenced_ids = {shell.id for shell in referenced_shells}
+        existing_ids = {shell.id for shell in user_shells}
+        user_shells.extend(
+            shell for shell in referenced_shells if shell.id not in existing_ids
+        )
 
         for shell in user_shells:
             try:
                 # Deduplicate by name
                 if shell.name in seen_names:
                     continue
-                unified = _user_shell_to_unified(shell)
+                unified = _user_shell_to_unified(
+                    shell,
+                    namespace,
+                    is_reference=shell.id in referenced_ids,
+                )
                 result.append(unified)
                 seen_names.add(shell.name)
             except Exception as e:
@@ -332,6 +361,19 @@ def get_unified_shell(
         )
         if user_shell:
             return _user_shell_to_unified(user_shell).model_dump()
+        referenced_shell = get_referenced_capability(
+            db,
+            kind="Shell",
+            name=shell_name,
+            user_id=current_user.id,
+            namespace="default",
+        )
+        if referenced_shell:
+            return _user_shell_to_unified(
+                referenced_shell,
+                "default",
+                is_reference=True,
+            ).model_dump()
         if shell_type == "user":
             raise HTTPException(status_code=404, detail="User shell not found")
 

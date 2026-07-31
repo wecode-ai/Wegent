@@ -125,6 +125,7 @@ function makeInstall(): ResourceLibraryInstall {
       status: 'published',
       install_count: 0,
       is_installed: true,
+      bind_modes: [],
       created_at: '2026-07-29T00:00:00Z',
       updated_at: '2026-07-29T00:00:00Z',
     },

@@ -254,6 +254,7 @@ fn process_command(request: &CommandRequest) -> Command {
 fn shell_command(command_line: &str) -> Command {
     let mut command = Command::new("cmd");
     command.args(["/C", command_line]);
+    crate::process::hide_windows_console(&mut command);
     command
 }
 

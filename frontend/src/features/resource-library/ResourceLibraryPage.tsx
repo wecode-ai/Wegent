@@ -38,7 +38,7 @@ import type { TeamModeFilter } from '@/features/tasks/components/selector/team-s
 
 const managedTypes: ManagedResourceType[] = ['agent', 'skill', 'model', 'shell', 'retriever']
 const marketplaceTabs: ResourceLibraryTab[] = ['discover', 'mine', 'team', 'published']
-const foundationTabs: ResourceLibraryTab[] = ['mine', 'team', 'system']
+const foundationTabs: ResourceLibraryTab[] = ['discover', 'mine', 'team', 'published']
 const teamModeFilters: TeamModeFilter[] = ['all', 'chat', 'code', 'task']
 const modelCategoryFilters: ResourceLibraryModelCategoryFilter[] = [
   'all',
@@ -103,6 +103,7 @@ export function ResourceLibraryPage() {
       ? modelCategoryParam
       : ('all' as ResourceLibraryModelCategoryFilter)
   const sortMode = getResourceLibrarySortMode(searchParams.get('sort'))
+  const [managedRevision, setManagedRevision] = useState(0)
   const [publishedRevision, setPublishedRevision] = useState(0)
   const keywordParam = searchParams.get('keyword') || ''
   const [searchInput, setSearchInput] = useState(keywordParam)
@@ -159,11 +160,13 @@ export function ResourceLibraryPage() {
 
   const handleResourceCreated = () => {
     setCreateRequest(null)
+    setManagedRevision(revision => revision + 1)
     setPublishedRevision(revision => revision + 1)
   }
 
   const handleCreateRequestClose = () => {
     setCreateRequest(null)
+    setManagedRevision(revision => revision + 1)
   }
 
   const handleMarketplaceSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -171,8 +174,7 @@ export function ResourceLibraryPage() {
     replaceParams({ keyword: searchInput.trim() || null })
   }
 
-  const showMarketplaceSearch =
-    tab === 'discover' && (resourceType === 'agent' || resourceType === 'skill')
+  const showMarketplaceSearch = tab === 'discover'
 
   const renderContent = () => {
     if (tab === 'discover') {
@@ -197,25 +199,9 @@ export function ResourceLibraryPage() {
     if (tab === 'published') {
       return <PublishedResources key={publishedRevision} resourceType={resourceType} />
     }
-    if (tab === 'system') {
-      return (
-        <MyResources
-          allowedTypes={[resourceType]}
-          fixedSource="system"
-          hideSourceControls
-          hideTypeControls
-          hideManagerCreateActions
-          hideSortControls
-          teamModeFilter={teamModeFilter}
-          onTeamModeFilterChange={mode => replaceParams({ mode: mode === 'all' ? null : mode })}
-          hideTeamModeFilter
-          modelCategoryFilter={modelCategoryFilter}
-          hideModelCategoryFilter
-        />
-      )
-    }
     return (
       <MyResources
+        key={managedRevision}
         allowedTypes={[resourceType]}
         fixedSource="personal"
         hideSourceControls
