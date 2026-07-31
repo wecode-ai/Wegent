@@ -43,6 +43,22 @@ export function buildGroupDisplayNameMap(groups: Group[]): Map<string, string> {
   return new Map(groups.map(group => [group.name, group.display_name || group.name]))
 }
 
+export function filterResourceLibraryItemsByGroups<T>(
+  items: T[],
+  groupNames: string[] | undefined,
+  getNamespace: (item: T) => string | null | undefined
+): T[] {
+  if (groupNames === undefined) {
+    return items
+  }
+
+  const selectedGroups = new Set(groupNames)
+  return items.filter(item => {
+    const namespace = getNamespace(item)
+    return Boolean(namespace && selectedGroups.has(namespace))
+  })
+}
+
 function compareText(left: string | null | undefined, right: string | null | undefined): number {
   return nameCollator.compare(left || '', right || '')
 }

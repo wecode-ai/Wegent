@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi, beforeEach } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
 import { WindowFrameControls } from './WindowFrameControls'
 
 const mocks = vi.hoisted(() => {
@@ -18,10 +17,6 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: vi.fn(() => mocks.windowMock),
-}))
-
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue(undefined),
 }))
 
 describe('WindowFrameControls', () => {
@@ -78,19 +73,9 @@ describe('WindowFrameControls', () => {
     expect(mocks.windowMock.maximize).not.toHaveBeenCalled()
   })
 
-  test('close button invokes close_main_window_to_tray command', async () => {
+  test('close button requests the standard window close flow', async () => {
     render(<WindowFrameControls />)
     fireEvent.click(screen.getByTestId('window-close-button'))
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('close_main_window_to_tray'))
-  })
-
-  test('falls back to window.close when close_main_window_to_tray command fails', async () => {
-    const invokeMock = invoke as unknown as ReturnType<typeof vi.fn>
-    invokeMock.mockRejectedValueOnce(new Error('command unavailable'))
-
-    render(<WindowFrameControls />)
-    fireEvent.click(screen.getByTestId('window-close-button'))
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('close_main_window_to_tray'))
     await waitFor(() => expect(mocks.windowMock.close).toHaveBeenCalledTimes(1))
   })
 

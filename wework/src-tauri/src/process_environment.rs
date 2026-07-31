@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
 
 const STANDARD_DEVELOPER_PATHS: &[&str] = &[
     "/opt/homebrew/bin",
@@ -29,6 +33,23 @@ pub fn normalized_process_path(current_path: &str) -> String {
 
 pub fn normalized_current_path() -> String {
     normalized_process_path(env::var("PATH").ok().as_deref().unwrap_or_default())
+}
+
+pub fn sanitized_current_environment() -> Vec<(OsString, OsString)> {
+    sanitized_environment(env::vars_os())
+}
+
+fn sanitized_environment(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Vec<(OsString, OsString)> {
+    environment
+        .into_iter()
+        .filter(|(key, _)| !is_exported_bash_function(key))
+        .collect()
+}
+
+fn is_exported_bash_function(key: &OsStr) -> bool {
+    key.to_string_lossy().starts_with("BASH_FUNC_")
 }
 
 fn append_path_entries(paths: &mut Vec<PathBuf>, value: &str) {
@@ -75,5 +96,30 @@ mod tests {
         assert!(path.contains("/opt/homebrew/sbin"));
         assert!(path.contains("/usr/local/bin"));
         assert!(path.contains("/usr/local/sbin"));
+    }
+
+    #[test]
+    fn sanitized_environment_removes_exported_bash_functions() {
+        let environment = vec![
+            (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+            (OsString::from("BASH_FUNC_which%%"), OsString::from("() {")),
+            (
+                OsString::from("APP_BASH_FUNC_SETTING"),
+                OsString::from("preserved"),
+            ),
+        ];
+
+        let sanitized = sanitized_environment(environment);
+
+        assert_eq!(
+            sanitized,
+            vec![
+                (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (
+                    OsString::from("APP_BASH_FUNC_SETTING"),
+                    OsString::from("preserved"),
+                ),
+            ]
+        );
     }
 }

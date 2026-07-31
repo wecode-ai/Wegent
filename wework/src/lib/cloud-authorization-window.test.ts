@@ -3,11 +3,15 @@ import { openExternalUrl } from './external-links'
 import { isTauriRuntime } from './runtime-environment'
 import { openCloudAuthorizationWindow } from './cloud-authorization-window'
 
+const invokeMock = vi.hoisted(() => vi.fn())
+
 const webviewWindowMocks = vi.hoisted(() => {
   const constructorMock = vi.fn()
   const existingCloseMock = vi.fn()
   const getByLabelMock = vi.fn()
   const setFocusMock = vi.fn()
+  const setAlwaysOnTopMock = vi.fn()
+  const showMock = vi.fn()
   const closeMock = vi.fn()
   const destroyMock = vi.fn()
   const onCloseRequestedMock = vi.fn()
@@ -18,6 +22,8 @@ const webviewWindowMocks = vi.hoisted(() => {
     existingCloseMock,
     getByLabelMock,
     setFocusMock,
+    setAlwaysOnTopMock,
+    showMock,
     closeMock,
     destroyMock,
     onCloseRequestedMock,
@@ -26,9 +32,12 @@ const webviewWindowMocks = vi.hoisted(() => {
 })
 
 const currentWindowMocks = vi.hoisted(() => ({
-  outerPosition: vi.fn(),
-  outerSize: vi.fn(),
-  scaleFactor: vi.fn(),
+  onMoved: vi.fn(),
+  onScaleChanged: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -47,6 +56,8 @@ vi.mock('@tauri-apps/api/webviewWindow', () => {
     close = webviewWindowMocks.closeMock
     destroy = webviewWindowMocks.destroyMock
     setFocus = webviewWindowMocks.setFocusMock
+    setAlwaysOnTop = webviewWindowMocks.setAlwaysOnTopMock
+    show = webviewWindowMocks.showMock
     onCloseRequested = webviewWindowMocks.onCloseRequestedMock
     once = webviewWindowMocks.onceMock
 
@@ -68,6 +79,7 @@ const openExternalUrlMock = vi.mocked(openExternalUrl)
 describe('openCloudAuthorizationWindow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    invokeMock.mockResolvedValue(undefined)
     isTauriRuntimeMock.mockReturnValue(false)
     openExternalUrlMock.mockResolvedValue(true)
     webviewWindowMocks.getByLabelMock.mockResolvedValue(null)
@@ -75,10 +87,11 @@ describe('openCloudAuthorizationWindow', () => {
     webviewWindowMocks.closeMock.mockResolvedValue(undefined)
     webviewWindowMocks.destroyMock.mockResolvedValue(undefined)
     webviewWindowMocks.setFocusMock.mockResolvedValue(undefined)
+    webviewWindowMocks.setAlwaysOnTopMock.mockResolvedValue(undefined)
+    webviewWindowMocks.showMock.mockResolvedValue(undefined)
     webviewWindowMocks.onCloseRequestedMock.mockResolvedValue(vi.fn())
-    currentWindowMocks.outerPosition.mockResolvedValue({ x: 200, y: 100 })
-    currentWindowMocks.outerSize.mockResolvedValue({ width: 1400, height: 1000 })
-    currentWindowMocks.scaleFactor.mockResolvedValue(1)
+    currentWindowMocks.onMoved.mockResolvedValue(vi.fn())
+    currentWindowMocks.onScaleChanged.mockResolvedValue(vi.fn())
     webviewWindowMocks.onceMock.mockImplementation((event: string, handler) => {
       if (event === 'tauri://created') {
         window.queueMicrotask(() => handler({ payload: null }))
@@ -124,15 +137,18 @@ describe('openCloudAuthorizationWindow', () => {
         height: 640,
         minWidth: 960,
         minHeight: 620,
-        parent: currentWindowMocks,
-        x: 400,
-        y: 244,
-        center: false,
+        center: true,
         maximizable: false,
+        alwaysOnTop: true,
         focus: true,
-        visible: true,
+        visible: false,
       })
     )
+    expect(webviewWindowMocks.setAlwaysOnTopMock).toHaveBeenCalledWith(true)
+    expect(invokeMock).toHaveBeenCalledWith('position_cloud_authorization_window')
+    expect(webviewWindowMocks.showMock).toHaveBeenCalled()
+    expect(currentWindowMocks.onMoved).toHaveBeenCalled()
+    expect(currentWindowMocks.onScaleChanged).toHaveBeenCalled()
     expect(webviewWindowMocks.setFocusMock).toHaveBeenCalled()
     expect(webviewWindowMocks.onCloseRequestedMock).toHaveBeenCalled()
     expect(openExternalUrlMock).not.toHaveBeenCalled()
@@ -149,6 +165,25 @@ describe('openCloudAuthorizationWindow', () => {
     expect(webviewWindowMocks.closeMock).toHaveBeenCalled()
   })
 
+  test('repositions the authorization window after Wework moves', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+
+    await openCloudAuthorizationWindow('https://cloud.example.com/auth/wework/authorize')
+    const movedHandler = currentWindowMocks.onMoved.mock.calls[0]?.[0]
+    expect(movedHandler).toBeTypeOf('function')
+
+    vi.useFakeTimers()
+    try {
+      movedHandler({ payload: { x: -1200, y: 0 } })
+      await vi.advanceTimersByTimeAsync(100)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(invokeMock).toHaveBeenCalledTimes(2)
+    expect(invokeMock).toHaveBeenLastCalledWith('position_cloud_authorization_window')
+  })
+
   test('destroys the authorization window when close is blocked', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     webviewWindowMocks.closeMock.mockRejectedValue(new Error('close not allowed'))
@@ -160,5 +195,30 @@ describe('openCloudAuthorizationWindow', () => {
 
     expect(webviewWindowMocks.closeMock).toHaveBeenCalled()
     expect(webviewWindowMocks.destroyMock).toHaveBeenCalled()
+  })
+
+  test('closes the authorization window when enabling always-on-top fails', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    webviewWindowMocks.setAlwaysOnTopMock.mockRejectedValue(new Error('always-on-top not allowed'))
+
+    await expect(
+      openCloudAuthorizationWindow('https://cloud.example.com/auth/wework/authorize')
+    ).rejects.toThrow('always-on-top not allowed')
+
+    expect(webviewWindowMocks.closeMock).toHaveBeenCalled()
+    expect(webviewWindowMocks.onCloseRequestedMock).not.toHaveBeenCalled()
+  })
+
+  test('closes the authorization window when native positioning fails', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockRejectedValue(new Error('native positioning failed'))
+
+    await expect(
+      openCloudAuthorizationWindow('https://cloud.example.com/auth/wework/authorize')
+    ).rejects.toThrow('native positioning failed')
+
+    expect(webviewWindowMocks.closeMock).toHaveBeenCalled()
+    expect(webviewWindowMocks.showMock).not.toHaveBeenCalled()
+    expect(webviewWindowMocks.onCloseRequestedMock).not.toHaveBeenCalled()
   })
 })

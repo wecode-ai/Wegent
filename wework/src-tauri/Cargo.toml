@@ -37,8 +37,10 @@ portable-pty = "0.8"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.13", features = ["blocking", "multipart"] }
 base64 = "0.22"
+getrandom = "0.2"
 regex = "1"
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }

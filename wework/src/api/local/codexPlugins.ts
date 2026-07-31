@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
+  ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   requestLocalExecutor,
@@ -625,6 +626,7 @@ async function readState(
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
   const executorStatus = await ensureLocalExecutorStarted()
+  await ensureBundledPluginMarketplaceRegistered()
   const requestedMarketplaceId = params.mergeAllMarketplaces
     ? ''
     : params.marketplaceId?.trim() || selectedMarketplaceId()

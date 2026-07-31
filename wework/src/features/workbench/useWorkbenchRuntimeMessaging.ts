@@ -15,6 +15,7 @@ import {
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
+import { notifyMainRuntimeWorkChanged } from '@/tauri/runtimeWorkSync'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -801,6 +802,18 @@ export function useWorkbenchRuntimeMessaging({
           }
         }
         lifecycleStore.sendAccepted(address)
+        if (!options?.ephemeral) {
+          void notifyMainRuntimeWorkChanged({
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+          }).catch(error => {
+            console.warn('[Wework] Failed to notify main window about runtime task creation', {
+              deviceId: address.deviceId,
+              taskId: address.taskId,
+              error,
+            })
+          })
+        }
         if (options?.refreshWorkListsOnResolve !== false) {
           await refreshWorkLists()
         }

@@ -1,6 +1,10 @@
 mod appshots;
+#[cfg(desktop)]
+mod cloud_authorization_window;
 mod desktop_capture;
 mod embedded_browser;
+#[cfg(target_os = "macos")]
+mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
 mod local_executor;
@@ -4517,6 +4521,8 @@ pub fn run() {
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
+            #[cfg(desktop)]
+            cloud_authorization_window::position_cloud_authorization_window,
             desktop_capture::capture_main_webview,
             desktop_capture::capture_popout_webview,
             acknowledge_frontend_resume_probe,
@@ -4542,7 +4548,9 @@ pub fn run() {
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
+            embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,

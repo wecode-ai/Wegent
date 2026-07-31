@@ -344,7 +344,7 @@ export interface SkillBindingException {
 
 export interface SkillBinding {
   id: number
-  target_type: 'user' | 'agent' | 'project' | 'message'
+  target_type: 'user' | 'group' | 'agent' | 'project' | 'message'
   target_id: string
   skill_ref: {
     skill_id: number
@@ -461,6 +461,48 @@ export async function addSkillToMyDefault(skillId: number): Promise<SkillBinding
   }
 
   return response.json()
+}
+
+export async function addSkillToGroups(
+  skillId: number,
+  groupNames: string[]
+): Promise<SkillBinding[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/groups`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ group_names: groupNames }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to add Skill to groups')
+  }
+
+  return response.json()
+}
+
+export async function removeSkillFromGroup(skillId: number, groupName: string): Promise<void> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const params = new URLSearchParams({ group_name: groupName })
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/groups?${params}`
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to remove Skill from group')
+  }
 }
 
 export async function updateMyDefaultSkillBindingExceptions(

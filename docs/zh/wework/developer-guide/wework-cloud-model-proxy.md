@@ -42,6 +42,12 @@ executor 的 Codex compat proxy 在上游尚未开始返回响应流、且模型
 
 如果上游返回标准 `Retry-After` 响应头，proxy 会优先采用该等待时间，并将单次等待限制在 60 秒以内。非 429 响应不会触发这项策略；重试耗尽后，proxy 会把最后一次 429 状态和错误正文返回给 Codex。已经开始输出的流不会通过这项机制重放，避免重复生成或重复执行工具。
 
+### Anthropic 空输出恢复
+
+部分 Anthropic Messages 兼容服务可能在 `message_delta` 中返回结束原因和大于零的 `output_tokens`，却没有发送任何文本、思考内容或工具调用。executor 的 Codex compat proxy 会把这种不完整响应转换为失败事件，而不是错误地发出成功完成事件。Codex 随后按流错误恢复机制重试当前模型请求，避免 Wework 在没有 assistant 回复时提前结束任务。
+
+只有完全没有观察到模型输出时才会触发这项检查。已经收到文本、思考内容或工具调用的响应不会被重放；用于连接预热且 `output_tokens` 为零的合法空响应也不受影响。
+
 ### Namespace 工具兼容
 
 Codex 向 OpenAI Responses API 发送工具时，可以使用 `type: "namespace"` 把多个子工具组织在同一个 namespace 下。OpenAI Chat Completions 和 Anthropic Messages 没有对应的 namespace 字段，因此 executor 的 Codex compat proxy 会在协议转换边界执行可逆映射：

@@ -27,17 +27,17 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|click|close-to-tray|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|debug|click|click-at|click-then-macrotask|seed-local-project|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
-  --value TEXT              Replacement value for fill
+  --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
+                            seed-local-project, paste-paths, or drop-paths
   --target SELECTOR         Event target selector for pointer-move (default: body)
-                            Required destination selector for drag
+                            Required destination for drag and click-then-macrotask
   --file PATH               File to dispatch for drop-file
-  --value JSON              Path descriptors for paste-paths or drop-paths
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -67,6 +67,13 @@ export function resolveStartupTimeout(timeout) {
     throw new Error('--timeout must be a finite positive number')
   }
   return configuredTimeout
+}
+
+export function resolveCommandTimeout(timeout) {
+  const configuredTimeout = Number(timeout)
+  return Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : defaultTimeoutMs
 }
 
 function json(response, status, value) {
@@ -307,6 +314,17 @@ async function request(session, token, path, method = 'GET', body) {
   return value
 }
 
+async function waitForFreshControlClient(session, token, previousClientId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const status = await request(session, token, '/status')
+    const clientId = status.readyInfo?.clientId
+    if (clientId && clientId !== previousClientId) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('Timed out waiting for the reloaded Wework WebView to reconnect')
+}
+
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
   if (command === 'serve') return runServer(options.session, options.token)
@@ -384,8 +402,14 @@ async function main() {
     capture: 'capture',
     'capture-popout': 'capturePopoutWindow',
     snapshot: 'snapshot',
+    debug: 'getWorkbenchDebugSnapshot',
     click: 'click',
+    'click-at': 'clickAt',
+    'click-then-macrotask': 'clickThenMacrotask',
+    'seed-local-project': 'seedLocalProject',
+    reload: 'reloadApp',
     'close-to-tray': 'closeMainWindowToTray',
+    'request-close': 'requestMainWindowClose',
     'dismiss-popout': 'dismissPopoutWindow',
     drag: 'drag',
     'drop-file': 'dropFile',
@@ -415,6 +439,10 @@ async function main() {
     (command === 'capture' ||
     command === 'capture-popout' ||
     command === 'snapshot' ||
+    command === 'debug' ||
+    command === 'click-at' ||
+    command === 'seed-local-project' ||
+    command === 'reload' ||
     command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
@@ -422,7 +450,8 @@ async function main() {
     command === 'show-popout' ||
     command === 'system-drag-drop' ||
     command === 'window-focus-snapshot' ||
-    command === 'close-to-tray'
+    command === 'close-to-tray' ||
+    command === 'request-close'
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')
@@ -437,6 +466,9 @@ async function main() {
         : dropFileExtension === '.txt'
           ? 'text/plain'
           : 'application/octet-stream'
+  const previousReady =
+    command === 'reload' ? await request(session, session.token, '/status') : null
+  const effectiveTimeoutMs = resolveCommandTimeout(options.timeout)
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
@@ -448,8 +480,16 @@ async function main() {
     text: options.text,
     visible: options.visible === 'true',
     stableMs: options.stable ? Number(options.stable) : undefined,
-    timeoutMs: options.timeout ? Number(options.timeout) : undefined,
+    timeoutMs: effectiveTimeoutMs,
   })
+  if (command === 'reload') {
+    await waitForFreshControlClient(
+      session,
+      session.token,
+      previousReady?.readyInfo?.clientId,
+      effectiveTimeoutMs
+    )
+  }
   if (command === 'capture' || command === 'capture-popout') {
     if (!options.output) throw new Error('--output is required')
     const prefix = 'data:image/png;base64,'

@@ -26,6 +26,7 @@ import {
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
+import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
@@ -1329,6 +1330,14 @@ export function WorkbenchProvider({
   )
   const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  useEffect(() => {
+    const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [stableRefreshWorkLists])
+
   useEffect(() => {
     const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {

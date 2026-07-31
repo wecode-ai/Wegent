@@ -154,6 +154,7 @@ struct LocalExecutorInner {
     runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
+    codex_initialize_elapsed_ms: Option<u64>,
     generation: u64,
 }
 
@@ -434,6 +435,8 @@ pub struct LocalExecutorStatus {
     device_id: Option<String>,
     #[serde(rename = "runtimeInstanceId")]
     runtime_instance_id: Option<String>,
+    #[serde(rename = "codexInitializeElapsedMs")]
+    codex_initialize_elapsed_ms: Option<u64>,
     version: Option<String>,
     error: Option<String>,
 }
@@ -591,7 +594,7 @@ fn local_executor_isolation_enabled() -> Result<bool, String> {
             .unwrap_or(true))
 }
 
-fn local_executor_home_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -806,6 +809,7 @@ fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
         ready: inner.ready,
         device_id: inner.device_id.clone(),
         runtime_instance_id: inner.runtime_instance_id.clone(),
+        codex_initialize_elapsed_ms: inner.codex_initialize_elapsed_ms,
         version: inner.version.clone(),
         error: inner.error.clone(),
     }
@@ -1807,6 +1811,7 @@ fn register_spawned_child(
     inner.child = Some(child);
     inner.running = true;
     inner.ready = false;
+    inner.codex_initialize_elapsed_ms = None;
     inner.device_id = Some(
         inner
             .device_id
@@ -1885,6 +1890,8 @@ fn spawn_configured_sidecar(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.env_clear();
+    command.envs(process_environment::sanitized_current_environment());
     command.envs(envs.iter().map(|(key, value)| (key, value)));
     configure_managed_process_group(&mut command);
     let mut child = command.spawn().map_err(|error| {
@@ -1950,6 +1957,8 @@ fn spawn_bundled_sidecar(
         .map_err(|error| {
             format!("Failed to resolve local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
         })?
+        .env_clear()
+        .envs(process_environment::sanitized_current_environment())
         .envs(envs.iter().map(|(key, value)| (key, value)));
     let (mut rx, child) = sidecar.spawn().map_err(|error| {
         format!("Failed to start local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
@@ -2977,8 +2986,39 @@ pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> 
 pub async fn local_executor_ensure_started(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
+    proxy_url: Option<String>,
 ) -> Result<LocalExecutorStatus, String> {
-    start_executor_if_needed(app, &state).await?;
+    start_executor_if_needed(app.clone(), &state).await?;
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.runtime_config.update".to_string(),
+            params: json!({"proxyUrl": proxy_url}),
+        },
+    )
+    .await?;
+    let startup = send_executor_request(
+        app,
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.ensure_started".to_string(),
+            params: json!({}),
+        },
+    )
+    .await?;
+    if startup
+        .get("started")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let elapsed_ms = startup.get("initializeElapsedMs").and_then(Value::as_u64);
+        state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?
+            .codex_initialize_elapsed_ms = elapsed_ms;
+    }
     status_from_state(&state)
 }
 

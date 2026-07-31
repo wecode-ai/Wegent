@@ -99,6 +99,10 @@
     "go_to_market": "去市场看看",
     "libraryTitle": "技能库",
     "libraryDescription": "上传、管理技能。技能可以设为自动启用，跟随你进入对话；也可以在智能体里添加技能，强化智能体的能力。",
+    "myLibraryTitle": "我的技能",
+    "myLibraryDescription": "管理你创建和已启用的技能。",
+    "groupLibraryTitle": "群组技能",
+    "groupLibraryDescription": "管理当前群组创建和维护的技能。群组从市场添加的技能在上方单独展示。",
     "defaultEnabled": {
       "title": "自动启用技能",
       "description": "这些技能会在你的所有对话中自动生效；也可以为模式或智能体设置例外。",
@@ -119,6 +123,7 @@
       "removeFromMyDefault": "取消自动启用",
       "addSuccess": "已设为自动启用",
       "removeSuccess": "已取消自动启用",
+      "removeExternalSuccess": "已取消自动启用，可在“发现”中重新添加",
       "updateFailed": "更新自动启用技能失败",
       "groupScopeHint": "只对你生效，不会影响团队其他成员。"
     },
@@ -193,7 +198,7 @@
   "team": {
     "list": {
       "filterDevice": "设备",
-      "goToDevice": "去设备"
+      "runOnDevice": "去设备执行任务"
     },
     "quick_phrases": {
       "label": "快捷短语",

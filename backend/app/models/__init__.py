@@ -30,6 +30,7 @@ from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionStat
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
+from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.plugin_marketplace import (
@@ -100,6 +101,7 @@ __all__ = [
     "PluginUpstream",
     "PluginSubmission",
     "PluginDeviceInstallation",
+    "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",
     "BackgroundExecution",

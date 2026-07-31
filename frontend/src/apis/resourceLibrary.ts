@@ -4,13 +4,17 @@
 
 import apiClient from '@/apis/client'
 import type {
+  ResourceLibraryAgentBindings,
+  ResourceLibraryAgentBindingsUpdateRequest,
   ResourceLibraryCreateListingRequest,
   ResourceLibraryInstallApiRequest,
   ResourceLibraryInstallRequest,
   ResourceLibraryInstall,
   ResourceLibraryListListingsParams,
+  ResourceLibraryDiscoveryResponse,
   ResourceLibraryListResponse,
   ResourceLibraryListing,
+  ResourceLibraryPublicationUpdateRequest,
 } from '@/features/resource-library/types'
 
 const RESOURCE_LIBRARY_BASE_PATH = '/resource-library'
@@ -39,6 +43,8 @@ function buildListingsQuery(params?: ResourceLibraryListListingsParams): string 
   appendQueryParam(query, 'keyword', params?.keyword)
   appendQueryParam(query, 'tags', params?.tags)
   appendQueryParam(query, 'status', params?.status)
+  appendQueryParam(query, 'target_namespace', params?.targetNamespace)
+  appendQueryParam(query, 'cursor', params?.cursor)
   appendQueryParam(query, 'page', params?.page)
   appendQueryParam(query, 'limit', params?.limit)
 
@@ -59,12 +65,16 @@ function toInstallApiRequest(
 export const resourceLibraryApi = {
   listListings(
     params?: ResourceLibraryListListingsParams
-  ): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {
+  ): Promise<ResourceLibraryDiscoveryResponse<ResourceLibraryListing>> {
     return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/listings${buildListingsQuery(params)}`)
   },
 
   getListing(listingId: number): Promise<ResourceLibraryListing> {
     return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}`)
+  },
+
+  getPublication(listingId: number): Promise<ResourceLibraryListing> {
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/publication`)
   },
 
   createListing(request: ResourceLibraryCreateListingRequest): Promise<ResourceLibraryListing> {
@@ -81,8 +91,36 @@ export const resourceLibraryApi = {
     )
   },
 
+  bindAgent(
+    agentId: number,
+    request: ResourceLibraryInstallRequest
+  ): Promise<ResourceLibraryInstall> {
+    return apiClient.post(
+      `${RESOURCE_LIBRARY_BASE_PATH}/agents/${agentId}/bindings`,
+      toInstallApiRequest(request)
+    )
+  },
+
+  getAgentBindings(agentId: number): Promise<ResourceLibraryAgentBindings> {
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/agents/${agentId}/bindings`)
+  },
+
+  syncAgentBindings(
+    agentId: number,
+    request: ResourceLibraryAgentBindingsUpdateRequest
+  ): Promise<ResourceLibraryAgentBindings> {
+    return apiClient.put(`${RESOURCE_LIBRARY_BASE_PATH}/agents/${agentId}/bindings`, request)
+  },
+
   archiveListing(listingId: number): Promise<ResourceLibraryListing> {
     return apiClient.post(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/archive`)
+  },
+
+  updatePublication(
+    listingId: number,
+    request: ResourceLibraryPublicationUpdateRequest
+  ): Promise<ResourceLibraryListing> {
+    return apiClient.put(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/publication`, request)
   },
 
   listMyInstalls(
@@ -98,6 +136,15 @@ export const resourceLibraryApi = {
   ): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {
     return apiClient.get(
       `${RESOURCE_LIBRARY_BASE_PATH}/users/me/published${buildListingsQuery(params)}`
+    )
+  },
+
+  listGroupInstalls(
+    groupNamespace: string,
+    params?: ResourceLibraryListListingsParams
+  ): Promise<ResourceLibraryListResponse<ResourceLibraryInstall>> {
+    return apiClient.get(
+      `${RESOURCE_LIBRARY_BASE_PATH}/groups/${encodeURIComponent(groupNamespace)}/installs${buildListingsQuery(params)}`
     )
   },
 }
