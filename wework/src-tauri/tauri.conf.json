@@ -37,7 +37,9 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": ["**/*"]
+          "allow": [
+            "**/*"
+          ]
         }
       }
     }
@@ -53,7 +55,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/wegent-executor", "binaries/dws"],
+    "externalBin": [
+      "binaries/wegent-executor",
+      "binaries/dws"
+    ],
     "resources": [
       "binaries/codex/**/*",
       "bundled-hooks/**/*",
