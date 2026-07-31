@@ -13,7 +13,7 @@ pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 
 /// Resolves the isolated Codex home owned by the Wework executor.
-pub(super) fn wework_codex_home() -> PathBuf {
+pub(crate) fn wework_codex_home() -> PathBuf {
     env::var_os(WEGENT_CODEX_HOME_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

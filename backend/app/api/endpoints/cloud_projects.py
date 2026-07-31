@@ -94,6 +94,16 @@ def update_cloud_project(
     return _project_response(db, project, current_user)
 
 
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def archive_cloud_project(
+    project_id: int,
+    version: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    cloud_project_service.archive(db, project_id, current_user.id, version)
+
+
 @router.post(
     "/{project_id}/local-bindings",
     response_model=LocalBindingResponse,

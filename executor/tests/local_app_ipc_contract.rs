@@ -238,6 +238,31 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
         .await
         .unwrap_err();
     assert_eq!(conflict.code, "version_conflict");
+
+    server
+        .dispatch(
+            "todos.archive",
+            json!({"project_id": project_id, "task_id": parent_id}),
+        )
+        .await
+        .unwrap();
+    let todos = server
+        .dispatch("todos.list", json!({"project_id": project_id}))
+        .await
+        .unwrap();
+    assert!(todos.as_array().unwrap().is_empty());
+
+    let projects = server.dispatch("projects.list", json!({})).await.unwrap();
+    let current_project = &projects.as_array().unwrap()[0];
+    server
+        .dispatch(
+            "projects.archive",
+            json!({"project_id": project_id, "version": current_project["version"]}),
+        )
+        .await
+        .unwrap();
+    let projects = server.dispatch("projects.list", json!({})).await.unwrap();
+    assert!(projects.as_array().unwrap().is_empty());
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
 }
 

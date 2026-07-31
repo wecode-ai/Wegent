@@ -24,9 +24,7 @@ from app.schemas.tagging import normalize_tags as _normalize_tags
 class LoopItemCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = ""
-    status: Literal["inbox", "pending", "in_progress", "in_review", "completed"] = (
-        "inbox"
-    )
+    status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     priority: Literal["none", "low", "medium", "high", "urgent"] = "none"
     due_at: datetime | None = None
@@ -40,9 +38,7 @@ class LoopItemUpdate(BaseModel):
     version: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    status: (
-        Literal["inbox", "pending", "in_progress", "in_review", "completed"] | None
-    ) = None
+    status: str | None = Field(default=None, max_length=32)
     assignee_user_id: int | None = None
     priority: Literal["none", "low", "medium", "high", "urgent"] | None = None
     due_at: datetime | None = None
@@ -58,7 +54,7 @@ class LoopItemReorder(BaseModel):
     """Manual order of the TODOs inside one board lane (parent + status)."""
 
     parent_id: str | None = Field(default=None, max_length=64)
-    status: Literal["inbox", "pending", "in_progress", "in_review", "completed"]
+    status: str = Field(max_length=32)
     item_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
@@ -73,6 +69,7 @@ class LoopItemResponse(BaseModel):
     description: str
     status: str
     assignee_user_id: int | None
+    assignee_name: str | None = None
     priority: str
     due_at: datetime | None
     sort_order: int

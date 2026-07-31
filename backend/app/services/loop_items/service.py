@@ -49,6 +49,22 @@ from app.stores.tasks import task_store
 
 
 class LoopItemService:
+    @staticmethod
+    def _project_status_ids(project: CloudProject) -> list[str]:
+        metadata = (
+            project.metadata_json if isinstance(project.metadata_json, dict) else {}
+        )
+        board = metadata.get("board_config")
+        board = board if isinstance(board, dict) else {}
+        statuses = board.get("statuses")
+        if not isinstance(statuses, list):
+            return ["inbox", "pending", "in_progress", "in_review", "completed"]
+        return [
+            str(item["id"])
+            for item in statuses
+            if isinstance(item, dict) and item.get("id")
+        ]
+
     def _require_internal_task_project(
         self,
         db: Session,
@@ -104,6 +120,9 @@ class LoopItemService:
             "can_view_detail": can_view_detail,
             "can_edit": can_edit,
         }
+        if item.assignee_user_id:
+            assignee = db.get(User, item.assignee_user_id)
+            values["assignee_name"] = assignee.user_name if assignee else None
         if not can_view_detail:
             values["description"] = ""
         return values
@@ -252,6 +271,16 @@ class LoopItemService:
         project.next_item_number += 1
         payload = values.model_dump()
         tags = payload.pop("tags")
+        if payload.get("assignee_user_id") is None:
+            payload["assignee_user_id"] = user_id
+        configured_statuses = self._project_status_ids(project)
+        requested_status = payload.get("status")
+        if requested_status is None:
+            payload["status"] = configured_statuses[0] if configured_statuses else ""
+        elif requested_status not in configured_statuses:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
+            )
         item = LoopItem(
             id=f"{project.project_key}-{sequence}",
             cloud_project_id=project.id,
@@ -520,6 +549,13 @@ class LoopItemService:
             metadata["tags"] = updates.pop("tags") or []
             updates["metadata_json"] = metadata
         next_status = updates.get("status")
+        if "status" in values.model_fields_set and next_status is not None:
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is None or next_status not in self._project_status_ids(project):
+                if next_status != "":
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown board status"
+                    )
         if next_status and next_status != item.status:
             updates["completed_at"] = (
                 self._now() if next_status == "completed" else None
@@ -543,12 +579,28 @@ class LoopItemService:
         return item
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Soft delete a TODO; the row is kept for the recycle bin."""
+        """Soft delete a TODO subtree; rows are kept for the recycle bin."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
-        item.deleted_at = self._now()
-        item.version += 1
+        archived_at = self._now()
+        pending_parent_ids = [item.id]
+        archived_items = [item]
+        while pending_parent_ids:
+            children = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == item.cloud_project_id,
+                    LoopItem.parent_id.in_(pending_parent_ids),
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                )
+                .all()
+            )
+            pending_parent_ids = [child.id for child in children]
+            archived_items.extend(children)
+        for archived_item in archived_items:
+            archived_item.deleted_at = archived_at
+            archived_item.version += 1
         db.commit()
         db.refresh(item)
         return item
@@ -894,7 +946,8 @@ class LoopItemService:
             .filter(
                 LoopItem.cloud_project_id.in_(project_by_id),
                 loop_datetime_is_unset(LoopItem.deleted_at),
-                (LoopItem.assignee_user_id == user_id)
+                (LoopItem.created_by_user_id == user_id)
+                | (LoopItem.assignee_user_id == user_id)
                 | LoopItem.id.in_(active_task_items)
                 | LoopItem.id.in_(collaborator_items),
             )
