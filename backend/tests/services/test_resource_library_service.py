@@ -692,7 +692,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     assert exc_info.value.status_code == 404
 
 
-def test_published_model_install_is_a_live_reference(test_db, test_user):
+def test_published_model_install_is_a_live_reference(test_db, test_user, monkeypatch):
     source = Kind(
         user_id=test_user.id,
         kind="Model",
@@ -763,6 +763,10 @@ def test_published_model_install_is_a_live_reference(test_db, test_user):
     flag_modified(source, "json")
     test_db.commit()
 
+    monkeypatch.setattr(
+        "app.services.model_aggregation_service.kind_service.list_resources",
+        lambda user_id, kind, namespace: [],
+    )
     models = model_aggregation_service.list_available_models(
         test_db,
         consumer,
