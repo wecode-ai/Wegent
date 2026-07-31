@@ -121,12 +121,8 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS, DESKTOP_MESSAGE_LIST_CLASS } from './desktopChatLayout'
 
-const DESKTOP_CHAT_CONTENT_BASE_CLASS =
-  'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
-const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
-const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
-const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
 const DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS =
@@ -161,6 +157,7 @@ function cloudLoopItemStatusLabel(
     case 'completed':
       return t('workbench.cloud_todo_status_completed', '已完成')
   }
+  return ''
 }
 
 function cloudItemAsLocalWorkItem(
@@ -234,6 +231,12 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  selectedFileWorkspaceTargetKey: string | null
+  selectedWorkspaceFile: {
+    targetKey: string
+    path: string
+    isDirectory: boolean
+  } | null
 }
 
 interface PendingBlankBrowserMigration {
@@ -986,12 +989,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () =>
       initialBlankBrowserMigration?.rightPanelTabs ?? initialWorkspaceState?.rightPanelTabs ?? []
   )
+  const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
+    string | null
+  >(() => initialWorkspaceState?.selectedFileWorkspaceTargetKey ?? null)
+  const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(
+    () => initialWorkspaceState?.selectedWorkspaceFile ?? null
+  )
+  const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
       rightPanelOpen,
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      selectedFileWorkspaceTargetKey,
+      selectedWorkspaceFile,
     })
   }, [
     onWorkspaceStateChange,
@@ -1000,6 +1012,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    selectedFileWorkspaceTargetKey,
+    selectedWorkspaceFile,
   ])
   const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
     () => initialBlankBrowserMigration?.browserLabel ?? null
@@ -1019,9 +1033,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
-  const [selectedFileWorkspaceTargetKey, setSelectedFileWorkspaceTargetKey] = useState<
-    string | null
-  >(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
@@ -1149,9 +1160,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
   const temporaryChatExpanded = rightPanelExpanded && rightPanelView.startsWith('chat:')
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
-  const hasPersistentRightPanelResource = rightPanelTabs.some(
-    tab => tab === 'terminal' || tab === 'browser'
-  )
+  const hasPersistentRightPanelResource =
+    fileWorkspaceDirty || rightPanelTabs.some(tab => tab === 'terminal' || tab === 'browser')
   useEffect(() => {
     onTerminalPanePinChange(paneKey, 'right-panel', hasPersistentRightPanelResource)
     return () => onTerminalPanePinChange(paneKey, 'right-panel', false)
@@ -1241,6 +1251,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ) ?? null
   const fileWorkspaceTarget =
     openFileRequest?.target ?? selectedFileWorkspaceTarget ?? effectiveWorkspaceTarget
+  const fileWorkspaceTargetKey = fileWorkspaceTarget
+    ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
+    : null
+  const initialFileWorkspaceSelection =
+    selectedWorkspaceFile && selectedWorkspaceFile.targetKey === fileWorkspaceTargetKey
+      ? {
+          path: selectedWorkspaceFile.path,
+          isDirectory: selectedWorkspaceFile.isDirectory,
+        }
+      : null
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
   const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
@@ -1721,6 +1741,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setSelectedFileWorkspaceTargetKey(`${target.deviceId}:${target.path}`)
     setOpenFileRequest(null)
   }, [])
+  const handleFileWorkspaceSelectionChange = useCallback(
+    (selection: { path: string; isDirectory: boolean }) => {
+      if (!fileWorkspaceTargetKey) return
+      setSelectedWorkspaceFile({
+        targetKey: fileWorkspaceTargetKey,
+        path: selection.path,
+        isDirectory: selection.isDirectory,
+      })
+    },
+    [fileWorkspaceTargetKey]
+  )
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
@@ -2798,6 +2829,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
+              initialFileSelection={initialFileWorkspaceSelection}
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
@@ -2807,6 +2839,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
               onAddCodeComment={paneSession.addCodeComment}
+              onFileDirtyChange={setFileWorkspaceDirty}
+              onFileSelectionChange={handleFileWorkspaceSelectionChange}
               onSelectFileWorkspaceTarget={selectFileWorkspaceTarget}
               onSelectReview={selectReviewView}
               onSelectTerminal={selectTerminalView}

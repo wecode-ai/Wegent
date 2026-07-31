@@ -44,6 +44,10 @@ export function ResourceDetailDrawer({
   const { t } = useTranslation('resource-library')
   const title = listing ? getListingTitle(listing) : ''
   const isAgent = listing?.resource_type === 'agent'
+  const isDirectlyUsableSystemCapability =
+    !!listing &&
+    ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
+    listing.publisher_user_id === 0
   const isPersonalTarget = targetNamespace === 'default'
   const installDisabled =
     !listing || isLoading || (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
@@ -77,6 +81,9 @@ export function ResourceDetailDrawer({
                   <span className="text-xs text-text-muted">
                     v{listing.current_version.version}
                   </span>
+                )}
+                {isDirectlyUsableSystemCapability && (
+                  <Badge variant="secondary">{t('actions.system_available')}</Badge>
                 )}
                 <span className="text-xs text-text-muted">
                   {t('fields.publisher')} · {publisher}
@@ -112,20 +119,22 @@ export function ResourceDetailDrawer({
           ) : null}
         </div>
 
-        <DialogFooter className="border-t border-border px-6 py-4">
-          <Button
-            type="button"
-            variant={installDisabled ? 'secondary' : 'primary'}
-            className="h-11 min-w-[44px]"
-            disabled={installDisabled}
-            onClick={() => listing && onInstall(listing)}
-            aria-label={`${actionLabel} ${title}`}
-            data-testid="resource-detail-install-button"
-          >
-            <ActionIcon className="h-4 w-4" aria-hidden="true" />
-            {actionLabel}
-          </Button>
-        </DialogFooter>
+        {!isDirectlyUsableSystemCapability && (
+          <DialogFooter className="border-t border-border px-6 py-4">
+            <Button
+              type="button"
+              variant={installDisabled ? 'secondary' : 'primary'}
+              className="h-11 min-w-[44px]"
+              disabled={installDisabled}
+              onClick={() => listing && onInstall(listing)}
+              aria-label={`${actionLabel} ${title}`}
+              data-testid="resource-detail-install-button"
+            >
+              <ActionIcon className="h-4 w-4" aria-hidden="true" />
+              {actionLabel}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )

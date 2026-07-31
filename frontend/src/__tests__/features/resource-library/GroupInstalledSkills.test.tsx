@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -33,6 +33,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       ({
         'fields.group_added_skills': '团队已添加技能',
         'filters.skill': '技能',
+        'states.loading': '加载中',
         'actions.more': '更多操作',
         'actions.remove_from_team': '从团队移除',
         'actions.cancel': '取消',
@@ -125,10 +126,11 @@ function makeInstall(): ResourceLibraryInstall {
       status: 'published',
       install_count: 0,
       is_installed: true,
+      bind_modes: [],
       created_at: '2026-07-29T00:00:00Z',
       updated_at: '2026-07-29T00:00:00Z',
     },
-    installed_reference: { skill_id: 92 },
+    installed_reference: { skill_id: 92, kind: 'SkillBinding' },
     install_status: 'installed',
     installed_at: '2026-07-29T00:00:00Z',
     updated_at: '2026-07-29T00:00:00Z',
@@ -144,6 +146,39 @@ describe('GroupInstalledSkills', () => {
       limit: 100,
     })
     mockedRemoveSkillFromGroup.mockResolvedValue()
+  })
+
+  it('shows an animated loading state while group skills are loading', async () => {
+    let resolveRequest: (
+      value: Awaited<ReturnType<typeof resourceLibraryApi.listGroupInstalls>>
+    ) => void
+    mockedListGroupInstalls.mockReturnValue(
+      new Promise(resolve => {
+        resolveRequest = resolve
+      })
+    )
+
+    render(
+      <GroupInstalledSkills groupNamespaces={['platform/team']} groups={[makeGroup('Developer')]} />
+    )
+
+    expect(screen.getByTestId('group-installed-skills-loading')).toHaveAttribute(
+      'aria-label',
+      '加载中'
+    )
+    expect(document.querySelectorAll('.animate-pulse')).toHaveLength(3)
+
+    await act(async () => {
+      resolveRequest!({
+        items: [makeInstall()],
+        total: 1,
+        page: 1,
+        limit: 100,
+      })
+    })
+
+    expect(await screen.findByText('Test Skill')).toBeInTheDocument()
+    expect(screen.queryByTestId('group-installed-skills-loading')).not.toBeInTheDocument()
   })
 
   it('lets a group developer remove only the group binding', async () => {
@@ -172,5 +207,51 @@ describe('GroupInstalledSkills', () => {
 
     expect(await screen.findByText('Test Skill')).toBeInTheDocument()
     expect(screen.queryByTestId('group-skill-actions-21')).not.toBeInTheDocument()
+  })
+
+  it('shows legacy skills owned by the group namespace', async () => {
+    mockedListGroupInstalls.mockResolvedValue({
+      items: [
+        {
+          ...makeInstall(),
+          id: 31,
+          listing_id: 31,
+          version_id: 31,
+          listing: {
+            ...makeInstall().listing!,
+            id: 31,
+            name: 'legacy-skill',
+            display_name: 'Legacy Skill',
+            description: 'Legacy group skill',
+            publisher_user_name: 'legacy-owner',
+            publisher_namespace: 'platform/team',
+          },
+          installed_kind_id: 31,
+          installed_reference: {
+            namespace: 'platform/team',
+            name: 'legacy-skill',
+            kind: 'Skill',
+            skill_id: 31,
+            resource_type: 'skill',
+            ownership: 'group',
+          },
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 100,
+    })
+
+    render(
+      <GroupInstalledSkills groupNamespaces={['platform/team']} groups={[makeGroup('Developer')]} />
+    )
+
+    expect(await screen.findByText('Legacy Skill')).toBeInTheDocument()
+    expect(screen.queryByTestId('group-skill-actions-legacy-31')).not.toBeInTheDocument()
+    expect(mockedListGroupInstalls).toHaveBeenCalledWith('platform/team', {
+      resourceType: 'skill',
+      page: 1,
+      limit: 100,
+    })
   })
 })

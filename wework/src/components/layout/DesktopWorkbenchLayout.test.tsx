@@ -4792,6 +4792,11 @@ describe('DesktopWorkbenchLayout', () => {
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     expect(sideChat).toBeInTheDocument()
+    expect(screen.getByTestId('side-chat-composer-layout')).toHaveClass(
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
@@ -4841,8 +4846,20 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
-    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    expect(sideChatInput).toHaveValue('')
+
+    expect(
+      screen.getByTestId('right-workspace-chat-scroll-area-content').lastElementChild
+    ).toHaveClass(
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_6rem))]',
+      'max-w-[calc(100%_-_6rem)]',
+      'px-0'
+    )
 
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -4877,8 +4894,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
-    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(sideChatInput).toHaveValue('')
 
     await waitFor(() =>
       expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
@@ -4893,6 +4912,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+    expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   })
 
@@ -7846,6 +7866,151 @@ describe('DesktopWorkbenchLayout', () => {
       'src',
       'https://example.com/'
     )
+  })
+
+  test('preserves the open file when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const workspaceFileApi = {
+      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          entries: [
+            {
+              name: 'README.md',
+              path: `${path}/README.md`,
+              isDirectory: false,
+              size: 12,
+              modifiedAt: null,
+            },
+          ],
+        })
+      ),
+      readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          name: 'README.md',
+          content: `preview for ${path}`,
+          editable: true,
+          revision: 'sha256:readme',
+          truncated: false,
+          size: 28,
+          modifiedAt: null,
+        })
+      ),
+    }
+    const propsWithFiles = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      workspaceFileApi,
+    })
+    const layoutForTask = (task: typeof taskA) => (
+      <StrictMode>
+        <DesktopWorkbenchLayout {...propsWithFiles(task)} />
+      </StrictMode>
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(layoutForTask(taskA))
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-file-option'))
+    await userEvent.click(await activePane().findByText('README.md'))
+
+    expect(await activePane().findByTestId('workspace-file-path')).toHaveTextContent(
+      '/Users/me/Wegent/.worktrees/a/README.md'
+    )
+
+    rerender(layoutForTask(taskB))
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-file-option'))
+    await userEvent.click(await activePane().findByText('README.md'))
+
+    expect(await activePane().findByTestId('workspace-file-path')).toHaveTextContent(
+      '/Users/me/Wegent/.worktrees/b/README.md'
+    )
+    expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'preview for /Users/me/Wegent/.worktrees/b/README.md'
+    )
+
+    rerender(layoutForTask(taskA))
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent(
+        '/Users/me/Wegent/.worktrees/a/README.md'
+      )
+      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'preview for /Users/me/Wegent/.worktrees/a/README.md'
+      )
+    })
+
+    rerender(layoutForTask(taskB))
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent(
+        '/Users/me/Wegent/.worktrees/b/README.md'
+      )
+      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'preview for /Users/me/Wegent/.worktrees/b/README.md'
+      )
+    })
+    expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
+  })
+
+  test('preserves the open directory when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const workspaceFileApi = {
+      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          entries: path.endsWith('/docs')
+            ? []
+            : [
+                {
+                  name: 'docs',
+                  path: `${path}/docs`,
+                  isDirectory: true,
+                  size: 0,
+                  modifiedAt: null,
+                },
+              ],
+        })
+      ),
+      readWorkspaceTextFile: vi.fn(),
+    }
+    const propsWithFiles = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      workspaceFileApi,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFiles(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-file-option'))
+    await userEvent.click(await activePane().findByText('docs'))
+
+    await waitFor(() => {
+      expect(workspaceFileApi.listWorkspaceEntries).toHaveBeenCalledWith(
+        expect.any(String),
+        '/Users/me/Wegent/.worktrees/a/docs'
+      )
+    })
+
+    rerender(<DesktopWorkbenchLayout {...propsWithFiles(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithFiles(taskA)} />)
+
+    await waitFor(() => {
+      expect(
+        workspaceFileApi.listWorkspaceEntries.mock.calls.filter(
+          ([, path]) => path === '/Users/me/Wegent/.worktrees/a/docs'
+        )
+      ).toHaveLength(2)
+      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+    })
   })
 
   test('restores serializable right workspace state without retaining the conversation pane', async () => {

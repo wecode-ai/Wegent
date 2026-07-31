@@ -25,6 +25,7 @@ import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { executeVerificationControlCommand } from './verification-control'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -177,7 +178,7 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-function seedDesktopE2ECloudConnection() {
+async function seedDesktopE2ECloudConnection(): Promise<void> {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
   const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
@@ -241,6 +242,7 @@ function seedDesktopE2ECloudConnection() {
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
+      persistApiKey: false,
       catalogReady: localModelsCatalogReady,
       enabled: true,
     })
@@ -254,14 +256,17 @@ function seedDesktopE2ECloudConnection() {
   })
 }
 
-export function installWeworkAutomationBridge() {
+export async function installWeworkAutomationBridge(
+  beforeSeed: Promise<void> = Promise.resolve()
+): Promise<void> {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
-  seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
+  await beforeSeed.catch(() => undefined)
+  await seedDesktopE2ECloudConnection()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -720,6 +725,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     })
   }
 
+  const verificationResult = await executeVerificationControlCommand(command, {
+    elementEnabled: desktopControlElementEnabled,
+  })
+  if (verificationResult.handled) return verificationResult.value
+
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
@@ -799,6 +809,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getAttribute': {
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.text
+        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : elements[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const attribute = command.value?.trim()
+      if (!attribute) throw new Error('getAttribute requires an attribute name')
+      return element.getAttribute(attribute) ?? ''
+    }
     case 'getStyle': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -847,8 +867,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'expandProcessingSummaries':
       return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.text
+        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const text = element.textContent?.trim() ?? ''
       element.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
@@ -858,7 +882,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
-      return element.textContent?.trim() ?? ''
+      return text
     }
     case 'scrollToBottomAsUser': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -1020,6 +1044,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getLocalExecutorStatus':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':

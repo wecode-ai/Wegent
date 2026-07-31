@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-ResourceLibraryResourceType = Literal["agent", "skill"]
+ResourceLibraryResourceType = Literal["agent", "skill", "model", "shell", "retriever"]
 ResourceLibraryListingStatus = Literal["published", "archived"]
 
 
@@ -43,6 +43,7 @@ class ResourceLibraryListing(BaseModel):
     current_version: ResourceLibraryVersion
     install_count: int = 0
     is_installed: bool = False
+    bind_modes: list[str] = Field(default_factory=list)
     allow_personal_install: bool = True
     allow_group_install: bool = True
     target_groups: list[str] = Field(default_factory=list)
@@ -69,16 +70,22 @@ class ResourceLibraryDiscoveryList(BaseModel):
 
 
 class ResourceLibraryCreateListingRequest(BaseModel):
-    """Publish an existing Team or Skill Kind."""
+    """Set the sharing scope for an existing capability Kind."""
 
     resource_type: ResourceLibraryResourceType
-    source_id: int
+    source_id: int | None = None
+    source_name: str | None = Field(default=None, min_length=1, max_length=100)
+    source_namespace: str = Field(default="default", min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=100)
     display_name: str = Field(min_length=1, max_length=100)
     description: str | None = None
     icon: str | None = None
     tags: list[str] = Field(default_factory=list, max_length=20)
     version: str = Field(default="1.0.0", min_length=1, max_length=50)
+    status: ResourceLibraryListingStatus = "published"
+    target_groups: list[str] = Field(default_factory=list, max_length=100)
+    allow_personal_install: bool | None = None
+    allow_group_install: bool | None = None
     manifest_options: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -119,7 +126,7 @@ class ResourceLibraryAgentBindings(BaseModel):
 
 
 class ResourceLibraryInstall(BaseModel):
-    """Normalized install state backed by ResourceMember or SkillBinding."""
+    """Normalized installed or group-owned capability state."""
 
     id: int
     listing_id: int
@@ -142,3 +149,22 @@ class ResourceLibraryInstallList(BaseModel):
     total: int
     page: int
     limit: int
+
+
+class ResourceLibraryReferenceConsumer(BaseModel):
+    """Resource that currently depends on an installed capability reference."""
+
+    id: int
+    name: str
+    namespace: str
+
+
+class ResourceLibraryReferenceUsage(BaseModel):
+    """Consumers that prevent a capability reference from being unbound."""
+
+    referenced_bots: list[ResourceLibraryReferenceConsumer] = Field(
+        default_factory=list
+    )
+    referenced_knowledge_bases: list[ResourceLibraryReferenceConsumer] = Field(
+        default_factory=list
+    )

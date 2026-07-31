@@ -67,6 +67,7 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
     hideModelCategoryFilter,
     allowedTypes,
     onCreateRequestClose,
+    onResourceCreated,
   }: {
     createRequest?: { target: { scope: string }; publishAfterCreate?: boolean }
     hideTypeControls?: boolean
@@ -79,6 +80,7 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
     hideModelCategoryFilter?: boolean
     allowedTypes?: string[]
     onCreateRequestClose?: () => void
+    onResourceCreated?: () => void
   }) => (
     <div
       data-testid="my-resource-management"
@@ -96,9 +98,22 @@ jest.mock('@/features/resource-library/components/MyResources', () => ({
         ? `${createRequest.target.scope}${createRequest.publishAfterCreate ? '-market' : ''}`
         : '资源管理'}
       {createRequest && (
-        <button type="button" data-testid="cancel-resource-creation" onClick={onCreateRequestClose}>
-          取消创建
-        </button>
+        <>
+          <button
+            type="button"
+            data-testid="cancel-resource-creation"
+            onClick={onCreateRequestClose}
+          >
+            取消创建
+          </button>
+          <button
+            type="button"
+            data-testid="complete-resource-creation"
+            onClick={onResourceCreated}
+          >
+            完成创建
+          </button>
+        </>
       )}
     </div>
   ),
@@ -178,6 +193,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.shell': '执行器',
         'filters.retriever': '检索器',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'actions.search': '搜索',
         'actions.filter': '筛选',
         'actions.publish': '发布资源',
@@ -270,6 +287,10 @@ describe('ResourceLibraryPage', () => {
       'border-border',
       'bg-surface'
     )
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索智能体或描述'
+    )
     expect(screen.queryByTestId('resource-library-marketplace-sort')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '模型' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '执行器' })).toBeInTheDocument()
@@ -282,6 +303,17 @@ describe('ResourceLibraryPage', () => {
     expect(mockResourceLibraryApi.listMyInstalls).not.toHaveBeenCalled()
   })
 
+  it('uses the skill-specific search placeholder', () => {
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
+  })
+
   it('opens the agent creator directly without changing tabs', async () => {
     const user = userEvent.setup()
     render(<ResourceLibraryPage />)
@@ -292,6 +324,20 @@ describe('ResourceLibraryPage', () => {
 
     expect(await screen.findByTestId('my-resource-management')).toHaveTextContent('personal')
     expect(mockReplace).not.toHaveBeenCalled()
+  })
+
+  it('reloads the visible resource manager after creating a capability', async () => {
+    mockSearchParams = new URLSearchParams('tab=mine')
+    const user = userEvent.setup()
+    render(<ResourceLibraryPage />)
+
+    const visibleManager = screen.getByTestId('my-resource-management')
+
+    await user.click(screen.getByTestId('new-capability-button'))
+    await user.click(screen.getByTestId('new-capability-type-agent'))
+    await user.click(screen.getByTestId('complete-resource-creation'))
+
+    expect(screen.getByTestId('my-resource-management')).not.toBe(visibleManager)
   })
 
   it('shows one resource manager at a time on my capabilities', () => {
@@ -325,7 +371,7 @@ describe('ResourceLibraryPage', () => {
     expect(mockResourceLibraryApi.listMyInstalls).not.toHaveBeenCalled()
   })
 
-  it('uses contextual lifecycle tabs for marketplace and foundation resources', async () => {
+  it('uses marketplace lifecycle tabs for every resource type', async () => {
     mockSearchParams = new URLSearchParams('tab=team&type=all')
     const { rerender } = render(<ResourceLibraryPage />)
 
@@ -340,19 +386,21 @@ describe('ResourceLibraryPage', () => {
     rerender(<ResourceLibraryPage />)
 
     expect(screen.getByRole('tab', { name: '模型' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.queryByRole('button', { name: '我发布的' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '管理' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-mine-tab')).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-types', 'model')
+    expect(screen.getByTestId('resource-library-published-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByTestId('published-resources')).toBeInTheDocument()
   })
 
-  it('moves foundation resources from discover to personal management', async () => {
+  it('keeps foundation resources in marketplace discovery', async () => {
     const user = userEvent.setup()
     render(<ResourceLibraryPage />)
 
     await user.click(screen.getByRole('tab', { name: '模型' }))
 
-    expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=model&tab=mine', {
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?type=model&tab=discover', {
       scroll: false,
     })
   })
@@ -440,29 +488,17 @@ describe('ResourceLibraryPage', () => {
     )
   })
 
-  it('shows system models in a dedicated system capabilities view', () => {
+  it('does not expose a separate system category for foundation resources', () => {
     mockSearchParams = new URLSearchParams('type=model&tab=system')
 
     render(<ResourceLibraryPage />)
 
-    expect(screen.queryByRole('button', { name: '管理' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-system-tab')).toHaveAttribute(
+    expect(screen.queryByTestId('resource-library-system-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-discover-tab')).toHaveAttribute(
       'aria-selected',
       'true'
     )
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
-      'data-fixed-source',
-      'system'
-    )
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-types', 'model')
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
-      'data-hide-manager-create-actions',
-      'true'
-    )
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
-      'data-hide-model-category-filter',
-      'true'
-    )
+    expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'model')
   })
 
   it('opens the skill creator directly without a continue step', async () => {

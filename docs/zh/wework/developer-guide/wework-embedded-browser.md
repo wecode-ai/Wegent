@@ -4,7 +4,7 @@ sidebar_position: 38
 
 # 内置浏览器
 
-Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互网页，并让本地运行时通过 CDP-backed Browser Session 控制同一个页面。它不是截图预览，也不会新开外部 Chrome 窗口。
+Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互网页，并让本地运行时通过 WKWebView bridge 控制同一个页面。它不是截图预览，也不会新开外部 Chrome 窗口。
 
 ## 架构
 
@@ -12,11 +12,41 @@ Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互�
 
 - Wework Tauri 原生层创建嵌入式 WebView，并通过命令更新位置、导航地址和显示状态。
 - Wework React 工作台负责把浏览器面板挂载到右侧 workspace pane，并维护面板、任务和批注状态。
-- `deps/browser/relay-server` 暴露给 Codex 的浏览器 MCP 工具，工具名称面向模型描述为 Wework 内置浏览器，避免暴露 Playwright 等实现细节。
+- `executor/src/browser_mcp` 暴露给 Codex 的浏览器 MCP 工具，并通过 Wework bridge 操作当前任务绑定的 WKWebView。
 
-Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器工具时，relay server 通过 Wework 的本地 IPC 操作当前任务绑定的嵌入式浏览器。
+Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏览器工具时，MCP server 读取当前 bridge identity，向 Wework 进程内的 loopback bridge 发送受控请求。bridge 再在主线程调度 WKWebView 的导航、页面检查、DOM 动作、等待和截图。
 
-每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把实际地址传给它启动的 Executor。不得复用父进程环境中的桥接地址，否则同时运行的多个 Wework 实例可能把浏览器请求发送到错误的窗口。
+每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把 bridge identity 原子写入当前 Executor home 的 `runtime/embedded-browser-bridge.json`。identity 包含 schema 版本、进程 PID、loopback 地址、认证 token 和启动时间。文件目录权限应限制为当前用户可读写，token 不得写入日志。MCP server 每次请求前读取最新 identity，并只接受 loopback 地址，避免同时运行的多个 Wework 实例把浏览器请求发送到错误窗口。
+
+bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的网页 scheme；不要允许 `file:`、`javascript:` 或其它可以读取本机文件或执行任意脚本的地址进入 Agent 导航路径。
+
+bridge 支持有限并发。长时间 `waitFor` 不应阻塞独立的 `click`、`fill` 或 `inspect` 请求；超出并发上限时返回明确的忙碌错误，而不是让调用无限等待。
+
+## Agent 浏览器能力
+
+Agent 面向模型暴露的是浏览器动作工具，而不是底层 WebKit API。常用能力包括：
+
+- `browser_open` / `browser_navigate`：打开或跳转页面。
+- `browser_inspect`：返回结构化页面检查结果。
+- `browser_click`、`browser_type`、`browser_fill`、`browser_press_key`、`browser_hover`、`browser_focus`：操作页面元素。
+- `browser_scroll`、`browser_scroll_into_view`、`browser_select_option`、`browser_set_checked`：补齐常见表单和滚动动作。
+- `browser_wait`：等待页面稳定、URL 条件、文本或元素状态。
+- `browser_take_screenshot`：获取真实浏览器截图。
+- `browser_capabilities`、`browser_native_input_probe`、`browser_ax_probe`、`browser_present_probe`：报告当前 WKWebView 能力边界和诊断信息。
+
+组合工具可以把高频链路合并为一次模型调用，例如 `browser_open_and_inspect`、`browser_click_and_inspect` 和 `browser_wait_and_inspect`。组合工具必须在 MCP `tools/list` 中暴露，保持协议自描述。
+
+`inspect` 表示结构化页面检查，`screenshot` 表示真实截图。不要复用 `snapshot` 来表示 DOM 结构化结果，避免和真实截图语义混淆。
+
+结构化 inspect 结果至少应包含页面 URL、标题、viewport、节点列表和纯文本摘要。节点应稳定包含：
+
+- `ref` 和 `index`：供后续动作定位。
+- `role`、`name`、`text`、`value`：供模型理解元素语义。
+- `rect`、`visible`、`disabled`、`actionable`：供模型判断是否能操作。
+- `frameId`、`selector` 或其它调试定位信息：仅用于诊断，不应要求模型依赖脆弱 selector。
+- `warnings`：说明遮挡、不可见、敏感输入、跨 frame 限制等风险。
+
+动作工具优先使用 `inspect` 产生的 `ref`。当页面重排导致 `ref` 失效时，应返回可恢复错误，引导模型重新 `inspect`，不要静默猜测 selector。动作结果应描述观测到的效果，例如值变化、DOM 变化、URL 变化或只派发了事件但未观察到效果。
 
 ## 任务绑定
 
@@ -39,9 +69,11 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 ## WebView 兼容性
 
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
+- 浏览器 WebView 使用 Safari 兼容 User-Agent，避免网站把缺少浏览器产品标识的 WebKit User-Agent 识别为不受支持的客户端。
+- 弹窗、OAuth、SSO 和支付流程可能通过 `window.open` 或新窗口导航触发。实现应把它们路由到受控浏览器窗口或明确交给外部系统处理，不能让 Agent 不可见地操作隐藏页面。
 - 下载处理器从应用偏好读取下载目录和“下载前询问”开关；取消系统保存对话框必须取消本次下载。
 - 页面加载事件负责把当前 URL 写入应用状态。不要在 IPC 或自定义协议处理期间同步读取原生 WebView URL；macOS WebKit 在 WebView 创建或销毁期间可能暂时没有 URL。
-- 嵌入式浏览器使用标准 Safari 兼容 User-Agent，避免网站把缺少浏览器产品标识的 WebKit User-Agent 识别为不受支持的客户端。
+- 页面动作脚本只能执行与当前工具语义一致的操作。禁止把任意 DOM 修改包装成内部 evaluate 来绕过安全检查。
 - macOS App Transport Security 只为嵌入式网页内容允许 HTTP。无效服务器证书必须先经过系统信任校验；仅在校验失败后使用该次 server-trust challenge 继续加载，并向前端发送包含原生 WebView 标识和来源的风险状态。TLS handler 必须在首次导航前完成注册，避免初始页面与异步 `with_webview` 配置竞争。证书提示在同源页面间保留，导航到其他来源或关闭 WebView 时必须清除。
 
 ## 可选云桌面扩展
@@ -69,13 +101,13 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 ```bash
 pnpm --filter wework typecheck
 pnpm --filter wework lint
-cd wework && pnpm vitest run src/lib/embedded-browser.test.ts src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx
-cd wework/src-tauri && cargo check
-cd deps/browser/relay-server && npm run test:mcp
+cargo check --manifest-path executor/Cargo.toml
+cargo check --manifest-path wework/src-tauri/Cargo.toml
+cargo test --manifest-path executor/Cargo.toml browser_mcp
+cargo test --manifest-path wework/src-tauri/Cargo.toml embedded_browser
+pnpm --filter wework e2e:desktop:embedded-browser
 ```
 
-涉及 Executor Codex 启动配置时，还应运行：
+浏览器涉及 Tauri 命令、原生 WebView、IPC 或 Agent 操作链路时，还应使用 `pnpm --filter wework ai:verify start` 启动隔离真实 Tauri 会话，并记录打开页面、inspect、动作和截图的验证证据。完整 E2E 太慢时，合并前至少要说明未运行的原因，并确保 CI 中的 `e2e:desktop:embedded-browser` 会覆盖该场景。
 
-```bash
-cd executor && cargo test codex_launch_config_includes_cdp_browser_mcp_server
-```
+涉及 Executor Codex 启动配置时，还应运行对应的 Codex launch config 单元测试，确认 browser MCP server 会被正确注入。

@@ -8,6 +8,8 @@ mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
 mod local_executor;
+#[cfg(desktop)]
+mod local_model_secrets;
 mod local_terminal;
 #[cfg(desktop)]
 mod popout_window;
@@ -4548,7 +4550,9 @@ pub fn run() {
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
+            embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
@@ -4572,6 +4576,10 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
+            #[cfg(desktop)]
+            local_model_secrets::read_local_model_api_keys,
+            #[cfg(desktop)]
+            local_model_secrets::update_local_model_api_key,
             get_app_log_directory,
             get_app_preferences,
             close_main_window_to_tray,

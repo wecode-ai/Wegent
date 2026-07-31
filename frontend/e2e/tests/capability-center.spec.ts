@@ -13,6 +13,7 @@ interface CapabilityListingResponse {
     id: number
     resource_type: 'agent' | 'skill'
     publisher_user_id: number
+    bind_modes: string[]
     allow_personal_install: boolean
     allow_group_install: boolean
   }>
@@ -91,7 +92,11 @@ test.describe('Capability Center', () => {
       }
     })
     await clickListingAction(page, listing!.id)
-    await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
+    if (listing!.bind_modes.includes('code')) {
+      await expect(page).toHaveURL(`/chat?agent=code&teamId=${listing!.id}`)
+    } else {
+      await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
+    }
     expect(installRequested).toBe(false)
   })
 

@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { arch, platform } from 'node:process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import JSZip from 'jszip'
 
 const require = createRequire(import.meta.url)
 const packageJson = require.resolve('dingtalk-workspace-cli/package.json')
@@ -49,28 +50,31 @@ async function findBinary(directory) {
   return null
 }
 
-function extractArchive(archive, destination) {
-  const isZip = archive.endsWith('.zip')
-  if (process.platform === 'win32') {
-    if (isZip) {
-      const result = spawnSync('tar', ['-xf', archive, '-C', destination], { stdio: 'inherit' })
-      if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
-      return
-    }
-    const result = spawnSync('tar', ['-xzf', archive, '-C', destination], { stdio: 'inherit' })
-    if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
-    return
-  }
-
-  const command = isZip ? 'unzip' : 'tar'
-  const args = isZip ? ['-q', archive, '-d', destination] : ['-xzf', archive, '-C', destination]
-  const result = spawnSync(command, args, { stdio: 'inherit' })
-  if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+async function extractZip(archive, destination) {
+  const zip = await JSZip.loadAsync(await readFile(archive))
+  await Promise.all(
+    Object.values(zip.files).map(async entry => {
+      const output = join(destination, entry.name)
+      if (entry.dir) {
+        await mkdir(output, { recursive: true })
+        return
+      }
+      await mkdir(dirname(output), { recursive: true })
+      await writeFile(output, await entry.async('nodebuffer'))
+    })
+  )
 }
 
 try {
   const archive = join(packageRoot, 'assets', archiveName)
-  extractArchive(archive, temporaryDirectory)
+  if (archiveName.endsWith('.zip')) {
+    await extractZip(archive, temporaryDirectory)
+  } else {
+    const result = spawnSync('tar', ['-xzf', archive, '-C', temporaryDirectory], {
+      stdio: 'inherit',
+    })
+    if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+  }
   const source = await findBinary(temporaryDirectory)
   if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
   const destination = resolve(

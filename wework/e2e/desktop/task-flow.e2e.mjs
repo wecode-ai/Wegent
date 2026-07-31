@@ -117,7 +117,8 @@ const CHECKPOINT_TASK_PROMPT =
 const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE'
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
-const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 10
+const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
+const TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN = 6
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -234,12 +235,6 @@ const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
-const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source === 'local'
-)
-const REMOTE_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source !== 'local'
-)
 const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
 const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
 const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
@@ -377,6 +372,10 @@ const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
+  'https://desktop-e2e-startup-probe.invalid/marketplace.git'
+const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -698,6 +697,23 @@ class BlockingNetworkProxy {
     throw new Error('Codex did not reach the blocking network proxy')
   }
 
+  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+    }
+    const observedRequests = this.requests.slice(requestCount)
+    throw new Error(
+      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
+    )
+  }
+
+  requestCount() {
+    return this.requests.length
+  }
+
   release() {
     if (this.released) return
     this.released = true
@@ -777,7 +793,8 @@ async function sendPromptWithButton(
   control,
   selector,
   prompt,
-  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS
+  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+  { confirmCloudModelCatalogSync = false } = {}
 ) {
   await waitForSnapshot(
     control,
@@ -791,6 +808,28 @@ async function sendPromptWithButton(
     timeoutMs,
   })
   await control.command('press', selector, { key: 'Enter', timeoutMs })
+  if (confirmCloudModelCatalogSync) {
+    await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {
+      visible: true,
+      timeoutMs,
+    })
+    await captureVerificationScreenshot(
+      control,
+      'cloud-model-catalog-sync-confirmation.png',
+      '[data-testid="cloud-model-catalog-sync-dialog"]'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="cloud-model-catalog-sync-confirm-button"]',
+      { timeoutMs }
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('cloud-model-catalog-sync-dialog'),
+      'The cloud model catalog sync dialog did not close after Codex restarted',
+      timeoutMs
+    )
+  }
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
 }
 
@@ -1269,6 +1308,91 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+}
+
+async function verifyVirtualizedTurnNavigationActiveMarker(control) {
+  const turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN
+  const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+  const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
+  await control.command('waitFor', previewSelector, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const turnIndex = await control.command('getAttribute', previewSelector, {
+    text: promptText,
+    value: 'data-turn-index',
+  })
+  assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
+  const targetResponseText = `Virtualized navigation response ${turnNumber}.1`
+  await control.command(
+    'scrollToRatioAsUser',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`,
+    { value: '0' }
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: targetResponseText,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+
+  const assistantText = await control.command(
+    'scrollIntoViewAsUser',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: targetResponseText }
+  )
+  const turnMatch = assistantText.match(/Virtualized navigation response (\d+)\.\d+/)
+  assert.ok(turnMatch, `Unable to identify the virtualized navigation turn from "${assistantText}"`)
+
+  assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
+
+  const mountedUserMessages = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  )
+  assert.ok(
+    !mountedUserMessages.includes(promptText),
+    `Turn ${turnNumber} user row remained mounted, so the active-marker regression was not reproduced`
+  )
+
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"][data-turn-index="${turnIndex}"][data-active="true"]`,
+    {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+}
+
+async function reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp) {
+  const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(taskId, 'The turn-navigation fixture did not expose its runtime task ID')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await restartDesktopApp()
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
+  await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${TURN_NAVIGATION_REGRESSION_TURN_COUNT}`,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -2759,31 +2883,6 @@ async function waitForWorkbenchDebugState(control, predicate, message) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
-async function assertConfiguredLocalModelsHidden(control, startIndex) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const modelNames = snapshot.workbench?.composer?.availableModelNames
-    if (Array.isArray(modelNames) && modelNames.length > 0) {
-      for (const [caseIndex, model] of HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.entries()) {
-        const matrixIndex = startIndex + caseIndex
-        console.log(
-          `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
-        )
-        assert.equal(
-          modelNames.includes(model.optionId),
-          false,
-          `${model.optionId} was visible for cloud execution`
-        )
-        console.log(`Model protocol matrix passed: ${matrixCaseId(model)} hidden`)
-      }
-      return
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error('The cloud execution model catalog did not become ready')
-}
-
 async function captureVerificationScreenshot(control, name, selector = 'body') {
   if (
     process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
@@ -2875,35 +2974,62 @@ async function waitForBundledMarketplaceRegistration(codexHome) {
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
   blockingNetworkProxy,
-  codexNetworkProbeEnabledPath,
   control,
   restartDesktopApp,
 }) {
+  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
+  const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-  await writeFile(codexNetworkProbeEnabledPath, 'enabled\n', 'utf8')
   await restartDesktopApp()
-  await control.command('waitFor', '[data-testid="projects-create-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  const blockedRequest = await blockingNetworkProxy.waitForRequest()
-  await rm(codexNetworkProbeEnabledPath, { force: true })
+  const [blockedRequest] = await Promise.all([
+    blockingNetworkProxy.waitForRequestMatchingAfter(
+      requestCountBeforeRestart,
+      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
+      DEFAULT_STEP_TIMEOUT_MS
+    ),
+    control.command('waitFor', '[data-testid="projects-create-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }),
+  ])
   assert.match(
     blockedRequest,
     /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture an HTTP request'
+    'The blocking proxy did not capture a Codex startup request'
   )
-  blockingNetworkProxy.release()
-  await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('setLocalProxyUrl', 'body', { value: '' })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
-    'Blocked Codex network traffic hid the ready workbench'
+    'Blocked Codex network traffic prevented the workbench from becoming usable'
+  )
+  const executorStatus = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.equal(
+    executorStatus.ready,
+    true,
+    'The local executor was not ready after Codex initialize'
+  )
+  assert.ok(
+    Number.isFinite(executorStatus.codexInitializeElapsedMs),
+    'The local executor did not report the Codex initialize duration'
+  )
+  assert.ok(
+    executorStatus.codexInitializeElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+    `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
+  )
+  console.log(
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+  )
+  assert.equal(
+    control.modelRequests.length,
+    modelRequestCountBeforeRestart,
+    'The workbench sent an agent model request while Codex was still starting'
   )
 
+  blockingNetworkProxy.release()
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('setLocalProxyUrl', 'body', { value: '' })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -3864,6 +3990,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   composerSelector,
   control,
   executorLogPath,
+  restartDesktopApp,
   setPhase,
 }) {
   const lifecycleScreenshotName = name => `window-lifecycle-${name}`
@@ -4252,7 +4379,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('09-first-virtualized-turn-navigation-target.png')
   )
-
   setPhase('archived-task-cache-eviction')
   const cacheBeforeArchive = JSON.parse(
     await control.command('performanceSnapshot', 'body')
@@ -4298,6 +4424,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
+  await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
+  await verifyVirtualizedTurnNavigationActiveMarker(control)
   return taskRowTestId
 }
 
@@ -7479,8 +7607,8 @@ class DesktopE2EServer {
         completionText,
         ...Array.from(
           { length: 6 },
-          (_, index) =>
-            `Virtualized navigation response ${turnNumber}.${index + 1}. ${'Measured content '.repeat(12)}`
+          (_, paragraphIndex) =>
+            `Virtualized navigation response ${turnNumber}.${paragraphIndex + 1}. ${'Measured content '.repeat(12)}`
         ),
       ].join('\n\n')
       this.writeSse(response, [
@@ -9050,68 +9178,6 @@ async function writeCodexConfig(
   )
 }
 
-async function createBlockingCodexLauncher(realCodexBinary, expectedProxyUrl, resultDir) {
-  const launcherPath = join(resultDir, 'codex-network-probe.mjs')
-  const enabledPath = join(resultDir, 'codex-network-probe.enabled')
-  await writeFile(
-    launcherPath,
-    `#!/usr/bin/env node
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { connect } from 'node:net'
-
-const realCodexBinary = ${JSON.stringify(realCodexBinary)}
-const expectedProxyUrl = ${JSON.stringify(expectedProxyUrl)}
-const enabledPath = ${JSON.stringify(enabledPath)}
-const args = process.argv.slice(2)
-let delegated = false
-
-function delegateToRealCodex() {
-  if (delegated) return
-  delegated = true
-  const child = spawn(realCodexBinary, args, {
-    env: process.env,
-    stdio: 'inherit',
-  })
-  for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => child.kill(signal))
-  }
-  child.once('error', error => {
-    console.error(error)
-    process.exitCode = 1
-  })
-  child.once('exit', (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal)
-      return
-    }
-    process.exit(code ?? 1)
-  })
-}
-
-if (!args.includes('app-server') || !existsSync(enabledPath)) {
-  delegateToRealCodex()
-} else {
-  const proxy = new URL(expectedProxyUrl)
-  const socket = connect({
-    host: proxy.hostname,
-    port: Number(proxy.port),
-  })
-  socket.once('connect', () => {
-    socket.write(
-      'CONNECT chatgpt.com:443 HTTP/1.1\\r\\nHost: chatgpt.com:443\\r\\nConnection: keep-alive\\r\\n\\r\\n'
-    )
-  })
-  socket.once('close', delegateToRealCodex)
-  socket.once('error', delegateToRealCodex)
-}
-`,
-    'utf8'
-  )
-  await chmod(launcherPath, 0o755)
-  return { enabledPath, launcherPath }
-}
-
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -9245,6 +9311,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_MODEL_SERVER_URL: modelServerUrl,
         VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: CLOUD_ONLY ? 'true' : 'false',
         VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
@@ -9435,7 +9502,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-work-01-plugin-entry.png')
-  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('navigate', 'body', { value: '/cloud-work' })
   await control.command('waitFor', '[data-testid="cloud-work-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -9485,10 +9552,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await assertConfiguredLocalModelsHidden(
-    control,
-    LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length
-  )
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
@@ -9605,16 +9668,14 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 
   await verifyModelProtocolMatrix({
-    cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
+    cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
     control,
     newConversationSelector:
       '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
     screenshotPrefix: 'cloud-matrix',
     setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
-    startIndex:
-      LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length +
-      HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length,
+    startIndex: LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
     workspacePath,
   })
 
@@ -9832,6 +9893,7 @@ async function verifyModelProtocolMatrix({
   startIndex = 0,
   workspacePath,
 }) {
+  let hasConfirmedCatalogSync = false
   for (const [caseIndex, model] of cases.entries()) {
     const matrixIndex = startIndex + caseIndex
     console.log(
@@ -9852,7 +9914,20 @@ async function verifyModelProtocolMatrix({
     })
     await selectE2EModel(control, model.optionId, model.label)
 
-    await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+    const confirmCloudModelCatalogSync =
+      !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
+    await sendPromptWithButton(
+      control,
+      composerSelector,
+      matrixTextPrompt(model),
+      MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      {
+        confirmCloudModelCatalogSync,
+      }
+    )
+    if (confirmCloudModelCatalogSync) {
+      hasConfirmedCatalogSync = true
+    }
     await waitForMatrixStage(control, model, 'tool')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: matrixTextCompletion(model),
@@ -9959,6 +10034,7 @@ async function main() {
     {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
+      executorHome,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -9989,11 +10065,6 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
-    const blockingCodexLauncher = RUNS_PLUGIN_E2E
-      ? await createBlockingCodexLauncher(codexBinary, blockingNetworkProxy.url, resultDir)
-      : null
-    const appCodexBinary = blockingCodexLauncher?.launcherPath ?? codexBinary
-
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     const executorBinary = await buildExecutor()
     if (CLOUD_ONLY) {
@@ -10020,7 +10091,7 @@ async function main() {
 
     const appEnvironment = {
       ...process.env,
-      CODEX_BIN: appCodexBinary,
+      CODEX_BIN: codexBinary,
       HOME: homePath,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -10035,7 +10106,14 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(RUNS_PLUGIN_E2E ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+      ...(RUNS_PLUGIN_E2E
+        ? {
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.proxy',
+            GIT_CONFIG_VALUE_0: blockingNetworkProxy.url,
+            WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
+          }
+        : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -10056,7 +10134,14 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
-          ...(RUNS_PLUGIN_E2E ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
+          ...(RUNS_PLUGIN_E2E
+            ? [
+                'GIT_CONFIG_COUNT',
+                'GIT_CONFIG_KEY_0',
+                'GIT_CONFIG_VALUE_0',
+                'WEWORK_E2E_NATIVE_CODEX_HOME',
+              ]
+            : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
@@ -10131,10 +10216,19 @@ async function main() {
         codexHome,
         control,
       })
-      await writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      await writeCodexConfig(
+        codexHome,
+        control.url,
+        `[features]
+plugins = true
+
+[marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
+source_type = "git"
+source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
+last_updated = "2026-07-30T00:00:00Z"`
+      )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
-        codexNetworkProbeEnabledPath: blockingCodexLauncher.enabledPath,
         control,
         restartDesktopApp,
       })
@@ -10144,6 +10238,18 @@ async function main() {
       phase = 'system-drag-panel-layout'
       await verifySystemDragPanelLayout(control)
       console.log(`Wework desktop system-drag-panel E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (desktopScenario && DESKTOP_SCENARIO_ONLY) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -10307,6 +10413,8 @@ async function main() {
       await control.command('waitFor', '[data-testid="message-turn-navigation-marker"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      await reopenCurrentTurnNavigationTask(control, ACTIVE_COMPOSER_SELECTOR, restartDesktopApp)
+      await verifyVirtualizedTurnNavigationActiveMarker(control)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -11399,6 +11507,7 @@ async function main() {
         composerSelector,
         control,
         executorLogPath,
+        restartDesktopApp,
         setPhase: value => {
           phase = value
         },

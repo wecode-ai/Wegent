@@ -7,6 +7,86 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn queued_unsubscribe_is_skipped_after_thread_reactivation() {
+    let client = CodexAppServerClient::new("codex-lifecycle-generation-test");
+    let thread_id = format!("thread-reactivation-{}", std::process::id());
+
+    client.mark_thread_active(&thread_id).await;
+    let stale_generation = client
+        .mark_thread_idle(&thread_id)
+        .await
+        .expect("terminal turn should make the thread idle");
+    client.mark_thread_active(&thread_id).await;
+
+    let sent = client
+        .request_thread_unsubscribe_if_idle(&thread_id, stale_generation)
+        .await
+        .expect("stale cleanup should be skipped without contacting an app-server");
+
+    assert!(!sent);
+    let current_generation = client
+        .mark_thread_idle(&thread_id)
+        .await
+        .expect("reactivated turn should have its own idle generation");
+    assert_ne!(current_generation, stale_generation);
+    client
+        .clear_idle_thread_generation(&thread_id, current_generation)
+        .await;
+}
+
+#[tokio::test]
+async fn thread_lifecycle_gate_does_not_block_unrelated_threads() {
+    let client = CodexAppServerClient::new("codex-lifecycle-gate-test");
+    let blocked_thread = format!("thread-blocked-{}", std::process::id());
+    let unrelated_thread = format!("thread-unrelated-{}", std::process::id());
+    let blocked_gate = client.thread_lifecycle_gate(&blocked_thread).await;
+    let blocked_guard = blocked_gate.lock().await;
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        client.mark_thread_active(&unrelated_thread),
+    )
+    .await
+    .expect("an unrelated thread should not wait for another thread's lifecycle gate");
+
+    let blocked_activation = {
+        let client = client.clone();
+        let blocked_thread = blocked_thread.clone();
+        tokio::spawn(async move {
+            client.mark_thread_active(&blocked_thread).await;
+        })
+    };
+    tokio::pin!(blocked_activation);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut blocked_activation)
+            .await
+            .is_err(),
+        "the same thread should remain serialized"
+    );
+
+    drop(blocked_guard);
+    tokio::time::timeout(Duration::from_secs(1), &mut blocked_activation)
+        .await
+        .expect("same-thread activation should continue after the lifecycle gate is released")
+        .expect("same-thread activation task should join");
+
+    let unrelated_generation = client
+        .mark_thread_idle(&unrelated_thread)
+        .await
+        .expect("unrelated thread should become idle");
+    client
+        .clear_idle_thread_generation(&unrelated_thread, unrelated_generation)
+        .await;
+    let blocked_generation = client
+        .mark_thread_idle(&blocked_thread)
+        .await
+        .expect("blocked thread should become idle");
+    client
+        .clear_idle_thread_generation(&blocked_thread, blocked_generation)
+        .await;
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);
@@ -301,9 +381,23 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
         .any(|line| line.starts_with("instructions =")));
     assert!(config.contains("developer_instructions"));
     assert!(config.contains("用中文回复"));
-    assert!(config.contains("browser_navigate"));
+    assert!(config.contains("Build the workflow from the user's requested outcome"));
+    assert!(config.contains("reuse all known targets across adjacent actions"));
+    assert!(config.contains("An explicit click request requires `browser_click`"));
+    assert!(config.contains("Use `browser_take_screenshot` only when"));
+    assert!(config.contains("Do not narrate plans or progress"));
     assert!(config.contains("personality = \"pragmatic\""));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strip_wework_browser_instructions_removes_unknown_generated_version() {
+    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version";
+
+    assert_eq!(
+        strip_wework_browser_instructions(instructions),
+        "用中文回复"
+    );
 }
 
 #[test]
@@ -1543,8 +1637,13 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
     let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
     let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    let old_bridge_token = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
     env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
+    env::set_var(
+        WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+        "bridge-test-token",
+    );
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
@@ -1597,6 +1696,10 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
         "workspace-browser-task-123"
     );
+    assert_eq!(
+        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"],
+        "bridge-test-token"
+    );
 
     if let Some(old_home) = old_home {
         env::set_var("WEGENT_EXECUTOR_HOME", old_home);
@@ -1607,6 +1710,11 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
     } else {
         env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    }
+    if let Some(old_bridge_token) = old_bridge_token {
+        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, old_bridge_token);
+    } else {
+        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     }
 }
 
