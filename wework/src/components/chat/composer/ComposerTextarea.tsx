@@ -42,11 +42,14 @@ import { workspacePathReferenceText } from './composerPathTransfer'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
+import { LinkEditPopover } from './LinkEditPopover'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
+import type { ComposerLinkPayload } from './composerLinks'
+import { openExternalUrl } from '@/lib/external-links'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -121,6 +124,8 @@ export function ComposerTextarea({
   const [appsLoading, setAppsLoading] = useState(false)
   const [appsLoadError, setAppsLoadError] = useState(false)
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
+  const [editingLink, setEditingLink] = useState<ComposerLinkPayload | null>(null)
+  const [editingLinkAnchor, setEditingLinkAnchor] = useState<HTMLElement | null>(null)
   const canPickNativeWorkspacePaths =
     canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
@@ -1104,6 +1109,11 @@ export function ComposerTextarea({
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
+        onOpenUrl={url => void openExternalUrl(url)}
+        onEditComposerLink={(payload, anchor) => {
+          setEditingLink(payload)
+          setEditingLinkAnchor(anchor ?? null)
+        }}
         onClick={() => updateAutocompleteTrigger()}
         onFocus={() => updateAutocompleteTrigger()}
         disabled={disabled}
@@ -1168,6 +1178,37 @@ export function ComposerTextarea({
             getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
           />
         </div>
+      )}
+      {editingLink && (
+        <LinkEditPopover
+          payload={editingLink}
+          anchor={editingLinkAnchor}
+          onClose={() => {
+            setEditingLink(null)
+            setEditingLinkAnchor(null)
+          }}
+          onChange={nextPayload => {
+            const editor = editorRef.current
+            if (!editor) return
+            const snapshot = editor.getSnapshot()
+            const nextValue = snapshot.value.replaceAll(editingLink.url, nextPayload.url)
+            commitEditorValue(nextValue, snapshot.selectionOffset)
+            setEditingLink(null)
+            setEditingLinkAnchor(null)
+          }}
+          onRemove={() => {
+            const editor = editorRef.current
+            if (!editor) return
+            const snapshot = editor.getSnapshot()
+            const nextValue = snapshot.value
+              .replaceAll(editingLink.url, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+            commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, nextValue.length))
+            setEditingLink(null)
+            setEditingLinkAnchor(null)
+          }}
+        />
       )}
     </div>
   )

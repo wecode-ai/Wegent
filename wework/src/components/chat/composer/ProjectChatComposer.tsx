@@ -13,6 +13,8 @@ import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
 import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
+import { extractFirstLink } from '@/lib/link-preview'
+import { LinkPreviewCard } from './LinkPreviewCard'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
@@ -146,6 +148,8 @@ export function ProjectChatComposer({
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
     !submitDisabled
+  const linkPreview = useMemo(() => extractFirstLink(value), [value])
+  const linkPreviewVisible = Boolean(linkPreview)
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
@@ -188,6 +192,21 @@ export function ProjectChatComposer({
       ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const handleRemoveLinkPreview = () => {
+    if (!linkPreview) return
+    onChange(value.replace(linkPreview.url, '').replace(/\s+/g, ' ').trim())
+  }
+  const handleChangeLinkText = (text: string) => {
+    if (!linkPreview) return
+    const escaped = linkPreview.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$\u0026')
+    const nextValue = value.replace(new RegExp(escaped, 'g'), text)
+    onChange(nextValue)
+  }
+  const handleChangeLinkUrl = (nextUrl: string) => {
+    if (!linkPreview) return
+    const escaped = linkPreview.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$\u0026')
+    onChange(value.replace(new RegExp(escaped, 'g'), nextUrl))
   }
 
   return (
@@ -265,6 +284,16 @@ export function ProjectChatComposer({
           onShowTextAttachment={handleShowTextAttachment}
           onClearCodeComments={onClearCodeComments}
         />
+        {linkPreviewVisible && linkPreview && (
+          <LinkPreviewCard
+            preview={linkPreview}
+            linkText={linkPreview.displayUrl}
+            onRemove={handleRemoveLinkPreview}
+            onChangeLinkText={handleChangeLinkText}
+            onChangeUrl={handleChangeLinkUrl}
+            disabled={disabled}
+          />
+        )}
         {disabledReason && (
           <div
             data-testid="composer-disabled-reason"

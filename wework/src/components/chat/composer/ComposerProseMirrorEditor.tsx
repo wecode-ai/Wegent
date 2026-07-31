@@ -7,6 +7,8 @@ import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-st
 import { EditorView } from 'prosemirror-view'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
+import { ComposerLinkNodeView } from './ComposerLinkNodeView'
+import type { ComposerLinkPayload } from './composerLinks'
 import {
   composerSchema,
   createComposerDocument,
@@ -42,6 +44,8 @@ interface ComposerProseMirrorEditorProps {
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
   onOpenMentionPlugin?: (reference: PluginReference) => void
+  onOpenUrl?: (url: string) => void
+  onEditComposerLink?: (payload: ComposerLinkPayload, anchor?: HTMLElement) => void
   onClick: () => void
   onFocus: () => void
   disabled?: boolean
@@ -132,6 +136,13 @@ export const ComposerProseMirrorEditor = forwardRef<
             path => callbacksRef.current.onOpenMentionFile?.(path),
             reference => callbacksRef.current.onOpenMentionPlugin?.(reference)
           )
+        },
+        composer_link(node, view, getPos) {
+          return new ComposerLinkNodeView(node, view, getPos, {
+            onOpenUrl: url => callbacksRef.current.onOpenUrl?.(url),
+            onEditLink: (payload, anchor) =>
+              callbacksRef.current.onEditComposerLink?.(payload, anchor),
+          })
         },
       },
       dispatchTransaction(transaction) {
@@ -356,7 +367,10 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
   }
 
   const adjacentNode = event.key === 'ArrowLeft' ? $head.nodeBefore : $head.nodeAfter
-  if (adjacentNode?.type === composerSchema.nodes.composer_mention) {
+  if (
+    adjacentNode?.type === composerSchema.nodes.composer_mention ||
+    adjacentNode?.type === composerSchema.nodes.composer_link
+  ) {
     const nextPosition =
       event.key === 'ArrowLeft'
         ? $head.pos - adjacentNode.nodeSize
@@ -374,7 +388,10 @@ function findComposerMentionFromDOMSelection(view: EditorView): HTMLElement | nu
   const anchorNode = view.dom.ownerDocument.getSelection()?.anchorNode
   const anchorElement =
     anchorNode instanceof HTMLElement ? anchorNode : (anchorNode?.parentElement ?? null)
-  const mention = anchorElement?.closest<HTMLElement>('[data-composer-skill-reference]') ?? null
+  const mention =
+    anchorElement?.closest<HTMLElement>(
+      '[data-composer-skill-reference], [data-composer-link-url]'
+    ) ?? null
   return mention && view.dom.contains(mention) ? mention : null
 }
 
@@ -464,6 +481,12 @@ function serializedOffsetFromPosition(doc: ProseMirrorNode, position: number): n
       }
       return
     }
+    if (node.type === composerSchema.nodes.composer_link) {
+      if (position >= nodeStart + node.nodeSize) {
+        serializedOffset += String(node.attrs.url ?? '').length
+      }
+      return
+    }
     if (node.type === composerSchema.nodes.hard_break && position >= nodeStart + node.nodeSize) {
       serializedOffset += 1
     }
@@ -496,9 +519,11 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
     const serializedLength =
       node.type === composerSchema.nodes.composer_mention
         ? String(node.attrs.reference ?? '').length
-        : node.type === composerSchema.nodes.hard_break
-          ? 1
-          : 0
+        : node.type === composerSchema.nodes.composer_link
+          ? String(node.attrs.url ?? '').length
+          : node.type === composerSchema.nodes.hard_break
+            ? 1
+            : 0
     if (normalizedTarget <= serializedOffset) {
       position = nodeStart
       resolved = true

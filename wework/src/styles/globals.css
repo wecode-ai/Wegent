@@ -351,6 +351,24 @@ button:disabled {
     cursor: pointer;
   }
 
+  .composer-link-node {
+    display: inline-flex;
+    align-items: baseline;
+    max-width: 100%;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    vertical-align: baseline;
+    white-space: nowrap;
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: pointer;
+  }
+
+  .composer-link-node .composer-mention-icon {
+    object-fit: contain;
+  }
+
   .composer-mention-label {
     font: inherit;
   }
