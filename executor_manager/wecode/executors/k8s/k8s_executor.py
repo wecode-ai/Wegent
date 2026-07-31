@@ -723,7 +723,10 @@ class K8sExecutor(Executor):
                 "pod_name": pod_name,
             }
         except ApiException as e:
-            if e.status == 409 and allow_reconcile:
+            # HTTP 409 AlreadyExists: the pod was left by a prior prepare whose
+            # response was cut off (e.g. gateway timeout).
+            already_exists = e.status == 409
+            if already_exists and allow_reconcile:
                 return self._reconcile_existing_pod(
                     core_v1, pod, namespace, pod_name, task_id
                 )
