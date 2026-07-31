@@ -9,15 +9,15 @@ import {
 } from 'react'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
-import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
@@ -432,33 +432,8 @@ export function WorkbenchProvider({
       error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
     })
   }, [])
-  const modelExecutionDeviceId = useMemo(() => {
-    if (state.currentRuntimeTask?.deviceId) return state.currentRuntimeTask.deviceId
-    const projectWorkspace = findProjectDeviceWorkspace(
-      state.runtimeWork,
-      activeProject?.id,
-      state.selectedDeviceWorkspaceId
-    )
-    return projectWorkspace?.deviceId ?? (!activeProject ? state.standaloneDeviceId : null)
-  }, [
-    activeProject,
-    state.currentRuntimeTask,
-    state.runtimeWork,
-    state.selectedDeviceWorkspaceId,
-    state.standaloneDeviceId,
-  ])
-  const modelExecutionDevice = findWorkbenchDevice(state.devices, modelExecutionDeviceId)
-  const hideConfiguredLocalModels = Boolean(
-    modelExecutionDevice && modelExecutionDevice.device_type !== 'local'
-  )
-  const filterModelForExecution = useCallback(
-    (model: UnifiedModel) =>
-      !hideConfiguredLocalModels || localModelIdFromModelName(model.name) === null,
-    [hideConfiguredLocalModels]
-  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
-    filterModel: filterModelForExecution,
     locked: false,
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask,
@@ -1849,6 +1824,7 @@ export function WorkbenchProvider({
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />
+          <CloudModelCatalogSyncDialogHost />
           {children}
         </WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>

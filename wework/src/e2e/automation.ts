@@ -178,7 +178,7 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-function seedDesktopE2ECloudConnection() {
+async function seedDesktopE2ECloudConnection(): Promise<void> {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
   const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
@@ -242,6 +242,7 @@ function seedDesktopE2ECloudConnection() {
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
+      persistApiKey: false,
       catalogReady: localModelsCatalogReady,
       enabled: true,
     })
@@ -255,14 +256,17 @@ function seedDesktopE2ECloudConnection() {
   })
 }
 
-export function installWeworkAutomationBridge() {
+export async function installWeworkAutomationBridge(
+  beforeSeed: Promise<void> = Promise.resolve()
+): Promise<void> {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
-  seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
+  await beforeSeed.catch(() => undefined)
+  await seedDesktopE2ECloudConnection()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {

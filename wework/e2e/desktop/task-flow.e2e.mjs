@@ -235,12 +235,6 @@ const MIXED_TOOL_TURN_MODEL_PROTOCOL_MATRIX_CASES = LOCAL_CUSTOM_MODEL_PROTOCOL_
 )
 const LOCAL_CONNECTED_MODEL_PROTOCOL_MATRIX_CASES =
   LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(model => model.source !== 'local')
-const HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source === 'local'
-)
-const REMOTE_MODEL_PROTOCOL_MATRIX_CASES = CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.filter(
-  model => model.source !== 'local'
-)
 const MODEL_PROTOCOL_MATRIX_TOTAL = MODEL_PROTOCOL_MATRIX_CASES.length * 2
 const MODEL_PROTOCOL_MATRIX_TEXT_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TEXT'
 const MODEL_PROTOCOL_MATRIX_TOOL_PREFIX = 'WEWORK_MODEL_PROTOCOL_MATRIX_TOOL'
@@ -799,7 +793,8 @@ async function sendPromptWithButton(
   control,
   selector,
   prompt,
-  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS
+  timeoutMs = MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+  { confirmCloudModelCatalogSync = false } = {}
 ) {
   await waitForSnapshot(
     control,
@@ -813,6 +808,28 @@ async function sendPromptWithButton(
     timeoutMs,
   })
   await control.command('press', selector, { key: 'Enter', timeoutMs })
+  if (confirmCloudModelCatalogSync) {
+    await control.command('waitFor', '[data-testid="cloud-model-catalog-sync-dialog"]', {
+      visible: true,
+      timeoutMs,
+    })
+    await captureVerificationScreenshot(
+      control,
+      'cloud-model-catalog-sync-confirmation.png',
+      '[data-testid="cloud-model-catalog-sync-dialog"]'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="cloud-model-catalog-sync-confirm-button"]',
+      { timeoutMs }
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('cloud-model-catalog-sync-dialog'),
+      'The cloud model catalog sync dialog did not close after Codex restarted',
+      timeoutMs
+    )
+  }
   await waitForSuccessfulMatrixSubmission(control, selector, prompt, timeoutMs)
 }
 
@@ -2864,31 +2881,6 @@ async function waitForWorkbenchDebugState(control, predicate, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
-}
-
-async function assertConfiguredLocalModelsHidden(control, startIndex) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < MODEL_PROTOCOL_MATRIX_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    const modelNames = snapshot.workbench?.composer?.availableModelNames
-    if (Array.isArray(modelNames) && modelNames.length > 0) {
-      for (const [caseIndex, model] of HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.entries()) {
-        const matrixIndex = startIndex + caseIndex
-        console.log(
-          `Model protocol matrix ${matrixIndex + 1}/${MODEL_PROTOCOL_MATRIX_TOTAL} started: ${matrixCaseId(model)}`
-        )
-        assert.equal(
-          modelNames.includes(model.optionId),
-          false,
-          `${model.optionId} was visible for cloud execution`
-        )
-        console.log(`Model protocol matrix passed: ${matrixCaseId(model)} hidden`)
-      }
-      return
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error('The cloud execution model catalog did not become ready')
 }
 
 async function captureVerificationScreenshot(control, name, selector = 'body') {
@@ -9510,7 +9502,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-work-01-plugin-entry.png')
-  await control.command('click', '[data-testid="sidebar-cloud-connection-button"]')
+  await control.command('navigate', 'body', { value: '/cloud-work' })
   await control.command('waitFor', '[data-testid="cloud-work-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -9560,10 +9552,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await assertConfiguredLocalModelsHidden(
-    control,
-    LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length
-  )
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
@@ -9680,16 +9668,14 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, restartDesktopA
   await verifyAnthropicEmptyResponseRecovery({ composerSelector, control })
 
   await verifyModelProtocolMatrix({
-    cases: REMOTE_MODEL_PROTOCOL_MATRIX_CASES,
+    cases: CLOUD_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES,
     composerSelector,
     control,
     newConversationSelector:
       '[data-testid^="project-row-"] [data-testid="project-new-conversation-button"]',
     screenshotPrefix: 'cloud-matrix',
     setCodexUpstreamProtocol: protocol => cloudEnvironment.setCodexUpstreamProtocol(protocol),
-    startIndex:
-      LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length +
-      HIDDEN_CLOUD_MODEL_PROTOCOL_MATRIX_CASES.length,
+    startIndex: LOCAL_EXECUTION_MODEL_PROTOCOL_MATRIX_CASES.length,
     workspacePath,
   })
 
@@ -9907,6 +9893,7 @@ async function verifyModelProtocolMatrix({
   startIndex = 0,
   workspacePath,
 }) {
+  let hasConfirmedCatalogSync = false
   for (const [caseIndex, model] of cases.entries()) {
     const matrixIndex = startIndex + caseIndex
     console.log(
@@ -9927,7 +9914,20 @@ async function verifyModelProtocolMatrix({
     })
     await selectE2EModel(control, model.optionId, model.label)
 
-    await sendPromptWithButton(control, composerSelector, matrixTextPrompt(model))
+    const confirmCloudModelCatalogSync =
+      !hasConfirmedCatalogSync && model.execution === 'cloud' && model.source === 'local'
+    await sendPromptWithButton(
+      control,
+      composerSelector,
+      matrixTextPrompt(model),
+      MODEL_PROTOCOL_MATRIX_TIMEOUT_MS,
+      {
+        confirmCloudModelCatalogSync,
+      }
+    )
+    if (confirmCloudModelCatalogSync) {
+      hasConfirmedCatalogSync = true
+    }
     await waitForMatrixStage(control, model, 'tool')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: matrixTextCompletion(model),
