@@ -15,9 +15,9 @@ class AttachmentAction(str, Enum):
     """Attachment actions that may expose a durable copy."""
 
     CREATE_PUBLIC_SHARE = "create_public_share"
+    PREVIEW_BY_SHARE_TOKEN = "preview_by_share_token"
     DOWNLOAD_BY_SHARE_TOKEN = "download_by_share_token"
     DOWNLOAD_SHARED = "download_shared"
-    EXECUTOR_DOWNLOAD = "executor_download"
 
 
 @dataclass(frozen=True)
