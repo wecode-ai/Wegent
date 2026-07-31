@@ -14,83 +14,42 @@
 
 final result: passed
 
----
-
-# Workspace Document Tabs Follow-up Review
-
-## Source visual truth
-
-- Reference: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785512913569/image.model-input.png`
-
-## Implementation evidence
-
-- Task tab active: `wework/test-results/ai-verify/final-workspace-tabs-review/01-task-active.png`
-- New-tab menu: `wework/test-results/ai-verify/final-workspace-tabs-review/02-new-tab-menu.png`
-- Project spaces active: `wework/test-results/ai-verify/final-workspace-tabs-review/03-project-spaces-active.png`
-- Concrete project title active: `wework/test-results/ai-verify/final-workspace-tabs-review/04-project-name-active.png`
-- Switch back to task: `wework/test-results/ai-verify/final-workspace-tabs-review/05-switch-back-to-task.png`
-- Close project tab: `wework/test-results/ai-verify/final-workspace-tabs-review/06-close-project-tab.png`
-- Restore closed project tab: `wework/test-results/ai-verify/final-workspace-tabs-review/07-restore-closed-project-tab.png`
-- Tab context menu: `wework/test-results/ai-verify/final-workspace-tabs-review/08-tab-context-menu.png`
-- Independent project window: `wework/test-results/ai-verify/final-workspace-tabs-review/09-project-new-window.png`
-- Side-by-side comparison: `wework/test-results/ai-verify/final-workspace-tabs-review/10-reference-vs-implementation.png`
-
-## Review findings
-
-- The active document tab uses the content surface color, stronger text, and connected corner
-  shapes; inactive tabs remain on the muted titlebar. The selected and unselected states are
-  visibly distinct at a glance.
-- Horizontal tab padding and a hidden-scrollbar overflow region preserve both active-tab corner
-  shapes at the first and last positions while allowing future multi-tab growth.
-- The reference hierarchy is preserved: native traffic lights, document tabs, a quiet titlebar,
-  sidebar/content separation, and the active tab visually joining the page below.
-- Top-level navigation consistently uses “项目空间”; an opened project uses its concrete name
-  (“产品规划”) in both the main window and the independent window.
-- Add-tab and context menus remain compact, aligned to their trigger, and clamped to the viewport.
-- The real Tauri independent-window capture confirms that the reduced workspace-window capability
-  still supports the complete project-space experience.
-
-## Interaction and accessibility verification
-
-- Open, select, close, restore, reorder, keyboard context-menu, and open-in-new-window flows were
-  exercised.
-- Tabs expose semantic `tablist`/`tab` roles without nesting another button inside the tab.
-- Close labels and auxiliary route titles are localized in Chinese and English.
-- No actionable P0, P1, or P2 visual mismatch remains.
-
-final result: passed
-
----
-
 # Wework 工作区标签设计 QA
 
 ## 目标
 
-- 参考图：`/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785512913569/image.png`
+- 参考图与实现对照：`docs/assets/images/wework-workspace-tabs-reference-comparison.png`（左侧为用户提供的设计图，右侧为真实 Tauri 实现）。
 - 实现范围：Wework 顶层任务 / 项目空间文档标签、项目名标题、关闭与恢复、新窗口。
-- 验证环境：macOS 真实 Tauri 隔离实例，主窗口 1280×720；独立项目窗口 1280×800。
+- 验证环境：macOS 真实 Tauri 隔离实例，浅色主题；主窗口 1280×720；独立项目窗口 1280×800。
+- 测试数据：隔离环境内创建本地项目“产品规划”，不读取或修改用户的个人项目数据。
 
 ## 对照结果
 
-- 对照图：`wework/test-results/ai-verify/final-workspace-tabs/10-reference-vs-implementation.png`
+- 完整审查链：`docs/assets/images/wework-workspace-tabs-review-chain.png`
+- 最小权限独立窗口实机图：`docs/assets/images/wework-workspace-tabs-minimal-capability.png`
 - 标题栏高度、文档标签宽度、圆角连接、关闭按钮、加号位置与参考方向一致。
 - 标题栏使用稳定浅灰底色，选中标签使用内容表面色；未选中标签留在标题栏层，状态差异清晰。
 - 顶层产品名统一为“项目空间”；具体项目打开后标签标题显示项目名，例如“产品规划”。
 - 主窗口与独立项目窗口均无裁切、重叠、错误边框或圆角断裂。
 
-## 核心流程截图
+## 逐用例 QA 记录
 
-1. `01-task-active.png`：任务标签初始选中。
-2. `02-new-tab-menu.png`：新建标签菜单。
-3. `03-project-spaces-active.png`：项目空间顶层标签选中。
-4. `04-project-name-active.png`：具体项目标题显示“产品规划”。
-5. `05-switch-back-to-task.png`：切回任务，选中态同步。
-6. `06-close-project-tab.png`：关闭项目标签后回退到任务。
-7. `07-restore-closed-project-tab.png`：快捷键恢复已关闭项目标签。
-8. `08-tab-context-menu.png`：标签上下文菜单。
-9. `09-project-new-window.png`：项目在独立窗口中打开。
+| 用例             | 前置条件与精确步骤                                          | 预期结果                                                                     | 实际结果、负向与恢复验证                                                                        | 证据                                  |
+| ---------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------- |
+| 初始与切换选中态 | 启动隔离实例；同时保留“任务”和项目标签；依次点击两个标签    | 只有活动标签使用白色内容表面、加粗文字与连接圆角，未选中标签停留在灰色标题栏 | 通过；首尾标签的连接圆角均未被滚动容器裁切，切换后 ARIA 选中态同步                              | 审查链 01、05                         |
+| 打开顶层项目空间 | 点击 `+`，再点击“项目空间”                                  | 菜单贴近触发器且不越界；打开的顶层标签标题为“项目空间”                       | 通过；重复打开会复用现有文档而非生成重复标签                                                    | 审查链 02、03；重复文档单测           |
+| 打开具体项目     | 在隔离实例创建“产品规划”，从项目空间进入该项目              | 活动标签立即显示“产品规划”，不继续显示顶层产品名                             | 通过；创建结果直接更新活动文档，避免异步列表刷新造成旧标题                                      | 审查链 04；项目标题单测               |
+| 关闭与回退       | 激活“产品规划”，点击其关闭按钮                              | 项目标签消失，活动文档稳定回退到“任务”                                       | 通过；E2E 使用轮询等待真实 DOM 移除，覆盖 WebView 延迟更新                                      | 审查链 06；桌面 E2E                   |
+| 恢复已关闭标签   | 完成上一用例后按 `⌘⇧T`                                      | “产品规划”恢复并成为活动标签                                                 | 通过；若原文档 ID 已被占用，会生成新 ID 后恢复，避免覆盖现有文档                                | 审查链 07；恢复冲突单测               |
+| 拖动排序         | 拖动项目标签跨过相邻标签                                    | 标签顺序更新，活动文档不变                                                   | 通过；WebKit `dragover` 无法读取 `dataTransfer` 时使用已提升的拖动状态恢复排序                  | 拖动回归单测                          |
+| 键盘上下文菜单   | 聚焦标签并按 `Shift+F10`，检查菜单项并关闭                  | 菜单在视口内显示，可键盘进入；关闭按钮和菜单使用中英文可访问名称             | 通过；同时覆盖 Context Menu 键入口和菜单边界夹取                                                | 审查链 08；键盘/本地化单测            |
+| 独立项目窗口     | 在项目标签菜单选择“在新窗口中打开”，等待新 WebView 完整渲染 | 独立窗口标题与标签均显示“产品规划”，内容完整且窗口控件可用                   | 通过；创建失败或等待超时会销毁残留窗口；权限仅保留窗口控制、窗口生命周期事件监听/解绑与日志能力 | 审查链 09；最小权限实机图；Tauri 单测 |
+| 多窗口截图确定性 | 同时存在主窗口和项目窗口时执行工作区截图命令                | 优先捕获当前聚焦的工作区窗口；无焦点时捕获最近创建的窗口                     | 通过；Rust 排序与回退路径编译、测试通过                                                         | 工作区截图命令测试                    |
 
-截图目录：`wework/test-results/ai-verify/final-workspace-tabs/`
+## 清理
+
+- 结束验证后停止隔离 Tauri 会话并清理其 Executor 进程组与临时认证链接。
+- “产品规划”仅存在于隔离测试数据；运行时原始截图保留在被 Git 忽略的 `wework/test-results/`，仓库只提交对照图和审查联系表。
 
 ## 缺陷审查
 
@@ -101,6 +60,48 @@ final result: passed
 - P2：未发现。
 
 ## 最终结论
+
+final result: passed
+
+---
+
+# Workspace Document Tabs Follow-up Review
+
+## Source and implementation evidence
+
+- Repository-accessible source/implementation comparison:
+  `docs/assets/images/wework-workspace-tabs-reference-comparison.png` (source on the left,
+  real-Tauri implementation on the right).
+- Repository-accessible core-flow review chain:
+  `docs/assets/images/wework-workspace-tabs-review-chain.png`.
+- Repository-accessible real-Tauri project window under the minimal capability:
+  `docs/assets/images/wework-workspace-tabs-minimal-capability.png`.
+- Environment: isolated real Tauri app on macOS in light theme; 1280×720 main window and
+  1280×800 project window.
+- Test data: a local project named “产品规划”, created only inside the isolated verification
+  environment.
+
+## Case-level verification
+
+| Case                    | Preconditions and exact steps                                | Expected                                                                                        | Actual, negative, and recovery coverage                                                                                                                | Evidence                                                 |
+| ----------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Active/inactive states  | Keep Task and project documents open; click each tab in turn | Only the active tab joins the white content surface; inactive tabs remain on the muted titlebar | Passed; ARIA selection followed focus and neither end cap was clipped                                                                                  | Review chain 01, 05                                      |
+| Open project spaces     | Click `+`, then “项目空间”                                   | A clamped menu opens and the top-level document is titled “项目空间”                            | Passed; opening the same document again reuses it                                                                                                      | Review chain 02, 03; duplicate-document unit test        |
+| Open a concrete project | Create and enter “产品规划”                                  | The active title changes immediately to the concrete project name                               | Passed; the create result updates the document before an asynchronous list refresh                                                                     | Review chain 04; project-title unit test                 |
+| Close and fallback      | Activate “产品规划” and press its close control              | The project tab is removed and Task becomes active                                              | Passed; desktop E2E polls for real WebView DOM removal                                                                                                 | Review chain 06; desktop E2E                             |
+| Restore                 | After closing, press `Cmd+Shift+T`                           | “产品规划” returns as the active document                                                       | Passed; an occupied historical ID is replaced with a fresh ID                                                                                          | Review chain 07; collision-recovery unit test            |
+| Reorder                 | Drag a project tab across its neighbor                       | Order changes without changing the active document                                              | Passed; lifted drag state recovers WebKit `dragover` events with empty transfer data                                                                   | Drag regression unit test                                |
+| Keyboard context menu   | Focus a tab and press `Shift+F10`                            | The menu opens inside the viewport with localized accessible names                              | Passed; Context Menu key and viewport clamping are also covered                                                                                        | Review chain 08; keyboard/i18n unit tests                |
+| New window              | Choose “Open in new window” and wait for the new WebView     | The new window renders “产品规划” completely with working chrome                                | Passed; create errors and readiness timeouts destroy partial windows; capability is limited to window controls, lifecycle listen/unlisten, and logging | Review chain 09; minimal-capability capture; Tauri tests |
+| Deterministic capture   | Capture while main and project windows both exist            | Capture the focused workspace, or the newest one when none is focused                           | Passed in Rust sorting/fallback coverage                                                                                                               | Workspace capture command test                           |
+
+## Cleanup and result
+
+- The isolated Tauri session, Executor process group, and temporary authentication link were
+  removed after verification.
+- Runtime screenshots remain under ignored `wework/test-results/`; only the comparison and review
+  contact sheet are committed for reviewer and CI access.
+- No actionable P0, P1, or P2 visual mismatch remains.
 
 final result: passed
 

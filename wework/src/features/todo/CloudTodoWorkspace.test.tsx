@@ -226,12 +226,16 @@ describe('CloudTodoWorkspace', () => {
   it('resets project-specific view state when a controlled project changes externally', async () => {
     const user = { id: 1, user_name: 'local', email: 'local@example.com' } as User
     const workbenchServices = services()
+    const controlledProject = { ...project, id: String(project.id) }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [controlledProject],
+    })
     const view = render(
       <CloudTodoWorkspace
         user={user}
         localProjects={[]}
         services={workbenchServices}
-        activeProjectId={project.id as unknown as string}
+        activeProjectId={controlledProject.id}
       />
     )
 

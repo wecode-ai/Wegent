@@ -4,7 +4,8 @@
   "description": "Allows project-space document windows to manage only their own window chrome.",
   "windows": ["workspace-*"],
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:window:allow-set-focus",
