@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -18,6 +21,7 @@ pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
 pub(super) struct InteractionAnswerRouterState {
     pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
     buffered: HashMap<String, Value>,
+    claimed: HashSet<String>,
     pub(super) closed: bool,
 }
 
@@ -68,25 +72,26 @@ impl InteractionAnswerRouter {
     }
 
     /// Waits for exactly one answer associated with a correlation key.
-    pub(super) async fn receive(&self, key: String) -> Result<Value, String> {
+    pub(super) async fn receive(&self, key: String) -> Result<Option<Value>, String> {
         let receiver = {
             let mut state = self.state.lock().await;
+            if !state.claimed.insert(key.clone()) {
+                return Ok(None);
+            }
             if let Some(answer) = state.buffered.remove(&key) {
-                return Ok(answer);
+                return Ok(Some(answer));
             }
             if state.closed {
                 return Err("request_user_input response router closed".to_owned());
             }
             let (sender, receiver) = oneshot::channel();
-            if state.pending.contains_key(&key) {
-                return Err("duplicate pending interaction correlation key".to_owned());
-            }
             state.pending.insert(key, sender);
             receiver
         };
         receiver
             .await
             .map_err(|_| "request_user_input response router closed".to_owned())?
+            .map(Some)
     }
 }
 
@@ -113,7 +118,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn duplicate_receive_preserves_original_waiter() {
+    async fn duplicate_receive_is_ignored_and_preserves_original_waiter() {
         let (sender, receiver) = mpsc::channel(1);
         let router = InteractionAnswerRouter::new(receiver);
         let original = {
@@ -136,12 +141,9 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(duplicate.unwrap(), None);
         assert_eq!(
-            duplicate.unwrap_err(),
-            "duplicate pending interaction correlation key"
-        );
-        assert_eq!(
-            original.await.unwrap().unwrap()["answers"]["choice"],
+            original.await.unwrap().unwrap().unwrap()["answers"]["choice"],
             "original"
         );
     }

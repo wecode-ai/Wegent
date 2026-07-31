@@ -75,7 +75,7 @@ export type ArchiveRuntimeTaskResult = {
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
-  clientMessageId?: string
+  clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void

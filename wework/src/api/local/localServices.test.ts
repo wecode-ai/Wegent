@@ -845,7 +845,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
-      clientMessageId: 'runtime-local-pane-1',
+      clientUserMessageId: 'runtime-local-pane-1',
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -879,7 +879,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'continue',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -976,7 +976,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'stop and use this direction',
-      clientMessageId: 'runtime-interrupt-1',
+      clientUserMessageId: 'runtime-interrupt-1',
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
@@ -997,7 +997,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'stop and use this direction',
-        clientMessageId: 'runtime-interrupt-1',
+        clientUserMessageId: 'runtime-interrupt-1',
         executionRequest: expect.objectContaining({
           prompt: 'stop and use this direction',
           client_user_message_id: 'runtime-interrupt-1',

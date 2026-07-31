@@ -201,9 +201,9 @@ executor 从原生 Codex session 发现用户消息时，会把 `local_images`�
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
-Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientMessageId` 和附件元数据。发言导航的 id 优先使用 `clientMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
+Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientUserMessageId` 和附件元数据。发言导航的 id 优先使用 `clientUserMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
 
-Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。为了保持 Codex transcript 的单一信源，Wework 只在 LocalTask 的 `runtimeHandle.userMessagePresentations` 中按 `clientMessageId` 持久化引用 token 与目标，不保存第二份用户正文。executor 读取 provider transcript 后，以 provider 的 `content` 作为唯一正文，仅为相同 `clientMessageId` 的消息补充 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回；没有稳定客户端消息 id 时不做推测匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
+Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。为了保持 Codex transcript 的单一信源，Wework 只在 LocalTask 的 `runtimeHandle.userMessagePresentations` 中按 `clientUserMessageId` 持久化引用 token 与目标，不保存第二份用户正文。executor 读取 provider transcript 后，以 provider 的 `content` 作为唯一正文，仅为相同 `clientUserMessageId` 的消息补充 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回；没有稳定客户端消息 id 时不做推测匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
 
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Rust executor 的 Codex app-server 路径以 app-server 通知流作为本轮事件来源；如果后续接入 diff 通知，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
 

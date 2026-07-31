@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => {
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
+  const localChatStreamSubscribe = vi.fn(() => vi.fn())
+  const cloudRuntimeChatStreamSubscribe = vi.fn(() => vi.fn())
   const captureRuntimeIpcOptions = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
@@ -75,7 +77,7 @@ const mocks = vi.hoisted(() => {
       archiveProjectConversations: localArchiveProjectConversations,
     },
     userApi: { updateCurrentUser: localUpdateCurrentUser },
-    chatStream: { subscribe: vi.fn(() => vi.fn()) },
+    chatStream: { subscribe: localChatStreamSubscribe },
   }
 
   const cloudServices = {
@@ -140,6 +142,8 @@ const mocks = vi.hoisted(() => {
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
     cloudRuntimeIpcSubscribe,
+    localChatStreamSubscribe,
+    cloudRuntimeChatStreamSubscribe,
     captureRuntimeIpcOptions,
     localListArchivedConversations,
     cloudListArchivedConversations,
@@ -224,6 +228,12 @@ vi.mock('@/api/backend/runtimeIpc', () => ({
     request: mocks.cloudRuntimeIpcRequest,
     subscribe: mocks.cloudRuntimeIpcSubscribe,
     dispose: vi.fn(),
+  }),
+}))
+
+vi.mock('@/api/runtime/runtimeChatStream', () => ({
+  createRuntimeChatStream: () => ({
+    subscribe: mocks.cloudRuntimeChatStreamSubscribe,
   }),
 }))
 
@@ -396,6 +406,49 @@ describe('createHybridWorkbenchServices', () => {
         { kind: 'process', label: 'Process', command: 'wegent-executor' },
       ],
     })
+  })
+
+  it('routes runtime stream events through exactly one transport by device identity', () => {
+    const services = createServices()
+    const onChatChunk = vi.fn()
+
+    services.chatStream.subscribe({ onChatChunk })
+
+    const localHandlers = mocks.localChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    const cloudHandlers = mocks.cloudRuntimeChatStreamSubscribe.mock.calls.at(-1)?.[0]
+    expect(localHandlers).toBeDefined()
+    expect(cloudHandlers).toBeDefined()
+
+    localHandlers?.onChatChunk?.({
+      deviceId: 'local-device',
+      taskId: 'local-task',
+      subtaskId: 'local-turn',
+      itemId: 'local-item',
+      content: 'local',
+    })
+    cloudHandlers?.onChatChunk?.({
+      deviceId: 'local-device',
+      taskId: 'local-task',
+      subtaskId: 'local-turn',
+      itemId: 'local-item',
+      content: 'duplicate local relay',
+    })
+    localHandlers?.onChatChunk?.({
+      deviceId: 'cloud-device',
+      taskId: 'cloud-task',
+      subtaskId: 'cloud-turn',
+      itemId: 'cloud-item',
+      content: 'duplicate cloud relay',
+    })
+    cloudHandlers?.onChatChunk?.({
+      deviceId: 'cloud-device',
+      taskId: 'cloud-task',
+      subtaskId: 'cloud-turn',
+      itemId: 'cloud-item',
+      content: 'cloud',
+    })
+
+    expect(onChatChunk.mock.calls.map(([payload]) => payload.content)).toEqual(['local', 'cloud'])
   })
 
   it('loads cloud models in the background without delaying local models', async () => {

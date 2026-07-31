@@ -18,8 +18,16 @@ fn cached_transcript_response(
         before_cursor: before_cursor.map(ToOwned::to_owned),
         after_cursor: after_cursor.map(ToOwned::to_owned),
         full_content: false,
+        turn_item_source: TranscriptTurnItemSource::CachedMessages,
     })
 }
+
+#[derive(Clone, Copy)]
+enum TranscriptTurnItemSource {
+    CodexItems,
+    CachedMessages,
+}
+
 struct TranscriptResponseInput {
     local_task_id: String,
     workspace_path: String,
@@ -31,6 +39,7 @@ struct TranscriptResponseInput {
     before_cursor: Option<String>,
     after_cursor: Option<String>,
     full_content: bool,
+    turn_item_source: TranscriptTurnItemSource,
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -45,6 +54,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         before_cursor,
         after_cursor,
         full_content,
+        turn_item_source,
     } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
     let page = transcript_page(
@@ -53,6 +63,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         before_cursor.as_deref(),
         after_cursor.as_deref(),
     );
+    let turns = transcript_canonical_turns(&page.messages, turn_item_source);
     json!({
         "success": true,
         "taskId": local_task_id,
@@ -60,6 +71,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "runtime": runtime,
         "running": running,
         "messages": page.messages,
+        "turns": turns,
         "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
@@ -76,6 +88,129 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
+}
+
+fn transcript_canonical_turns(
+    messages: &[Value],
+    item_source: TranscriptTurnItemSource,
+) -> Vec<Value> {
+    let mut turns: Vec<Value> = Vec::new();
+    let mut turn_indexes = std::collections::HashMap::<String, usize>::new();
+
+    for message in messages {
+        let Some(turn_id) = string_field(message, "turnId")
+            .or_else(|| string_field(message, "turn_id"))
+            .or_else(|| string_field(message, "subtaskId"))
+            .or_else(|| string_field(message, "subtask_id"))
+        else {
+            continue;
+        };
+        let turn_index = if let Some(index) = turn_indexes.get(&turn_id).copied() {
+            index
+        } else {
+            let index = turns.len();
+            turns.push(json!({
+                "id": turn_id,
+                "items": [],
+                "status": "done",
+            }));
+            turn_indexes.insert(turn_id.clone(), index);
+            index
+        };
+        let Some(turn) = turns.get_mut(turn_index).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for key in [
+            "status",
+            "runtimeStatus",
+            "completedAt",
+            "error",
+            "errorType",
+            "stoppedNotice",
+            "fileChanges",
+            "references",
+            "memoryCitations",
+        ] {
+            if let Some(value) = message.get(key) {
+                turn.insert(key.to_owned(), value.clone());
+            }
+        }
+        let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        let role = string_field(message, "role").unwrap_or_default();
+        if role.eq_ignore_ascii_case("user") {
+            let Some(item_id) = string_field(message, "clientUserMessageId")
+                .or_else(|| string_field(message, "client_user_message_id"))
+                .or_else(|| string_field(message, "id"))
+            else {
+                continue;
+            };
+            items.push(json!({
+                "id": item_id,
+                "type": "user_message",
+                "message": message,
+            }));
+            continue;
+        }
+        if !role.eq_ignore_ascii_case("assistant") {
+            continue;
+        }
+
+        match item_source {
+            TranscriptTurnItemSource::CodexItems => {
+                if let Some(runtime_items) =
+                    message.get("runtimeItems").and_then(Value::as_array)
+                {
+                    items.extend(runtime_items.iter().cloned());
+                }
+            }
+            TranscriptTurnItemSource::CachedMessages => {
+                append_runtime_message_items(items, message);
+            }
+        }
+
+    }
+
+    turns
+}
+
+fn append_runtime_message_items(items: &mut Vec<Value>, message: &Value) {
+    if let (Some(item_id), Some(content)) = (
+        string_field(message, "id"),
+        string_field(message, "content"),
+    ) {
+        let mut item = json!({
+            "id": item_id,
+            "type": "assistant_text",
+            "content": content,
+        });
+        if let Some(created_at) = message.get("createdAt").or_else(|| message.get("created_at")) {
+            item["createdAt"] = created_at.clone();
+        }
+        items.push(item);
+    }
+
+    let Some(blocks) = message.get("blocks").and_then(Value::as_array) else {
+        return;
+    };
+    let mut ordered_blocks = blocks.iter().enumerate().collect::<Vec<_>>();
+    ordered_blocks.sort_by_key(|(index, block)| {
+        (
+            timestamp_ms_field(block, "createdAt").unwrap_or(i64::MAX),
+            *index,
+        )
+    });
+    for (_, block) in ordered_blocks {
+        let Some(block_id) = string_field(block, "id") else {
+            continue;
+        };
+        items.push(json!({
+            "id": block_id,
+            "type": "block",
+            "block": block,
+        }));
+    }
 }
 
 fn transcript_context_usage(thread: &Value) -> Option<Value> {
@@ -118,8 +253,8 @@ fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
 }
 
 fn transcript_navigation_message_id(message: &Value, message_index: usize) -> String {
-    string_field(message, "clientMessageId")
-        .or_else(|| string_field(message, "client_message_id"))
+    string_field(message, "clientUserMessageId")
+        .or_else(|| string_field(message, "client_user_message_id"))
         .or_else(|| string_field(message, "id"))
         .unwrap_or_else(|| format!("message-{message_index}"))
 }
@@ -167,9 +302,9 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
 }
 
 fn user_message_presentation(payload: &Value) -> Option<Value> {
-    let client_message_id = payload
-        .get("clientMessageId")
-        .or_else(|| payload.get("client_message_id"))
+    let client_user_message_id = payload
+        .get("clientUserMessageId")
+        .or_else(|| payload.get("client_user_message_id"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
@@ -180,7 +315,7 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
     let references = local_presentation_reference_descriptors(content);
     (!references.is_empty()).then(|| {
         json!({
-            "clientMessageId": client_message_id,
+            "clientUserMessageId": client_user_message_id,
             "references": references,
         })
     })
@@ -188,16 +323,16 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
 
 fn attach_user_message_presentations(messages: &mut [Value], presentations: Vec<Value>) {
     for presentation in presentations {
-        let Some(client_message_id) = string_field(&presentation, "clientMessageId")
-            .or_else(|| string_field(&presentation, "client_message_id"))
+        let Some(client_user_message_id) = string_field(&presentation, "clientUserMessageId")
+            .or_else(|| string_field(&presentation, "client_user_message_id"))
         else {
             continue;
         };
         let Some(message) = messages.iter_mut().find(|message| {
-            string_field(message, "clientMessageId")
-                .or_else(|| string_field(message, "client_message_id"))
+            string_field(message, "clientUserMessageId")
+                .or_else(|| string_field(message, "client_user_message_id"))
                 .as_deref()
-                == Some(client_message_id.as_str())
+                == Some(client_user_message_id.as_str())
         }) else {
             continue;
         };
@@ -346,16 +481,16 @@ fn cached_user_message(
     message.insert("content".to_owned(), Value::String(content.to_owned()));
     message.insert("status".to_owned(), Value::String("done".to_owned()));
     message.insert("createdAt".to_owned(), Value::Number(now_ms().into()));
-    if let Some(client_message_id) = payload
-        .get("clientMessageId")
-        .or_else(|| payload.get("client_message_id"))
+    if let Some(client_user_message_id) = payload
+        .get("clientUserMessageId")
+        .or_else(|| payload.get("client_user_message_id"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
         message.insert(
-            "clientMessageId".to_owned(),
-            Value::String(client_message_id.to_owned()),
+            "clientUserMessageId".to_owned(),
+            Value::String(client_user_message_id.to_owned()),
         );
     }
     if let Some(source) = payload

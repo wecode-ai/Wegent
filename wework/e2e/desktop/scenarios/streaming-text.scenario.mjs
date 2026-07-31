@@ -6,6 +6,8 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
+const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
@@ -18,6 +20,8 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
@@ -38,6 +42,7 @@ const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
   ).join('\n\n')}`,
 }))
 const STREAMING_TURN_INDEX = HISTORY_TURNS.length + 1
+const PANE_EVICTION_BLANK_COUNT = 4
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
@@ -247,20 +252,25 @@ function requestContainsToolRegressionPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
 }
 
+function requestContainsTimerPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
+}
+
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
 }
 
-function selectShellTool(body, workspacePath) {
+function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
   if (names.has('exec_command')) {
     return {
       name: 'exec_command',
       arguments: {
-        cmd: 'pwd',
+        cmd: command,
         workdir: workspacePath,
-        yield_time_ms: 1_000,
+        timeout_ms: timeoutMs,
+        yield_time_ms: timeoutMs,
       },
     }
   }
@@ -268,9 +278,9 @@ function selectShellTool(body, workspacePath) {
   return {
     name: 'shell_command',
     arguments: {
-      command: 'pwd',
+      command,
       workdir: workspacePath,
-      timeout_ms: 1_000,
+      timeout_ms: timeoutMs,
     },
   }
 }
@@ -283,6 +293,28 @@ async function getSingleElementMetrics(control, selector, description) {
 
 function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function processingDurationSeconds(text) {
+  const hours = Number(text.match(/(\d+)\s*(?:小时|h)/)?.[1] ?? 0)
+  const minutes = Number(text.match(/(\d+)\s*(?:分钟|分|m)/)?.[1] ?? 0)
+  const seconds = Number(text.match(/(\d+)\s*(?:秒|s)/)?.[1] ?? 0)
+  return hours * 3_600 + minutes * 60 + seconds
+}
+
+async function waitForProcessingDuration(control, minimumSeconds, timeoutMs) {
+  const startedAt = Date.now()
+  let text = ''
+  await control.command('waitFor', PROCESSING_SUMMARY_SELECTOR, { timeoutMs })
+  while (Date.now() - startedAt < timeoutMs) {
+    text = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
+    const duration = processingDurationSeconds(text)
+    if (duration >= minimumSeconds) return duration
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `The running processing duration did not reach ${minimumSeconds}s; latest header: ${text}`
+  )
 }
 
 async function waitForBottom(control, description, timeoutMs) {
@@ -386,6 +418,7 @@ export function createDesktopScenario({
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let toolRegressionStage = 'initial'
+  let timerStage = 'initial'
   let releaseAppend
   let releaseResponse
   let resolveRequest
@@ -409,6 +442,18 @@ export function createDesktopScenario({
 
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        timerStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(TIMER_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         toolRegressionStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -420,6 +465,23 @@ export function createDesktopScenario({
           ])
         )
         return true
+      }
+
+      if (requestContainsTimerPrompt(body)) {
+        if (timerStage === 'initial') {
+          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          timerStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        throw new Error(`Unexpected running-timer stage: ${timerStage}`)
       }
 
       if (requestContainsPrompt(body)) {
@@ -435,7 +497,10 @@ export function createDesktopScenario({
         response.write(sse(stream.start))
         await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
         await appendRelease
-        await writeSseEvents(response, [assistantMessage(APPENDED_TEXT)])
+        await writeSseEvents(
+          response,
+          textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
+        )
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -521,6 +586,42 @@ export function createDesktopScenario({
         false,
         'The completed response still rendered a reasoning disclosure'
       )
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const knownTimerTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
+      await control.command('fill', COMPOSER_SELECTOR, { value: TIMER_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      const timerTaskRowTestId = await waitForNewTaskRow(
+        control,
+        knownTimerTaskRows,
+        TIMER_PROMPT,
+        uiTimeoutMs
+      )
+      const processingDurationBeforeSwitch = await waitForProcessingDuration(
+        control,
+        3,
+        uiTimeoutMs
+      )
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const processingDurationAfterSwitch = await waitForProcessingDuration(control, 1, uiTimeoutMs)
+      assert.ok(
+        processingDurationAfterSwitch >= processingDurationBeforeSwitch,
+        `The running processing timer reset from ${processingDurationBeforeSwitch}s to ${processingDurationAfterSwitch}s after switching pages`
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TIMER_COMPLETION,
+        timeoutMs: 25_000,
+      })
+
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const knownTaskRows = new Set(
@@ -578,7 +679,7 @@ export function createDesktopScenario({
       )
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const streamingSnapshot = JSON.parse(
@@ -586,7 +687,15 @@ export function createDesktopScenario({
       )
       assert.ok(
         streamingSnapshot.text.includes(MARKER),
-        'The process text after the streaming tool call lost its prefix'
+        'The assistant text after the streaming tool call lost its prefix'
+      )
+      assert.ok(
+        streamingSnapshot.testIds.includes('assistant-message-content'),
+        'The phase-less streaming response was not rendered as assistant content'
+      )
+      assert.ok(
+        !streamingSnapshot.text.includes(APPEND_MARKER),
+        'The later assistant delta was visible before the runtime released it'
       )
       await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.18' })
       await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
@@ -671,6 +780,11 @@ export function createDesktopScenario({
       await capture(control, 'streaming-text-02-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
         'The streaming conversation before switching tasks',
@@ -680,6 +794,7 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
       )
+      await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
@@ -687,24 +802,49 @@ export function createDesktopScenario({
       })
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      await new Promise(resolve => setTimeout(resolve, 1_500))
-      const pinnedAfterSwitch = await getSingleElementMetrics(
+      const pinnedAfterSwitch = await waitForBottom(
         control,
-        SCROLLER_SELECTOR,
-        'The bottom-pinned streaming conversation after switching back'
+        'The bottom-pinned streaming conversation after switching back',
+        5_000
       )
       assert.ok(
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
       await capture(control, 'streaming-text-03-bottom-restored-after-task-switch.png')
+
+      for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+      await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        ASSISTANT_CONTENT_SELECTOR,
+        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
-        'The user turns were rendered with duplicate turn-navigation markers'
+        'The remounted running conversation lost or duplicated earlier user turns'
+      )
+      await control.command('hover', `${TURN_NAVIGATION_MARKER_SELECTOR}[data-turn-index="0"]`)
+      const initialTurnPreview = await control.command(
+        'getText',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"][data-turn-index="0"]`
+      )
+      assert.ok(
+        initialTurnPreview.includes(INITIAL_PROMPT),
+        'The remounted running conversation lost the previous user question'
+      )
+      assert.ok(
+        initialTurnPreview.includes('WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE'),
+        'The remounted running conversation lost the previous assistant answer'
       )
       await control.command(
         'hover',
@@ -736,7 +876,7 @@ export function createDesktopScenario({
       )
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const completedSnapshot = JSON.parse(
@@ -748,7 +888,7 @@ export function createDesktopScenario({
       )
       assert.ok(
         completedSnapshot.testIds.includes('assistant-message-content'),
-        'The completed response did not promote ambiguous text to final assistant content'
+        'The completed response was not retained as assistant content'
       )
       assert.ok(
         !completedSnapshot.testIds.includes('thinking-indicator'),

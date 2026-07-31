@@ -81,9 +81,18 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import {
+  applyRuntimeConversationGoalContinuation,
+  applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  markRuntimeConversationAssistantStarted,
+  publishRuntimeTransportReplaced,
+  runtimeConversationKey,
+  setRuntimeConversationGoal,
+  setRuntimeConversationTaskPlan,
+  settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
+import { createRuntimeConversationStreamHandlers } from './runtimePaneMessages'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -94,7 +103,6 @@ import {
   findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
-  getRuntimeTaskRouteKey,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
@@ -236,7 +244,7 @@ export function WorkbenchProvider({
     lifecycleSnapshot,
   })
   const currentContextUsage = state.currentRuntimeTask
-    ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
+    ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
 
   const currentUser = state.user ?? user
@@ -1145,7 +1153,7 @@ export function WorkbenchProvider({
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
-          [getRuntimeTaskRouteKey(address)]: contextUsage,
+          [runtimeConversationKey(address)]: contextUsage,
         }))
       }
       return transcript
@@ -1173,39 +1181,95 @@ export function WorkbenchProvider({
           const contextUsage = resolveRuntimeContextUsage(address, usage)
           setContextUsageByRuntimeTask(current => ({
             ...current,
-            [getRuntimeTaskRouteKey(address)]: contextUsage,
+            [runtimeConversationKey(address)]: contextUsage,
           }))
           handlers.onContextUsageUpdated?.(contextUsage)
-        },
-        onAssistantSettled: () => {
-          console.info('[Wework] Runtime task settlement dispatched', {
-            deviceId: address.deviceId,
-            taskId: address.taskId,
-            workspacePath: address.workspacePath ?? null,
-          })
-          lifecycleStore.turnSettled(address)
-          handlers.onAssistantSettled?.()
-        },
-        onAssistantStart: () => {
-          lifecycleStore.turnStarted(address)
-          handlers.onAssistantStart?.()
         },
       })
   )
 
-  const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
-    state.runtimeWork,
-    state.currentRuntimeTask,
-    lifecycleSnapshot
+  const applyCanonicalRuntimeAction = useStableEvent(
+    (address: RuntimeTaskAddress, action: Parameters<typeof applyRuntimeConversationAction>[1]) => {
+      applyRuntimeConversationAction(address, action)
+    }
   )
-  const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
-    .map(address => `${address.deviceId}:${address.taskId}`)
-    .join('|')
-  const getLatestBackgroundRunningTasks = useStableEvent(() =>
-    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask, lifecycleSnapshot)
+  const settleCanonicalRuntimeGuidance = useStableEvent(
+    (
+      address: RuntimeTaskAddress,
+      payload: Parameters<typeof settleRuntimeConversationGuidance>[1]
+    ) => settleRuntimeConversationGuidance(address, payload)
   )
-  const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Runtime work list refresh failed', {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        error,
+      })
+    })
+  })
+  const updateCanonicalRuntimeContextUsage = useStableEvent(
+    (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
+      const currentAddress =
+        state.currentRuntimeTask?.deviceId === address.deviceId &&
+        state.currentRuntimeTask.taskId === address.taskId
+          ? state.currentRuntimeTask
+          : address
+      const contextUsage = resolveRuntimeContextUsage(currentAddress, usage)
+      setContextUsageByRuntimeTask(current => ({
+        ...current,
+        [runtimeConversationKey(address)]: contextUsage,
+      }))
+    }
+  )
+
+  useEffect(
+    () =>
+      resolvedServices.chatStream.subscribe(
+        createRuntimeConversationStreamHandlers({
+          onMessageAction: applyCanonicalRuntimeAction,
+          onGuidanceApplied: settleCanonicalRuntimeGuidance,
+          onAssistantStart: address => {
+            markRuntimeConversationAssistantStarted(address)
+            lifecycleStore.turnStarted(address)
+          },
+          onAssistantSettled: address => {
+            settleRuntimeConversationSubagents(address)
+            lifecycleStore.turnSettled(address)
+          },
+          onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
+          onSubagentActivity: applyRuntimeConversationSubagentActivity,
+          onRuntimeGoalUpdated: (address, payload) => {
+            const goal = payload.goal ?? null
+            setRuntimeConversationGoal(address, goal)
+            lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalCleared: address => {
+            setRuntimeConversationGoal(address, null)
+            lifecycleStore.goalStatusReceived(address, null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalContinuation: (address, payload) => {
+            applyRuntimeConversationGoalContinuation(address, payload)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
+          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
+          onRefreshWorkLists: refreshRuntimeWorkLists,
+        })
+      ),
+    [
+      applyCanonicalRuntimeAction,
+      lifecycleStore,
+      refreshRuntimeWorkLists,
+      resolvedServices.chatStream,
+      settleCanonicalRuntimeGuidance,
+      updateCanonicalRuntimeContextUsage,
+    ]
+  )
+
   useEffect(() => {
     const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
 
@@ -1213,33 +1277,6 @@ export function WorkbenchProvider({
       void listener?.then(unlisten => unlisten())
     }
   }, [stableRefreshWorkLists])
-
-  useEffect(() => {
-    const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
-      subscribeBackgroundRuntimeTaskStream(address, {
-        onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onGuidanceApplied: payload => settleRuntimeConversationGuidance(address, payload),
-        onAssistantStart: () => lifecycleStore.turnStarted(address),
-        onAssistantSettled: () => lifecycleStore.turnSettled(address),
-        onRefreshWorkLists: () => {
-          void stableRefreshWorkLists().catch(error => {
-            console.warn('[Wework] Background runtime work list refresh failed', {
-              deviceId: address.deviceId,
-              taskId: address.taskId,
-              error,
-            })
-          })
-        },
-      })
-    )
-    return () => unsubscribers.forEach(unsubscribe => unsubscribe())
-  }, [
-    backgroundRunningTaskRoutes,
-    getLatestBackgroundRunningTasks,
-    lifecycleStore,
-    stableRefreshWorkLists,
-    subscribeBackgroundRuntimeTaskStream,
-  ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
@@ -1843,39 +1880,4 @@ function getProjectChatScopeKey({
     return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
-}
-
-function getBackgroundRunningRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  currentRuntimeTask: RuntimeTaskAddress | null,
-  lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>
-): RuntimeTaskAddress[] {
-  if (!runtimeWork) return []
-
-  const tasks = new Map<string, RuntimeTaskAddress>()
-  const workspaces = [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-  for (const workspace of workspaces) {
-    for (const task of workspace.tasks) {
-      const key = `${workspace.deviceId}\0${task.taskId}`
-      if (!lifecycleSnapshot.runningTaskKeys.has(key)) continue
-      if (
-        currentRuntimeTask?.deviceId === workspace.deviceId &&
-        currentRuntimeTask.taskId === task.taskId
-      ) {
-        continue
-      }
-      const address = {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        threadId: task.threadId,
-        workspacePath: workspace.workspacePath,
-        runtimeHandle: task.runtimeHandle,
-      }
-      tasks.set(`${address.deviceId}:${address.taskId}`, address)
-    }
-  }
-  return [...tasks.values()]
 }
