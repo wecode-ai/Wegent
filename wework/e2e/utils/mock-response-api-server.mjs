@@ -98,19 +98,21 @@ function responseBody(request, content) {
   }
 }
 
-function capabilityProbeName(request) {
+function capabilityProbeTool(request) {
   const tools = Array.isArray(request?.tools) ? request.tools : []
-  return tools
-    .map(tool => tool?.name || tool?.function?.name)
-    .find(name => name === 'wework_capability_probe' || name === 'apply_patch')
+  return tools.find(tool => {
+    const name = tool?.name || tool?.function?.name
+    return name === 'wework_capability_probe' || name === 'apply_patch'
+  })
+}
+
+function capabilityProbeName(request) {
+  const tool = capabilityProbeTool(request)
+  return tool?.name || tool?.function?.name
 }
 
 function capabilityRequestError(req, request, apiFormat) {
-  const tools = Array.isArray(request?.tools) ? request.tools : []
-  const tool = tools.find(candidate => {
-    const name = candidate?.name || candidate?.function?.name
-    return name === 'wework_capability_probe' || name === 'apply_patch'
-  })
+  const tool = capabilityProbeTool(request)
   if (!tool) return 'Missing capability probe tool'
   if (!String(req.headers.authorization || '').startsWith('Bearer ')) {
     return 'Missing bearer authorization'
@@ -175,7 +177,7 @@ function capabilityRequestError(req, request, apiFormat) {
 
 function responsesCapabilityBody(request) {
   const createdAt = Math.floor(Date.now() / 1000)
-  const custom = request?.tools?.[0]?.type === 'custom'
+  const custom = capabilityProbeTool(request)?.type === 'custom'
   return {
     id: `resp_probe_${createdAt}`,
     object: 'response',

@@ -128,15 +128,18 @@ for (const protocol of [
 
     expect(result).toEqual({ status: 200, toolCalling: true })
     const body = request.postDataJSON()
+    const probeTool = body.tools.find(
+      (tool: { name?: string; function?: { name?: string } }) =>
+        (tool.name ?? tool.function?.name) === protocol.expectedToolName
+    )
     expect(body.model).toBe(protocol.modelId)
     expect(request.postData()).toContain(protocol.expectedToolName)
     expect(body.tool_choice).toBeUndefined()
+    expect(probeTool).toBeTruthy()
     if (protocol.expectedToolType) {
-      expect(body.tools[0].type).toBe(protocol.expectedToolType)
-      expect(body.tools[0].name ?? body.tools[0].function?.name).toBe(protocol.expectedToolName)
+      expect(probeTool.type).toBe(protocol.expectedToolType)
     } else {
-      expect(body.tools[0].name).toBe(protocol.expectedToolName)
-      expect(body.tools[0].input_schema).toBeTruthy()
+      expect(probeTool.input_schema).toBeTruthy()
     }
   })
 }

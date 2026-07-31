@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from 'vitest'
 import { testLocalModelConnection } from './localModelConnectionTest'
 
+const APPLY_PATCH_PROBE =
+  '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n'
+
 describe('localModelConnectionTest', () => {
   test('rejects a text-only response because it does not prove agent tool capability', async () => {
     const fetcher = vi
@@ -26,7 +29,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
         }),
         {
           status: 200,
@@ -61,6 +64,27 @@ describe('localModelConnectionTest', () => {
       tools: [{ type: 'custom', name: 'apply_patch' }],
     })
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
+  })
+
+  test('rejects an apply_patch response with a mismatched probe payload', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'resp_1',
+          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: 'PING' }],
+        })
+      )
+    )
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://models.local/v1',
+          modelId: 'gpt-5',
+        },
+        { fetcher }
+      )
+    ).rejects.toThrow('did not return the required capability probe tool call')
   })
 
   test('uses the provided API key and surfaces HTTP errors', async () => {
@@ -117,7 +141,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
         })
       )
     )
@@ -141,7 +165,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch', input: APPLY_PATCH_PROBE }],
         })
       )
     )

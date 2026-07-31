@@ -165,7 +165,8 @@ function hasProbeToolCall(
     const candidate = record(item)
     return (
       (candidate?.type === 'custom_tool_call' || candidate?.type === 'function_call') &&
-      candidate.name === expectedToolName
+      candidate.name === expectedToolName &&
+      (toolProfile !== 'custom' || candidate.input === APPLY_PATCH_PROBE)
     )
   })
 }
