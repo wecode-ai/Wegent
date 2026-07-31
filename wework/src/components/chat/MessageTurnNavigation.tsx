@@ -771,13 +771,7 @@ function findActiveMarkerFromMountedMessages(
 ): MessageTurnMarker | null {
   if (!anchorByMessageId || anchorByMessageId.size === 0) return null
 
-  const messageIndexById = new Map(
-    messages.flatMap(message =>
-      Number.isFinite(message.runtimeMessageIndex)
-        ? [[message.id, message.runtimeMessageIndex as number] as const]
-        : []
-    )
-  )
+  const messagePositionById = buildMessageTimelinePositions(messages)
   const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
   let currentMessageIndex: number | null = null
   let currentMessageTop = Number.NEGATIVE_INFINITY
@@ -785,17 +779,17 @@ function findActiveMarkerFromMountedMessages(
   let firstMountedMessageTop = Number.POSITIVE_INFINITY
 
   anchorByMessageId.forEach((anchor, messageId) => {
-    const messageIndex = messageIndexById.get(messageId)
-    if (messageIndex === undefined) return
+    const messagePosition = messagePositionById.get(messageId)
+    if (messagePosition === undefined) return
 
     const targetTop = getMessageAnchorTargetTop(scroller, anchor)
     if (targetTop < firstMountedMessageTop) {
       firstMountedMessageTop = targetTop
-      firstMountedMessageIndex = messageIndex
+      firstMountedMessageIndex = messagePosition
     }
     if (targetTop <= currentPosition && targetTop > currentMessageTop) {
       currentMessageTop = targetTop
-      currentMessageIndex = messageIndex
+      currentMessageIndex = messagePosition
     }
   })
 
@@ -808,6 +802,29 @@ function findActiveMarkerFromMountedMessages(
     activeMarker = marker
   }
   return activeMarker
+}
+
+function buildMessageTimelinePositions(messages: WorkbenchMessage[]): Map<string, number> {
+  const positions = new Map<string, number>()
+  let nextMessageIndex: number | null = null
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (Number.isFinite(message.runtimeMessageIndex)) {
+      nextMessageIndex = message.runtimeMessageIndex as number
+      positions.set(message.id, nextMessageIndex)
+      continue
+    }
+
+    // A persisted page can start with an assistant message whose preceding user
+    // message belongs to the previous page. Keep it in the absolute transcript
+    // coordinate system by placing it immediately before the next indexed row.
+    if (nextMessageIndex !== null) {
+      positions.set(message.id, nextMessageIndex - 0.5)
+    }
+  }
+
+  return positions
 }
 
 function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {

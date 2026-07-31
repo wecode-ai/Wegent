@@ -1381,6 +1381,91 @@ describe('ScrollableMessageArea', () => {
     expect(markers[1]).toHaveAttribute('data-active', 'true')
   })
 
+  test('tracks a page-leading assistant without a runtime message index', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          <div data-message-id="boundary-assistant">Boundary response</div>
+        </div>
+        <MessageTurnNavigation
+          messages={[
+            {
+              id: 'boundary-assistant',
+              role: 'assistant',
+              content: 'Boundary response',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:11.000Z',
+            },
+            {
+              id: 'next-user',
+              role: 'user',
+              content: 'Next request',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:12.000Z',
+              runtimeMessageIndex: 12,
+            },
+            {
+              id: 'next-assistant',
+              role: 'assistant',
+              content: 'Next response',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:13.000Z',
+              runtimeMessageIndex: 13,
+            },
+          ]}
+          turnNavigation={[
+            {
+              id: 'previous-user',
+              turnIndex: 4,
+              messageIndex: 8,
+              promptPreview: 'Previous request',
+              responsePreview: 'Previous response',
+            },
+            {
+              id: 'boundary-user',
+              turnIndex: 5,
+              messageIndex: 10,
+              promptPreview: 'Boundary request',
+              responsePreview: 'Boundary response',
+            },
+            {
+              id: 'next-user',
+              turnIndex: 6,
+              messageIndex: 12,
+              promptPreview: 'Next request',
+              responsePreview: 'Next response',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 4_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_800,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Boundary response'), 40, 1_200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
   test('clicks a message navigation marker to jump to that user message', () => {
     render(
       <ScrollableMessageArea
