@@ -1295,7 +1295,17 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
 
 async function verifyVirtualizedTurnNavigationActiveMarker(control) {
   const turnNumber = TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN
-  const turnIndex = turnNumber - 1
+  const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+  const previewSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"]`
+  await control.command('waitFor', previewSelector, {
+    text: promptText,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const turnIndex = await control.command('getAttribute', previewSelector, {
+    text: promptText,
+    value: 'data-turn-index',
+  })
+  assert.match(turnIndex, /^\d+$/, `Unable to identify the navigation marker for "${promptText}"`)
   const targetResponseText = `Virtualized navigation response ${turnNumber}.1`
   await control.command(
     'scrollToRatioAsUser',
@@ -1320,7 +1330,6 @@ async function verifyVirtualizedTurnNavigationActiveMarker(control) {
   assert.ok(turnMatch, `Unable to identify the virtualized navigation turn from "${assistantText}"`)
 
   assert.equal(Number(turnMatch[1]), turnNumber, 'Scrolled to the wrong navigation turn')
-  const promptText = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
   await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
 
   const mountedUserMessages = await control.command(
@@ -4359,8 +4368,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
-  await verifyVirtualizedTurnNavigationActiveMarker(control)
   await control.command('click', '[data-testid="message-turn-navigation-marker"]')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
   const navigationTopMetrics = await waitForTopMetrics(
@@ -4380,7 +4387,6 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('09-first-virtualized-turn-navigation-target.png')
   )
-
   setPhase('archived-task-cache-eviction')
   const cacheBeforeArchive = JSON.parse(
     await control.command('performanceSnapshot', 'body')
@@ -4426,6 +4432,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
+  await reopenCurrentTurnNavigationTask(control, composerSelector, restartDesktopApp)
+  await verifyVirtualizedTurnNavigationActiveMarker(control)
   return taskRowTestId
 }
 

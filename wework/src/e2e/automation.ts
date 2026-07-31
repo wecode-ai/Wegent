@@ -805,6 +805,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getAttribute': {
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.text
+        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : elements[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const attribute = command.value?.trim()
+      if (!attribute) throw new Error('getAttribute requires an attribute name')
+      return element.getAttribute(attribute) ?? ''
+    }
     case 'getStyle': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
