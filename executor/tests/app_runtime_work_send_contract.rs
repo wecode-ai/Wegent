@@ -3181,8 +3181,9 @@ fn write_codex_state_db_thread(sqlite_home: &Path) {
 }
 
 fn read_json_lines(path: &Path) -> Vec<Value> {
-    fs::read_to_string(path)
-        .unwrap_or_default()
+    let contents = fs::read_to_string(path).unwrap_or_default();
+    let complete_length = contents.rfind('\n').map_or(0, |index| index + 1);
+    contents[..complete_length]
         .lines()
         .filter(|line| line.trim_start().starts_with('{'))
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
