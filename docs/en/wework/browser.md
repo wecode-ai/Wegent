@@ -20,6 +20,18 @@ On macOS, Wework continues loading an `https` page when its certificate is expir
 
 Annotation mode lets you select a visible page element and attach a comment to the current message. Use it to identify layout, styling, or interaction issues.
 
-When browser tools are enabled, AI can inspect and operate pages. Confirm the target and impact before account, publishing, payment, or deletion actions.
+When browser tools are enabled, AI can open, inspect, and operate pages in the same right-side embedded browser. It does not open a separate external Chrome window.
+
+Common AI browser actions include:
+
+- Opening or navigating to pages.
+- Inspecting page structure to identify inputs, buttons, links, selects, checkboxes, and visible text.
+- Clicking, typing, filling forms, pressing keys, hovering, scrolling, selecting options, and checking boxes.
+- Waiting for page loads, visible text, or page stability.
+- Capturing the current browser page for diagnostics.
+
+AI uses structured `inspect` results to understand the page. `screenshot` still means a real image capture. Inspect results include element role, name, text, value, bounds, visibility, and actionability so the model can target elements more reliably.
+
+The right panel shows the Agent browser-control state while AI operates the page. You can pause AI control and resume it after review. Confirm the target and impact before account, publishing, payment, deletion, or other high-risk actions.
 
 Use **Settings → Browser** to choose a download folder or clear browser data. Clearing data signs you out of websites.

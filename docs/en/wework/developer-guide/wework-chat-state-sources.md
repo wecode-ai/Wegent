@@ -205,6 +205,14 @@ A reference is serialized in the draft as `[$title](wework-conversation://<encod
 
 This feature is a user-authorized pre-send snapshot injection, not a conversation MCP. The model cannot independently list, search, or read conversations that the user did not reference; menu search uses only metadata already loaded in `runtimeWork`. Changes to this path must keep the reference parsing and context construction unit tests, composer/message rendering tests, and the `conversation-mention.scenario.mjs` desktop E2E scenario aligned.
 
+## Conversation Switching and Transcript Restoration
+
+`loadedRuntimeTranscriptKeyRef` only proves that a task transcript finished loading at some point. It does not prove that the message area is still displaying that task. When the user rapidly switches from task A to a still-loading task B and back to A, B's cached messages may already have replaced the message area while A remains the last successfully loaded key.
+
+The pane may therefore skip restoration only when both the loaded key and the displayed transcript identity match the target task. When the identities differ, it must reapply the target task's cached messages and start a transcript load. Effect cleanup must continue isolating late responses from other tasks so they cannot overwrite the current task.
+
+Cover this path with both a component race test and a real desktop scenario: keep one task running, switch rapidly between it and a completed task, then verify that every historical turn in the completed task remains visible after switching back.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:

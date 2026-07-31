@@ -538,7 +538,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     const { key: loadKey, address } = runtimeTaskLoadTarget
-    if (loadedRuntimeTranscriptKeyRef.current === loadKey) {
+    if (
+      loadedRuntimeTranscriptKeyRef.current === loadKey &&
+      displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
+    ) {
       return
     }
 
