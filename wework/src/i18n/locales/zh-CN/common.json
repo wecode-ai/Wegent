@@ -769,7 +769,7 @@
     "reset_default_model_settings": "重置为默认设置",
     "speed_standard": "标准",
     "speed_standard_description": "默认速度",
-    "speed_fast": "⚡ 快速",
+    "speed_fast": "快速",
     "speed_fast_description": "1.5 倍速度，消耗增加",
     "default_permission": "默认权限",
     "auto_review": "自动审查",
