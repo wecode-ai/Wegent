@@ -769,7 +769,16 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
+function wecodeExecutorForRuntime(runtime: string): string {
+  const normalized = runtime
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+  return normalized === 'claude' || normalized === 'claudecode' ? 'claudecode' : normalized
+}
+
 function localRuntimeModelConfig(
+  runtime: string,
   modelName?: string,
   modelType?: string | null,
   modelOptions?: Record<string, string>,
@@ -854,6 +863,8 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
         'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
+        'X-Wegent-Upstream-Header-Wecode-Executor': wecodeExecutorForRuntime(runtime),
+        'X-Wegent-Upstream-Header-Wecode-Source': 'wegent-local',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }
@@ -1256,6 +1267,7 @@ function buildLocalRuntimeExecutionRequest(
   const taskId = input.taskId || derivedTaskId
   const modelConfig = applyRuntimeModelOptions(
     localRuntimeModelConfig(
+      input.runtime,
       input.modelId,
       input.modelType,
       input.modelOptions,

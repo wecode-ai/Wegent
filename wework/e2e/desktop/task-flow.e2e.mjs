@@ -6860,7 +6860,16 @@ class DesktopE2EServer {
   async handleModelResponse(request, response, protocol) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
-    const modelRequest = { authorization, body, scenario: this.scenario }
+    const modelRequest = {
+      authorization,
+      body,
+      scenario: this.scenario,
+      trackingHeaders: {
+        action: request.headers['wecode-action'] ?? null,
+        executor: request.headers['wecode-executor'] ?? null,
+        source: request.headers['wecode-source'] ?? null,
+      },
+    }
     this.modelRequests.push(modelRequest)
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` || request.headers['x-api-key'] === MODEL_API_KEY
@@ -10820,10 +10829,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       phase = 'initial-task'
       await sendPrompt(control, composerSelector, TASK_PROMPT)
-      await withTimeout(
+      const initialModelRequest = await withTimeout(
         control.awaitScenarioRequest('initial'),
         DEFAULT_STEP_TIMEOUT_MS,
         'The model service did not receive the initial task request'
+      )
+      assert.deepEqual(
+        initialModelRequest.trackingHeaders,
+        {
+          action: 'wework',
+          executor: 'codex',
+          source: 'wegent-local',
+        },
+        'The local Wework model request did not preserve its tracking headers'
       )
       const runningTaskSnapshot = await waitForSnapshot(
         control,
