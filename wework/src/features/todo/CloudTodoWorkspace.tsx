@@ -35,11 +35,12 @@ import type {
 } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
-import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
+import {
+  DesktopSidebarHeader,
+  DesktopSidebarNavItem,
+} from '@/components/layout/DesktopSidebarPrimitives'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -47,9 +48,6 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { getActiveKeybinding, OPEN_SEARCH_COMMAND } from '@/lib/keybindings'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
-import { getPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { AITableView } from '@/features/todo/AITableView'
 import type { ProjectWithTasks, User as UserProfile } from '@/types/api'
@@ -657,7 +655,6 @@ function ProjectDialog({
 }
 
 export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoWorkspaceProps) {
-  const platform = getPlatform()
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -1439,95 +1436,61 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   return (
     <div
       className={cn(
-        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary',
-        platform === 'win' && 'flex-col'
+        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
       )}
       data-testid="cloud-todo-workspace"
     >
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="todo"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <aside
           className={cn(
-            'relative shrink-0 overflow-hidden border-r border-border bg-background transition-[width] duration-200',
-            sidebarCollapsed ? 'w-0 border-r-0' : 'w-[248px]'
+            'relative shrink-0 overflow-hidden border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-200',
+            sidebarCollapsed ? 'w-0 border-r-0' : 'w-[240px]'
           )}
         >
-          <div className="flex h-full w-[248px] flex-col">
-            {platform !== 'win' && (
-              <>
-                <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-                <div
-                  data-testid="cloud-todo-sidebar-chrome-controls"
-                  className="relative z-10 ml-[92px] flex h-[38px] shrink-0 items-center gap-1"
-                >
+          <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
+            <DesktopSidebarHeader
+              actionsTestId="cloud-todo-sidebar-chrome-controls"
+              actions={
+                <>
                   <DesktopWindowControls
                     sidebarCollapsed={false}
                     onToggleSidebar={() => setSidebarCollapsed(true)}
-                    className="gap-1"
+                    className="gap-0"
                     toggleTestId="cloud-todo-collapse-sidebar"
                   />
-                  <DesktopAppSwitcher
-                    activeApp="todo"
-                    onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-                    testIds={{
-                      wework: 'cloud-todo-app-wework',
-                      todo: 'cloud-todo-app-current',
-                      apps: 'cloud-todo-app-apps',
-                      wegent: 'cloud-todo-app-wegent',
-                    }}
-                  />
-                </div>
-              </>
-            )}
-            <nav className="space-y-1 px-2">
-              <button
-                type="button"
+                  <button
+                    type="button"
+                    data-testid="cloud-search-toggle"
+                    onClick={() => setGlobalSearchOpen(true)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                    title={t('workbench.search')}
+                    aria-label={t('workbench.search')}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                </>
+              }
+            />
+            <nav className="space-y-0.5">
+              <DesktopSidebarNavItem
+                icon={Cloud}
+                label="项目空间"
+                selected={rootView === 'projects'}
                 onClick={() => {
                   setRootView('projects')
                   selectProject(null)
                   setSelectedItem(null)
                 }}
-                className={cn(
-                  'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                  rootView === 'projects'
-                    ? 'bg-muted font-medium text-text-primary'
-                    : 'text-text-secondary hover:bg-muted/60'
-                )}
-              >
-                <Cloud className="h-4 w-4" /> 项目空间
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-my-work"
+              />
+              <DesktopSidebarNavItem
+                icon={CircleUserRound}
+                label="我的工作"
+                testId="cloud-my-work"
+                selected={rootView === 'my-work'}
                 onClick={() => setRootView('my-work')}
-                className={cn(
-                  'flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm',
-                  rootView === 'my-work'
-                    ? 'bg-muted font-medium text-text-primary'
-                    : 'text-text-secondary hover:bg-muted/60'
-                )}
-              >
-                <CircleUserRound className="h-4 w-4" /> 我的工作
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-search-toggle"
-                onClick={() => setGlobalSearchOpen(true)}
-                className="flex h-8 w-full items-center gap-3 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted/60"
-              >
-                <Search className="h-4 w-4" /> 搜索
-                <KeyboardShortcut
-                  value={getActiveKeybinding(OPEN_SEARCH_COMMAND) ?? 'Command+K'}
-                  className="ml-auto rounded-md border border-border bg-background px-1.5 text-xs leading-5 text-text-muted"
-                />
-              </button>
+              />
             </nav>
-            <div className="mt-6 flex items-center px-5 text-xs font-medium text-text-muted">
+            <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
               项目空间
               <button
                 type="button"
@@ -1538,7 +1501,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                 <Plus className="mx-auto h-3.5 w-3.5" />
               </button>
             </div>
-            <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2">
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto">
               {projects.map(project => {
                 const ProjectLocationIcon = project.location === 'local' ? HardDrive : Cloud
                 return (
@@ -1546,10 +1509,10 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                     key={project.id}
                     data-cloud-project-menu-root
                     className={cn(
-                      'group relative flex h-8 w-full items-center rounded-lg px-1 text-sm',
+                      'group relative flex h-[30px] w-full items-center rounded-[10px] px-0 text-base leading-5',
                       rootView === 'projects' && selectedProjectId === project.id
-                        ? 'bg-muted font-medium text-text-primary'
-                        : 'text-text-secondary hover:bg-muted/60'
+                        ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                        : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
                     )}
                   >
                     <button
@@ -1561,13 +1524,13 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                         setProjectView('board')
                         setSelectedItem(null)
                       }}
-                      className="flex h-full min-w-0 flex-1 items-center gap-3 rounded-md px-2 text-sm"
+                      className="flex h-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2.5 text-base"
                     >
-                      <ProjectLocationIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                      <ProjectLocationIcon className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]" />
                       <span className="min-w-0 flex-1 truncate text-left">{project.name}</span>
                     </button>
                     {projectCounts[project.id] ? (
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-text-muted group-hover:hidden">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover:hidden">
                         {projectCounts[project.id]}
                       </span>
                     ) : null}
@@ -1577,7 +1540,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                       onClick={() => {
                         setProjectMenuId(current => (current === project.id ? null : project.id))
                       }}
-                      className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary focus:flex group-hover:flex"
+                      className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] transition hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:flex group-hover:flex"
                       aria-expanded={projectMenuId === project.id}
                       aria-label={t('todo.project_actions', '项目操作')}
                     >
@@ -1665,23 +1628,13 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
           {sidebarCollapsed && (
             <div
               data-testid="cloud-todo-collapsed-chrome-controls"
-              className="absolute left-[92px] top-0 z-20 flex h-[38px] items-center gap-1"
+              className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
             >
               <DesktopWindowControls
                 sidebarCollapsed
                 onToggleSidebar={() => setSidebarCollapsed(false)}
                 className="gap-1"
                 toggleTestId="cloud-todo-expand-sidebar"
-              />
-              <DesktopAppSwitcher
-                activeApp="todo"
-                onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-                testIds={{
-                  wework: 'cloud-todo-collapsed-app-wework',
-                  todo: 'cloud-todo-collapsed-app-current',
-                  apps: 'cloud-todo-collapsed-app-apps',
-                  wegent: 'cloud-todo-collapsed-app-wegent',
-                }}
               />
             </div>
           )}

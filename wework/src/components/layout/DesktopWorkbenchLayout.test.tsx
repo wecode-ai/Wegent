@@ -2439,10 +2439,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-8', 'w-8', 'rounded-lg')
+    expect(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    ).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
-      screen.getByTestId('desktop-window-controls')
+      screen.getAllByTestId('desktop-window-controls')[1]
     )
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
@@ -2455,7 +2457,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     const sidebar = screen.getByTestId('desktop-sidebar')
     expect(sidebar).toHaveStyle({ width: '240px' })
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
@@ -2465,9 +2469,10 @@ describe('DesktopWorkbenchLayout', () => {
       'will-change-[width]'
     )
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
-      screen.getByTestId('desktop-window-controls')
-    )
+    const workbenchControls = within(
+      screen.getByTestId('workbench-topbar-left-actions')
+    ).getByTestId('desktop-window-controls')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(workbenchControls)
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
@@ -2490,7 +2495,9 @@ describe('DesktopWorkbenchLayout', () => {
   test('slides out a sidebar preview from the left edge without resizing the workspace', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     const main = getDesktopWorkbenchMainElement()
     const preview = screen.getByTestId('desktop-sidebar-preview')
@@ -2528,16 +2535,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar')).toContainElement(
       screen.getByTestId('collapse-sidebar-button')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+    expect(screen.getByTestId('desktop-sidebar')).toContainElement(
       screen.getByTestId('collapse-sidebar-button')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toHaveClass('left-[92px]')
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-wework')
-    )
-    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.queryByTestId('desktop-sidebar-chrome-controls')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
@@ -2602,16 +2604,14 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workbench-pane-task-title')
     )
     expect(screen.getByTestId('workbench-main-header')).toHaveClass('h-[38px]', 'border-b')
-    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-[92px]')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-2')
     expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
       screen.getByTestId('expand-sidebar-button')
     )
     const collapsedHeaderControls = within(
       screen.getByTestId('workbench-main-header-left-controls')
     )
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
-    expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(collapsedHeaderControls.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',
@@ -2649,7 +2649,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
   })
 
-  test('renders the Windows titlebar above the sidebar and workbench content', () => {
+  test('leaves Windows window chrome to the application titlebar', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2662,27 +2662,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('workbench-windows-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-windows-titlebar')).not.toHaveClass(
-      'border-b',
-      'border-border/40'
-    )
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveClass(
-      'bg-[rgb(var(--color-sidebar-unfocused))]'
-    )
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveStyle({
-      left: '240px',
-      right: '138px',
-    })
+    expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
-    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
-    expect(screen.queryByTestId('workbench-main-header')).not.toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('rounded-tl-xl')
+    expect(screen.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-main-header')).toBeInTheDocument()
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-tl-xl')
   })
 
-  test('places panel toggles in the Windows titlebar actions, next to the window controls', async () => {
+  test('renders Windows workbench actions in the shared workbench header', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2695,14 +2683,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
-    const panelToggles = screen.getByTestId('workbench-panel-toggles')
-    expect(panelToggles).toContainElement(screen.getByTestId('toggle-right-workspace-panel-button'))
-    expect(panelToggles).toContainElement(
-      screen.getByTestId('toggle-bottom-workspace-panel-button')
-    )
-    expect(screen.queryByTestId('workbench-pinned-panel-toggles')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('workbench-main-header')).toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -4310,7 +4292,9 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
 
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
     expect(panelShell).toHaveStyle({ width: '100%' })

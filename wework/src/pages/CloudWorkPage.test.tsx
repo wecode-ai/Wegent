@@ -128,10 +128,6 @@ vi.mock('@/components/layout/useDesktopSidebarCollapsed', () => ({
   }),
 }))
 
-vi.mock('@/components/layout/DesktopWindowsTitlebar', () => ({
-  DesktopWindowsTitlebar: () => null,
-}))
-
 vi.mock('@/components/layout/DesktopSidebar', () => ({
   DesktopSidebar: () => <aside data-testid="desktop-sidebar" />,
 }))

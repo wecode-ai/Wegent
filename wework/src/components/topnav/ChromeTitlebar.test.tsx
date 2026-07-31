@@ -90,12 +90,13 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'pr-3')
   })
 
-  test('renders app tabs as icon-only controls with hover labels', () => {
+  test('renders app views as always-visible top navigation tabs', () => {
     render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
-    expect(weworkTab).toHaveAttribute('aria-haspopup', 'menu')
+    expect(weworkTab).toHaveAttribute('aria-current', 'page')
+    expect(weworkTab).not.toHaveAttribute('aria-haspopup')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
   })
@@ -210,6 +211,7 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-window-controls')).not.toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
     disableTauri()

@@ -54,6 +54,8 @@
   --diffs-font-size: 12px;
   --appearance-contrast: 50;
   --radius: 0.5rem;
+  --app-view-inline-inset: 0.5rem;
+  --app-view-block-end-inset: 0.5rem;
   --z-chrome: 20;
   --z-titlebar: 15;
   --z-popover: 40;
@@ -61,6 +63,11 @@
   --z-critical: 100;
   --z-system: 1000;
   --z-system-popover: 1010;
+}
+
+.app-view-surface {
+  height: calc(100% - var(--app-view-block-end-inset));
+  margin: 0 var(--app-view-inline-inset) var(--app-view-block-end-inset);
 }
 
 .task-description-editor .tiptap p.is-editor-empty:first-child::before {
@@ -203,6 +210,12 @@ body {
 html[data-system-drag-panel='true'],
 html[data-system-drag-panel='true'] body,
 html[data-system-drag-panel='true'] #root {
+  background: transparent;
+}
+
+html[data-desktop-vibrancy='true'],
+html[data-desktop-vibrancy='true'] body,
+html[data-desktop-vibrancy='true'] #root {
   background: transparent;
 }
 
