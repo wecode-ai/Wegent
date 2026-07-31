@@ -3,7 +3,12 @@ use std::collections::{HashSet, VecDeque};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 const MAX_SETTLED_TASK_IDS: usize = 256;
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Default)]
 pub(crate) struct SystemSleepState {
@@ -240,7 +245,8 @@ fn spawn_inhibitor_command(mut command: Command) -> Result<Child, String> {
 #[cfg(target_os = "windows")]
 impl Drop for SleepInhibitor {
     fn drop(&mut self) {
-        let current_thread_id = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        let current_thread_id =
+            unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
         if current_thread_id != self.thread_id {
             log::warn!(
                 "Sleep inhibitor dropped on a different OS thread than it was acquired on; \

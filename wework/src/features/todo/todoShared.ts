@@ -8,12 +8,21 @@ export const columns: Array<{ status: CloudLoopItem['status']; label: string }> 
   { status: 'completed', label: '已完成' },
 ]
 
-export const columnDotClasses: Record<CloudLoopItem['status'], string> = {
+export const columnDotClasses: Record<string, string> = {
   inbox: 'bg-zinc-400',
   pending: 'bg-indigo-500',
   in_progress: 'bg-amber-500',
   in_review: 'bg-violet-500',
   completed: 'bg-emerald-500',
+}
+
+export const boardStatusColorClasses: Record<string, string> = {
+  gray: 'bg-zinc-400',
+  blue: 'bg-blue-500',
+  orange: 'bg-amber-500',
+  purple: 'bg-violet-500',
+  green: 'bg-emerald-500',
+  red: 'bg-red-500',
 }
 
 export const memberAvatarClasses = [

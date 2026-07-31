@@ -57,6 +57,10 @@ impl TaskRuntime {
             .map(mask_project)
     }
 
+    pub fn archive_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {
+        self.local_store.archive_project(project_id, version)
+    }
+
     pub fn configure_external_project(
         &self,
         project: ProjectDescriptor,
@@ -215,10 +219,11 @@ impl TaskRuntime {
         query: Option<&str>,
         limit: i64,
         cursor: Option<&str>,
+        view_id: Option<&str>,
     ) -> Result<serde_json::Value, TaskRuntimeError> {
         let project = self.aitable_project(project_id)?;
         self.aitable_provider
-            .list_records(&project, query, limit, cursor)
+            .list_records(&project, query, limit, cursor, view_id)
             .await
     }
 
@@ -295,6 +300,18 @@ impl TaskRuntime {
     ) -> Result<(), TaskRuntimeError> {
         let project = self.aitable_project(project_id)?;
         self.aitable_provider.delete_field(&project, field_id).await
+    }
+
+    pub async fn aitable_create_view(
+        &self,
+        project_id: &str,
+        name: &str,
+        view_type: &str,
+    ) -> Result<serde_json::Value, TaskRuntimeError> {
+        let project = self.aitable_project(project_id)?;
+        self.aitable_provider
+            .create_view(&project, name, view_type)
+            .await
     }
 
     fn aitable_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
@@ -441,6 +458,20 @@ impl TaskRuntime {
                     .update_board(&project, task_id, input)
                     .await
             }
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn archive_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.archive_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),

@@ -11,6 +11,7 @@
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tokio::process::Command;
 
 use super::{LoopItem, TaskProviderKind, TaskRuntimeError};
@@ -31,6 +32,13 @@ struct AITableConfig {
     status_mapping: Map<String, Value>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ViewQueryConfig {
+    filters: Option<String>,
+    sort: Option<String>,
+    field_ids: Option<String>,
+}
+
 impl AITableProvider {
     pub(crate) fn new(database_path: PathBuf) -> Result<Self, TaskRuntimeError> {
         let executor_home = database_path.parent().unwrap_or_else(|| Path::new("."));
@@ -46,8 +54,22 @@ impl AITableProvider {
     }
 
     pub(crate) async fn auth_login(&self) -> Result<Value, TaskRuntimeError> {
-        self.run(&["auth", "login"]).await?;
-        self.auth_status().await
+        let mut child = self
+            .command(&["auth", "login", "--force"])?
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                TaskRuntimeError::ProviderRequest(format!(
+                    "DWS login is unavailable at {}: {error}",
+                    self.dws_binary.display()
+                ))
+            })?;
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        Ok(json!({"started": true}))
     }
 
     pub(crate) async fn auth_logout(&self) -> Result<(), TaskRuntimeError> {
@@ -82,6 +104,17 @@ impl AITableProvider {
                 &config.table_id,
             ])
             .await?;
+        let views = self
+            .run(&[
+                "aitable",
+                "view",
+                "get",
+                "--base-id",
+                &config.base_id,
+                "--table-id",
+                &config.table_id,
+            ])
+            .await?;
         let tables = list_from(&table, &["tables", "sheets", "items", "data"]);
         let active_table = tables
             .iter()
@@ -102,7 +135,38 @@ impl AITableProvider {
                 .iter()
                 .map(normalize_field)
                 .collect::<Vec<_>>(),
+            "views": list_from(&views, &["views", "items", "data", "results"]),
         }))
+    }
+
+    pub(crate) async fn create_view(
+        &self,
+        project: &LoopItem,
+        name: &str,
+        view_type: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        if name.trim().is_empty() {
+            return Err(invalid("view name must not be empty"));
+        }
+        if !matches!(view_type, "grid" | "kanban") {
+            return Err(invalid("view type must be grid or kanban"));
+        }
+        let config = self.config(project)?;
+        self.run(&[
+            "aitable",
+            "view",
+            "create",
+            "--base-id",
+            &config.base_id,
+            "--table-id",
+            &config.table_id,
+            "--name",
+            name,
+            "--view-type",
+            view_type,
+        ])
+        .await
+        .map(unwrap)
     }
 
     pub(crate) async fn list_records(
@@ -111,6 +175,7 @@ impl AITableProvider {
         query: Option<&str>,
         limit: i64,
         cursor: Option<&str>,
+        view_id: Option<&str>,
     ) -> Result<Value, TaskRuntimeError> {
         let config = self.config(project)?;
         let page_limit = limit.clamp(1, 100) as usize;
@@ -131,6 +196,38 @@ impl AITableProvider {
         }
         if let Some(cursor) = cursor.filter(|value| !value.trim().is_empty()) {
             args.extend(["--cursor", cursor]);
+        }
+        let view = match view_id.filter(|value| !value.trim().is_empty()) {
+            Some(view_id) => Some(
+                self.run(&[
+                    "aitable",
+                    "view",
+                    "get",
+                    "--base-id",
+                    &config.base_id,
+                    "--table-id",
+                    &config.table_id,
+                    "--view-ids",
+                    view_id,
+                ])
+                .await?,
+            ),
+            None => None,
+        };
+        let selected_view = view.as_ref().and_then(|response| {
+            list_from(response, &["views", "items", "data", "results"])
+                .into_iter()
+                .next()
+        });
+        let view_query = view_query_config(selected_view.as_ref())?;
+        if let Some(filters) = view_query.filters.as_deref() {
+            args.extend(["--filters", filters]);
+        }
+        if let Some(sort) = view_query.sort.as_deref() {
+            args.extend(["--sort", sort]);
+        }
+        if let Some(field_ids) = view_query.field_ids.as_deref() {
+            args.extend(["--field-ids", field_ids]);
         }
         let response = self.run(&args).await?;
         let items = list_from(&response, &["records", "items", "data", "results"])
@@ -330,7 +427,7 @@ impl AITableProvider {
             &config.base_id,
             "--table-id",
             &config.table_id,
-            "--field-ids",
+            "--field-id",
             field_id,
             "--yes",
         ])
@@ -377,29 +474,117 @@ impl AITableProvider {
         })
     }
 
+    async fn board_config(
+        &self,
+        project: &LoopItem,
+    ) -> Result<(AITableConfig, Vec<Value>), TaskRuntimeError> {
+        let mut config = self.config(project)?;
+        let response = self
+            .run(&[
+                "aitable",
+                "field",
+                "get",
+                "--base-id",
+                &config.base_id,
+                "--table-id",
+                &config.table_id,
+            ])
+            .await?;
+        let fields = list_from(&response, &["fields", "items", "data", "results"])
+            .iter()
+            .map(normalize_field)
+            .collect::<Vec<_>>();
+        infer_board_mapping(&mut config.mapping, &fields);
+        Ok((config, fields))
+    }
+
+    async fn enrich_user_cells(&self, fields: &[Value], records: &mut [Value]) {
+        let user_fields = fields
+            .iter()
+            .filter(|field| field.get("type").and_then(Value::as_str) == Some("user"))
+            .filter_map(|field| field.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let mut names = HashMap::new();
+        let mut user_ids = Vec::new();
+        for record in records.iter() {
+            for field_id in &user_fields {
+                let Some(users) = record
+                    .get("cells")
+                    .and_then(|cells| cells.get(*field_id))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for user_id in users.iter().filter_map(|user| {
+                    user.get("userId")
+                        .or_else(|| user.get("user_id"))
+                        .and_then(Value::as_str)
+                }) {
+                    if !user_ids.iter().any(|candidate| candidate == user_id) {
+                        user_ids.push(user_id.to_owned());
+                    }
+                }
+            }
+        }
+        for user_id in user_ids.into_iter().take(30) {
+            let Ok(response) = self
+                .run(&["contact", "user", "search", "--query", &user_id])
+                .await
+            else {
+                continue;
+            };
+            let user = list_from(&response, &["result", "users", "items", "data"])
+                .into_iter()
+                .find(|user| {
+                    user.get("userId")
+                        .or_else(|| user.get("user_id"))
+                        .and_then(Value::as_str)
+                        == Some(user_id.as_str())
+                });
+            if let Some(name) = user.as_ref().and_then(|user| {
+                user.get("name")
+                    .or_else(|| user.get("nick"))
+                    .and_then(Value::as_str)
+            }) {
+                names.insert(user_id, name.to_owned());
+            }
+        }
+        for record in records {
+            for field_id in &user_fields {
+                let Some(users) = record
+                    .get_mut("cells")
+                    .and_then(|cells| cells.get_mut(*field_id))
+                    .and_then(Value::as_array_mut)
+                else {
+                    continue;
+                };
+                for user in users {
+                    let Some(object) = user.as_object_mut() else {
+                        continue;
+                    };
+                    let user_id = object
+                        .get("userId")
+                        .or_else(|| object.get("user_id"))
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned);
+                    if let Some(user_id) = user_id {
+                        object.insert(
+                            "name".to_owned(),
+                            json!(names.get(&user_id).cloned().unwrap_or(user_id)),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     async fn run(&self, args: &[&str]) -> Result<Value, TaskRuntimeError> {
-        std::fs::create_dir_all(&self.dws_config_dir)
-            .map_err(|error| TaskRuntimeError::ProviderRequest(error.to_string()))?;
-        let output = Command::new(&self.dws_binary)
-            .args(args)
-            .args(["--format", "json"])
-            // DWS 1.0.32 keeps OAuth credentials below the user home even when
-            // DWS_CONFIG_DIR is set. Override both so Wework never consumes a
-            // developer's global DWS session.
-            .env("HOME", &self.dws_home)
-            .env("USERPROFILE", &self.dws_home)
-            .env("DWS_CONFIG_DIR", &self.dws_config_dir)
-            // Wework owns this isolated DWS home. File-backed DEKs avoid
-            // repeated macOS Keychain prompts when a stale `dek` item exists.
-            .env("DWS_DISABLE_KEYCHAIN", "1")
-            .output()
-            .await
-            .map_err(|error| {
-                TaskRuntimeError::ProviderRequest(format!(
-                    "DWS is unavailable at {}: {error}",
-                    self.dws_binary.display()
-                ))
-            })?;
+        let output = self.command(args)?.output().await.map_err(|error| {
+            TaskRuntimeError::ProviderRequest(format!(
+                "DWS is unavailable at {}: {error}",
+                self.dws_binary.display()
+            ))
+        })?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         let value = serde_json::from_str::<Value>(stdout.trim())
@@ -418,46 +603,36 @@ impl AITableProvider {
         Ok(value)
     }
 
+    fn command(&self, args: &[&str]) -> Result<Command, TaskRuntimeError> {
+        std::fs::create_dir_all(&self.dws_config_dir)
+            .map_err(|error| TaskRuntimeError::ProviderRequest(error.to_string()))?;
+        let mut command = Command::new(&self.dws_binary);
+        command
+            .args(args)
+            .args(["--format", "json"])
+            // DWS 1.0.32 keeps OAuth credentials below the user home even when
+            // DWS_CONFIG_DIR is set. Override both so Wework never consumes a
+            // developer's global DWS session.
+            .env("HOME", &self.dws_home)
+            .env("USERPROFILE", &self.dws_home)
+            .env("DWS_CONFIG_DIR", &self.dws_config_dir)
+            // Wework owns this isolated DWS home. File-backed DEKs avoid
+            // repeated macOS Keychain prompts when a stale `dek` item exists.
+            .env("DWS_DISABLE_KEYCHAIN", "1");
+        Ok(command)
+    }
+
     /// Project records onto LoopItems using the optional board mapping.
     pub(crate) async fn list_board(
         &self,
         project: &LoopItem,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
-        let mut config = self.config(project)?;
-        if mapping_get(&config.mapping, "parent_field_id").is_none() {
-            let fields = self
-                .run(&[
-                    "aitable",
-                    "field",
-                    "get",
-                    "--base-id",
-                    &config.base_id,
-                    "--table-id",
-                    &config.table_id,
-                ])
-                .await?;
-            let parent_field = list_from(&fields, &["fields", "items", "data", "results"])
-                .iter()
-                .map(normalize_field)
-                .filter(|field| field.get("name").and_then(Value::as_str) == Some("父记录"))
-                .min_by_key(|field| {
-                    (field.get("type").and_then(Value::as_str) != Some("text")) as u8
-                });
-            if let Some(field_id) = parent_field
-                .as_ref()
-                .and_then(|field| field.get("id"))
-                .and_then(Value::as_str)
-            {
-                config
-                    .mapping
-                    .insert("parent_field_id".to_owned(), json!(field_id));
-            }
-        }
+        let (config, fields) = self.board_config(project).await?;
         let mut records = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..50 {
             let page = self
-                .list_records(project, None, 100, cursor.as_deref())
+                .list_records(project, None, 100, cursor.as_deref(), None)
                 .await?;
             if let Some(items) = page.get("items").and_then(Value::as_array) {
                 records.extend(items.iter().cloned());
@@ -470,6 +645,7 @@ impl AITableProvider {
                 break;
             }
         }
+        self.enrich_user_cells(&fields, &mut records).await;
         let title_records = records
             .iter()
             .filter_map(|candidate| {
@@ -503,7 +679,7 @@ impl AITableProvider {
         project: &LoopItem,
         input: TaskCreate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let config = self.config(project)?;
+        let (config, _) = self.board_config(project).await?;
         let mut cells = Map::new();
         insert_mapped(
             &mut cells,
@@ -545,7 +721,7 @@ impl AITableProvider {
         task_id: &str,
         input: TaskUpdate,
     ) -> Result<LoopItem, TaskRuntimeError> {
-        let config = self.config(project)?;
+        let (config, _) = self.board_config(project).await?;
         let record_id = task_id
             .rsplit(':')
             .next()
@@ -589,6 +765,47 @@ impl AITableProvider {
     }
 }
 
+fn infer_board_mapping(mapping: &mut Map<String, Value>, fields: &[Value]) {
+    let candidates = [
+        ("title_field_id", &["标题", "任务名称", "任务", "名称"][..]),
+        ("description_field_id", &["描述", "备注", "详情"][..]),
+        ("status_field_id", &["状态", "进度"][..]),
+        ("parent_field_id", &["父记录", "父任务"][..]),
+        ("priority_field_id", &["优先级"][..]),
+        ("assignee_field_id", &["负责人", "执行人"][..]),
+        (
+            "due_field_id",
+            &["截止时间", "计划结束日期", "截止日期"][..],
+        ),
+    ];
+    for (key, names) in candidates {
+        if mapping_get(mapping, key).is_some() {
+            continue;
+        }
+        let field = fields.iter().find(|field| {
+            field
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| names.iter().any(|candidate| name.contains(candidate)))
+        });
+        if let Some(field_id) = field
+            .and_then(|field| field.get("id"))
+            .and_then(Value::as_str)
+        {
+            mapping.insert(key.to_owned(), json!(field_id));
+        }
+    }
+    if mapping_get(mapping, "title_field_id").is_none() {
+        if let Some(field_id) = fields
+            .first()
+            .and_then(|field| field.get("id"))
+            .and_then(Value::as_str)
+        {
+            mapping.insert("title_field_id".to_owned(), json!(field_id));
+        }
+    }
+}
+
 fn resolve_dws_binary() -> PathBuf {
     if let Some(path) = std::env::var_os("DWS_BINARY_PATH") {
         return PathBuf::from(path);
@@ -621,6 +838,42 @@ fn required(value: &Map<String, Value>, key: &str) -> Result<String, TaskRuntime
         .filter(|v| !v.is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(|| invalid(format!("provider_config.{key} is required")))
+}
+
+fn view_query_config(view: Option<&Value>) -> Result<ViewQueryConfig, TaskRuntimeError> {
+    let filters = view
+        .and_then(|view| view.get("filter").or_else(|| view.get("filters")))
+        .filter(|filters| {
+            filters
+                .get("operands")
+                .and_then(Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+        })
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| invalid(error.to_string()))?;
+    let sort = view
+        .and_then(|view| view.get("sort").or_else(|| view.get("sorts")))
+        .filter(|sort| sort.as_array().is_some_and(|items| !items.is_empty()))
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| invalid(error.to_string()))?;
+    let field_ids = view
+        .and_then(|view| view.get("columns").or_else(|| view.get("fieldIds")))
+        .and_then(Value::as_array)
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .filter(|columns| !columns.is_empty());
+    Ok(ViewQueryConfig {
+        filters,
+        sort,
+        field_ids,
+    })
 }
 
 fn unwrap(response: Value) -> Value {
@@ -883,6 +1136,13 @@ fn board_loop_item(
         }
     };
     let source_status = cell_text(record, mapping_get(mapping, "status_field_id"));
+    let assignee_label = cell_text(record, mapping_get(mapping, "assignee_field_id"));
+    let due_at = normalized_due_at(&cell_text(record, mapping_get(mapping, "due_field_id")));
+    let source_cells = record
+        .get("cells")
+        .or_else(|| record.get("fields"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let status = mapped_status(config, &source_status);
     let priority = map_option(
         &cell_text(record, mapping_get(mapping, "priority_field_id")),
@@ -913,12 +1173,33 @@ fn board_loop_item(
             "task_provider": TaskProviderKind::DingtalkAitable,
             "record_id": record_id,
             "source_status": source_status,
+            "assignee_label": assignee_label,
+            "due_at": due_at,
+            "source_cells": source_cells,
         }),
         version: 1,
         created_at: now.clone(),
         updated_at: now,
         completed_at: None,
     }
+}
+
+fn normalized_due_at(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    if let Ok(timestamp) = value.parse::<i64>() {
+        let datetime = if timestamp.abs() >= 10_000_000_000 {
+            chrono::DateTime::from_timestamp_millis(timestamp)
+        } else {
+            chrono::DateTime::from_timestamp(timestamp, 0)
+        };
+        if let Some(datetime) = datetime {
+            return datetime.to_rfc3339();
+        }
+    }
+    value.to_owned()
 }
 
 fn parent_record_id(
