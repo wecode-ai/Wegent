@@ -122,4 +122,18 @@ describe('CodexHomeInitializer', () => {
     )
     expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
   })
+
+  test('uses a localized fallback for non-Error status lookup failures', async () => {
+    localCodexPluginApiMock.codexHomeMigrationStatus.mockRejectedValue(null)
+
+    render(
+      <CodexHomeInitializer>
+        <div data-testid="workbench-child" />
+      </CodexHomeInitializer>
+    )
+
+    expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-home-initializer-error')).toHaveTextContent('工作台暂时不可用')
+    expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
+  })
 })
