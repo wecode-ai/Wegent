@@ -3,6 +3,7 @@ import type { HTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
+import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
@@ -176,11 +177,18 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       td: ({ children }: { children?: ReactNode }) => (
         <td className="border-b border-border px-3 py-2">{children}</td>
       ),
-      a: ({ href, children }: { href?: string; children?: ReactNode }) => (
-        <AssistantMarkdownLink href={href} onOpenFile={openFile}>
-          {children}
-        </AssistantMarkdownLink>
-      ),
+      a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+        const text = reactNodeToText(children)
+        const isComposerLink = href && /^https?:\/\//.test(href) && text && text !== href
+        if (isComposerLink && !href?.startsWith(WEWORK_MARKDOWN_FILE_LINK_PREFIX)) {
+          return <ComposerLinkChip payload={{ url: href, label: text }} />
+        }
+        return (
+          <AssistantMarkdownLink href={href} onOpenFile={openFile}>
+            {children}
+          </AssistantMarkdownLink>
+        )
+      },
       img: ({ src, alt }: { src?: string; alt?: string }) => (
         <AssistantMarkdownImage src={src} alt={alt} />
       ),

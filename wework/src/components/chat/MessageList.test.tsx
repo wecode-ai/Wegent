@@ -2148,23 +2148,10 @@ describe('MessageList', () => {
       />
     )
 
-    const link = screen.getByRole('link', { name: 'MessageList.tsx' })
-    expect(link).toHaveClass(
-      'inline-flex',
-      'items-center',
-      'gap-1',
-      'rounded-md',
-      'text-blue-600',
-      'no-underline'
-    )
-    expect(link).not.toHaveClass('bg-blue-50')
-    expect(link).not.toHaveClass('hover:bg-blue-100')
-    expect(link).not.toHaveClass('ring-1')
-    expect(link).not.toHaveClass('text-primary')
-    expect(link).not.toHaveAttribute('target')
-    expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
-
-    fireEvent.click(link)
+    const chip = screen.getByTestId('composer-link-chip')
+    expect(chip).toHaveTextContent('MessageList.tsx')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'https://example.com/MessageList.tsx')
+    fireEvent.click(chip)
     expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
   })
 

@@ -46,6 +46,7 @@ import {
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
+import { ComposerLinkChip } from './ComposerLinkChip'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { isImeEnterEvent } from '@/lib/ime'
@@ -1692,6 +1693,7 @@ function MessageHoverActions({
 
 const CODEX_MENTION_LINK_PATTERN =
   /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
+const COMPOSER_LINK_PATTERN = /\[([^\]]*)\]\((https?:\/\/[^\s)\]]+)\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1736,7 +1738,7 @@ function renderUserContent(
     const start = match.index ?? 0
     const text = content.slice(offset, start)
     if (text) {
-      parts.push(<span key={`text-${offset}`}>{text}</span>)
+      parts.push(...renderUserTextWithLinks(text, offset))
     }
 
     const mentionName = match[2]
@@ -1808,10 +1810,35 @@ function renderUserContent(
 
   const remainingText = content.slice(offset)
   if (remainingText) {
-    parts.push(<span key={`text-${offset}`}>{remainingText}</span>)
+    parts.push(...renderUserTextWithLinks(remainingText, offset))
   }
 
   return parts
+}
+function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let localOffset = 0
+  for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
+    const start = match.index ?? 0
+    const before = text.slice(localOffset, start)
+    if (before) {
+      nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
+    }
+    const label = match[1] ?? ''
+    const url = match[2] ?? ''
+    nodes.push(
+      <ComposerLinkChip
+        key={`link-${baseOffset}-${start}`}
+        payload={{ url, label: label || url }}
+      />
+    )
+    localOffset = start + match[0].length
+  }
+  const tail = text.slice(localOffset)
+  if (tail) {
+    nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{tail}</span>)
+  }
+  return nodes
 }
 
 const RAW_FAILED_MESSAGE_PATTERNS = [
