@@ -50,7 +50,6 @@ import type {
   UnifiedModelListResponse,
   User,
 } from '@/types/api'
-import type { Automation, AutomationMutation } from '@/types/automation'
 
 const LOCAL_DEVICE_ID = 'local-device'
 const CLOUD_BACKGROUND_CACHE_TTL_MS = 30_000
@@ -304,8 +303,6 @@ export function createHybridWorkbenchServices(
   let rememberedCloudModels: UnifiedModel[] = []
   let cloudModelsLoaded = false
   let cloudModelsRequest: Promise<void> | null = null
-  let rememberedCloudAutomations: Automation[] = []
-  let cloudAutomationsRequest: Promise<void> | null = null
   const rememberedCloudSearch = new Map<string, RuntimeWorkSearchResponse>()
   const cloudSearchRequests = new Map<string, Promise<void>>()
   const rememberedCloudArchives = new Map<string, ArchivedConversationsListResponse>()
@@ -345,23 +342,6 @@ export function createHybridWorkbenchServices(
       })
       .finally(() => {
         cloudModelsRequest = null
-      })
-  }
-  const loadCloudAutomationsInBackground = () => {
-    if (cloudAutomationsRequest) return
-    cloudAutomationsRequest = cloudServices
-      .automationApi!.listAutomations()
-      .then(response => {
-        rememberedCloudAutomations = response.items
-        for (const automation of response.items) {
-          automationSourceById.set(automation.id, 'cloud')
-        }
-      })
-      .catch(error => {
-        console.warn('[Wework] Failed to load cloud automations:', error)
-      })
-      .finally(() => {
-        cloudAutomationsRequest = null
       })
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
@@ -879,97 +859,7 @@ export function createHybridWorkbenchServices(
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
     },
   }
-  const automationSourceById = new Map<string, Automation['source']>()
-  const automationApi: NonNullable<WorkbenchServices['automationApi']> = {
-    async listAutomations() {
-      const local = await localServices.automationApi!.listAutomations()
-      loadCloudAutomationsInBackground()
-      const items = [...local.items, ...rememberedCloudAutomations].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt)
-      )
-      for (const automation of items) {
-        automationSourceById.set(automation.id, automation.source)
-      }
-      return { items }
-    },
-    getAutomation(automationId: string) {
-      return automationApiForId(automationId).getAutomation(automationId)
-    },
-    createAutomation(data: AutomationMutation) {
-      const api =
-        data.source === 'cloud' ? cloudServices.automationApi! : localServices.automationApi!
-      return api.createAutomation(data).then(response => {
-        automationSourceById.set(response.automation.id, response.automation.source)
-        if (response.automation.source === 'cloud') {
-          rememberedCloudAutomations = [
-            response.automation,
-            ...rememberedCloudAutomations.filter(item => item.id !== response.automation.id),
-          ]
-        }
-        return response
-      })
-    },
-    updateAutomation(automationId: string, data: AutomationMutation) {
-      const api =
-        data.source === 'cloud' ? cloudServices.automationApi! : localServices.automationApi!
-      return api.updateAutomation(automationId, data).then(response => {
-        if (response.automation.source === 'cloud') {
-          rememberedCloudAutomations = [
-            response.automation,
-            ...rememberedCloudAutomations.filter(item => item.id !== automationId),
-          ]
-        }
-        return response
-      })
-    },
-    deleteAutomation(automationId: string) {
-      return automationApiForId(automationId)
-        .deleteAutomation(automationId)
-        .then(response => {
-          automationSourceById.delete(automationId)
-          rememberedCloudAutomations = rememberedCloudAutomations.filter(
-            item => item.id !== automationId
-          )
-          return response
-        })
-    },
-    toggleAutomation(automationId: string, enabled: boolean) {
-      return automationApiForId(automationId)
-        .toggleAutomation(automationId, enabled)
-        .then(response => {
-          if (response.automation.source === 'cloud') {
-            rememberedCloudAutomations = rememberedCloudAutomations.map(item =>
-              item.id === automationId ? response.automation : item
-            )
-          }
-          return response
-        })
-    },
-    runAutomationNow(automationId: string) {
-      return automationApiForId(automationId).runAutomationNow(automationId)
-    },
-    listAutomationRuns(automationId?: string) {
-      if (automationId) {
-        return automationApiForId(automationId).listAutomationRuns(automationId)
-      }
-      return Promise.all([
-        localServices.automationApi!.listAutomationRuns(),
-        cloudServices.automationApi!.listAutomationRuns().catch(() => ({ items: [] })),
-      ]).then(([local, cloud]) => ({
-        items: [...local.items, ...cloud.items].sort((left, right) =>
-          right.createdAt.localeCompare(left.createdAt)
-        ),
-      }))
-    },
-  }
-
-  function automationApiForId(
-    automationId: string
-  ): NonNullable<WorkbenchServices['automationApi']> {
-    return automationId.startsWith('cloud:') || automationSourceById.get(automationId) === 'cloud'
-      ? cloudServices.automationApi!
-      : localServices.automationApi!
-  }
+  const automationApi = localServices.automationApi
 
   const cloudRuntimeChatStream = createRuntimeChatStream({
     request: (method, params) => {

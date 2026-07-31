@@ -4,7 +4,14 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from 'react'
 import dynamic from 'next/dynamic'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Building2, Check, ChevronDown, Globe2, Layers3, Search, UserRound } from 'lucide-react'
@@ -18,11 +25,24 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
 import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from '../resourceSorting'
-import type { ManagedResourceSourceFilter, ManagedResourceType } from '../types'
+import type {
+  ManagedResourceSourceFilter,
+  ManagedResourceType,
+  ResourceLibraryModelCategoryFilter,
+} from '../types'
+import type { ResourceCreateRequest } from './ResourceCreateButton'
+import type { TeamModeFilter } from '@/features/tasks/components/selector/team-selector-utils'
 
 const managedResourceTypes: ManagedResourceType[] = [
   'agent',
@@ -174,9 +194,11 @@ function useResourceLibraryTranslation() {
 function ManagedResourceTabs({
   value,
   onValueChange,
+  resourceTypes = managedResourceTypes,
 }: {
   value: ManagedResourceType
   onValueChange: (value: ManagedResourceType) => void
+  resourceTypes?: ManagedResourceType[]
 }) {
   const t = useResourceLibraryTranslation()
 
@@ -187,7 +209,7 @@ function ManagedResourceTabs({
       aria-label={t('fields.type')}
       data-testid="managed-resource-type-tabs"
     >
-      {managedResourceTypes.map(type => {
+      {resourceTypes.map(type => {
         const isActive = value === type
 
         return (
@@ -413,30 +435,27 @@ function ResourceSortControls({
   const options: ResourceLibrarySortMode[] = ['default', 'latest']
 
   return (
-    <div
-      className="flex flex-col gap-2 sm:flex-row sm:items-center lg:flex-shrink-0 lg:justify-end"
-      data-testid="managed-resource-sort-control"
-    >
+    <div className="flex items-center gap-2" data-testid="managed-resource-sort-control">
       <span className="text-xs font-medium text-text-muted">{t('fields.sort')}</span>
-      <div className="flex flex-wrap items-center gap-2">
-        {options.map(option => {
-          const isActive = value === option
-
-          return (
-            <Button
-              key={option}
-              type="button"
-              variant={isActive ? 'primary' : 'outline'}
-              aria-pressed={isActive}
-              className="h-11 min-w-[44px] px-4 lg:h-9"
-              onClick={() => onValueChange(option)}
-              data-testid={`resource-sort-${option}-button`}
-            >
+      <Select
+        value={value}
+        onValueChange={option => onValueChange(option as ResourceLibrarySortMode)}
+      >
+        <SelectTrigger
+          className="h-11 w-32 bg-base lg:h-9"
+          aria-label={t('fields.sort')}
+          data-testid="resource-sort-select"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(option => (
+            <SelectItem key={option} value={option} data-testid={`resource-sort-${option}-option`}>
               {t(`sort.${option}`)}
-            </Button>
-          )
-        })}
-      </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
@@ -453,18 +472,65 @@ function sourceFilterToScope(
 
 interface MyResourcesProps {
   title?: string
+  allowedTypes?: ManagedResourceType[]
+  fixedSource?: ManagedResourceSourceFilter
+  fixedGroup?: string | null
+  groupFilter?: string[]
+  hideSourceControls?: boolean
+  hideTypeControls?: boolean
+  hideManagerCreateActions?: boolean
+  hideSortControls?: boolean
+  teamModeFilter?: TeamModeFilter
+  onTeamModeFilterChange?: (mode: TeamModeFilter) => void
+  hideTeamModeFilter?: boolean
+  modelCategoryFilter?: ResourceLibraryModelCategoryFilter
+  onModelCategoryFilterChange?: (category: ResourceLibraryModelCategoryFilter) => void
+  hideModelCategoryFilter?: boolean
+  createRequest?: ResourceCreateRequest & { type: ManagedResourceType }
+  onResourceCreated?: (type: 'agent' | 'skill', sourceId?: number) => void
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  leadingFilterControls?: ReactNode
 }
 
-export function MyResources({ title }: MyResourcesProps = {}) {
+export function MyResources({
+  title,
+  allowedTypes = managedResourceTypes,
+  fixedSource,
+  fixedGroup,
+  groupFilter,
+  hideSourceControls = false,
+  hideTypeControls = false,
+  hideManagerCreateActions = false,
+  hideSortControls = false,
+  teamModeFilter,
+  onTeamModeFilterChange,
+  hideTeamModeFilter = false,
+  modelCategoryFilter,
+  onModelCategoryFilterChange,
+  hideModelCategoryFilter = false,
+  createRequest,
+  onResourceCreated,
+  onCreateRequestClose,
+  creationOnly = false,
+  leadingFilterControls,
+}: MyResourcesProps = {}) {
+  const allowedTypesKey = allowedTypes.join(',')
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const searchParamsSnapshot = searchParams.toString()
-  const [resourceType, setResourceType] = useState<ManagedResourceType>(getInitialResourceType)
-  const [sourceFilter, setSourceFilter] =
-    useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
+  const [resourceType, setResourceType] = useState<ManagedResourceType>(() => {
+    const initialType = getInitialResourceType()
+    return allowedTypes.includes(initialType) ? initialType : allowedTypes[0]
+  })
+  const [sourceFilter, setSourceFilter] = useState<ManagedResourceSourceFilter>(
+    () => fixedSource || getInitialSourceFilter()
+  )
   const [groups, setGroups] = useState<Group[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() =>
+    fixedGroup === undefined ? getInitialGroupName() : fixedGroup
+  )
   const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(getInitialSortMode)
 
   const replaceResourceLibraryUrl = useCallback(
@@ -555,11 +621,13 @@ export function MyResources({ title }: MyResourcesProps = {}) {
 
   useEffect(() => {
     const params = new URLSearchParams(searchParamsSnapshot)
-    setResourceType(getResourceTypeFromSearchParams(params))
-    setSourceFilter(getSourceFilterFromSearchParams(params))
-    setSelectedGroup(getGroupNameFromSearchParams(params))
+    const nextType = getResourceTypeFromSearchParams(params)
+    const nextAllowedTypes = allowedTypesKey.split(',') as ManagedResourceType[]
+    setResourceType(nextAllowedTypes.includes(nextType) ? nextType : nextAllowedTypes[0])
+    setSourceFilter(fixedSource || getSourceFilterFromSearchParams(params))
+    setSelectedGroup(fixedGroup === undefined ? getGroupNameFromSearchParams(params) : fixedGroup)
     setSortMode(getSortModeFromSearchParams(params))
-  }, [searchParamsSnapshot])
+  }, [allowedTypesKey, fixedGroup, fixedSource, searchParamsSnapshot])
 
   useEffect(() => {
     let isMounted = true
@@ -579,9 +647,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     }
   }, [])
 
-  const renderManager = () => {
+  const renderManager = (managerType: ManagedResourceType = resourceType) => {
     const managerScope = sourceFilterToScope(sourceFilter)
-    const sourceControls = (
+    const sourceFilterControls = hideSourceControls ? null : (
       <ResourceSourceFilterControls
         value={sourceFilter}
         onValueChange={handleSourceFilterChange}
@@ -590,12 +658,19 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         onGroupSourceChange={handleGroupSourceChange}
       />
     )
-    const sortControls = (
+    const sourceControls =
+      leadingFilterControls || sourceFilterControls ? (
+        <>
+          {leadingFilterControls}
+          {sourceFilterControls}
+        </>
+      ) : null
+    const sortControls = hideSortControls ? null : (
       <ResourceSortControls value={sortMode} onValueChange={handleSortModeChange} />
     )
     const groupName = sourceFilter === 'group' ? selectedGroup : null
 
-    if (resourceType === 'agent') {
+    if (managerType === 'agent') {
       return (
         <TeamListWithScope
           scope={managerScope}
@@ -604,11 +679,25 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           sourceControls={sourceControls}
           sortControls={sortControls}
           groups={groups}
+          groupFilter={groupFilter}
           sortMode={sortMode}
+          modeFilter={teamModeFilter}
+          onModeFilterChange={onTeamModeFilterChange}
+          hideModeFilter={hideTeamModeFilter}
+          createRequest={createRequest?.type === 'agent' ? createRequest : undefined}
+          creationOnly={creationOnly}
+          onCreateRequestClose={onCreateRequestClose}
+          onCreated={
+            createRequest?.type === 'agent'
+              ? team => onResourceCreated?.('agent', team.id)
+              : undefined
+          }
+          compact
+          hideCreateActions={hideManagerCreateActions}
         />
       )
     }
-    if (resourceType === 'model') {
+    if (managerType === 'model') {
       return (
         <ModelListWithScope
           scope={managerScope}
@@ -617,11 +706,20 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           sourceControls={sourceControls}
           sortControls={sortControls}
           groups={groups}
+          groupFilter={groupFilter}
           sortMode={sortMode}
+          createRequest={createRequest?.type === 'model' ? createRequest : undefined}
+          onCreateRequestClose={onCreateRequestClose}
+          creationOnly={creationOnly}
+          hideCreateActions={hideManagerCreateActions}
+          categoryFilter={modelCategoryFilter}
+          onCategoryFilterChange={onModelCategoryFilterChange}
+          hideCategoryFilterControls={hideModelCategoryFilter}
+          compact
         />
       )
     }
-    if (resourceType === 'shell') {
+    if (managerType === 'shell') {
       return (
         <ShellListWithScope
           scope={managerScope}
@@ -630,11 +728,17 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           sourceControls={sourceControls}
           sortControls={sortControls}
           groups={groups}
+          groupFilter={groupFilter}
           sortMode={sortMode}
+          createRequest={createRequest?.type === 'shell' ? createRequest : undefined}
+          onCreateRequestClose={onCreateRequestClose}
+          creationOnly={creationOnly}
+          hideCreateActions={hideManagerCreateActions}
+          compact
         />
       )
     }
-    if (resourceType === 'skill') {
+    if (managerType === 'skill') {
       return (
         <SkillListWithScope
           scope={managerScope}
@@ -643,11 +747,23 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           sourceControls={sourceControls}
           sortControls={sortControls}
           groups={groups}
+          groupFilter={groupFilter}
           sortMode={sortMode}
+          createRequest={createRequest?.type === 'skill' ? createRequest : undefined}
+          onCreateRequestClose={onCreateRequestClose}
+          creationOnly={creationOnly}
+          showAutoEnabledSkills={sourceFilter === 'all' || sourceFilter === 'personal'}
+          hideCreateActions={hideManagerCreateActions}
+          compact
+          onCreated={
+            createRequest?.type === 'skill'
+              ? skillId => onResourceCreated?.('skill', skillId)
+              : undefined
+          }
         />
       )
     }
-    if (resourceType === 'retriever') {
+    if (managerType === 'retriever') {
       return (
         <RetrieverListWithScope
           scope={managerScope}
@@ -656,7 +772,13 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           sourceControls={sourceControls}
           sortControls={sortControls}
           groups={groups}
+          groupFilter={groupFilter}
           sortMode={sortMode}
+          createRequest={createRequest?.type === 'retriever' ? createRequest : undefined}
+          onCreateRequestClose={onCreateRequestClose}
+          creationOnly={creationOnly}
+          hideCreateActions={hideManagerCreateActions}
+          compact
         />
       )
     }
@@ -666,13 +788,19 @@ export function MyResources({ title }: MyResourcesProps = {}) {
 
   return (
     <div className="flex flex-col gap-4" data-testid="my-resources">
-      <div
-        className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between"
-        data-testid="managed-resource-header"
-      >
-        {title && <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>}
-        <ManagedResourceTabs value={resourceType} onValueChange={handleResourceTypeChange} />
-      </div>
+      {!creationOnly && !hideTypeControls && (
+        <div
+          className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between"
+          data-testid="managed-resource-header"
+        >
+          {title && <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>}
+          <ManagedResourceTabs
+            value={resourceType}
+            onValueChange={handleResourceTypeChange}
+            resourceTypes={allowedTypes}
+          />
+        </div>
+      )}
 
       <div>{renderManager()}</div>
     </div>

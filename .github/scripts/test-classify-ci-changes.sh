@@ -209,6 +209,15 @@ for workflow in test.yml lint.yml; do
   fi
 done
 
+for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
+  workflow_path="$script_dir/../workflows/$workflow"
+  if ! grep -Fq 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' "$workflow_path"; then
+    printf '%s must classify pull request changes from the merge base\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+done
+
 wework_workflow="$script_dir/../workflows/wework-e2e.yml"
 if [[ "$(grep -c "github.event.action != 'labeled'" "$wework_workflow")" -lt 2 ]]; then
   printf 'Wework non-memory E2E jobs must filter pull_request label events\n' >&2

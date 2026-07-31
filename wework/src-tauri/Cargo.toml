@@ -37,8 +37,10 @@ portable-pty = "0.8"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["time"] }
 reqwest = { version = "0.13", features = ["blocking", "multipart"] }
 base64 = "0.22"
+getrandom = "0.2"
 regex = "1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Keep Wry's devtools API available when its debug assertions are disabled below.
@@ -60,8 +62,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["N
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Power"] }
-
+windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
 # over a browser download. Keep application debug assertions enabled while

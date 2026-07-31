@@ -25,7 +25,6 @@ import {
   type AutomationDraft,
 } from '@/features/automations/automationDraft'
 import { useAuth } from '@/features/auth/useAuth'
-import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -48,7 +47,6 @@ type StatusFilter = 'all' | 'active' | 'paused'
 export function AutomationsPage() {
   const { t, i18n } = useTranslation('common')
   const { logout } = useAuth()
-  const cloudConnection = useCloudConnection()
   const isMobile = useIsMobile()
   const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
@@ -111,10 +109,6 @@ export function AutomationsPage() {
 
   const localDevices = useMemo(
     () => state.devices.filter(device => !isCloudDevice(device)),
-    [state.devices]
-  )
-  const cloudDevices = useMemo(
-    () => state.devices.filter(device => isCloudDevice(device)),
     [state.devices]
   )
   const loadAutomations = useCallback(async () => {
@@ -264,9 +258,8 @@ export function AutomationsPage() {
   }
 
   const changeSource = (source: AutomationSource) => {
-    if (!draft || editing) return
-    const devices = source === 'cloud' ? cloudDevices : localDevices
-    const deviceId = devices[0]?.device_id ?? ''
+    if (!draft || editing || source !== 'local') return
+    const deviceId = localDevices[0]?.device_id ?? ''
     setDraft(current =>
       current
         ? {
@@ -294,10 +287,7 @@ export function AutomationsPage() {
     }
     const workspacePath =
       draft.workspacePath.trim() || (await getDeviceHomeDirectory(draft.deviceId))
-    const team =
-      draft.source === 'cloud'
-        ? await services.cloudBackgroundApi?.getDefaultWorkbenchTeam?.()
-        : state.defaultTeam
+    const team = state.defaultTeam
     if (!team) {
       throw new Error(t('workbench.automation_team_unavailable', '无法获取运行所需的默认智能体'))
     }
@@ -308,7 +298,7 @@ export function AutomationsPage() {
       runtime: 'codex',
       message: draft.prompt.trim(),
       title: draft.name.trim(),
-      ...(draft.source === 'local' && draft.modelId
+      ...(draft.modelId
         ? {
             modelId: draft.modelId,
             modelType: draft.modelType as RuntimeTaskCreateRequest['modelType'],
@@ -554,8 +544,7 @@ export function AutomationsPage() {
                 automation={editing}
                 runs={runs}
                 locale={locale}
-                cloudAvailable={cloudConnection.isConnected}
-                devices={draft.source === 'cloud' ? cloudDevices : localDevices}
+                devices={localDevices}
                 projects={state.runtimeWork?.projects ?? []}
                 models={projectChat.models}
                 currentRuntimeTask={state.currentRuntimeTask}

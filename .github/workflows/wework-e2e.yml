@@ -54,7 +54,7 @@ jobs:
             .github/scripts/classify-wework-desktop-e2e.sh --all
           else
             changed_files="$(mktemp)"
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
             .github/scripts/classify-ci-changes.sh < "$changed_files"
             .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
           fi

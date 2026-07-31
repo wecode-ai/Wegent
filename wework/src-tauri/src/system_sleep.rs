@@ -159,7 +159,9 @@ fn is_runtime_state_event(event: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-struct SleepInhibitor;
+struct SleepInhibitor {
+    thread_id: u32,
+}
 
 #[cfg(not(target_os = "windows"))]
 struct SleepInhibitor {
@@ -178,7 +180,7 @@ fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
     // ES_SYSTEM_REQUIRED (0x00000001) resets the system idle timer and keeps
     // the system awake while the thread is active; ES_CONTINUOUS (0x80000000)
     // keeps the state in effect until reset. Reset happens in Drop by calling
-    // again with ES_CONTINUOUS.
+    // again with ES_CONTINUOUS on the same OS thread that acquired it.
     unsafe {
         let result = windows_sys::Win32::System::Power::SetThreadExecutionState(
             windows_sys::Win32::System::Power::ES_SYSTEM_REQUIRED
@@ -188,7 +190,9 @@ fn acquire_sleep_inhibitor() -> Result<SleepInhibitor, String> {
             return Err("SetThreadExecutionState returned zero".to_owned());
         }
     }
-    Ok(SleepInhibitor)
+    Ok(SleepInhibitor {
+        thread_id: unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() },
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -236,6 +240,14 @@ fn spawn_inhibitor_command(mut command: Command) -> Result<Child, String> {
 #[cfg(target_os = "windows")]
 impl Drop for SleepInhibitor {
     fn drop(&mut self) {
+        let current_thread_id = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        if current_thread_id != self.thread_id {
+            log::warn!(
+                "Sleep inhibitor dropped on a different OS thread than it was acquired on; \
+                 leaving ES_CONTINUOUS state in place"
+            );
+            return;
+        }
         unsafe {
             windows_sys::Win32::System::Power::SetThreadExecutionState(
                 windows_sys::Win32::System::Power::ES_CONTINUOUS,

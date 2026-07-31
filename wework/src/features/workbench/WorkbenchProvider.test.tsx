@@ -61,6 +61,11 @@ const localExecutorMocks = vi.hoisted(() => ({
   subscribeLocalExecutorEvents: vi.fn(),
 }))
 
+const runtimeWorkSyncMocks = vi.hoisted(() => ({
+  installMainRuntimeWorkChangedListener: vi.fn(() => null),
+  notifyMainRuntimeWorkChanged: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
@@ -68,6 +73,8 @@ vi.mock('@/tauri/localExecutor', () => ({
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
+
+vi.mock('@/tauri/runtimeWorkSync', () => runtimeWorkSyncMocks)
 
 function setTauriRuntime() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -5321,6 +5328,12 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     )
     expect(runtimeWorkApi.createRuntimeTask.mock.calls[0][0]).not.toHaveProperty('projectId')
+    await waitFor(() =>
+      expect(runtimeWorkSyncMocks.notifyMainRuntimeWorkChanged).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        taskId: 'conversation-created',
+      })
+    )
     expect(screen.getByTestId('workbench-error')).not.toHaveTextContent(
       '请选择项目或打开设备工作区后再发送'
     )
@@ -6996,6 +7009,68 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message b')
     expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message a')
+  })
+
+  test('restores cached history when returning before another transcript finishes loading', async () => {
+    const runtimeBTranscript = deferred<RuntimeTranscriptResponse>()
+    const getRuntimeTranscript = vi.fn((address: RuntimeTaskAddress) => {
+      if (address.taskId === 'runtime-b') return runtimeBTranscript.promise
+      return Promise.resolve({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message a' }],
+      } satisfies RuntimeTranscriptResponse)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    )
+
+    await userEvent.click(screen.getByText('open runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-b'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('loading')
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toBeEmptyDOMElement()
+
+    await userEvent.click(screen.getByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      runtimeBTranscript.resolve({
+        taskId: 'runtime-b',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-b:user:1', role: 'user', content: 'message b' }],
+      })
+      await runtimeBTranscript.promise
+    })
+
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('message b')
   })
 
   test('does not reload the currently selected runtime task when clicked again', async () => {

@@ -37,7 +37,7 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
-    runtime_automations,
+    resource_library,
     runtime_work,
     share,
     sites,
@@ -119,6 +119,11 @@ api_router.include_router(
     wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
 )
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(
+    resource_library.router,
+    prefix="/resource-library",
+    tags=["resource-library"],
+)
 api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
 )
@@ -288,11 +293,6 @@ api_router.include_router(
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
-)
-api_router.include_router(
-    runtime_automations.router,
-    prefix="/runtime-automations",
-    tags=["runtime-automations"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

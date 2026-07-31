@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
@@ -11,18 +12,14 @@ const AUTHORIZATION_WINDOW_WIDTH = 1000
 const AUTHORIZATION_WINDOW_HEIGHT = 640
 const AUTHORIZATION_WINDOW_MIN_WIDTH = 960
 const AUTHORIZATION_WINDOW_MIN_HEIGHT = 620
-const AUTHORIZATION_WINDOW_VERTICAL_OFFSET = -36
-
-interface AuthorizationWindowPosition {
-  x?: number
-  y?: number
-  center: boolean
-}
+const AUTHORIZATION_WINDOW_REPOSITION_DELAY_MS = 100
 
 interface TauriWebviewWindowHandle {
   close: () => Promise<void>
   destroy: () => Promise<void>
+  show: () => Promise<void>
   setFocus: () => Promise<void>
+  setAlwaysOnTop: (alwaysOnTop: boolean) => Promise<void>
   onCloseRequested: (handler: () => void | Promise<void>) => Promise<UnlistenFn>
   once: <T = unknown>(
     event: string,
@@ -44,21 +41,62 @@ async function closeAuthorizationWindow(windowHandle: TauriWebviewWindowHandle):
   }
 }
 
-function createCloseHandle(windowHandle: TauriWebviewWindowHandle): CloudAuthorizationHandle {
+async function followCurrentWeworkWindow(
+  currentWindow: ReturnType<typeof getCurrentWindow>
+): Promise<() => void> {
+  let repositionTimeoutId: number | null = null
+  const reposition = () => {
+    if (repositionTimeoutId !== null) window.clearTimeout(repositionTimeoutId)
+    repositionTimeoutId = window.setTimeout(() => {
+      repositionTimeoutId = null
+      void invoke('position_cloud_authorization_window').catch(error => {
+        console.error('[CloudConnection] Failed to follow the Wework window', error)
+      })
+    }, AUTHORIZATION_WINDOW_REPOSITION_DELAY_MS)
+  }
+  const unlistenMoved = await currentWindow.onMoved(reposition)
+  let unlistenScaleChanged: UnlistenFn
+  try {
+    unlistenScaleChanged = await currentWindow.onScaleChanged(reposition)
+  } catch (error) {
+    unlistenMoved()
+    throw error
+  }
+
+  let stopped = false
+  return () => {
+    if (stopped) return
+    stopped = true
+    if (repositionTimeoutId !== null) window.clearTimeout(repositionTimeoutId)
+    unlistenMoved()
+    unlistenScaleChanged()
+  }
+}
+
+function createCloseHandle(
+  windowHandle: TauriWebviewWindowHandle,
+  stopFollowing: () => void
+): CloudAuthorizationHandle {
   let resolveClosed: () => void = () => undefined
   const closed = new Promise<void>(resolve => {
     resolveClosed = resolve
   })
 
   void windowHandle
-    .onCloseRequested(() => resolveClosed())
+    .onCloseRequested(() => {
+      stopFollowing()
+      resolveClosed()
+    })
     .catch(error => {
       console.error('[CloudConnection] Failed to listen for authorization window close', error)
     })
 
   return {
     closed,
-    close: () => closeAuthorizationWindow(windowHandle),
+    close: async () => {
+      stopFollowing()
+      await closeAuthorizationWindow(windowHandle)
+    },
   }
 }
 
@@ -66,34 +104,6 @@ function formatTauriError(payload: unknown): string {
   if (payload instanceof Error) return payload.message
   if (typeof payload === 'string') return payload
   return 'Unknown Tauri window error'
-}
-
-async function getAuthorizationWindowPosition(
-  currentWindow: ReturnType<typeof getCurrentWindow>
-): Promise<AuthorizationWindowPosition> {
-  try {
-    const [position, size, scaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.outerSize(),
-      currentWindow.scaleFactor(),
-    ])
-    const width = AUTHORIZATION_WINDOW_WIDTH * scaleFactor
-    const height = AUTHORIZATION_WINDOW_HEIGHT * scaleFactor
-    return {
-      x: Math.max(0, Math.round((position.x + (size.width - width) / 2) / scaleFactor)),
-      y: Math.max(
-        0,
-        Math.round(
-          (position.y + (size.height - height) / 2) / scaleFactor +
-            AUTHORIZATION_WINDOW_VERTICAL_OFFSET
-        )
-      ),
-      center: false,
-    }
-  } catch (error) {
-    console.warn('[CloudConnection] Failed to position authorization window', error)
-    return { center: true }
-  }
 }
 
 async function waitForWindowCreation(windowHandle: TauriWebviewWindowHandle): Promise<void> {
@@ -146,7 +156,6 @@ export async function openCloudAuthorizationWindow(
   }
 
   const currentWindow = getCurrentWindow()
-  const position = await getAuthorizationWindowPosition(currentWindow)
   const authWindow = new WebviewWindow(CLOUD_AUTHORIZATION_WINDOW_LABEL, {
     url,
     title: CLOUD_AUTHORIZATION_WINDOW_TITLE,
@@ -154,19 +163,30 @@ export async function openCloudAuthorizationWindow(
     height: AUTHORIZATION_WINDOW_HEIGHT,
     minWidth: AUTHORIZATION_WINDOW_MIN_WIDTH,
     minHeight: AUTHORIZATION_WINDOW_MIN_HEIGHT,
-    parent: currentWindow,
-    ...position,
+    center: true,
     preventOverflow: true,
     resizable: true,
     maximizable: false,
+    alwaysOnTop: true,
     focus: true,
-    visible: true,
+    visible: false,
     decorations: true,
     shadow: true,
     dragDropEnabled: false,
   })
 
   await waitForWindowCreation(authWindow)
+  const stopFollowing = await (async () => {
+    try {
+      await authWindow.setAlwaysOnTop(true)
+      await invoke('position_cloud_authorization_window')
+      await authWindow.show()
+      return await followCurrentWeworkWindow(currentWindow)
+    } catch (error) {
+      await closeAuthorizationWindow(authWindow)
+      throw error
+    }
+  })()
   await authWindow.setFocus().catch(() => undefined)
-  return createCloseHandle(authWindow)
+  return createCloseHandle(authWindow, stopFollowing)
 }

@@ -11,8 +11,11 @@ let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
+export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
+  'wework:embedded-browser-invalid-tls-certificate'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
+export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
 
 export interface EmbeddedBrowserOcclusionChange {
   id: string
@@ -30,6 +33,7 @@ export interface EmbeddedBrowserPageState {
   nativeLabel: string
   title: string | null
   url: string | null
+  invalidTlsCertificate?: EmbeddedBrowserInvalidTlsCertificateEvent | null
 }
 
 export interface EmbeddedBrowserOpenRequest {
@@ -48,6 +52,43 @@ export interface EmbeddedBrowserDownloadEvent {
   totalBytes: number | null
 }
 
+export interface EmbeddedBrowserAgentStateEvent {
+  label: string
+  status: 'idle' | 'running' | 'paused' | 'needs_user' | 'error'
+  action: string | null
+  target: string | null
+  message: string | null
+  errorCode: string | null
+  approval: EmbeddedBrowserAgentApproval | null
+  createdAtUnixMs: number
+}
+
+export interface EmbeddedBrowserAgentApproval {
+  approvalId: string
+  risk: string
+  actionKind: string
+  reason: string
+  target: unknown | null
+  expiresAtUnixMs: number
+}
+
+export interface EmbeddedBrowserInvalidTlsCertificateEvent {
+  nativeLabel: string
+  url: string
+  host: string
+  port: number
+}
+
+export function listenEmbeddedBrowserInvalidTlsCertificates(
+  handler: (event: EmbeddedBrowserInvalidTlsCertificateEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserInvalidTlsCertificateEvent>(
+    EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT,
+    event => handler(event.payload)
+  )
+}
+
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
   await invoke('embedded_browser_pause_download', { id })
 }
@@ -60,11 +101,35 @@ export async function deleteEmbeddedBrowserDownload(id: string): Promise<void> {
   await invoke('embedded_browser_delete_download', { id })
 }
 
+export async function setEmbeddedBrowserAgentControlPaused(
+  paused: boolean,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invoke('embedded_browser_set_agent_control_paused', { label, paused })
+}
+
+export async function resolveEmbeddedBrowserAgentApproval(
+  approvalId: string,
+  approved: boolean,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invoke('embedded_browser_resolve_agent_approval', { label, approvalId, approved })
+}
+
 export function listenEmbeddedBrowserDownloads(
   handler: (event: EmbeddedBrowserDownloadEvent) => void
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listen<EmbeddedBrowserDownloadEvent>(EMBEDDED_BROWSER_DOWNLOAD_EVENT, event => {
+    handler(event.payload)
+  })
+}
+
+export function listenEmbeddedBrowserAgentState(
+  handler: (event: EmbeddedBrowserAgentStateEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserAgentStateEvent>(EMBEDDED_BROWSER_AGENT_STATE_EVENT, event => {
     handler(event.payload)
   })
 }

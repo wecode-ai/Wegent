@@ -12,6 +12,7 @@ import type {
   QuickLaunchPreparePresetRequest,
   QuickLaunchPreparePresetResponse,
   QuickAccessResponse,
+  QuickAccessTeam,
   QuickLaunchResponse,
   User,
   UserPreferences,
@@ -220,6 +221,10 @@ export const userApis = {
     quickAccessRequest = request
 
     return request
+  },
+
+  async getRecentTeams(): Promise<QuickAccessTeam[]> {
+    return apiClient.get('/users/recent-teams')
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {
