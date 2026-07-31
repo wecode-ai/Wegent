@@ -36,6 +36,7 @@ workflow_has_top_level_trigger() {
       if (!in_on) {
         if (line !~ /^on:[[:space:]]*/) next
         sub(/^on:[[:space:]]*/, "", line)
+        sub(/^[[:space:]]*#.*/, "", line)
         if (line != "") {
           found = inline_has_target(line)
           exit
@@ -298,6 +299,7 @@ for workflow in test.yml lint.yml; do
 done
 
 assert_workflow_trigger_case "block mapping push trigger" "true" $'on:\n  push:\n  pull_request:'
+assert_workflow_trigger_case "block mapping with on comment" "true" $'on: # workflow triggers\n  push:\n  pull_request:'
 assert_workflow_trigger_case "block sequence push trigger" "true" $'on:\n  - push\n  - pull_request'
 assert_workflow_trigger_case "inline scalar push trigger" "true" "on: push"
 assert_workflow_trigger_case "inline array push trigger" "true" "on: [push, pull_request]"
