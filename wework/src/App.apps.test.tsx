@@ -213,7 +213,6 @@ describe('App center route', () => {
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -246,13 +245,13 @@ describe('App center route', () => {
     )
   })
 
-  test('does not render the global chrome titlebar on the workbench route', async () => {
+  test('renders the global Chrome titlebar on the workbench route', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
     await waitForStartupScreenToClose()
-    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
   })
 
@@ -335,7 +334,7 @@ describe('App center route', () => {
     expect(sectionTabs).not.toHaveClass('xl:hidden')
   })
 
-  test('uses the fixed titlebar switcher and collapses the app center sidebar', async () => {
+  test('uses the fixed global view switcher on the app center route', async () => {
     window.history.pushState({}, '', '/apps')
 
     render(<App />)
@@ -348,13 +347,7 @@ describe('App center route', () => {
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(weworkTab).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('collapse-sidebar-button'))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('apps-page')).toHaveAttribute('data-sidebar-collapsed', 'true')
-    })
-    expect(screen.queryByTestId('apps-sidebar-nav')).not.toBeInTheDocument()
-    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+    expect(screen.getByTestId('apps-sidebar-nav')).toBeInTheDocument()
   })
 
   test('shows installed connector apps and opens Sites from Wegent Sites', async () => {

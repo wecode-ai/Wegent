@@ -19,7 +19,7 @@ export function AppIframe({ src, title }: AppIframeProps) {
   const [error, setError] = useState(false)
 
   return (
-    <div className="relative m-2 mt-0 h-[calc(100%-0.5rem)] overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]">
+    <div className="app-view-surface relative overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]">
       {loading && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />

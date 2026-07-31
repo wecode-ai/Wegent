@@ -2528,16 +2528,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar')).toContainElement(
       screen.getByTestId('collapse-sidebar-button')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+    expect(screen.getByTestId('desktop-sidebar')).toContainElement(
       screen.getByTestId('collapse-sidebar-button')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toHaveClass('left-[92px]')
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-wework')
-    )
-    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.queryByTestId('desktop-sidebar-chrome-controls')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
@@ -2602,16 +2597,14 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workbench-pane-task-title')
     )
     expect(screen.getByTestId('workbench-main-header')).toHaveClass('h-[38px]', 'border-b')
-    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-[92px]')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-2')
     expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
       screen.getByTestId('expand-sidebar-button')
     )
     const collapsedHeaderControls = within(
       screen.getByTestId('workbench-main-header-left-controls')
     )
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
-    expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(collapsedHeaderControls.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',

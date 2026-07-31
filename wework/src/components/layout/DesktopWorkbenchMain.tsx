@@ -70,13 +70,12 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
-import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { WindowFrameControls } from './WindowFrameControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
@@ -138,7 +137,7 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
-const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
+const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
 function cloudLoopItemStatusLabel(
@@ -2180,17 +2179,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="workbench-main-header-left-controls"
           className={cn(
             'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
-            platform === 'mac' && MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
+            platform === 'mac' && MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS
           )}
         >
           <DesktopWindowControls
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => onSidebarCollapsedChange(!sidebarCollapsed)}
             className="gap-1"
-          />
-          <DesktopAppSwitcher
-            activeApp="wework"
-            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
           />
         </div>
       )}

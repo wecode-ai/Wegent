@@ -630,16 +630,27 @@ describe('CloudTodoWorkspace', () => {
     )
 
     expect(screen.getByTestId('cloud-todo-workspace')).toHaveClass('absolute', 'inset-0', 'w-full')
-    expect(screen.getByTestId('cloud-todo-app-current')).toHaveTextContent('看板')
+    expect(screen.getByTestId('cloud-todo-workspace').querySelector('aside')).toHaveClass(
+      'w-[240px]',
+      'bg-[rgb(var(--color-sidebar))]'
+    )
+    expect(screen.queryByTestId('cloud-todo-app-current')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toBeInTheDocument()
-    expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(2)
+    expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('cloud-todo-collapse-sidebar')
+    )
+    expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('cloud-search-toggle')
+    )
+    expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(1)
     expect((await screen.findAllByText('项目空间')).length).toBeGreaterThan(0)
+    expect(screen.getByText('我的工作')).toHaveClass('h-[30px]', 'px-2', 'text-base')
     await waitFor(() => expect(screen.getAllByText('Wegent V4').length).toBeGreaterThan(0))
     await userEvent.click(screen.getAllByText('Wegent V4')[0])
     const projectHeader = screen.getByTestId('cloud-project-header')
     expect(projectHeader).toHaveClass('h-[52px]', 'shrink-0')
     expect(projectHeader.querySelector('[data-tauri-drag-region]')).toBeInTheDocument()
-    expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(2)
+    expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(1)
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
 
     expect(await screen.findByText('任务详情')).toBeInTheDocument()
@@ -762,8 +773,10 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
+    expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toHaveClass('gap-1')
     await userEvent.click(screen.getByTestId('cloud-todo-collapse-sidebar'))
-    expect(screen.getByTestId('cloud-todo-collapsed-app-current')).toHaveTextContent('看板')
+    expect(screen.queryByTestId('cloud-todo-collapsed-app-current')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass('left-2')
 
     await userEvent.click(screen.getByTestId('cloud-todo-expand-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()

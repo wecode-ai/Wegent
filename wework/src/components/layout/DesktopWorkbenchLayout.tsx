@@ -196,6 +196,7 @@ export function DesktopWorkbenchLayout() {
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
   const platform = getPlatform()
   const isTauri = isTauriRuntime()
+  const usesLayeredViewSurface = isTauri && platform === 'mac'
   const showWindowsTopBar = isTauri && platform === 'win' && !settingsOpen && !todoOpen
   const activeApp: DesktopAppKey =
     currentPath === '/todo'
@@ -585,9 +586,6 @@ export function DesktopWorkbenchLayout() {
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
-      onOpenWorkbench={() => navigateTo('/')}
-      onOpenTodo={() => navigateTo('/todo')}
-      onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
       onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
@@ -697,7 +695,9 @@ export function DesktopWorkbenchLayout() {
     <div
       className={cn(
         'relative h-full overflow-hidden bg-transparent text-text-primary',
-        showWindowsTopBar ? 'flex flex-col' : 'flex'
+        showWindowsTopBar ? 'flex flex-col' : 'flex',
+        usesLayeredViewSurface &&
+          'app-view-surface rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
       {windowsTopBar}
@@ -712,7 +712,7 @@ export function DesktopWorkbenchLayout() {
               data-testid="desktop-sidebar-hover-edge"
               aria-hidden="true"
               onPointerEnter={openSidebarPreview}
-              className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+              className="absolute left-0 top-0 z-popover h-full w-4"
             />
             <div
               data-testid="desktop-sidebar-preview"

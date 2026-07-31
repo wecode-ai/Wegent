@@ -109,7 +109,6 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
-import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
@@ -163,9 +162,6 @@ interface DesktopSidebarProps {
   onPointerEnter?: PointerEventHandler<HTMLElement>
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
-  onOpenWorkbench?: () => void
-  onOpenTodo?: () => void
-  onOpenApps?: () => void
   onNewChat: () => void
   onStartStandaloneChat: () => void
   onOpenSearch?: () => void
@@ -291,8 +287,6 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   red: '#ef4444',
   yellow: '#eab308',
 }
-const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
-
 function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
   const userName = user?.user_name?.trim()
   const email = user?.email?.trim()
@@ -2552,9 +2546,6 @@ export function DesktopSidebar({
   onPointerEnter,
   onPointerLeave,
   onToggleSidebar,
-  onOpenWorkbench,
-  onOpenTodo,
-  onOpenApps,
 }: DesktopSidebarProps) {
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
@@ -2574,7 +2565,7 @@ export function DesktopSidebar({
   const usesCloudAccount = showCloudConnectionEntry && Boolean(defaultWegentBackendUrl)
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const platform = getPlatform()
-  const usesOverlayTitlebar = isTauriRuntime() && platform === 'mac'
+  const usesOverlayTitlebar = false
   const isWindowsTauri = isTauriRuntime() && platform === 'win'
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -3012,7 +3003,7 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !isWindowsTauri && 'border-r border-black/[0.08] dark:border-white/[0.08]',
+        !collapsed && !isWindowsTauri && 'border-r border-black/[0.08] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -3039,8 +3030,8 @@ export function DesktopSidebar({
             <div
               data-testid="desktop-sidebar-chrome-controls"
               className={cn(
-                'absolute top-0 z-chrome flex h-[38px] items-center gap-7',
-                MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS
+                'absolute inset-x-0 top-0 z-chrome flex h-[38px] items-center justify-between pr-2',
+                'pl-[92px]'
               )}
             >
               <DesktopWindowControls
@@ -3048,35 +3039,33 @@ export function DesktopSidebar({
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
               />
-              <DesktopAppSwitcher
-                activeApp={
-                  activeItem === 'todo' ? 'todo' : activeItem === 'plugins' ? 'apps' : 'wework'
-                }
-                onNavigate={app => {
-                  if (app === 'wework') onOpenWorkbench?.()
-                  if (app === 'todo') onOpenTodo?.()
-                  if (app === 'apps') onOpenApps?.()
-                  if (app === 'wegent') navigateTo('/app/wegent')
-                }}
-              />
             </div>
           )}
           <div className="mb-1 flex h-9 items-center justify-between px-2">
             <span className="min-w-0 truncate text-heading-sm font-semibold leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
               Wework
             </span>
-            {onOpenSearch && (
-              <button
-                type="button"
-                data-testid="runtime-search-button"
-                onClick={onOpenSearch}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                title={t('workbench.search')}
-                aria-label={t('workbench.search')}
-              >
-                <Search className="h-4 w-4" />
-              </button>
-            )}
+            <div className="flex items-center gap-1">
+              {onToggleSidebar && (
+                <DesktopWindowControls
+                  sidebarCollapsed={false}
+                  onToggleSidebar={onToggleSidebar}
+                  className="gap-0"
+                />
+              )}
+              {onOpenSearch && (
+                <button
+                  type="button"
+                  data-testid="runtime-search-button"
+                  onClick={onOpenSearch}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                  title={t('workbench.search')}
+                  aria-label={t('workbench.search')}
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
           <nav className="space-y-0.5">
             <SidebarButton

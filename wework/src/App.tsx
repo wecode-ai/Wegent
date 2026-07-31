@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, Copy, Info, Minimize2, PanelLeft } from 'lucide-react'
+import { Check, Copy, Info, Minimize2 } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -28,19 +28,12 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import type { AppTab } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import {
-  requestDesktopSidebarToggle,
-  useDesktopSidebarCollapsed,
-} from '@/components/layout/useDesktopSidebarCollapsed'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
@@ -294,14 +287,25 @@ function AppShell() {
   }
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
-  const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
+  const isPopoutWindow = isPopoutWindowRuntime()
+  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
+  const titlebarOverlaysContent = false
+  const showChromeTitlebar = isTauri && !isPopoutWindow
+  const titlebarActiveKey = path === '/todo' ? 'todo' : activeAppKey
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
-  const isPopoutWindow = isPopoutWindowRuntime()
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
+
+  useEffect(() => {
+    if (!usesDesktopVibrancy) return undefined
+
+    document.documentElement.dataset.desktopVibrancy = 'true'
+    return () => {
+      delete document.documentElement.dataset.desktopVibrancy
+    }
+  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -484,21 +488,22 @@ function AppShell() {
     <div
       className={cn(
         'h-dvh',
-        isPopoutWindow ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-surface',
+        isPopoutWindow
+          ? 'overflow-visible bg-transparent'
+          : usesDesktopVibrancy
+            ? 'overflow-hidden bg-transparent'
+            : 'overflow-hidden bg-surface',
         titlebarOverlaysContent ? 'relative' : 'flex flex-col'
       )}
     >
       {showChromeTitlebar && (
         <ChromeTitlebar
           tabs={tabs}
-          activeKey={activeAppKey}
+          activeKey={titlebarActiveKey}
           onNavigate={appKey => (appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey))}
-          beforeTabs={<TitlebarSidebarToggle />}
-          afterTabs={<AppUpdateTitlebarButton />}
           iconOnlyTabs={isTauri}
-          className={
-            titlebarOverlaysContent ? 'absolute inset-x-0 top-0 z-system bg-transparent' : undefined
-          }
+          showWorkspacePortals={activeAppKey !== 'wework'}
+          showFeedback={activeAppKey !== 'wework'}
         />
       )}
       <div
@@ -678,36 +683,5 @@ function WeworkDevInstanceBadge() {
         </div>
       </div>
     </div>
-  )
-}
-
-function TitlebarSidebarToggle() {
-  const { t } = useTranslation('common')
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const label = sidebarCollapsed
-    ? t('workbench.expand_sidebar', '展开侧边栏')
-    : t('workbench.collapse_sidebar', '收起侧边栏')
-
-  return (
-    <TitlebarTooltip
-      label={t('workbench.toggle_sidebar', '切换边栏')}
-      shortcut="Command+B"
-      align="start"
-    >
-      <button
-        type="button"
-        data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-        onClick={() => {
-          if (!requestDesktopSidebarToggle()) {
-            setSidebarCollapsed(!sidebarCollapsed)
-          }
-        }}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={label}
-        aria-pressed={sidebarCollapsed}
-      >
-        <PanelLeft />
-      </button>
-    </TitlebarTooltip>
   )
 }
