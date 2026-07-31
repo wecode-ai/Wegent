@@ -98,35 +98,41 @@ function responseBody(request, content) {
   }
 }
 
-function capabilityProbeName(request) {
+function capabilityProbeTool(request) {
   const tools = Array.isArray(request?.tools) ? request.tools : []
-  return tools
-    .map(tool => tool?.name || tool?.function?.name)
-    .find(name => name === 'wework_capability_probe')
+  return tools.find(tool => {
+    const name = tool?.name || tool?.function?.name
+    return name === 'wework_capability_probe' || name === 'apply_patch'
+  })
+}
+
+function capabilityProbeName(request) {
+  const tool = capabilityProbeTool(request)
+  return tool?.name || tool?.function?.name
 }
 
 function capabilityRequestError(req, request, apiFormat) {
-  const tools = Array.isArray(request?.tools) ? request.tools : []
-  const tool = tools.find(
-    candidate => (candidate?.name || candidate?.function?.name) === 'wework_capability_probe'
-  )
-  if (!tool) return 'Missing wework_capability_probe tool'
+  const tool = capabilityProbeTool(request)
+  if (!tool) return 'Missing capability probe tool'
   if (!String(req.headers.authorization || '').startsWith('Bearer ')) {
     return 'Missing bearer authorization'
   }
   if (request?.stream !== false) return 'Capability probe must be non-streaming'
 
   if (apiFormat === 'responses') {
-    if (request?.store !== false || request?.max_output_tokens !== 64) {
+    const expectedMaxOutputTokens = tool.type === 'custom' ? 256 : 64
+    if (request?.store !== false || request?.max_output_tokens !== expectedMaxOutputTokens) {
       return 'Responses probe options are incorrect'
     }
     if (!String(request?.input || '').includes('PING')) return 'Responses probe prompt is missing'
     if (request?.tool_choice !== undefined) return 'Responses probe must not force a tool'
     if (tool.type === 'custom') {
       if (
+        tool.name !== 'apply_patch' ||
         tool.format?.type !== 'grammar' ||
         tool.format?.syntax !== 'lark' ||
-        tool.format?.definition !== 'start: "PING"'
+        !tool.format?.definition?.includes('begin_patch: "*** Begin Patch" LF') ||
+        !tool.format?.definition?.includes('end_patch: "*** End Patch" LF?')
       ) {
         return 'Responses custom tool grammar is incorrect'
       }
@@ -172,7 +178,7 @@ function capabilityRequestError(req, request, apiFormat) {
 
 function responsesCapabilityBody(request) {
   const createdAt = Math.floor(Date.now() / 1000)
-  const custom = request?.tools?.[0]?.type === 'custom'
+  const custom = capabilityProbeTool(request)?.type === 'custom'
   return {
     id: `resp_probe_${createdAt}`,
     object: 'response',
@@ -185,8 +191,9 @@ function responsesCapabilityBody(request) {
             id: `tool_probe_${createdAt}`,
             type: 'custom_tool_call',
             call_id: `call_probe_${createdAt}`,
-            name: 'wework_capability_probe',
-            input: 'PING',
+            name: 'apply_patch',
+            input:
+              '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n',
           }
         : {
             id: `tool_probe_${createdAt}`,

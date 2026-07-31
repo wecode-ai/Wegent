@@ -12295,9 +12295,14 @@ last_updated = "2026-07-30T00:00:00Z"`
         rightPanelShellSelector,
         'The expanded right workspace panel'
       )
+      const collapsedWorkbenchMetrics = await getSingleElementMetrics(
+        control,
+        ACTIVE_WORKBENCH_SELECTOR,
+        'The collapsed workbench'
+      )
       assert.ok(
-        sidebarHiddenPanelMetrics.left <= 1,
-        `The expanded right workspace panel remained ${sidebarHiddenPanelMetrics.left}px from the left edge`
+        Math.abs(sidebarHiddenPanelMetrics.left - collapsedWorkbenchMetrics.left) <= 1,
+        `The expanded right workspace panel was not aligned with the collapsed workbench: ${sidebarHiddenPanelMetrics.left}px versus ${collapsedWorkbenchMetrics.left}px`
       )
       await control.command('pointerLeave', '[data-testid="desktop-sidebar-hover-edge"]')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 350))

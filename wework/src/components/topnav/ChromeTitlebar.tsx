@@ -25,6 +25,8 @@ interface ChromeTitlebarProps {
   afterTabs?: ReactNode
   className?: string
   iconOnlyTabs?: boolean
+  showWorkspacePortals?: boolean
+  showFeedback?: boolean
 }
 
 export function ChromeTitlebar({
@@ -35,6 +37,8 @@ export function ChromeTitlebar({
   afterTabs,
   className,
   iconOnlyTabs = false,
+  showWorkspacePortals = true,
+  showFeedback = true,
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
@@ -43,7 +47,8 @@ export function ChromeTitlebar({
     <div
       data-testid="chrome-titlebar"
       className={cn(
-        'z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none',
+        'z-titlebar flex h-[38px] shrink-0 items-center pr-2 backdrop-blur-xl backdrop-saturate-150 select-none',
+        isTauri && platform === 'mac' ? 'bg-transparent' : 'bg-surface',
         className
       )}
     >
@@ -77,6 +82,7 @@ export function ChromeTitlebar({
                   : 'wework'
           }
           onNavigate={onNavigate}
+          variant="tabs"
         />
       ) : (
         <div className="flex min-w-0 items-center gap-1 overflow-hidden">
@@ -114,41 +120,48 @@ export function ChromeTitlebar({
       >
         {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
       </div>
-      {isTauri && platform === 'mac' && <TopnavFeedbackButton />}
-      {isTauri && <TitlebarExtensionSlot />}
-      <div
-        data-testid="titlebar-right-workspace-zone"
-        className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
-        style={{
-          right:
-            isTauri && platform === 'win'
-              ? 'calc(138px + 5rem)'
-              : isTauri && platform === 'linux'
-                ? 'calc(138px + 5rem)'
-                : '5rem',
-          width: 'var(--right-workspace-titlebar-width, auto)',
-        }}
-      >
-        <div
-          id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
-          data-testid="titlebar-right-panel"
-          className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
-        >
-          {isTauri ? (
-            <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
-              <MacOSTitleBarDragRegion className="h-full w-full" />
+      {showFeedback && isTauri && platform === 'mac' && <TopnavFeedbackButton />}
+      {showWorkspacePortals && isTauri && <TitlebarExtensionSlot />}
+      {showWorkspacePortals && (
+        <>
+          <div
+            data-testid="titlebar-right-workspace-zone"
+            className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
+            style={{
+              right:
+                isTauri && platform === 'win'
+                  ? 'calc(138px + 5rem)'
+                  : isTauri && platform === 'linux'
+                    ? 'calc(138px + 5rem)'
+                    : '5rem',
+              width: 'var(--right-workspace-titlebar-width, auto)',
+            }}
+          >
+            <div
+              id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
+              data-testid="titlebar-right-panel"
+              className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
+            >
+              {isTauri ? (
+                <div
+                  data-testid="titlebar-right-panel-drag-region"
+                  className="absolute inset-0 z-0"
+                >
+                  <MacOSTitleBarDragRegion className="h-full w-full" />
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      </div>
-      <div
-        id={TITLEBAR_ACTIONS_PORTAL_ID}
-        data-testid="titlebar-actions"
-        className="pointer-events-auto absolute right-0 top-0 z-chrome flex h-full w-[5rem] shrink-0 items-center justify-end gap-1 pr-3"
-        style={{
-          right: isTauri && (platform === 'linux' || platform === 'win') ? '138px' : undefined,
-        }}
-      />
+          </div>
+          <div
+            id={TITLEBAR_ACTIONS_PORTAL_ID}
+            data-testid="titlebar-actions"
+            className="pointer-events-auto absolute right-0 top-0 z-chrome flex h-full w-[5rem] shrink-0 items-center justify-end gap-1 pr-3"
+            style={{
+              right: isTauri && (platform === 'linux' || platform === 'win') ? '138px' : undefined,
+            }}
+          />
+        </>
+      )}
 
       {/* Linux: right spacer for native window controls */}
       {isTauri && platform === 'linux' && (

@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, Copy, Info, Minimize2, PanelLeft } from 'lucide-react'
+import { Check, Copy, Info, Minimize2 } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -28,23 +28,15 @@ import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import type { AppTab } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import {
-  requestDesktopSidebarToggle,
-  useDesktopSidebarCollapsed,
-} from '@/components/layout/useDesktopSidebarCollapsed'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
@@ -82,6 +74,8 @@ import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
@@ -145,6 +139,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/apps' ||
     path === '/popout' ||
     isPopoutWindow
+  const usesAuxiliaryDesktopSurface = isAuxiliaryRoute && !isPopoutWindow && isTauriRuntime()
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
   const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
     activeIframeTab ? [activeIframeTab] : []
@@ -188,6 +183,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
+  // Route surfaces and their sidebars must read one resolved preference snapshot.
+  // Mounting them before it is available makes experimental navigation items briefly
+  // disappear when a route change creates a new sidebar instance.
+  if (!experimentalFeatures.loaded) {
+    return null
+  }
+
   const auxiliaryPage = isPopoutWindow ? (
     <PopoutWorkbenchPage />
   ) : path === '/plugins/manage' ? (
@@ -226,7 +228,18 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           <AppIframe src={tab.url ?? ''} title={tab.label} />
         </div>
       ))}
-      {auxiliaryPage}
+      {auxiliaryPage && (
+        <div
+          data-testid="desktop-auxiliary-surface"
+          className={cn(
+            'h-full',
+            usesAuxiliaryDesktopSurface &&
+              'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
+          )}
+        >
+          {auxiliaryPage}
+        </div>
+      )}
     </WorkbenchProvider>
   )
 }
@@ -247,40 +260,31 @@ function MainApp() {
     document.title = getWeworkDocumentTitle()
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-
-    getAppPreferences()
-      .then(preferences => {
-        if (!cancelled) {
-          return applyLanguagePreference(preferences.language)
-        }
-        return undefined
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to initialize language preference:', error)
-        if (!cancelled) {
-          return applyLanguagePreference(defaultAppPreferences.language)
-        }
-        return undefined
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
     <AppearanceProvider>
-      <AppUpdateProvider>
-        <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
-          <AuthProvider>
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
+      <AppPreferencesProvider>
+        <LanguagePreferenceInitializer />
+        <AppUpdateProvider>
+          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+            <AuthProvider>
+              <AppShell />
+            </AuthProvider>
+          </CloudConnectionProvider>
+        </AppUpdateProvider>
+      </AppPreferencesProvider>
     </AppearanceProvider>
   )
+}
+
+function LanguagePreferenceInitializer() {
+  const appPreferences = useAppPreferencesState()
+
+  useEffect(() => {
+    if (!appPreferences?.loaded) return
+    void applyLanguagePreference(appPreferences.preferences.language)
+  }, [appPreferences?.loaded, appPreferences?.preferences.language])
+
+  return null
 }
 
 function AppShell() {
@@ -294,14 +298,25 @@ function AppShell() {
   }
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
-  const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
+  const isPopoutWindow = isPopoutWindowRuntime()
+  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
+  const titlebarOverlaysContent = false
+  const showChromeTitlebar = isTauri && !isPopoutWindow
+  const titlebarActiveKey = path === '/todo' ? 'todo' : activeAppKey
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
-  const isPopoutWindow = isPopoutWindowRuntime()
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
+
+  useEffect(() => {
+    if (!usesDesktopVibrancy) return undefined
+
+    document.documentElement.dataset.desktopVibrancy = 'true'
+    return () => {
+      delete document.documentElement.dataset.desktopVibrancy
+    }
+  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -484,21 +499,22 @@ function AppShell() {
     <div
       className={cn(
         'h-dvh',
-        isPopoutWindow ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-surface',
+        isPopoutWindow
+          ? 'overflow-visible bg-transparent'
+          : usesDesktopVibrancy
+            ? 'overflow-hidden bg-transparent'
+            : 'overflow-hidden bg-surface',
         titlebarOverlaysContent ? 'relative' : 'flex flex-col'
       )}
     >
       {showChromeTitlebar && (
         <ChromeTitlebar
           tabs={tabs}
-          activeKey={activeAppKey}
+          activeKey={titlebarActiveKey}
           onNavigate={appKey => (appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey))}
-          beforeTabs={<TitlebarSidebarToggle />}
-          afterTabs={<AppUpdateTitlebarButton />}
           iconOnlyTabs={isTauri}
-          className={
-            titlebarOverlaysContent ? 'absolute inset-x-0 top-0 z-system bg-transparent' : undefined
-          }
+          showWorkspacePortals={activeAppKey !== 'wework'}
+          showFeedback={activeAppKey !== 'wework'}
         />
       )}
       <div
@@ -678,36 +694,5 @@ function WeworkDevInstanceBadge() {
         </div>
       </div>
     </div>
-  )
-}
-
-function TitlebarSidebarToggle() {
-  const { t } = useTranslation('common')
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const label = sidebarCollapsed
-    ? t('workbench.expand_sidebar', '展开侧边栏')
-    : t('workbench.collapse_sidebar', '收起侧边栏')
-
-  return (
-    <TitlebarTooltip
-      label={t('workbench.toggle_sidebar', '切换边栏')}
-      shortcut="Command+B"
-      align="start"
-    >
-      <button
-        type="button"
-        data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-        onClick={() => {
-          if (!requestDesktopSidebarToggle()) {
-            setSidebarCollapsed(!sidebarCollapsed)
-          }
-        }}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={label}
-        aria-pressed={sidebarCollapsed}
-      >
-        <PanelLeft />
-      </button>
-    </TitlebarTooltip>
   )
 }

@@ -46,6 +46,19 @@ describe('DesktopAppSwitcher', () => {
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
   })
 
+  test('renders always-visible view tabs and navigates directly', () => {
+    experimentalFeatures.enabled = true
+    const onNavigate = vi.fn()
+
+    render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} variant="tabs" />)
+
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTestId('chrome-tab-todo')).toHaveTextContent('看板')
+    expect(screen.getByTestId('chrome-tab-todo')).not.toHaveAttribute('aria-haspopup')
+    fireEvent.click(screen.getByTestId('chrome-tab-todo'))
+    expect(onNavigate).toHaveBeenCalledWith('todo')
+  })
+
   test('hides Kanban while experimental features are disabled', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
