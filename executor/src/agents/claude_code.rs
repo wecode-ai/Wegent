@@ -14,7 +14,8 @@ use serde_json::{json, Map, Value};
 use crate::{
     agents::{
         backend_url::request_backend_url, interactive_mcp::build_interactive_form_answer_query,
-        skill_download::skill_download_concurrency, task_identity::task_identity_env,
+        runtime_capabilities::resolve_skill, skill_download::skill_download_concurrency,
+        task_identity::task_identity_env,
     },
     attachments::{
         append_text_to_vision_prompt, convert_openai_to_anthropic_content, create_multimodal_query,
@@ -30,7 +31,7 @@ use crate::{
     logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
-    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions},
+    services::skill_deployer::{build_skill_deployment_plan, SkillDeploymentOptions, SkillRef},
 };
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
@@ -651,7 +652,7 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     let Some(bot_config) = primary_bot(request) else {
         return;
     };
-    let Some(plan) = build_skill_deployment_plan(
+    let Some(mut plan) = build_skill_deployment_plan(
         bot_config,
         request,
         SkillDeploymentOptions {
@@ -665,6 +666,37 @@ pub(super) async fn deploy_claude_task_skills(request: &ExecutionRequest, spec: 
     let Some(backend_url) = task_backend_url(request) else {
         return;
     };
+
+    let resolver_client = reqwest::Client::new();
+    for skill_name in plan.skills.clone() {
+        if plan.resolved_skill_map.contains_key(&skill_name) {
+            continue;
+        }
+        match resolve_skill(&resolver_client, &plan, &skill_name, None, &backend_url).await {
+            Ok(Some((skill_id, namespace))) => {
+                plan.resolved_skill_map.insert(
+                    skill_name.clone(),
+                    SkillRef {
+                        skill_id,
+                        namespace,
+                        is_public: false,
+                        content_hash: None,
+                    },
+                );
+            }
+            Ok(None) => {
+                log_executor_event(
+                    "claude task skill not found",
+                    &[("skill", skill_name.clone())],
+                );
+            }
+            Err(error) => {
+                let mut fields = vec![("skill", skill_name.clone())];
+                push_error_fields(&mut fields, error);
+                log_executor_event("claude task skill resolution failed", &fields);
+            }
+        }
+    }
 
     let provider = HttpPackageProvider::new(backend_url, plan.auth_token.clone());
     stream::iter(plan.skills.iter().cloned())

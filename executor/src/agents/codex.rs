@@ -103,9 +103,10 @@ mod diagnostics;
 mod home;
 
 use diagnostics::{json_scalar_field, json_string_field};
+pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-use home::{prepare_wework_codex_home, wework_codex_home, CODEX_HOME_ENV};
+use home::{prepare_wework_codex_home, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -265,6 +266,12 @@ impl CodexAppServerClient {
                 .map_err(|_| "codex app-server response channel closed".to_owned())?
         })
         .await
+    }
+
+    pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(_, initialize_elapsed)| initialize_elapsed)
     }
 
     pub async fn configure_runtime_proxy(&self, proxy_url: Option<&str>) -> Result<bool, String> {
@@ -670,6 +677,14 @@ impl CodexAppServerClient {
     }
 
     async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(handle, _)| handle)
+    }
+
+    async fn ensure_process_with_startup(
+        &self,
+    ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
         let mut state = self.state.lock().await;
         if state
             .process
@@ -678,22 +693,28 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        let mut initialize_elapsed = None;
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
                 env: state.runtime_proxy_env.clone(),
                 ..CodexLaunchConfig::default()
             };
+            let initialize_started_at = Instant::now();
             let (process, next_id) =
                 start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
                     .await?;
+            initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
             state.next_id = next_id;
         }
-        Ok(state
-            .process
-            .as_ref()
-            .expect("persistent Codex app-server should be initialized")
-            .handle())
+        Ok((
+            state
+                .process
+                .as_ref()
+                .expect("persistent Codex app-server should be initialized")
+                .handle(),
+            initialize_elapsed,
+        ))
     }
 
     async fn ensure_process_for_launch_config(
@@ -931,7 +952,6 @@ async fn start_persistent_codex_app_server(
         Ok(rpc.into_parts())
     }
     .await;
-
     match result {
         Ok((stdin, stdout, next_id)) => {
             let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -2015,6 +2035,7 @@ fn spawn_codex_app_server(
         ),
     );
     configure_codex_app_server_process_group(&mut command);
+    configure_codex_windows_no_window(&mut command);
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -2098,6 +2119,14 @@ fn configure_codex_app_server_process_group(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn configure_codex_app_server_process_group(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn configure_codex_windows_no_window(command: &mut Command) {
+    crate::process::hide_windows_console(command);
+}
+
+#[cfg(not(windows))]
+fn configure_codex_windows_no_window(_command: &mut Command) {}
 
 async fn terminate_codex_app_server_child(child: &mut Child) {
     signal_codex_app_server_child(child);

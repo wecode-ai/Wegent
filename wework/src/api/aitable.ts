@@ -14,7 +14,7 @@ export interface AITableField {
   id: string
   name: string
   type: string
-  config: Record<string, unknown>
+  config: Record<string, unknown> | null
   ai_config?: Record<string, unknown> | null
   raw: Record<string, unknown>
 }
@@ -30,6 +30,7 @@ export interface AITableDescription {
   tables: Array<Record<string, unknown>>
   active_table: Record<string, unknown>
   fields: AITableField[]
+  views?: Array<Record<string, unknown>>
 }
 
 export interface AITableRecordPage {
@@ -43,7 +44,7 @@ export interface AITableApi {
   describe(projectId: string): Promise<AITableDescription>
   listRecords(
     projectId: string,
-    options?: { query?: string; limit?: number; cursor?: string }
+    options?: { query?: string; limit?: number; cursor?: string; viewId?: string }
   ): Promise<AITableRecordPage>
   getRecord?(projectId: string, recordId: string): Promise<AITableRecord>
   createRecord(projectId: string, cells: Record<string, unknown>): Promise<AITableRecord>
@@ -63,6 +64,10 @@ export interface AITableApi {
     data: { name?: string; config?: Record<string, unknown> }
   ): Promise<AITableField>
   deleteField(projectId: string, fieldId: string): Promise<void>
+  createView?(
+    projectId: string,
+    data: { name: string; type: 'grid' | 'kanban' }
+  ): Promise<Record<string, unknown>>
 }
 
 type LocalRequest = <T>(
@@ -97,6 +102,7 @@ export function createLocalAITableApi(request: LocalRequest): AITableApi {
         query: options.query,
         limit: options.limit,
         cursor: options.cursor,
+        view_id: options.viewId,
       })
     },
     getRecord(projectId, recordId) {
@@ -132,6 +138,13 @@ export function createLocalAITableApi(request: LocalRequest): AITableApi {
     },
     async deleteField(projectId, fieldId) {
       await request('aitable.delete_field', { project_id: projectId, field_id: fieldId })
+    },
+    createView(projectId, data) {
+      return request('aitable.create_view', {
+        project_id: projectId,
+        name: data.name,
+        view_type: data.type,
+      })
     },
   }
 }

@@ -2,12 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
+import {
+  DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
+  DESKTOP_MESSAGE_LIST_CLASS,
+} from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useWorkbenchAttachments } from '@/features/workbench/useWorkbenchAttachments'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { useTranslation } from '@/hooks/useTranslation'
+import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
+import {
+  useRuntimeTaskLifecycle,
+  useRuntimeTaskLifecycleStore,
+} from '@/features/workbench/runtimeTaskLifecycle'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
   Attachment,
@@ -17,8 +27,6 @@ import type {
 } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
-
-const SIDE_CHAT_MESSAGE_LIST_CLASS = 'w-full max-w-none px-5 pb-4 pt-5 lg:pl-14'
 
 function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
   return action.type === 'assistant_chunk' || action.type === 'block_updated'
@@ -41,6 +49,19 @@ interface TemporaryChatPanelProps {
   instanceId: string
   testId?: string
   initialInput?: string
+  initialAddress?: RuntimeTaskAddress | null
+  createTask?: (
+    message: string,
+    options: {
+      attachments: Attachment[]
+      onError: (message: string) => void
+      onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
+    }
+  ) => Promise<RuntimeTaskAddress | false>
+  onAddressChange?: (address: RuntimeTaskAddress | null) => void
+  sendEphemeral?: boolean
+  emptyStateText?: string
+  placeholder?: string
   expanded?: boolean
   onRestoreConversation?: () => void
 }
@@ -51,6 +72,12 @@ export function TemporaryChatPanel({
   instanceId,
   testId = 'right-workspace-chat-panel',
   initialInput = '',
+  initialAddress = null,
+  createTask,
+  onAddressChange,
+  sendEphemeral = true,
+  emptyStateText = '临时聊天不会出现在左侧任务列表。',
+  placeholder = '要求后续变更',
   expanded = false,
   onRestoreConversation,
 }: TemporaryChatPanelProps) {
@@ -84,21 +111,43 @@ export function TemporaryChatPanel({
     }),
     [attachmentSelection, projectChat]
   )
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>(null)
+  const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
+  const lifecycleStore = useRuntimeTaskLifecycleStore()
+  const taskLifecycle = useRuntimeTaskLifecycle(address)
+  const paneStatus = useMemo(
+    () =>
+      deriveRuntimePaneStatus({
+        messages,
+        currentRuntimeTask: address,
+        lifecycle: taskLifecycle,
+      }),
+    [address, messages, taskLifecycle]
+  )
+  const busy = sending || paneStatus.isBusy
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
+
+  const updateAddress = useCallback(
+    (nextAddress: RuntimeTaskAddress | null) => {
+      setAddress(nextAddress)
+      onAddressChange?.(nextAddress)
+    },
+    [onAddressChange]
+  )
 
   useEffect(() => {
     if (!initialInput) return
     const frame = requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLElement>(`[data-testid="${testId}"] [data-testid="chat-message-input"]`)
-        ?.focus()
+      focusComposerAtEnd(
+        document.querySelector<HTMLElement>(
+          `[data-testid="${testId}"] [data-testid="chat-message-input"]`
+        )
+      )
     })
     return () => cancelAnimationFrame(frame)
   }, [initialInput, testId])
@@ -164,9 +213,11 @@ export function TemporaryChatPanel({
     let cancelled = false
     void loadRuntimeTranscriptForPane(address)
       .then(transcript => {
-        if (!cancelled && transcript.messages.length > 0) {
-          setMessages(transcript.messages)
-        }
+        if (cancelled) return
+        lifecycleStore.syncTranscript(address, transcript, {
+          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+        })
+        if (transcript.messages.length > 0) setMessages(transcript.messages)
       })
       .catch(caughtError => {
         if (!cancelled) {
@@ -176,7 +227,7 @@ export function TemporaryChatPanel({
     return () => {
       cancelled = true
     }
-  }, [address, loadRuntimeTranscriptForPane])
+  }, [address, lifecycleStore, loadRuntimeTranscriptForPane])
 
   const loadFullTranscript = useCallback(async () => {
     if (!address || loadingFullTranscript) return
@@ -186,6 +237,9 @@ export function TemporaryChatPanel({
         includeFullContent: true,
         refresh: true,
       })
+      lifecycleStore.syncTranscript(address, transcript, {
+        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+      })
       if (transcript.messages.length > 0) {
         setMessages(transcript.messages)
       }
@@ -194,13 +248,13 @@ export function TemporaryChatPanel({
     } finally {
       setLoadingFullTranscript(false)
     }
-  }, [address, loadRuntimeTranscriptForPane, loadingFullTranscript])
+  }, [address, lifecycleStore, loadRuntimeTranscriptForPane, loadingFullTranscript])
 
   useEffect(() => {
     if (!address) return
     return subscribeRuntimeTaskStream(address, {
       onMessageAction: dispatchMessages,
-      onAssistantStart: () => setSending(true),
+      onAssistantStart: () => setSending(false),
       onAssistantSettled: () => setSending(false),
     })
   }, [address, dispatchMessages, subscribeRuntimeTaskStream])
@@ -218,33 +272,42 @@ export function TemporaryChatPanel({
       if (!message) return
       setError(null)
       setMessages(current => [...current, createUserMessage(message)])
+      setInput('')
       setSending(true)
 
       const currentAttachments = sideChatProjectChat.attachments
       const attachmentIds = remoteAttachmentIds(currentAttachments)
       const attachments = localRuntimeAttachments(currentAttachments)
-      const handleError = (message: string) => {
-        setError(message)
+      const handleError = (errorMessage: string) => {
+        setError(errorMessage)
+        setInput(current => current || message)
         setSending(false)
       }
 
       const targetAddress =
         address ??
-        (await createTemporaryRuntimeTask(message, {
-          project: currentProject,
-          source,
-          attachments: currentAttachments,
-          onError: handleError,
-          onRuntimeTaskOptimisticOpen: setAddress,
-        }))
+        (createTask
+          ? await createTask(message, {
+              attachments: currentAttachments,
+              onError: handleError,
+              onRuntimeTaskOptimisticOpen: updateAddress,
+            })
+          : await createTemporaryRuntimeTask(message, {
+              project: currentProject,
+              source,
+              attachments: currentAttachments,
+              onError: handleError,
+              onRuntimeTaskOptimisticOpen: updateAddress,
+            }))
 
       if (!targetAddress) {
-        setAddress(null)
+        setInput(current => current || message)
+        updateAddress(null)
         setSending(false)
         return
       }
       if (!address) {
-        setAddress(targetAddress)
+        updateAddress(targetAddress)
         sideChatProjectChat.resetAttachments()
         return
       }
@@ -253,7 +316,7 @@ export function TemporaryChatPanel({
         {
           address: targetAddress,
           message,
-          ephemeral: true,
+          ...(sendEphemeral ? { ephemeral: true } : {}),
           ...selectedModelFields,
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
@@ -268,6 +331,7 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      createTask,
       createTemporaryRuntimeTask,
       currentProject,
       input,
@@ -275,6 +339,8 @@ export function TemporaryChatPanel({
       selectedModelFields,
       sendRuntimePaneMessage,
       source,
+      sendEphemeral,
+      updateAddress,
     ]
   )
 
@@ -290,16 +356,16 @@ export function TemporaryChatPanel({
       {messages.length === 0 ? (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-sm text-text-muted">
           <MessageCircle className="h-5 w-5 text-text-secondary" />
-          <p>临时聊天不会出现在左侧任务列表。</p>
+          <p>{emptyStateText}</p>
         </div>
       ) : (
         <ScrollableMessageArea
           messages={messages}
-          isWaitingForAssistant={sending}
+          isWaitingForAssistant={busy}
           devices={state.devices}
           conversationKey={address?.taskId ?? instanceId}
           className="min-h-0 flex-1"
-          messageListClassName={SIDE_CHAT_MESSAGE_LIST_CLASS}
+          messageListClassName={`${DESKTOP_MESSAGE_LIST_CLASS} pb-4 pt-5`}
           scrollTestId="right-workspace-chat-scroll-area"
           onLoadFullTranscript={loadFullTranscript}
           loadingFullTranscript={loadingFullTranscript}
@@ -311,7 +377,7 @@ export function TemporaryChatPanel({
           'shrink-0',
           expanded
             ? 'relative z-critical mx-auto w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6'
-            : 'bg-background px-4 py-3'
+            : 'bg-background py-3'
         )}
       >
         {expanded && (
@@ -325,18 +391,21 @@ export function TemporaryChatPanel({
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        <div className="pointer-events-auto">
+        <div
+          data-testid="side-chat-composer-layout"
+          className={cn('pointer-events-auto', !expanded && DESKTOP_CHAT_CONTENT_WIDTH_CLASS)}
+        >
           <BufferedChatInput
             value={input}
             onChange={setInput}
             onSubmit={send}
             disabled={false}
             error={error}
-            placeholder="要求后续变更"
+            placeholder={placeholder}
             variant="desktop"
             projectChat={sideChatProjectChat}
             showProjectWorkBar={false}
-            isStreaming={sending}
+            isStreaming={busy}
             onPause={pause}
           />
         </div>

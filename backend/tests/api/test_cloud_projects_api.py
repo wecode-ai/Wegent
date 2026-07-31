@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.delivery import CloudProject, Delivery, DeliveryAsset
+from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
 from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
@@ -125,6 +125,105 @@ def test_cloud_project_tag_registry(
     )
     assert cleared.status_code == 200
     assert cleared.json()["tags"] == []
+
+
+def test_cloud_project_card_display_is_shared_through_project_metadata(
+    test_client: TestClient, test_token: str
+) -> None:
+    created = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "display", "name": "Shared card display"},
+    ).json()
+    assert created["card_display"] == {
+        "show_assignee": True,
+        "show_priority": True,
+        "show_tags": True,
+        "show_date": True,
+    }
+
+    updated = test_client.patch(
+        f"/api/v1/cloud-projects/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "card_display": {
+                **created["card_display"],
+                "show_assignee": False,
+            },
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["card_display"]["show_assignee"] is False
+
+    listed = test_client.get("/api/v1/cloud-projects", headers=_auth(test_token))
+    match = next(item for item in listed.json()["items"] if item["id"] == created["id"])
+    assert match["card_display"]["show_assignee"] is False
+
+
+def test_cloud_project_board_config_supports_custom_statuses(
+    test_client: TestClient, test_db: Session, test_token: str
+) -> None:
+    project = test_client.post(
+        "/api/v1/cloud-projects",
+        headers=_auth(test_token),
+        json={"project_key": "board", "name": "Custom board"},
+    ).json()
+    assert [item["id"] for item in project["board_config"]["statuses"]] == [
+        "inbox",
+        "pending",
+        "in_progress",
+        "in_review",
+        "completed",
+    ]
+
+    configured = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "board_config": {
+                "group_by": "priority",
+                "statuses": [
+                    {"id": "idea", "name": "想法", "color": "gray"},
+                    {"id": "shipping", "name": "发布中", "color": "blue"},
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 200
+    project = configured.json()
+    assert project["board_config"]["group_by"] == "priority"
+
+    task = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Ship it", "status": "shipping"},
+    )
+    assert task.status_code == 201
+
+    stored_task = test_db.query(LoopItem).filter(LoopItem.id == task.json()["id"]).one()
+    stored_task.assignee_user_id = None
+    test_db.commit()
+    my_work = test_client.get(
+        "/api/v1/cloud-work-items/my-work", headers=_auth(test_token)
+    )
+    assert any(item["id"] == task.json()["id"] for item in my_work.json()["items"])
+
+    cleared = test_client.patch(
+        f"/api/v1/cloud-projects/{project['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": project["version"],
+            "board_config": {"group_by": "assignee", "statuses": []},
+        },
+    )
+    assert cleared.status_code == 200
+    test_db.expire_all()
+    refreshed = test_client.get(
+        f"/api/v1/loop-items/{task.json()['id']}", headers=_auth(test_token)
+    )
+    assert refreshed.json()["status"] == ""
 
 
 def test_cloud_project_generates_key_when_omitted(
@@ -753,6 +852,7 @@ def test_todo_lifecycle_and_multiple_local_tasks(
     )
     assert created.status_code == 201
     item = created.json()
+    assert item["assignee_name"] == test_user.user_name
     assert item["id"] == "CHAIN-1"
     assert item["cloud_project_id"] == project["id"]
     assert item["status"] == "inbox"
@@ -856,6 +956,7 @@ def test_loop_item_tags_roundtrip(
     )
     assert listed.status_code == 200
     assert listed.json()["items"][0]["tags"] == ["产品需求", "研发"]
+    assert listed.json()["items"][0]["assignee_name"] == test_user.user_name
 
     updated = test_client.patch(
         f"/api/v1/loop-items/{item['id']}",

@@ -38,7 +38,7 @@ import {
 } from '../useTeamCapabilityGroups'
 import type { ResourceCreateRequest } from './ResourceCreateButton'
 import { DiscoverResources } from './DiscoverResources'
-import { GroupInstalledSkills } from './GroupInstalledSkills'
+import { GroupInstalledSkills, GroupInstalledSkillsSkeleton } from './GroupInstalledSkills'
 import { MyResources } from './MyResources'
 import type { TeamModeFilter } from '@/features/tasks/components/selector/team-selector-utils'
 
@@ -264,7 +264,7 @@ export function TeamCapabilities({
     [addTargetGroup, writableGroups]
   )
   const canAdd = writableGroups.length > 0
-  const canAddMarketplaceCapability = resourceType === 'agent' || resourceType === 'skill'
+  const canAddMarketplaceCapability = resourceType !== 'all'
   const effectiveGroupNames = teamSelection.all
     ? groups.map(group => group.name)
     : teamSelection.groupNames
@@ -345,6 +345,9 @@ export function TeamCapabilities({
   )
 
   if (groupStatus === 'loading') {
+    if (resourceType === 'skill') {
+      return <GroupInstalledSkillsSkeleton />
+    }
     return (
       <div
         className="flex min-h-64 items-center justify-center rounded-lg border border-border text-sm text-text-muted"

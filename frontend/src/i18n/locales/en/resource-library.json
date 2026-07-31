@@ -43,6 +43,7 @@
     "use": "Use",
     "add": "Add",
     "added": "Added",
+    "system_available": "System available",
     "new_capability": "New Capability",
     "view_capabilities": "Capabilities",
     "add_capability": "Add from Marketplace",
@@ -146,6 +147,8 @@
   },
   "search": {
     "placeholder": "Search resources",
+    "agent_placeholder": "Search agents or descriptions",
+    "skill_placeholder": "Search skills",
     "groups_placeholder": "Search teams",
     "groups_empty": "No matching teams"
   },

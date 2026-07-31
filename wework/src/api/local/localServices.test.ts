@@ -1858,6 +1858,35 @@ describe('createLocalAppServices', () => {
     expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
   })
 
+  test('automatically deploys and emphasizes dws for a DingTalk AI Table project', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-dingtalk',
+      runtime: 'codex',
+      message: '把任务状态改成进行中',
+      additionalContext: {
+        dingtalkAITableProject: {
+          kind: 'application',
+          value: 'Base ID: base-1\nTable ID: table-1',
+        },
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.skill_names).toEqual(['dws'])
+    expect(payload.executionRequest.preload_skills).toEqual(['dws'])
+    expect(payload.executionRequest.user_selected_skills).toEqual(['dws'])
+  })
+
   test('activates project-space capabilities for a generic cloud reference', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

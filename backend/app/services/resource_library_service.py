@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from copy import deepcopy
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, Iterable
 
 from fastapi import HTTPException
@@ -34,7 +36,14 @@ from app.schemas.resource_library import (
     ResourceLibraryListing,
     ResourceLibraryListingList,
     ResourceLibraryPublicationUpdateRequest,
+    ResourceLibraryReferenceUsage,
     ResourceLibraryVersion,
+)
+from app.services.capability_reference_service import (
+    REFERENCE_KINDS,
+    ensure_capability_reference,
+    has_personal_capability_reference,
+    sync_group_capability_references,
 )
 from app.services.group_permission import (
     check_group_permission,
@@ -42,8 +51,15 @@ from app.services.group_permission import (
 from app.services.skill_binding_service import skill_binding_service
 
 LEGACY_CAPABILITY_INSTALLATION_KIND = "CapabilityInstallation"
-RESOURCE_KIND_BY_TYPE = {"agent": "Team", "skill": "Skill"}
+RESOURCE_KIND_BY_TYPE = {
+    "agent": "Team",
+    "skill": "Skill",
+    "model": "Model",
+    "shell": "Shell",
+    "retriever": "Retriever",
+}
 RESOURCE_TYPE_BY_KIND = {value: key for key, value in RESOURCE_KIND_BY_TYPE.items()}
+logger = logging.getLogger(__name__)
 
 
 def _iso_now() -> str:
@@ -249,6 +265,26 @@ class ResourceLibraryService:
         self._require_publish_permission(db, source, current_user)
         return self.to_listing(db, source, user_id=current_user.id)
 
+    def get_manageable_publication_by_source(
+        self,
+        db: Session,
+        *,
+        resource_type: str,
+        source_name: str,
+        source_namespace: str,
+        current_user: User,
+    ) -> ResourceLibraryListing:
+        """Get sharing settings using the source Kind identity."""
+        source = self._resolve_source_identity(
+            db,
+            resource_type=resource_type,
+            source_name=source_name,
+            source_namespace=source_namespace,
+            current_user=current_user,
+        )
+        self._require_publish_permission(db, source, current_user)
+        return self.to_listing(db, source, user_id=current_user.id)
+
     def publish(
         self,
         db: Session,
@@ -256,7 +292,7 @@ class ResourceLibraryService:
         request: ResourceLibraryCreateListingRequest,
         current_user: User,
     ) -> ResourceLibraryListing:
-        source = self._get_source(db, request.source_id)
+        source = self._resolve_publish_source(db, request, current_user)
         expected_kind = RESOURCE_KIND_BY_TYPE[request.resource_type]
         if source.kind != expected_kind:
             raise HTTPException(status_code=400, detail="Resource type does not match")
@@ -265,9 +301,36 @@ class ResourceLibraryService:
             self._validate_agent_dependencies(db, source)
 
         options = request.manifest_options
+        target_groups = self._normalize_group_names(request.target_groups)
+        allow_personal_install = (
+            request.allow_personal_install
+            if request.allow_personal_install is not None
+            else bool(options.get("allow_personal_install", True))
+        )
+        allow_group_install = (
+            request.allow_group_install
+            if request.allow_group_install is not None
+            else bool(options.get("allow_group_install", True))
+        )
+        if source.kind in {"Model", "Shell", "Retriever"}:
+            for group_name in target_groups:
+                self._require_target_namespace_permission(
+                    db,
+                    target_namespace=group_name,
+                    user_id=current_user.id,
+                )
+            try:
+                sync_group_capability_references(
+                    db,
+                    source=source,
+                    group_names=target_groups,
+                    user_id=current_user.id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
         capability = {
-            "visibility": "public",
-            "publishStatus": "published",
+            "visibility": ("public" if request.status == "published" else "private"),
+            "publishStatus": request.status,
             "listingName": request.name.strip(),
             "displayName": request.display_name.strip(),
             "description": request.description,
@@ -278,9 +341,11 @@ class ResourceLibraryService:
             "publishedBy": current_user.id,
             "updatedBy": current_user.id,
             "updatedAt": _iso_now(),
-            "allowPersonalInstall": bool(options.get("allow_personal_install", True)),
-            "allowGroupInstall": bool(options.get("allow_group_install", True)),
+            "allowPersonalInstall": allow_personal_install,
+            "allowGroupInstall": allow_group_install,
         }
+        if source.kind != "Team":
+            capability["targetGroups"] = target_groups
         self._set_capability(source, capability)
         self._sync_publication_index(db, source)
         db.commit()
@@ -342,7 +407,7 @@ class ResourceLibraryService:
                 )
                 self._delete_legacy_agent_installations(db, source.id)
                 capability.pop("targetGroups", None)
-            else:
+            elif source.kind == "Skill":
                 for group_name in target_groups:
                     skill_binding_service.add_group_skill(
                         db,
@@ -359,6 +424,23 @@ class ResourceLibraryService:
                         removed_by=current_user.id,
                         commit=False,
                     )
+                capability["targetGroups"] = target_groups
+            else:
+                for group_name in target_groups:
+                    self._require_target_namespace_permission(
+                        db,
+                        target_namespace=group_name,
+                        user_id=current_user.id,
+                    )
+                try:
+                    sync_group_capability_references(
+                        db,
+                        source=source,
+                        group_names=target_groups,
+                        user_id=current_user.id,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
                 capability["targetGroups"] = target_groups
         if "status" in updates:
             capability["publishStatus"] = updates["status"]
@@ -382,25 +464,83 @@ class ResourceLibraryService:
         page: int,
         limit: int,
     ) -> ResourceLibraryListingList:
-        resources = self._query_resources(db, resource_type)
-        manageable = [
-            resource
-            for resource in resources
-            if self._capability_publisher_id(self._capability(resource))
-            == current_user.id
-            and self._can_publish(db, resource, current_user)
+        started_at = perf_counter()
+        phase_started_at = perf_counter()
+        publication_query = db.query(MarketplaceResource).filter(
+            MarketplaceResource.owner_user_id == current_user.id
+        )
+        if resource_type:
+            publication_query = publication_query.filter(
+                MarketplaceResource.resource_type == resource_type
+            )
+        total = publication_query.order_by(None).count()
+        count_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        publications = (
+            publication_query.order_by(
+                MarketplaceResource.updated_at.desc(),
+                MarketplaceResource.kind_id.desc(),
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        index_page_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        kind_ids = [publication.kind_id for publication in publications]
+        resources = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(kind_ids),
+                Kind.is_active == True,
+            )
+            .all()
+            if kind_ids
+            else []
+        )
+        resource_by_id = {resource.id: resource for resource in resources}
+        kind_batch_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        items = [
+            self.to_listing(
+                db,
+                resource_by_id[publication.kind_id],
+                user_id=current_user.id,
+                install_count=publication.install_count,
+            )
+            for publication in publications
+            if publication.kind_id in resource_by_id
         ]
-        manageable.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        page_items = manageable[(page - 1) * limit : page * limit]
-        return ResourceLibraryListingList(
-            items=[
-                self.to_listing(db, item, user_id=current_user.id)
-                for item in page_items
-            ],
-            total=len(manageable),
+        serialize_ms = (perf_counter() - phase_started_at) * 1000
+        result = ResourceLibraryListingList(
+            items=items,
+            total=total,
             page=page,
             limit=limit,
         )
+        logger.info(
+            "[resource_library_timing] my_published user_id=%s resource_type=%s "
+            "page=%s limit=%s total=%s index_rows=%s kind_rows=%s items=%s "
+            "count_ms=%.2f index_page_ms=%.2f kind_batch_ms=%.2f "
+            "serialize_ms=%.2f total_ms=%.2f",
+            current_user.id,
+            resource_type,
+            page,
+            limit,
+            total,
+            len(publications),
+            len(resources),
+            len(items),
+            count_ms,
+            index_page_ms,
+            kind_batch_ms,
+            serialize_ms,
+            (perf_counter() - started_at) * 1000,
+        )
+        return result
 
     def install(
         self,
@@ -424,6 +564,13 @@ class ResourceLibraryService:
                 status_code=409,
                 detail="System agents are globally available and cannot be installed",
             )
+        if source.kind in REFERENCE_KINDS and source.user_id == 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "System capabilities are globally available and cannot be installed"
+                ),
+            )
         capability = self._effective_capability(source)
         self._require_install_permission(
             db,
@@ -438,7 +585,14 @@ class ResourceLibraryService:
                 target_namespace=target_namespace,
                 current_user=current_user,
             )
-        return self._install_agent(
+        if source.kind == "Team":
+            return self._install_agent(
+                db,
+                source=source,
+                target_namespace=target_namespace,
+                current_user=current_user,
+            )
+        return self._install_kind_reference(
             db,
             source=source,
             target_namespace=target_namespace,
@@ -555,14 +709,26 @@ class ResourceLibraryService:
                 )
             )
         if resource_type in {None, "skill"}:
+            group_owned_skills = self._group_owned_skill_responses(
+                db,
+                group_namespace=group_namespace,
+                user_id=current_user.id,
+            )
+            group_owned_names = {
+                item.listing.name for item in group_owned_skills if item.listing
+            }
+            group_bindings = self._skill_binding_responses(
+                db,
+                skill_binding_service.list_group_bindings(
+                    db, group_namespace, current_user.id
+                ),
+                current_user.id,
+            )
+            installs.extend(group_owned_skills)
             installs.extend(
-                self._skill_binding_responses(
-                    db,
-                    skill_binding_service.list_group_bindings(
-                        db, group_namespace, current_user.id
-                    ),
-                    current_user.id,
-                )
+                item
+                for item in group_bindings
+                if not item.listing or item.listing.name not in group_owned_names
             )
         installs.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         page_items = installs[(page - 1) * limit : page * limit]
@@ -622,6 +788,7 @@ class ResourceLibraryService:
                 else self._listing_install_count(db, source)
             ),
             is_installed=self._is_personally_installed(db, source, user_id),
+            bind_modes=self._bind_modes(source),
             allow_personal_install=bool(capability.get("allowPersonalInstall", True)),
             allow_group_install=bool(capability.get("allowGroupInstall", True)),
             target_groups=(
@@ -690,6 +857,275 @@ class ResourceLibraryService:
             target_namespace=target_namespace,
             installed_by=current_user.id,
         )
+
+    def _install_kind_reference(
+        self,
+        db: Session,
+        *,
+        source: Kind,
+        target_namespace: str,
+        current_user: User,
+    ) -> ResourceLibraryInstall:
+        try:
+            member, was_installed = ensure_capability_reference(
+                db,
+                source=source,
+                target_namespace=target_namespace,
+                user_id=current_user.id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if not was_installed:
+            self._increment_publication_install_count(db, source.id)
+        db.commit()
+        db.refresh(member)
+        resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
+        return ResourceLibraryInstall(
+            id=member.id,
+            listing_id=source.id,
+            version_id=source.id,
+            user_id=current_user.id,
+            resource_type=resource_type,
+            listing=self.to_listing(db, source, user_id=current_user.id),
+            installed_kind_id=source.id,
+            installed_reference={
+                "namespace": target_namespace,
+                "name": source.name,
+                "kind": source.kind,
+                "resource_type": resource_type,
+            },
+            installed_at=member.created_at,
+            updated_at=member.updated_at,
+        )
+
+    def uninstall_kind_reference(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        target_namespace: str,
+        current_user: User,
+    ) -> None:
+        entity_type = "user"
+        entity_id = str(current_user.id)
+        if target_namespace != "default":
+            self._require_target_namespace_permission(
+                db,
+                target_namespace=target_namespace,
+                user_id=current_user.id,
+            )
+            namespace = (
+                db.query(Namespace)
+                .filter(
+                    Namespace.name == target_namespace,
+                    Namespace.is_active.is_(True),
+                )
+                .first()
+            )
+            if namespace is None:
+                raise HTTPException(status_code=404, detail="Target group not found")
+            entity_type = "namespace"
+            entity_id = str(namespace.id)
+
+        member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_id == listing_id,
+                ResourceMember.resource_type.in_(REFERENCE_KINDS),
+                ResourceMember.entity_type == entity_type,
+                ResourceMember.entity_id == entity_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if member is None:
+            raise HTTPException(
+                status_code=404, detail="Capability reference not found"
+            )
+
+        source = db.get(Kind, listing_id)
+        if source is None or source.kind != member.resource_type:
+            raise HTTPException(status_code=404, detail="Capability source not found")
+        referenced_knowledge_bases = (
+            self._find_knowledge_bases_using_retriever_reference(
+                db,
+                source=source,
+                target_namespace=target_namespace,
+                user_id=current_user.id,
+            )
+        )
+        if referenced_knowledge_bases:
+            knowledge_base_names = ", ".join(
+                knowledge_base["name"] for knowledge_base in referenced_knowledge_bases
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CAPABILITY_REFERENCE_IN_USE",
+                    "message": (
+                        f"Cannot unbind Retriever '{source.name}' because it is "
+                        f"used by Knowledge Bases: {knowledge_base_names}. Change or "
+                        "delete those Knowledge Bases first."
+                    ),
+                    "referenced_knowledge_bases": referenced_knowledge_bases,
+                },
+            )
+        referenced_bots = self._find_bots_using_capability_reference(
+            db,
+            source=source,
+            target_namespace=target_namespace,
+            user_id=current_user.id,
+        )
+        if referenced_bots:
+            bot_names = ", ".join(bot["name"] for bot in referenced_bots)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CAPABILITY_REFERENCE_IN_USE",
+                    "message": (
+                        f"Cannot unbind {source.kind} '{source.name}' because it is "
+                        f"used by Bots: {bot_names}. Change or delete those Bots first."
+                    ),
+                    "referenced_bots": referenced_bots,
+                },
+            )
+
+        db.delete(member)
+        db.commit()
+
+    def get_kind_reference_usage(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        target_namespace: str,
+        current_user: User,
+    ) -> ResourceLibraryReferenceUsage:
+        entity_type = "user"
+        entity_id = str(current_user.id)
+        if target_namespace != "default":
+            self._require_target_namespace_permission(
+                db,
+                target_namespace=target_namespace,
+                user_id=current_user.id,
+            )
+            namespace = (
+                db.query(Namespace)
+                .filter(
+                    Namespace.name == target_namespace,
+                    Namespace.is_active.is_(True),
+                )
+                .first()
+            )
+            if namespace is None:
+                raise HTTPException(status_code=404, detail="Target group not found")
+            entity_type = "namespace"
+            entity_id = str(namespace.id)
+
+        member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_id == listing_id,
+                ResourceMember.resource_type.in_(REFERENCE_KINDS),
+                ResourceMember.entity_type == entity_type,
+                ResourceMember.entity_id == entity_id,
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+        if member is None:
+            raise HTTPException(
+                status_code=404, detail="Capability reference not found"
+            )
+
+        source = db.get(Kind, listing_id)
+        if source is None or source.kind != member.resource_type:
+            raise HTTPException(status_code=404, detail="Capability source not found")
+
+        return ResourceLibraryReferenceUsage(
+            referenced_bots=self._find_bots_using_capability_reference(
+                db,
+                source=source,
+                target_namespace=target_namespace,
+                user_id=current_user.id,
+            ),
+            referenced_knowledge_bases=(
+                self._find_knowledge_bases_using_retriever_reference(
+                    db,
+                    source=source,
+                    target_namespace=target_namespace,
+                    user_id=current_user.id,
+                )
+            ),
+        )
+
+    def _find_bots_using_capability_reference(
+        self,
+        db: Session,
+        *,
+        source: Kind,
+        target_namespace: str,
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        reference_field = {
+            "Shell": "shellRef",
+            "Model": "modelRef",
+        }.get(source.kind)
+        if reference_field is None:
+            return []
+
+        query = db.query(Kind).filter(
+            Kind.kind == "Bot",
+            Kind.is_active == True,
+            _resource_json_text(db, f"$.spec.{reference_field}.name") == source.name,
+            _resource_json_text(db, f"$.spec.{reference_field}.namespace")
+            == target_namespace,
+        )
+        if target_namespace == "default":
+            query = query.filter(Kind.user_id == user_id)
+
+        return [
+            {
+                "id": bot.id,
+                "name": bot.name,
+                "namespace": bot.namespace,
+            }
+            for bot in query.order_by(Kind.id).all()
+        ]
+
+    def _find_knowledge_bases_using_retriever_reference(
+        self,
+        db: Session,
+        *,
+        source: Kind,
+        target_namespace: str,
+        user_id: int,
+    ) -> list[dict[str, Any]]:
+        if source.kind != "Retriever":
+            return []
+
+        query = db.query(Kind).filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+            _resource_json_text(db, "$.spec.retrievalConfig.retriever_name")
+            == source.name,
+            _resource_json_text(db, "$.spec.retrievalConfig.retriever_namespace")
+            == target_namespace,
+        )
+        if target_namespace == "default":
+            query = query.filter(Kind.user_id == user_id)
+
+        return [
+            {
+                "id": knowledge_base.id,
+                "name": (
+                    (knowledge_base.json.get("spec") or {}).get("name")
+                    or knowledge_base.name
+                ),
+                "namespace": knowledge_base.namespace,
+            }
+            for knowledge_base in query.order_by(Kind.id).all()
+        ]
 
     def _bind_agent_reference(
         self,
@@ -956,6 +1392,45 @@ class ResourceLibraryService:
             installed_at=binding.created_at,
             updated_at=binding.updated_at,
         )
+
+    def _group_owned_skill_responses(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        user_id: int,
+    ) -> list[ResourceLibraryInstall]:
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.namespace == group_namespace,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        return [
+            ResourceLibraryInstall(
+                id=skill.id,
+                listing_id=skill.id,
+                version_id=skill.id,
+                user_id=skill.user_id,
+                resource_type="skill",
+                listing=self.to_listing(db, skill, user_id=user_id),
+                installed_kind_id=skill.id,
+                installed_reference={
+                    "namespace": group_namespace,
+                    "name": skill.name,
+                    "kind": "Skill",
+                    "skill_id": skill.id,
+                    "resource_type": "skill",
+                    "ownership": "group",
+                },
+                installed_at=skill.created_at,
+                updated_at=skill.updated_at,
+            )
+            for skill in skills
+        ]
 
     def _skill_binding_responses(
         self,
@@ -1250,6 +1725,14 @@ class ResourceLibraryService:
             return source.id in skill_binding_service.list_user_default_skill_ids(
                 db, user_id
             )
+        if source.kind in REFERENCE_KINDS and source.user_id == 0:
+            return True
+        if source.kind in REFERENCE_KINDS:
+            return has_personal_capability_reference(
+                db,
+                source=source,
+                user_id=user_id,
+            )
         if source.user_id == 0:
             return True
         if source.namespace == "default" and source.user_id == user_id:
@@ -1295,12 +1778,14 @@ class ResourceLibraryService:
 
         now = datetime.utcnow()
         if publication:
+            publication.owner_user_id = source.user_id
             publication.resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
             publication.updated_at = now
             return
         db.add(
             MarketplaceResource(
                 kind_id=source.id,
+                owner_user_id=source.user_id,
                 resource_type=RESOURCE_TYPE_BY_KIND[source.kind],
                 install_count=0,
                 published_at=now,
@@ -1358,6 +1843,46 @@ class ResourceLibraryService:
             raise HTTPException(status_code=404, detail="Capability resource not found")
         return source
 
+    def _resolve_publish_source(
+        self,
+        db: Session,
+        request: ResourceLibraryCreateListingRequest,
+        current_user: User,
+    ) -> Kind:
+        if request.source_id:
+            return self._get_source(db, request.source_id)
+        if not request.source_name:
+            raise HTTPException(status_code=400, detail="Source resource is required")
+        return self._resolve_source_identity(
+            db,
+            resource_type=request.resource_type,
+            source_name=request.source_name,
+            source_namespace=request.source_namespace,
+            current_user=current_user,
+        )
+
+    def _resolve_source_identity(
+        self,
+        db: Session,
+        *,
+        resource_type: str,
+        source_name: str,
+        source_namespace: str,
+        current_user: User,
+    ) -> Kind:
+        query = db.query(Kind).filter(
+            Kind.kind == RESOURCE_KIND_BY_TYPE[resource_type],
+            Kind.name == source_name,
+            Kind.namespace == source_namespace,
+            Kind.is_active == True,
+        )
+        if source_namespace == "default" and current_user.role != "admin":
+            query = query.filter(Kind.user_id == current_user.id)
+        source = query.order_by(Kind.id.desc()).first()
+        if not source:
+            raise HTTPException(status_code=404, detail="Capability resource not found")
+        return source
+
     def _display_name(self, source: Kind) -> str:
         payload = source.json if isinstance(source.json, dict) else {}
         metadata = payload.get("metadata", {})
@@ -1377,6 +1902,14 @@ class ResourceLibraryService:
     def _tags(self, source: Kind) -> list[str]:
         tags = self._spec(source).get("tags", [])
         return [str(tag) for tag in tags] if isinstance(tags, list) else []
+
+    def _bind_modes(self, source: Kind) -> list[str]:
+        if source.kind != "Team":
+            return []
+        bind_modes = self._spec(source).get("bind_mode", [])
+        return (
+            [str(mode) for mode in bind_modes] if isinstance(bind_modes, list) else []
+        )
 
     def _source_version(self, source: Kind) -> str:
         return str(self._spec(source).get("version") or "1.0.0")
