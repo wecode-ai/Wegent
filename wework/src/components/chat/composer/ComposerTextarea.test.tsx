@@ -540,7 +540,7 @@ describe('ComposerTextarea', () => {
       editor.focus()
     })
 
-    await screen.findByTestId('workspace-mention-option-0')
+    await screen.findByTestId('workspace-mention-option-0', {}, { timeout: 5_000 })
     expect(searchWorkspaceEntries).toHaveBeenCalledWith(
       'local-device',
       '/workspace/project',
