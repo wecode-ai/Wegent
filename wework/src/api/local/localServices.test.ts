@@ -1011,6 +1011,8 @@ describe('createLocalAppServices', () => {
               'X-Wegent-Model-Type': 'user',
               'X-Wegent-Model-Namespace': 'default',
               'X-Wegent-Model-User-Id': '42',
+              'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+              'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
             },
           }),
         }),
@@ -1355,6 +1357,8 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
+          'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+          'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
         },
         runtime_config: {
           codex: {
@@ -1418,6 +1422,8 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
+          'X-Wegent-Upstream-Header-wecode-executor': 'codex',
+          'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
         },
         runtime_config: {
           codex: {
