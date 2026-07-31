@@ -107,7 +107,7 @@ function testRequestBody(
     input: custom
       ? `Call apply_patch with this exact patch:\n${APPLY_PATCH_PROBE}`
       : 'Call the capability probe with value PING.',
-    max_output_tokens: 64,
+    max_output_tokens: custom ? 256 : 64,
     stream: false,
     store: false,
     tools: custom

@@ -61,6 +61,7 @@ describe('localModelConnectionTest', () => {
     )
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'gpt-oss:20b',
+      max_output_tokens: 256,
       tools: [{ type: 'custom', name: 'apply_patch' }],
     })
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
