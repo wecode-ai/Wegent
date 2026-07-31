@@ -151,6 +151,18 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }))
 
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    label: 'main',
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
+}))
+
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(
     (_event: string, listener: NonNullable<typeof tauriState.commandOutputListener>) => {
@@ -192,6 +204,14 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
 
 vi.mock('@/features/appshots/AppshotBridge', () => ({
   AppshotBridge: () => null,
+}))
+
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({

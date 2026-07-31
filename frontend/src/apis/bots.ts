@@ -29,6 +29,7 @@ export interface CreateBotRequest {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
   preload_skill_refs?: Record<string, SkillRefMeta>
+  target_group_names?: string[] // Transient context for validating team-scoped Skills
   namespace?: string // Group namespace, defaults to 'default' for personal bots
 }
 
@@ -43,6 +44,7 @@ export interface UpdateBotRequest {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
   preload_skill_refs?: Record<string, SkillRefMeta>
+  target_group_names?: string[] // Transient context for validating team-scoped Skills
   is_active?: boolean
   namespace?: string // Group namespace
 }

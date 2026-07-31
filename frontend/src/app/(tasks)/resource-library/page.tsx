@@ -12,7 +12,6 @@ import '@/features/common/scrollbar.css'
 import { paths } from '@/config/paths'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useTranslation } from '@/hooks/useTranslation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   CollapsedSidebarButtons,
@@ -24,7 +23,6 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 export default function Page() {
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { t } = useTranslation('resource-library')
   const { selectTask } = useTaskSession()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -66,12 +64,13 @@ export default function Page() {
       </ResizableSidebar>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopNavigation
-          variant="with-sidebar"
-          title={t('title')}
-          onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
-          isSidebarCollapsed={isCollapsed}
-        />
+        <div className="lg:hidden">
+          <TopNavigation
+            variant="with-sidebar"
+            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            isSidebarCollapsed={isCollapsed}
+          />
+        </div>
         <div className="min-h-0 flex-1 overflow-hidden">
           <Suspense fallback={null}>
             <ResourceLibraryPage />

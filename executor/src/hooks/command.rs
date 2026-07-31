@@ -153,6 +153,7 @@ fn shell_command(script: &str) -> Command {
     {
         let mut command = Command::new("cmd");
         command.args(["/S", "/C", script]);
+        crate::process::hide_windows_console(&mut command);
         command
     }
     #[cfg(not(windows))]

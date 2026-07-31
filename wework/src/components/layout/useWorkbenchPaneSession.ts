@@ -42,6 +42,7 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
+  RuntimeGuidanceAppliedPayload,
   RuntimePlanEventPayload,
   RuntimeGoalContinuationPayload,
   RuntimeAdditionalContext,
@@ -65,12 +66,19 @@ import {
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
   getRuntimeConversationMessages,
+  getRuntimeConversationGuidanceSplitBoundaries,
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
   reduceRuntimeConversationQueue,
   runtimeConversationKey,
   takeAppliedRuntimeConversationGuidance,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  createAppliedRuntimeGuidanceMessage,
+  insertAppliedRuntimeGuidance,
+  transformRuntimePaneActionForGuidanceSplits,
+  type GuidanceSplitBoundaries,
+} from '@/features/workbench/runtimeGuidanceMessages'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
 
@@ -110,10 +118,6 @@ interface PendingRuntimeGoalState {
   goal: RuntimeGoal
   targetKey: string | null
   targetIdentityKey: string | null
-}
-
-interface GuidanceSplitBoundary {
-  prefix: string
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
@@ -216,7 +220,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
   const displayedTranscriptIdentityRef = useRef<string | null>(null)
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
-  const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
+  const guidanceSplitBoundariesRef = useRef<GuidanceSplitBoundaries>(new Map())
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const interruptedGuidanceIdsRef = useRef(new Set<string>())
   const interruptAndSendInFlightRef = useRef(false)
@@ -303,10 +307,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [applyMessageActions, flushPendingMessageActions]
   )
   const appendGuidanceLocalUserMessage = useCallback(
-    (content: string, attachments?: Attachment[], options?: CreateLocalUserMessageOptions) => {
-      const guidanceMessage = createLocalUserMessage(content, attachments, options)
+    (queuedGuidance: RuntimePaneQueuedMessage, payload: RuntimeGuidanceAppliedPayload) => {
+      const guidanceMessage = createAppliedRuntimeGuidanceMessage(queuedGuidance, payload)
       setMessages(currentMessages => {
-        const nextMessages = splitActiveAssistantForGuidance(
+        const nextMessages = insertAppliedRuntimeGuidance(
           currentMessages,
           guidanceMessage,
           guidanceSplitBoundariesRef.current
@@ -418,6 +422,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     runtimeTaskLoadTargetRef.current = runtimeTaskLoadTarget
+    guidanceSplitBoundariesRef.current = runtimeTaskLoadTarget
+      ? getRuntimeConversationGuidanceSplitBoundaries(runtimeTaskLoadTarget.address)
+      : new Map()
   }, [runtimeTaskLoadTarget])
 
   useEffect(
@@ -531,7 +538,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     const { key: loadKey, address } = runtimeTaskLoadTarget
-    if (loadedRuntimeTranscriptKeyRef.current === loadKey) {
+    if (
+      loadedRuntimeTranscriptKeyRef.current === loadKey &&
+      displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
+    ) {
       return
     }
 
@@ -840,12 +850,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
           return
         }
-        appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
-          id: guidanceMessage.id,
-          createdAt: new Date(payload.appliedAtMs).toISOString(),
-          runtimeGoalRequest: guidanceMessage.runtimeGoalRequest,
-          runtimeGuidance: true,
-        })
+        appendGuidanceLocalUserMessage(guidanceMessage, payload)
         setQueuedMessages(messages =>
           reduceRuntimeConversationQueue(messages, {
             type: 'guidance_applied',
@@ -2496,168 +2501,6 @@ function createLocalUserMessage(
     runtimeGuidance: options.runtimeGuidance ? true : undefined,
     codeComments: options.codeComments?.length ? options.codeComments : undefined,
   }
-}
-
-function splitActiveAssistantForGuidance(
-  messages: WorkbenchMessage[],
-  guidanceMessage: WorkbenchMessage,
-  splitBoundaries: Map<string, GuidanceSplitBoundary>
-): WorkbenchMessage[] {
-  const assistantIndex = findLastIndex(
-    messages,
-    message => message.role === 'assistant' && message.status === 'streaming'
-  )
-  if (assistantIndex < 0) {
-    return [...messages, guidanceMessage]
-  }
-
-  const assistantMessage = messages[assistantIndex]
-  if (assistantMessage?.subtaskId) {
-    splitBoundaries.set(assistantMessage.subtaskId, {
-      prefix: assistantMessage.content,
-    })
-  }
-
-  const frozenAssistantMessage: WorkbenchMessage = {
-    ...assistantMessage,
-    id: `${assistantMessage.id}-before-guidance-${guidanceMessage.id}`,
-    subtaskId: undefined,
-    status: 'done',
-    runtimeStatus: 'done',
-    streamTextOffset: undefined,
-    completedAt: guidanceMessage.createdAt,
-    runtimeGuidanceSplitBefore: true,
-    blocks: freezeGuidanceAssistantBlocks(assistantMessage.blocks),
-  }
-
-  const continuationMessage = assistantMessage.subtaskId
-    ? createGuidanceContinuationAssistantMessage(
-        { ...assistantMessage, subtaskId: assistantMessage.subtaskId },
-        guidanceMessage
-      )
-    : null
-
-  return [
-    ...messages.slice(0, assistantIndex),
-    frozenAssistantMessage,
-    guidanceMessage,
-    ...(continuationMessage ? [continuationMessage] : []),
-    ...messages.slice(assistantIndex + 1),
-  ]
-}
-
-function createGuidanceContinuationAssistantMessage(
-  assistantMessage: WorkbenchMessage & { subtaskId: string },
-  guidanceMessage: WorkbenchMessage
-): WorkbenchMessage {
-  return {
-    ...assistantMessage,
-    id: `${assistantMessage.id}-after-guidance-${guidanceMessage.id}`,
-    content: '',
-    status: 'streaming',
-    runtimeStatus: 'streaming',
-    streamTextOffset: undefined,
-    blocks: [
-      {
-        id: `${guidanceMessage.id}-guidance`,
-        subtaskId: assistantMessage.subtaskId,
-        type: 'tool',
-        toolName: 'conversation_guidance',
-        toolInput: { message: guidanceMessage.content },
-        status: 'done',
-        createdAt: getMessageCreatedAtMs(guidanceMessage.createdAt),
-      },
-    ],
-    runtimeGuidanceContinuation: true,
-    contentTruncated: undefined,
-    contentOriginalChars: undefined,
-    completedAt: undefined,
-    stoppedNotice: false,
-  }
-}
-
-function transformRuntimePaneActionForGuidanceSplits(
-  action: RuntimePaneMessageAction,
-  splitBoundaries: Map<string, GuidanceSplitBoundary>
-): RuntimePaneMessageAction {
-  if (!('subtaskId' in action) || typeof action.subtaskId !== 'string') return action
-
-  const boundary = splitBoundaries.get(action.subtaskId)
-  if (!boundary) return action
-
-  switch (action.type) {
-    case 'assistant_chunk':
-      return action
-    case 'assistant_done': {
-      splitBoundaries.delete(action.subtaskId)
-      return {
-        ...action,
-        content:
-          action.content === undefined
-            ? undefined
-            : trimGuidanceSplitPrefix(boundary.prefix, action.content),
-      }
-    }
-    case 'assistant_error':
-    case 'assistant_cancelled':
-      splitBoundaries.delete(action.subtaskId)
-      return action
-    default:
-      return action
-  }
-}
-
-function trimGuidanceSplitPrefix(prefix: string, content: string, offset?: number): string {
-  if (!prefix || !content) return content
-
-  const prefixLength = textCodePointLength(prefix)
-  if (typeof offset === 'number' && Number.isFinite(offset)) {
-    const contentLength = textCodePointLength(content)
-    if (offset >= prefixLength) return content
-    const coveredLength = prefixLength - offset
-    if (coveredLength >= contentLength) return ''
-    return sliceTextCodePoints(content, coveredLength)
-  }
-
-  if (content.startsWith(prefix)) {
-    return content.slice(prefix.length)
-  }
-  return content
-}
-
-function freezeGuidanceAssistantBlocks(
-  blocks: WorkbenchMessage['blocks']
-): WorkbenchMessage['blocks'] {
-  return blocks?.map(block => {
-    if (block.status !== 'streaming' && block.status !== 'pending') return block
-    return {
-      ...block,
-      status: block.type === 'tool' ? 'done' : 'done',
-    }
-  })
-}
-
-function textCodePointLength(value: string): number {
-  return isAsciiText(value) ? value.length : Array.from(value).length
-}
-
-function sliceTextCodePoints(value: string, start: number): string {
-  if (start <= 0) return value
-  if (isAsciiText(value)) return value.slice(start)
-  return Array.from(value).slice(start).join('')
-}
-
-function getMessageCreatedAtMs(createdAt: string): number {
-  const timestamp = new Date(createdAt).getTime()
-  return Number.isFinite(timestamp) ? timestamp : Date.now()
-}
-
-function isAsciiText(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index)
-    if (code > 0x7f) return false
-  }
-  return true
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {

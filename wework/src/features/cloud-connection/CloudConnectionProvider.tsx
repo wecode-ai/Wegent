@@ -3,6 +3,7 @@ import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
 import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
+import { raceWithTimeout } from '@/lib/promise-timeout'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -46,6 +47,7 @@ interface WeworkCloudConfigResponse {
 
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
+const CLOUD_STARTUP_REQUEST_TIMEOUT_MS = 8000
 
 function resolveCloudRuntimeConfig(
   backendUrl: string,
@@ -178,20 +180,27 @@ async function runCloudRequest<T>(
   config: CloudConnectionRuntimeConfig,
   endpoint: string,
   request: () => Promise<T>,
-  options: { preserveErrorCodes?: string[] } = {}
+  options: {
+    preserveErrorCodes?: string[]
+    preserveStatuses?: number[]
+    timeoutMs?: number
+  } = {}
 ): Promise<T> {
   const url = cloudRequestUrl(config, endpoint)
   console.info('[CloudConnection] request start', { stage, url })
   try {
-    const response = await request()
+    const response = await raceWithTimeout(request(), options.timeoutMs, timeoutMs => {
+      return new Error(`Request timed out after ${timeoutMs}ms`)
+    })
     console.info('[CloudConnection] request success', { stage, url })
     return response
   } catch (error) {
     console.error('[CloudConnection] request failed', { stage, url, error })
     if (
       error instanceof ApiError &&
-      typeof error.errorCode === 'string' &&
-      options.preserveErrorCodes?.includes(error.errorCode)
+      ((typeof error.errorCode === 'string' &&
+        options.preserveErrorCodes?.includes(error.errorCode)) ||
+        options.preserveStatuses?.includes(error.status))
     ) {
       throw error
     }
@@ -207,12 +216,20 @@ async function checkCloudHealth(config: CloudConnectionRuntimeConfig): Promise<v
 }
 
 async function fetchCloudConfig(
-  config: CloudConnectionRuntimeConfig
+  config: CloudConnectionRuntimeConfig,
+  timeoutMs?: number
 ): Promise<{ webUrl: string; socketUrl?: string }> {
   const client = createCloudClient(config, null)
-  const metadata = await client.get<WeworkCloudConfigResponse>('/auth/wework/config', {
-    redirectOnUnauthorized: false,
-  })
+  const metadata = await runCloudRequest(
+    '读取云端配置',
+    config,
+    '/auth/wework/config',
+    () =>
+      client.get<WeworkCloudConfigResponse>('/auth/wework/config', {
+        redirectOnUnauthorized: false,
+      }),
+    { timeoutMs }
+  )
   if (typeof metadata.web_url !== 'string' || !metadata.web_url.trim()) {
     throw new Error('Cloud Backend did not provide a Web URL')
   }
@@ -226,10 +243,18 @@ async function fetchCloudConfig(
   }
 }
 
-async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: string): Promise<User> {
+async function fetchCloudUser(
+  config: CloudConnectionRuntimeConfig,
+  token: string,
+  timeoutMs?: number
+): Promise<User> {
   const client = createCloudClient(config, token)
-  return runCloudRequest('读取云端用户', config, '/users/me', () =>
-    client.get<User>('/users/me', { redirectOnUnauthorized: false })
+  return runCloudRequest(
+    '读取云端用户',
+    config,
+    '/users/me',
+    () => client.get<User>('/users/me', { redirectOnUnauthorized: false }),
+    { preserveStatuses: [401], timeoutMs }
   )
 }
 
@@ -242,7 +267,8 @@ async function ensureCloudSitesPlugin(
     '检查云端 Sites 插件',
     config,
     '/plugins/installed',
-    () => pluginApi.listInstalledPlugins()
+    () => pluginApi.listInstalledPlugins(),
+    { timeoutMs: CLOUD_STARTUP_REQUEST_TIMEOUT_MS }
   )
   const sitesInstalled = installedPlugins.items.some(plugin => {
     const source = plugin.spec.source
@@ -261,7 +287,8 @@ async function ensureCloudSitesPlugin(
     '安装云端 Sites 插件',
     config,
     `/plugins/builtin/${WEGENT_SITES_PLUGIN_NAME}/ensure-installed`,
-    () => pluginApi.ensureBuiltinPluginInstalled(WEGENT_SITES_PLUGIN_NAME)
+    () => pluginApi.ensureBuiltinPluginInstalled(WEGENT_SITES_PLUGIN_NAME),
+    { timeoutMs: CLOUD_STARTUP_REQUEST_TIMEOUT_MS }
   )
 }
 
@@ -362,7 +389,7 @@ export function CloudConnectionProvider({
     if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
     const backendUrl = snapshot.backendUrl
     const config = resolveCloudRuntimeConfig(backendUrl, snapshot.socketBaseUrlOverride)
-    void fetchCloudConfig(config)
+    void fetchCloudConfig(config, CLOUD_STARTUP_REQUEST_TIMEOUT_MS)
       .then(metadata => {
         const resolvedConfig = resolveCloudRuntimeConfig(
           backendUrl,
@@ -516,7 +543,7 @@ export function CloudConnectionProvider({
     }
 
     try {
-      const user = await fetchCloudUser(config, snapshot.token)
+      const user = await fetchCloudUser(config, snapshot.token, CLOUD_STARTUP_REQUEST_TIMEOUT_MS)
       setSnapshot(current => {
         const nextSnapshot = { ...current, status: 'connected' as const, user, error: null }
         persistSnapshot(nextSnapshot)
@@ -524,12 +551,19 @@ export function CloudConnectionProvider({
       })
       return user
     } catch (error) {
-      setSnapshot(current => ({
-        ...current,
-        status: error instanceof ApiError && error.status === 401 ? 'expired' : 'error',
-        token: null,
-        error: getCloudErrorMessage(error),
-      }))
+      setSnapshot(current =>
+        error instanceof ApiError && error.status === 401
+          ? {
+              ...current,
+              status: 'expired',
+              token: null,
+              error: getCloudErrorMessage(error),
+            }
+          : {
+              ...current,
+              error: getCloudErrorMessage(error),
+            }
+      )
       return null
     }
   }, [snapshot])

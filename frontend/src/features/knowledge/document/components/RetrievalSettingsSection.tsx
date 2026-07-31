@@ -298,7 +298,7 @@ export function RetrievalSettingsSection({
               onValueChange={handleRetrieverChange}
               placeholder={t('document.retrieval.retrieverSelect')}
               searchPlaceholder={t('document.retrieval.searchPlaceholder')}
-              disabled={isRetrieverDisabled || isAllDisabledDueToRag}
+              disabled={isRetrieverDisabled || noRetrieversAvailable}
               items={retrievers.map(retriever => ({
                 value: getRetrieverKey(retriever.name, retriever.namespace),
                 label: formatRetrieverLabel(retriever),
@@ -330,7 +330,7 @@ export function RetrievalSettingsSection({
               onValueChange={handleEmbeddingModelChange}
               placeholder={t('document.retrieval.embeddingModelSelect')}
               searchPlaceholder={t('document.retrieval.searchPlaceholder')}
-              disabled={isEmbeddingDisabled || isAllDisabledDueToRag}
+              disabled={isEmbeddingDisabled || noModelsAvailable}
               items={embeddingModels.map(model => ({
                 value: model.name,
                 label: formatModelLabel(model),

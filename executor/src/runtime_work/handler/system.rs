@@ -391,8 +391,7 @@ impl RuntimeWorkRpcHandler {
         }
         if payload.get("proxyUrl").is_some() || payload.get("proxy_url").is_some() {
             let proxy_url = optional_proxy_url(&payload)?;
-            self.codex_app_server
-                .configure_runtime_proxy_for_restart(proxy_url.as_deref())
+            self.configure_codex_runtime_proxy(proxy_url, true)
                 .await
                 .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
         }

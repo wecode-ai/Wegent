@@ -20,5 +20,10 @@
   "retry": "Retry",
   "fallback_error": "Workspace is unavailable",
   "error_not_running": "The local workspace service is not running",
-  "error_not_ready": "The local workspace service is not ready"
+  "error_not_ready": "The local workspace service is not ready",
+  "local_terminal_unavailable": "Local terminal is unavailable outside the Tauri desktop app",
+  "local_workspace_opening_unavailable": "Local workspace opening is unavailable outside the Tauri desktop app",
+  "local_file_opening_unavailable": "Local file opening is unavailable outside the Tauri desktop app",
+  "local_file_revealing_unavailable": "Local file revealing is unavailable outside the Tauri desktop app",
+  "local_app_icons_unavailable": "Local application icons are unavailable outside the Tauri desktop app"
 }

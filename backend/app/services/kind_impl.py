@@ -189,35 +189,18 @@ class BotKindService(KindBaseService):
         shell_name = bot_crd.spec.shellRef.name
         shell_namespace = bot_crd.spec.shellRef.namespace or "default"
 
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.namespace == shell_namespace,
-                Kind.name == shell_name,
-                Kind.is_active == True,
-            )
-            .first()
-        )
+        from app.services.adapters.shell_utils import get_shell_by_name
 
-        # If not found in user's shells, try to find in public shells (user_id=0)
+        shell = get_shell_by_name(
+            db,
+            shell_name,
+            user_id,
+            shell_namespace,
+        )
         if not shell:
-            public_shell = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Shell",
-                    Kind.name == shell_name,
-                    Kind.namespace == shell_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
+            raise NotFoundException(
+                f"Shell '{shell_name}' not found in namespace '{shell_namespace}' or in public shells"
             )
-            if not public_shell:
-                raise NotFoundException(
-                    f"Shell '{shell_name}' not found in namespace '{shell_namespace}' or in public shells"
-                )
 
     def _get_ghost_data(
         self, db: Session, user_id: int, name: str, namespace: str

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Shell, Team
+from app.services.adapters.shell_utils import get_shell_by_name
 from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -35,36 +36,12 @@ def get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
     """
     bot_crd = Bot.model_validate(bot.json)
 
-    # First check user's custom shells
-    shell = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Shell",
-            Kind.name == bot_crd.spec.shellRef.name,
-            Kind.namespace == bot_crd.spec.shellRef.namespace,
-            Kind.is_active == True,
-        )
-        .first()
+    shell = get_shell_by_name(
+        db,
+        bot_crd.spec.shellRef.name,
+        user_id,
+        bot_crd.spec.shellRef.namespace,
     )
-
-    # If not found, check public shells
-    if not shell:
-        public_shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if public_shell and public_shell.json:
-            shell_crd = Shell.model_validate(public_shell.json)
-            return shell_crd.spec.shellType
-        return ""
 
     if shell and shell.json:
         shell_crd = Shell.model_validate(shell.json)

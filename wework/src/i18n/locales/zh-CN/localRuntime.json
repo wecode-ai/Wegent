@@ -20,5 +20,10 @@
   "retry": "再试一次",
   "fallback_error": "工作台暂时不可用",
   "error_not_running": "本机工作台服务还没有启动",
-  "error_not_ready": "本机工作台服务还没有准备好"
+  "error_not_ready": "本机工作台服务还没有准备好",
+  "local_terminal_unavailable": "本地终端仅在 Tauri 桌面端可用",
+  "local_workspace_opening_unavailable": "本地工作区打开仅在 Tauri 桌面端可用",
+  "local_file_opening_unavailable": "本地文件打开仅在 Tauri 桌面端可用",
+  "local_file_revealing_unavailable": "本地文件 reveal 仅在 Tauri 桌面端可用",
+  "local_app_icons_unavailable": "本地应用图标仅在 Tauri 桌面端可用"
 }

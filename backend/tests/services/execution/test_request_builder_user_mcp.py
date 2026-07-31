@@ -6,6 +6,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
@@ -477,6 +479,7 @@ class TestUserScopedMcpInjection:
             True,
             2,
             team_namespace="default",
+            skill_id=None,
         )
         assert skills == [{"name": "dingtalk-docs"}]
         assert preload_skills == ["dingtalk-docs"]
@@ -489,6 +492,123 @@ class TestUserScopedMcpInjection:
                 "content_hash": None,
             }
         }
+
+    def test_get_bot_skills_resolves_agent_skill_as_agent_owner(self, test_db, mocker):
+        builder = TaskRequestBuilder(test_db)
+        team = SimpleNamespace(user_id=7, namespace="default")
+        bot = SimpleNamespace(
+            name="shared-agent-bot",
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "shared-agent-bot", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "shared-agent-ghost", "namespace": "default"},
+                    "shellRef": {"name": "Chat", "namespace": "default"},
+                },
+            },
+        )
+        ghost = SimpleNamespace(
+            name="shared-agent-ghost",
+            json={
+                "kind": "Ghost",
+                "metadata": {
+                    "name": "shared-agent-ghost",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "systemPrompt": "Use the configured private skill.",
+                    "skills": ["owner-private-skill"],
+                    "preload_skills": ["owner-private-skill"],
+                    "skill_refs": {
+                        "owner-private-skill": {
+                            "skill_id": 55,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                },
+            },
+        )
+        skill = SimpleNamespace(
+            id=55,
+            name="owner-private-skill",
+            user_id=7,
+            namespace="default",
+            json={},
+        )
+
+        mock_query = mocker.Mock()
+        mock_query.filter.return_value.first.return_value = ghost
+        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        find_attached_skill_by_ref = mocker.patch.object(
+            builder, "_find_attached_skill_by_ref", return_value=skill
+        )
+        mocker.patch.object(
+            builder,
+            "_build_skill_data",
+            return_value={"name": "owner-private-skill"},
+        )
+
+        skills, preload_skills, user_selected_skills, _ = builder._get_bot_skills(
+            bot=bot,
+            team=team,
+            user=SimpleNamespace(id=99, preferences="{}"),
+            user_id=99,
+        )
+
+        find_attached_skill_by_ref.assert_called_once_with(
+            "owner-private-skill",
+            skill_id=55,
+        )
+        assert skills == [{"name": "owner-private-skill"}]
+        assert preload_skills == ["owner-private-skill"]
+        assert user_selected_skills == ["owner-private-skill"]
+
+    def test_member_bot_skill_refs_resolve_as_agent_owner(self, test_db, mocker):
+        builder = TaskRequestBuilder(test_db)
+        skill = SimpleNamespace(
+            id=55,
+            name="owner-private-skill",
+            user_id=7,
+            namespace="default",
+            json={},
+        )
+        find_attached_skill_by_ref = mocker.patch.object(
+            builder, "_find_attached_skill_by_ref", return_value=skill
+        )
+        mocker.patch.object(
+            builder,
+            "_build_skill_data",
+            return_value={"name": "owner-private-skill"},
+        )
+        resolved_skills = []
+        skill_refs = {}
+
+        builder._extend_resolved_skills_from_bot_configs(
+            bot_configs=[
+                {
+                    "skills": ["owner-private-skill"],
+                    "skill_refs": {
+                        "owner-private-skill": {
+                            "skill_id": 55,
+                            "namespace": "default",
+                            "is_public": False,
+                        }
+                    },
+                }
+            ],
+            resolved_skills=resolved_skills,
+            skill_refs=skill_refs,
+            team=SimpleNamespace(user_id=7, namespace="default"),
+            user=SimpleNamespace(id=99, preferences="{}"),
+        )
+
+        find_attached_skill_by_ref.assert_called_once_with(
+            "owner-private-skill",
+            skill_id=55,
+        )
+        assert resolved_skills == [{"name": "owner-private-skill"}]
+        assert skill_refs["owner-private-skill"]["skill_id"] == 55
 
     def test_get_bot_skills_returns_four_tuple_when_ghost_not_found(
         self, test_db, mocker
@@ -569,3 +689,26 @@ class TestUserScopedMcpInjection:
 
         assert shell_info_one == {"shell_type": "ClaudeCode", "base_image": "img-a"}
         assert shell_info_two == {"shell_type": "Agno", "base_image": "img-b"}
+
+    def test_resolve_shell_info_rejects_dangling_reference(self, test_db, mocker):
+        builder = TaskRequestBuilder(test_db)
+        bot = SimpleNamespace(
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "dangling-shell-bot", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "ghost", "namespace": "default"},
+                    "shellRef": {"name": "missing-shell", "namespace": "default"},
+                },
+            }
+        )
+        mocker.patch(
+            "app.services.adapters.shell_utils.get_shell_by_name",
+            return_value=None,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Shell reference 'default/missing-shell' is unavailable",
+        ):
+            builder._resolve_shell_info(bot, user_id=1)

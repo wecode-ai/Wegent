@@ -14,6 +14,7 @@ class SkillBindingTargetType(str, Enum):
     """Supported target types for SkillBinding resources."""
 
     USER = "user"
+    GROUP = "group"
     AGENT = "agent"
     PROJECT = "project"
     MESSAGE = "message"

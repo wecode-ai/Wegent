@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 
@@ -51,5 +51,23 @@ describe('useRuntimeTaskRouteRestoration', () => {
 
     expect(result.current).toBeNull()
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
+  })
+
+  test('switches tasks when navigation changes only the URL query', async () => {
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-a')
+
+    renderHook(() => useRuntimeTaskRouteRestoration())
+
+    act(() => {
+      window.history.pushState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(openRuntimeTaskMock).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        taskId: 'task-b',
+      })
+    )
   })
 })
