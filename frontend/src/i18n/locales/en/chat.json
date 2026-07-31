@@ -297,6 +297,12 @@
     "overwrite_confirm_cancel": "Keep current input",
     "overwrite_confirm_action": "Replace"
   },
+  "knowledge_draft": {
+    "confirm_title": "Start a new task?",
+    "confirm_description": "Your current unsent message, attachments, and additional context will be cleared before creating the presentation draft.",
+    "confirm_cancel": "Keep current draft",
+    "confirm_action": "Start new task"
+  },
   "errors": {
     "request_failed": "LLM API request failed",
     "request_failed_retry": "LLM API request failed, please click retry",

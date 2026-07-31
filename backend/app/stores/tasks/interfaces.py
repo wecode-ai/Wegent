@@ -264,6 +264,14 @@ class TaskStore(Protocol):
         order_by_updated_at_desc: bool = False,
     ) -> list[TaskResource]: ...
 
+    def list_active_tasks_referencing_team(
+        self,
+        db: Session,
+        *,
+        team_name: str,
+        team_namespace: str,
+    ) -> list[TaskResource]: ...
+
     def list_recent_owner_only_tasks(
         self,
         db: Session,
@@ -271,6 +279,14 @@ class TaskStore(Protocol):
         user_id: int,
         limit: int,
         client_origin: Optional[str] = None,
+    ) -> list[TaskResource]: ...
+
+    def list_recent_owner_only_used_tasks(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
     ) -> list[TaskResource]: ...
 
     def list_owned_tasks_by_states(
@@ -562,6 +578,14 @@ class SubtaskStore(Protocol):
         role: SubtaskRole,
         owner_user_id: Optional[int] = None,
     ) -> Optional[Subtask]: ...
+
+    def list_by_ids_and_role(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        role: SubtaskRole,
+    ) -> list[Subtask]: ...
 
     def get_accessible_by_id(
         self,

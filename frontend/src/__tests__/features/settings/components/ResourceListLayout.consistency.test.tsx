@@ -354,4 +354,121 @@ describe('resource list layout consistency', () => {
     expect(screen.getByTestId('retriever-list-items')).toBeInTheDocument()
     expect(screen.queryByText('My Retrievers (1)')).not.toBeInTheDocument()
   })
+
+  it('uses the shared responsive card grid only in compact resource-library views', async () => {
+    const gridClass = 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+    const modelView = render(
+      <ModelList scope="all" sourceFilter="all" groups={writableGroups} compact />
+    )
+
+    await screen.findByText('Personal Model')
+    expect(screen.getByTestId('model-list-items')).toHaveClass('grid', gridClass)
+    expect(screen.queryByTestId('model-management-title')).not.toBeInTheDocument()
+    modelView.unmount()
+
+    const shellView = render(
+      <ShellList scope="all" sourceFilter="all" groups={writableGroups} compact />
+    )
+
+    await screen.findByText('Personal Executor')
+    expect(screen.getByTestId('shell-list-items')).toHaveClass('grid', gridClass)
+    shellView.unmount()
+
+    render(<RetrieverList scope="all" sourceFilter="all" groups={writableGroups} compact />)
+
+    await screen.findByText('Personal Retriever')
+    expect(screen.getByTestId('retriever-list-items')).toHaveClass('grid', gridClass)
+  })
+
+  it('shrinks a read-only system model card without duplicate metadata or empty actions', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'ali-deepseek-v4-flash',
+          type: 'public',
+          provider: 'anthropic',
+          modelId: 'ali-deepseek-v4-flash',
+          namespace: 'system',
+          modelCategoryType: 'llm',
+          config: { env: { model: 'anthropic', model_id: 'ali-deepseek-v4-flash' } },
+        },
+      ],
+    })
+
+    render(<ModelList scope="all" sourceFilter="system" compact hideCreateActions />)
+
+    const card = await screen.findByTestId('model-card-public-ali-deepseek-v4-flash')
+    expect(card).not.toHaveClass('min-h-[176px]')
+    expect(within(card).queryByTestId('model-card-actions-public-ali-deepseek-v4-flash')).toBeNull()
+    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
+      'h-11',
+      'w-11',
+      'rounded-xl',
+      'border'
+    )
+    expect(within(card).getAllByText('ali-deepseek-v4-flash')).toHaveLength(1)
+  })
+
+  it('omits empty actions and uses the shared icon container for system executors and retrievers', async () => {
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'system-shell',
+          displayName: 'System Executor',
+          type: 'public',
+          shellType: 'Chat',
+          executionType: 'external_api',
+          namespace: 'system',
+        },
+      ],
+    })
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'system-retriever',
+          displayName: 'System Retriever',
+          type: 'public',
+          storageType: 'elasticsearch',
+          namespace: 'system',
+        },
+      ],
+    })
+
+    const shellView = render(
+      <ShellList scope="all" sourceFilter="system" compact hideCreateActions />
+    )
+    const shellCard = await screen.findByTestId('shell-card-public-system-shell')
+    expect(shellCard).not.toHaveClass('min-h-[176px]')
+    expect(within(shellCard).queryByTestId('shell-card-actions-public-system-shell')).toBeNull()
+    expect(within(shellCard).getByTestId('resource-card-icon')).toHaveClass('h-11', 'w-11')
+    shellView.unmount()
+
+    render(<RetrieverList scope="all" sourceFilter="system" compact hideCreateActions />)
+    const retrieverCard = await screen.findByTestId('retriever-card-public-system-retriever')
+    expect(retrieverCard).not.toHaveClass('min-h-[176px]')
+    expect(
+      within(retrieverCard).queryByTestId('retriever-card-actions-public-system-retriever')
+    ).toBeNull()
+    expect(within(retrieverCard).getByTestId('resource-card-icon')).toHaveClass('h-11', 'w-11')
+  })
+
+  it('does not repeat public source or executor type metadata', async () => {
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'Chat',
+          type: 'public',
+          shellType: 'Chat',
+          executionType: 'external_api',
+          namespace: 'system',
+        },
+      ],
+    })
+
+    render(<ShellList scope="all" sourceFilter="system" compact hideCreateActions />)
+
+    const card = await screen.findByTestId('shell-card-public-Chat')
+    expect(within(card).getAllByText('Public')).toHaveLength(1)
+    expect(within(card).getAllByText('Chat')).toHaveLength(1)
+  })
 })

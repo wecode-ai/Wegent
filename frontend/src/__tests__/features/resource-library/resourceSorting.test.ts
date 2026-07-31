@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  filterResourceLibraryItemsByGroups,
   getResourceLibrarySortMode,
   sortResourceLibraryItems,
   type ResourceLibrarySortSource,
@@ -38,6 +39,26 @@ function sortResources(items: TestResource[], sortMode: 'default' | 'latest') {
 }
 
 describe('resource library sorting', () => {
+  it('filters resources by multiple group namespaces', () => {
+    const resources: TestResource[] = [
+      { id: 1, name: 'alpha', namespace: 'team-a', source: 'group' },
+      { id: 2, name: 'beta', namespace: 'team-b', source: 'group' },
+      { id: 3, name: 'gamma', namespace: 'team-c', source: 'group' },
+    ]
+
+    expect(
+      filterResourceLibraryItemsByGroups(
+        resources,
+        ['team-a', 'team-c'],
+        item => item.namespace
+      ).map(item => item.name)
+    ).toEqual(['alpha', 'gamma'])
+    expect(filterResourceLibraryItemsByGroups(resources, [], item => item.namespace)).toEqual([])
+    expect(filterResourceLibraryItemsByGroups(resources, undefined, item => item.namespace)).toBe(
+      resources
+    )
+  })
+
   it('normalizes invalid sort modes to the default mode', () => {
     expect(getResourceLibrarySortMode(null)).toBe('default')
     expect(getResourceLibrarySortMode('latest')).toBe('latest')

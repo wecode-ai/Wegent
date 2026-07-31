@@ -438,17 +438,23 @@ export default function TaskSidebar({
               }`}
               size="sm"
             >
-              <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
+              <span className="flex min-w-0 flex-1 items-center justify-start gap-2 text-left">
                 <LayoutGrid
                   aria-label="More navigation"
                   className={`h-4 w-4 flex-shrink-0 ${hasActiveItem ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
+                  className={`shrink-0 text-[14px] leading-5 font-medium ${
                     hasActiveItem ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {t('common:navigation.more')}
+                </span>
+                <span
+                  className="min-w-0 truncate text-[11px] font-normal text-text-muted"
+                  data-testid="task-sidebar-more-summary"
+                >
+                  {t('common:navigation.more_summary')}
                 </span>
               </span>
               <span className="ml-auto flex items-center gap-1">

@@ -26,6 +26,7 @@ import {
 } from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
+import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
@@ -81,7 +82,7 @@ import {
 } from './runtimeTaskLifecycle'
 import {
   applyRuntimeConversationAction,
-  takeAppliedRuntimeConversationGuidance,
+  settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 import {
   applyModelContextWindowOverride,
@@ -1231,10 +1232,18 @@ export function WorkbenchProvider({
   const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   useEffect(() => {
+    const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [stableRefreshWorkLists])
+
+  useEffect(() => {
     const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
       subscribeBackgroundRuntimeTaskStream(address, {
         onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onGuidanceApplied: payload => takeAppliedRuntimeConversationGuidance(address, payload),
+        onGuidanceApplied: payload => settleRuntimeConversationGuidance(address, payload),
         onAssistantStart: () => lifecycleStore.turnStarted(address),
         onAssistantSettled: () => lifecycleStore.turnSettled(address),
         onRefreshWorkLists: () => {

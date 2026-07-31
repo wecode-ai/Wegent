@@ -38,6 +38,12 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+Run only the embedded-browser Agent operation regression:
+
+```bash
+pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
@@ -103,6 +109,8 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 `e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario builds a long multi-turn conversation beyond the virtualization threshold. It first verifies that “Thinking” appears below the visible reply, then scrolls to completed history so the active response remains offscreen while it continues growing. The test waits for the list's total height to grow and asserts that the visible text anchor and `scrollTop` stay stable during streaming, after completion, and after reopening the task. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
 
+`e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Tauri WebView, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the current WKWebView bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. Results are written to `embedded-browser-agent-result.json`.
+
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
@@ -113,13 +121,29 @@ project initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
-by the complete flow. Segment commands are for fast local iteration; run the
-complete `pnpm --filter wework e2e:desktop` flow before pushing:
+by the complete flow. PR CI builds the smallest segment matrix for the changed
+feature paths. Shared desktop infrastructure, main, merge queue, scheduled
+runs, and `ci:all` still run the complete desktop suites. The mapping lives in
+`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature coverage is registered. Segment commands are also useful for focused
+local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --from-segment window-lifecycle
 pnpm --filter wework e2e:desktop -- --segment workspace-attachments
+```
+
+The plugin desktop suite reuses the same segment options while keeping its
+separate Codex Home initialization environment. Its ordered segments are
+`plugin-lifecycle`, `skill-mention-rendering`, and
+`sites-plugin-auto-install`. Each segment establishes the minimal plugin
+fixture it needs, so it can run alone or continue through the later plugin
+features:
+
+```bash
+pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
+pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-rendering
 ```
 
 Ordinary desktop-runner UI steps time out after 10 seconds by default, so one
@@ -349,6 +373,14 @@ Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
+
+The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
+dependencies in the runner user's home directory. Cache keys rotate weekly and
+are scoped by operating system and CPU architecture. Every run still executes
+`apt-get update`; an older cache is only a restore source, and missing or
+updated packages are downloaded from the Ubuntu repositories. Installation
+uses `--no-install-recommends` plus repository retries and timeouts to reduce
+whole-job timeouts caused by transient hosted-runner mirror degradation.
 
 The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
 

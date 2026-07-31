@@ -18,6 +18,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.services.auth import create_skill_identity_token, create_task_token
+from app.services.skill_binding_service import skill_binding_service
 
 
 def _create_user(test_db: Session, username: str, email: str) -> User:
@@ -570,6 +571,167 @@ version: "1.1.0"
         # Verify ZIP is valid
         downloaded_zip = zipfile.ZipFile(io.BytesIO(response.content))
         assert "test/SKILL.md" in downloaded_zip.namelist()
+
+    def test_download_bound_marketplace_skill(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_token: str,
+    ):
+        """A personal binding grants access to its publisher-owned archive."""
+        zip_content = self.create_test_zip(
+            "---\ndescription: Bound marketplace skill\n---\n"
+        )
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "bound-marketplace-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = int(create_response.json()["metadata"]["labels"]["id"])
+
+        source = test_db.query(Kind).filter(Kind.id == skill_id).one()
+        source_json = dict(source.json)
+        source_spec = dict(source_json["spec"])
+        source_spec["capability"] = {
+            "visibility": "public",
+            "publishStatus": "published",
+        }
+        source_json["spec"] = source_spec
+        source.json = source_json
+        test_db.commit()
+
+        consumer = _create_user(
+            test_db,
+            username="bound-skill-consumer",
+            email="bound-skill-consumer@example.com",
+        )
+        consumer_token = create_access_token(data={"sub": consumer.user_name})
+
+        unbound_response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download",
+            headers={"Authorization": f"Bearer {consumer_token}"},
+        )
+        assert unbound_response.status_code == 404
+
+        skill_binding_service.add_user_default_skill(
+            test_db,
+            user_id=consumer.id,
+            skill_id=skill_id,
+            created_by=consumer.id,
+        )
+        bound_response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download",
+            headers={"Authorization": f"Bearer {consumer_token}"},
+        )
+        assert bound_response.status_code == 200
+        assert bound_response.content == zip_content
+
+    def test_group_skill_download_requires_group_access(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        """Knowing a group namespace does not grant archive access."""
+        group = _create_group(test_db, test_user, "download-access-group")
+        _add_group_member(test_db, group, test_user, "Owner")
+        zip_content = self.create_test_zip(
+            "---\ndescription: Private group skill\n---\n"
+        )
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "private-group-download", "namespace": group.name},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = int(create_response.json()["metadata"]["labels"]["id"])
+
+        outsider = _create_user(
+            test_db,
+            username="group-skill-outsider",
+            email="group-skill-outsider@example.com",
+        )
+        outsider_token = create_access_token(data={"sub": outsider.user_name})
+        denied_response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download",
+            params={"namespace": group.name},
+            headers={"Authorization": f"Bearer {outsider_token}"},
+        )
+        assert denied_response.status_code == 404
+
+        reporter = _create_user(
+            test_db,
+            username="group-skill-reporter",
+            email="group-skill-reporter@example.com",
+        )
+        _add_group_member(test_db, group, reporter, "Reporter")
+        reporter_token = create_access_token(data={"sub": reporter.user_name})
+        allowed_response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download",
+            params={"namespace": group.name},
+            headers={"Authorization": f"Bearer {reporter_token}"},
+        )
+        assert allowed_response.status_code == 200
+        assert allowed_response.content == zip_content
+
+    def test_group_binding_grants_marketplace_skill_download(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        """A group binding grants members access to the canonical archive."""
+        zip_content = self.create_test_zip(
+            "---\ndescription: Group marketplace skill\n---\n"
+        )
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "group-marketplace-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = int(create_response.json()["metadata"]["labels"]["id"])
+
+        source = test_db.query(Kind).filter(Kind.id == skill_id).one()
+        source_json = dict(source.json)
+        source_spec = dict(source_json["spec"])
+        source_spec["capability"] = {
+            "visibility": "public",
+            "publishStatus": "published",
+        }
+        source_json["spec"] = source_spec
+        source.json = source_json
+        test_db.commit()
+
+        group = _create_group(test_db, test_user, "bound-download-group")
+        _add_group_member(test_db, group, test_user, "Owner")
+        skill_binding_service.add_group_skill(
+            test_db,
+            group_namespace=group.name,
+            skill_id=skill_id,
+            created_by=test_user.id,
+        )
+        reporter = _create_user(
+            test_db,
+            username="bound-group-reporter",
+            email="bound-group-reporter@example.com",
+        )
+        _add_group_member(test_db, group, reporter, "Reporter")
+        reporter_token = create_access_token(data={"sub": reporter.user_name})
+
+        response = test_client.get(
+            f"/api/v1/kinds/skills/{skill_id}/download",
+            params={"namespace": group.name},
+            headers={"Authorization": f"Bearer {reporter_token}"},
+        )
+        assert response.status_code == 200
+        assert response.content == zip_content
 
     def test_update_skill(self, test_client: TestClient, test_token: str):
         """Test updating skill with new ZIP"""
@@ -1266,6 +1428,97 @@ tags: ["public", "api", "test"]
         )
         assert updated_skill["visible"] is False
 
+    def test_unified_group_skills_include_installed_skill_bindings(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        """Group agent editors should see Skills installed through bindings."""
+        publisher = _create_user(
+            test_db,
+            "bound-skill-publisher",
+            "bound-skill-publisher@example.com",
+        )
+        group = _create_group(test_db, test_user, "bound-skill-target-group")
+        second_group = _create_group(
+            test_db, test_user, "bound-skill-second-target-group"
+        )
+        _add_group_member(test_db, group, test_user, "Developer")
+        _add_group_member(test_db, second_group, test_user, "Developer")
+        skill = Kind(
+            user_id=publisher.id,
+            kind="Skill",
+            name="bound-market-skill",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Skill",
+                "metadata": {
+                    "name": "bound-market-skill",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "description": "Installed from the marketplace",
+                    "version": "1.0.0",
+                    "capability": {
+                        "visibility": "public",
+                        "publishStatus": "published",
+                        "publishedBy": publisher.id,
+                    },
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(skill)
+        test_db.commit()
+        test_db.refresh(skill)
+
+        binding_response = test_client.post(
+            f"/api/v1/kinds/skills/{skill.id}/bindings/groups",
+            json={"group_names": [group.name, second_group.name]},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert binding_response.status_code == 200
+        assert {item["target_id"] for item in binding_response.json()} == {
+            group.name,
+            second_group.name,
+        }
+
+        for target_group in (group, second_group):
+            response = test_client.get(
+                "/api/v1/kinds/skills/unified",
+                params={"scope": "group", "group_name": target_group.name},
+                headers={"Authorization": f"Bearer {test_token}"},
+            )
+
+            assert response.status_code == 200
+            matching = [item for item in response.json() if item["name"] == skill.name]
+            assert len(matching) == 1
+            assert matching[0]["id"] == skill.id
+            assert matching[0]["namespace"] == skill.namespace
+
+        remove_response = test_client.delete(
+            f"/api/v1/kinds/skills/{skill.id}/bindings/groups",
+            params={"group_name": group.name},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert remove_response.status_code == 204
+
+        removed_group_response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            params={"scope": "group", "group_name": group.name},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        retained_group_response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            params={"scope": "group", "group_name": second_group.name},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert all(item["id"] != skill.id for item in removed_group_response.json())
+        assert any(item["id"] == skill.id for item in retained_group_response.json())
+
     def test_unified_skills_returns_hidden_public_skill_with_visible_flag(
         self,
         test_client: TestClient,
@@ -1361,9 +1614,9 @@ visible: false
         assert response.status_code == 404
 
     def test_download_public_skill_success(
-        self, test_client: TestClient, test_admin_token: str, test_token: str
+        self, test_client: TestClient, test_admin_token: str
     ):
-        """Test downloading public skill r user"""
+        """Administrators can download a system Skill archive."""
         skill_md = "---\ndescription: Download public test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
@@ -1378,10 +1631,10 @@ visible: false
 
         skill_id = create_response.json()["id"]
 
-        # Download as regular user
+        # Download as administrator
         response = test_client.get(
             f"/api/v1/kinds/skills/public/{skill_id}/download",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
         )
 
         assert response.status_code == 200
@@ -1392,6 +1645,33 @@ visible: false
         # Verify ZIP is valid
         downloaded_zip = zipfile.ZipFile(io.BytesIO(response.content))
         assert "test/SKILL.md" in downloaded_zip.namelist()
+
+    def test_download_public_skill_forbidden_for_regular_user(
+        self,
+        test_client: TestClient,
+        test_admin_token: str,
+        test_token: str,
+    ):
+        """Individual users cannot download a system Skill archive."""
+        skill_md = "---\ndescription: Download public test\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/public/upload",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+            data={"name": "download-public-forbidden-test"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+
+        response = test_client.get(
+            f"/api/v1/kinds/skills/public/{create_response.json()['id']}/download",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == (
+            "System skills cannot be downloaded by individual users"
+        )
 
     def test_download_public_skill_without_auth(
         self, test_client: TestClient, test_admin_token: str
@@ -1417,12 +1697,12 @@ visible: false
         assert response.status_code == 401
 
     def test_download_public_skill_not_found(
-        self, test_client: TestClient, test_token: str
+        self, test_client: TestClient, test_admin_token: str
     ):
         """Test downloading non-existent public skill returns 404"""
         response = test_client.get(
             "/api/v1/kinds/skills/public/99999/download",
-            headers={"Authorization": f"Bearer {test_token}"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
         )
 
         assert response.status_code == 404

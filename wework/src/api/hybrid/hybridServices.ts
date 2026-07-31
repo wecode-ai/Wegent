@@ -859,6 +859,7 @@ export function createHybridWorkbenchServices(
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
     },
   }
+  const automationApi = localServices.automationApi
 
   const cloudRuntimeChatStream = createRuntimeChatStream({
     request: (method, params) => {
@@ -913,6 +914,7 @@ export function createHybridWorkbenchServices(
     },
     deviceApi: hybridDeviceApi,
     runtimeWorkApi: hybridRuntimeWorkApi,
+    automationApi,
     attachmentApi: localServices.attachmentApi,
     userApi: localServices.userApi,
     cloudBackgroundApi: {

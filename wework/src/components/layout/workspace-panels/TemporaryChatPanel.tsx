@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageCircle } from 'lucide-react'
+import { ChevronRight, MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import {
@@ -17,6 +17,8 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type {
   Attachment,
   ProjectWithTasks,
@@ -60,6 +62,8 @@ interface TemporaryChatPanelProps {
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
+  expanded?: boolean
+  onRestoreConversation?: () => void
 }
 
 export function TemporaryChatPanel({
@@ -74,7 +78,10 @@ export function TemporaryChatPanel({
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
+  expanded = false,
+  onRestoreConversation,
 }: TemporaryChatPanelProps) {
+  const { t } = useTranslation('common')
   const {
     services,
     state,
@@ -296,6 +303,7 @@ export function TemporaryChatPanel({
       if (!targetAddress) {
         setInput(current => current || message)
         updateAddress(null)
+        setSending(false)
         return
       }
       if (!address) {
@@ -363,8 +371,30 @@ export function TemporaryChatPanel({
           loadingFullTranscript={loadingFullTranscript}
         />
       )}
-      <div className="shrink-0 bg-background py-3">
-        <div data-testid="side-chat-composer-layout" className={DESKTOP_CHAT_CONTENT_WIDTH_CLASS}>
+      <div
+        data-testid="right-workspace-chat-composer-shell"
+        className={cn(
+          'shrink-0',
+          expanded
+            ? 'relative z-critical mx-auto w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)] bg-transparent pb-2 pt-6'
+            : 'bg-background py-3'
+        )}
+      >
+        {expanded && (
+          <button
+            type="button"
+            data-testid="restore-conversation-from-expanded-workspace-button"
+            className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
+            onClick={onRestoreConversation}
+          >
+            <span>{t('workbench.latest_conversation_turn')}</span>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        )}
+        <div
+          data-testid="side-chat-composer-layout"
+          className={cn('pointer-events-auto', !expanded && DESKTOP_CHAT_CONTENT_WIDTH_CLASS)}
+        >
           <BufferedChatInput
             value={input}
             onChange={setInput}

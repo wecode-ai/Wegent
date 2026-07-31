@@ -6,6 +6,7 @@ import type { Team } from '@/types/api'
 import {
   buildTeamTargetHref,
   filterTeamsByMode,
+  getRecentTeams,
   getTeamTargetPage,
 } from '@/features/tasks/components/selector/team-selector-utils'
 
@@ -46,6 +47,26 @@ describe('team selector utils', () => {
     expect(getTeamTargetPage(makeTeam(2, ['chat', 'task']), 'task')).toBe('devices/chat')
     expect(getTeamTargetPage(makeTeam(3, ['chat', 'code']), 'code')).toBe('code')
     expect(getTeamTargetPage(makeTeam(4, ['chat', 'code']), 'all')).toBe('chat')
+  })
+
+  it('keeps recent-use order and fills to five with latest updated teams', () => {
+    const teams = [1, 2, 3, 4, 5, 6].map(id => ({
+      ...makeTeam(id, ['chat']),
+      updated_at: `2026-07-0${id}T00:00:00Z`,
+    }))
+
+    expect(getRecentTeams(teams, [3, 1]).map(team => team.id)).toEqual([3, 1, 6, 5, 4])
+  })
+
+  it('deduplicates system and personal copies by namespace and name', () => {
+    const teams = [1, 2, 3, 4, 5, 6].map(id => ({
+      ...makeTeam(id, ['chat']),
+      name: id <= 2 ? 'wegent-chat' : `team-${id}`,
+      user_id: id === 1 ? 0 : 7,
+      updated_at: `2026-07-0${id}T00:00:00Z`,
+    }))
+
+    expect(getRecentTeams(teams, [1, 2]).map(team => team.id)).toEqual([1, 6, 5, 4, 3])
   })
 
   it('builds code target hrefs through chat agent mode', () => {

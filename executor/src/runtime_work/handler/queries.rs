@@ -260,7 +260,10 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript_messages(&thread, &self.device_id)
         };
-        let messages = transcript_messages;
+        let mut messages = transcript_messages;
+        if let Some(link) = local_link.as_ref() {
+            attach_user_message_presentations(&mut messages, user_message_presentations(link));
+        }
         let running = local_execution_running;
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {

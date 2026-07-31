@@ -8,6 +8,12 @@ import type {
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import {
+  createAppliedRuntimeGuidanceMessage,
+  insertAppliedRuntimeGuidance,
+  transformRuntimePaneActionForGuidanceSplits,
+  type GuidanceSplitBoundaries,
+} from './runtimeGuidanceMessages'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const messagesByConversation = new Map<string, WorkbenchMessage[]>()
@@ -15,6 +21,7 @@ const queuedMessagesByConversation = new Map<string, RuntimePaneQueuedMessage[]>
 const queuedMessagesPausedByConversation = new Map<string, boolean>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
+const guidanceSplitBoundariesByConversation = new Map<string, GuidanceSplitBoundaries>()
 
 export type RuntimeConversationQueueEvent = {
   type: 'guidance_applied'
@@ -43,10 +50,14 @@ export function applyRuntimeConversationAction(
 ) {
   const key = runtimeConversationKey(address)
   const currentMessages = messagesByConversation.get(key) ?? []
+  const splitBoundaries = touchEntry(guidanceSplitBoundariesByConversation, key)
+  const actionForReduction = splitBoundaries
+    ? transformRuntimePaneActionForGuidanceSplits(action, splitBoundaries)
+    : action
   cacheBoundedEntry(
     messagesByConversation,
     key,
-    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(currentMessages, action)
+    reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(currentMessages, actionForReduction)
   )
 }
 
@@ -107,6 +118,41 @@ export function takeAppliedRuntimeConversationGuidance(
     queuedMessages.filter(message => message.id !== guidanceMessage.id)
   )
   return guidanceMessage
+}
+
+export function settleRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  payload: RuntimeGuidanceAppliedPayload
+): RuntimePaneQueuedMessage | null {
+  const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
+  if (!guidanceMessage) return null
+
+  const key = runtimeConversationKey(address)
+  const messages = messagesByConversation.get(key) ?? []
+  if (messages.some(message => message.id === guidanceMessage.id)) return guidanceMessage
+
+  const appliedGuidance = createAppliedRuntimeGuidanceMessage(guidanceMessage, payload)
+  cacheBoundedEntry(
+    messagesByConversation,
+    key,
+    insertAppliedRuntimeGuidance(
+      messages,
+      appliedGuidance,
+      getRuntimeConversationGuidanceSplitBoundaries(address)
+    )
+  )
+  return guidanceMessage
+}
+
+export function getRuntimeConversationGuidanceSplitBoundaries(
+  address: RuntimeTaskAddress
+): GuidanceSplitBoundaries {
+  const key = runtimeConversationKey(address)
+  const existing = touchEntry(guidanceSplitBoundariesByConversation, key)
+  if (existing) return existing
+  const boundaries: GuidanceSplitBoundaries = new Map()
+  cacheBoundedEntry(guidanceSplitBoundariesByConversation, key, boundaries)
+  return boundaries
 }
 
 export function reduceRuntimeConversationQueue(
@@ -198,6 +244,7 @@ export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   messagesByConversation.delete(key)
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
+  guidanceSplitBoundariesByConversation.delete(key)
   const viewKey = runtimeConversationViewKey(address)
   scrollSnapshotsByConversation.delete(viewKey)
   virtualMeasurementsByConversation.delete(viewKey)
@@ -217,6 +264,7 @@ export function clearRuntimeConversationCacheForTests() {
   queuedMessagesPausedByConversation.clear()
   scrollSnapshotsByConversation.clear()
   virtualMeasurementsByConversation.clear()
+  guidanceSplitBoundariesByConversation.clear()
 }
 
 function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {

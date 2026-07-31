@@ -255,6 +255,13 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(fixedSection).getByText('common:navigation.code')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
+    expect(within(fixedSection).getByTestId('task-sidebar-more-summary')).toHaveTextContent(
+      'common:navigation.more_summary'
+    )
+    expect(within(fixedSection).getByTestId('task-sidebar-more-summary')).toHaveClass(
+      'text-text-muted',
+      'truncate'
+    )
     expect(within(fixedSection).getByLabelText('More navigation')).toHaveClass('lucide-layout-grid')
     expect(
       within(fixedSection).queryByTestId('resource-library-sidebar-button')

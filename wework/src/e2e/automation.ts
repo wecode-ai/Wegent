@@ -17,12 +17,15 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { executeVerificationControlCommand } from './verification-control'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -483,6 +486,16 @@ function hoverDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+function leaveDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const options = desktopControlEventOptions(element)
+  for (const type of ['pointerout', 'pointerleave', 'mouseout', 'mouseleave']) {
+    dispatchDesktopControlPointerEvent(element, type, options)
+  }
+  return element.textContent?.trim() ?? ''
+}
+
 function moveDesktopControlPointer(command: DesktopControlCommand): string {
   const selector = command.target ?? command.selector
   const element = findDesktopControlElements(selector)[0]
@@ -697,14 +710,53 @@ function dispatchDesktopControlPaths(
 }
 
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
+  const getWindowFocusSnapshot = async () => {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const popoutWindow = await WebviewWindow.getByLabel('popout-window')
+    return JSON.stringify({
+      mainFocused: await getCurrentWindow().isFocused(),
+      popoutExists: Boolean(popoutWindow),
+      popoutFocused: popoutWindow ? await popoutWindow.isFocused() : false,
+      popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
+    })
+  }
+
+  const verificationResult = await executeVerificationControlCommand(command, {
+    elementEnabled: desktopControlElementEnabled,
+  })
+  if (verificationResult.handled) return verificationResult.value
+
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
+    case 'capturePopoutWindow':
+      return invoke<string>('capture_popout_webview')
     case 'closeMainWindowToTray':
+      return ''
+    case 'requestMainWindowClose':
       return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'storeLocalProxyUrl':
+      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'setLocalProxyUrl': {
+      const proxyUrl = command.value?.trim() ?? ''
+      const config = saveLocalProxyUrl(proxyUrl)
+      await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+        method: 'runtime.codex.runtime_config.update',
+        params: { proxyUrl: proxyUrl || null },
+      })
+      return JSON.stringify(config)
+    }
+    case 'toggleSidebar': {
+      const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
+      window.dispatchEvent(event)
+      if (!event.defaultPrevented) {
+        throw new Error('No desktop sidebar handled the toggle request')
+      }
+      return ''
+    }
     case 'performanceSnapshot': {
       const processMemory = navigator.platform.toLowerCase().includes('mac')
         ? await invoke('get_wework_process_snapshot')
@@ -720,6 +772,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       await getCurrentWindow().show()
       await getCurrentWindow().unminimize()
       await getCurrentWindow().setFocus()
+      return ''
+    case 'getWindowFocusSnapshot':
+      return getWindowFocusSnapshot()
+    case 'completeSystemDragDrop':
+      await invoke('complete_system_drag_drop', {
+        payload: JSON.parse(command.value ?? '{}'),
+      })
+      await new Promise(resolve => window.setTimeout(resolve, 250))
+      return getWindowFocusSnapshot()
+    case 'dismissPopoutWindow':
+      await invoke('dismiss_popout_window')
+      return ''
+    case 'showPopoutWindow':
+      await invoke('show_popout_window')
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
@@ -846,6 +912,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.click()
       return element.textContent?.trim() ?? ''
     }
+    case 'clickThenMacrotask': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!desktopControlElementEnabled(element)) {
+        throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      const targetSelector = command.target?.trim()
+      if (!targetSelector) throw new Error('clickThenMacrotask requires target')
+
+      element.click()
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+
+      const target = findDesktopControlElements(targetSelector)[0]
+      if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+      if (!desktopControlElementEnabled(target)) {
+        throw new Error(`Target selector "${targetSelector}" is disabled`)
+      }
+      target.click()
+      return target.textContent?.trim() ?? ''
+    }
     case 'clickIfPresent': {
       const element = findDesktopControlElements(command.selector).find(
         desktopControlElementEnabled
@@ -926,10 +1012,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'finishAnimations': {
+      let finishedCount = 0
+      for (const animation of document.getAnimations()) {
+        try {
+          animation.finish()
+          finishedCount += 1
+        } catch {
+          // Infinite animations cannot be finished and are unrelated to layout settling.
+        }
+      }
+      return String(finishedCount)
+    }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getLocalExecutorStatus':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'pointerLeave':
+      return leaveDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
     case 'navigate': {
@@ -951,6 +1053,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
       }
       return element.textContent?.trim() ?? ''
+    }
+    case 'submit': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const form = element instanceof HTMLFormElement ? element : element.closest('form')
+      if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
+      form.requestSubmit()
+      return ''
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
@@ -1010,6 +1120,8 @@ async function runDesktopControlClient(url: string): Promise<void> {
         await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
+        } else if (command.action === 'requestMainWindowClose') {
+          await getCurrentWindow().close()
         }
       } catch (error) {
         await postDesktopControlResult(url, {
@@ -1029,6 +1141,12 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
-  if (!url || window.location.pathname.startsWith('/system-drag')) return
+  if (
+    !url ||
+    getCurrentWindow().label !== 'main' ||
+    window.location.pathname.startsWith('/system-drag')
+  ) {
+    return
+  }
   void runDesktopControlClient(url)
 }

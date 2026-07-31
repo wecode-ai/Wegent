@@ -33,6 +33,13 @@ import type {
   User,
 } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
+import type {
+  Automation,
+  AutomationListResponse,
+  AutomationMutation,
+  AutomationRun,
+  AutomationRunListResponse,
+} from '@/types/automation'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
@@ -53,6 +60,20 @@ export interface ProjectSpaceApis {
   local?: DeliveryApi
   cloud?: DeliveryApi
   defaultLocation: ProjectSpaceLocation
+}
+
+export interface AutomationApi {
+  listAutomations: () => Promise<AutomationListResponse>
+  getAutomation: (automationId: string) => Promise<{ automation: Automation }>
+  createAutomation: (data: AutomationMutation) => Promise<{ automation: Automation }>
+  updateAutomation: (
+    automationId: string,
+    data: AutomationMutation
+  ) => Promise<{ automation: Automation }>
+  deleteAutomation: (automationId: string) => Promise<{ deleted: boolean }>
+  toggleAutomation: (automationId: string, enabled: boolean) => Promise<{ automation: Automation }>
+  runAutomationNow: (automationId: string) => Promise<{ run: AutomationRun | null }>
+  listAutomationRuns: (automationId?: string) => Promise<AutomationRunListResponse>
 }
 
 export interface WorkbenchServices {
@@ -94,6 +115,7 @@ export interface WorkbenchServices {
   projectSpaceApis?: ProjectSpaceApis
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
+  automationApi?: AutomationApi
   attachmentApi?: {
     uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>

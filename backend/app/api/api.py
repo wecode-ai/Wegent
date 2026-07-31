@@ -23,6 +23,7 @@ from app.api.endpoints import (
     installed_mcps,
     installed_plugins,
     knowledge,
+    knowledge_artifacts,
     knowledge_open,
     knowledge_transfer,
     knowledge_video_upload,
@@ -36,6 +37,7 @@ from app.api.endpoints import (
     quota,
     remote_devices,
     repository,
+    resource_library,
     runtime_work,
     share,
     sites,
@@ -117,6 +119,11 @@ api_router.include_router(
     wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
 )
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(
+    resource_library.router,
+    prefix="/resource-library",
+    tags=["resource-library"],
+)
 api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
 )
@@ -203,6 +210,11 @@ api_router.include_router(
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_artifacts.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-artifacts"],
 )
 api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]

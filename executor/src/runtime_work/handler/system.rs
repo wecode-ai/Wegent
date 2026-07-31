@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::codex_config::optional_proxy_url;
 use super::*;
 
 impl RuntimeWorkRpcHandler {
@@ -385,9 +386,30 @@ impl RuntimeWorkRpcHandler {
                 "restarted": false,
                 "requiresConfirmation": true,
                 "activeTaskCount": active_task_count,
+                "pendingRequestCount": 0,
             }));
         }
-        self.codex_app_server.restart().await;
+        if payload.get("proxyUrl").is_some() || payload.get("proxy_url").is_some() {
+            let proxy_url = optional_proxy_url(&payload)?;
+            self.configure_codex_runtime_proxy(proxy_url, true)
+                .await
+                .map_err(|error| AppIpcError::new("codex_runtime_config_update_failed", error))?;
+        }
+        if if_idle && !force {
+            match self.codex_app_server.restart_if_no_pending_requests().await {
+                Ok(()) => {}
+                Err(count) => {
+                    return Ok(json!({
+                        "restarted": false,
+                        "requiresConfirmation": true,
+                        "activeTaskCount": active_task_count,
+                        "pendingRequestCount": count,
+                    }));
+                }
+            }
+        } else {
+            self.codex_app_server.restart().await;
+        }
         crate::server::codex_model_catalog::invalidate_models_cache()
             .map_err(|error| AppIpcError::new("codex_cache_invalidation_failed", error))?;
         if !expected_models.is_empty() {
@@ -426,6 +448,7 @@ impl RuntimeWorkRpcHandler {
             "restarted": true,
             "requiresConfirmation": false,
             "activeTaskCount": active_task_count,
+            "pendingRequestCount": 0,
         }))
     }
 

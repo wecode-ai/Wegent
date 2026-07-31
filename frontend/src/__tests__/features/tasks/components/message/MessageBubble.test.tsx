@@ -197,6 +197,31 @@ describe('MessageBubble', () => {
     )
   })
 
+  it('keeps complete cancelled AI output saveable', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Partial but complete answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskStatus: 'CANCELLED',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).toHaveBeenCalledWith(
+      expect.objectContaining({ showSaveToKnowledge: true })
+    )
+  })
+
   it('re-renders when save action presence changes but ignores callback identity changes', () => {
     const msg: Message = {
       type: 'ai',
@@ -273,10 +298,6 @@ describe('MessageBubble', () => {
 
   it.each([
     {
-      name: 'streaming',
-      overrides: { status: 'streaming' as const, subtaskStatus: 'RUNNING' },
-    },
-    {
       name: 'error',
       overrides: { status: 'error' as const, subtaskStatus: 'FAILED' },
     },
@@ -319,6 +340,54 @@ describe('MessageBubble', () => {
     expect(mockBubbleTools.mock.calls.some(call => call[0].showSaveToKnowledge === true)).toBe(
       false
     )
+  })
+
+  it('does not render save tools for a streaming AI message', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$Answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'streaming',
+      subtaskStatus: 'RUNNING',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).not.toHaveBeenCalled()
+  })
+
+  it('does not render save tools for an empty AI message', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      status: 'completed',
+      subtaskStatus: 'COMPLETED',
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam()}
+        theme="light"
+        t={t}
+        onSaveToKnowledge={jest.fn()}
+      />
+    )
+
+    expect(mockBubbleTools).not.toHaveBeenCalled()
   })
 
   it('saves only text blocks from a completed blocks message', () => {

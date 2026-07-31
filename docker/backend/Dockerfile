@@ -30,11 +30,6 @@ COPY backend /app
 # - skills/: Skill packages (mermaid-diagram, wiki_submit, sandbox)
 COPY backend/init_data /app/init_data
 
-# The Sites plugin is required for Backend marketplace initialization. Keep this
-# check in the image build as well as Backend startup so an incomplete release
-# image cannot be published.
-RUN test -f /app/init_data/plugins/wegent-sites/.codex-plugin/plugin.json
-
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 

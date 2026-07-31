@@ -64,6 +64,7 @@ import {
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import type { DocumentCreationResult } from '../utils/document-creation'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
   return {
@@ -96,7 +97,7 @@ interface DocumentUploadProps {
       video?: string | null
       image?: string | null
     }
-  ) => Promise<void>
+  ) => Promise<DocumentCreationResult[]>
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
@@ -143,8 +144,17 @@ export function DocumentUpload({
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
-    useBatchAttachment()
+  const {
+    state,
+    addFiles,
+    removeFile,
+    clearFiles,
+    startUpload,
+    retryFile,
+    renameFile,
+    reset,
+    applyDocumentCreationResults,
+  } = useBatchAttachment()
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
     buildDefaultSplitterConfig
   )
@@ -276,16 +286,10 @@ export function DocumentUpload({
     setIsDragOver(false)
   }
 
-  // Handle retry - auto-start upload after retry
-  const handleRetryFile = useCallback(
-    async (id: string) => {
-      await retryFile(id)
-    },
-    [retryFile]
-  )
-
   // Confirm and create documents
-  const handleConfirm = async () => {
+  const handleConfirm = async (fileIds?: string[]) => {
+    const targetFileIds = fileIds ? new Set(fileIds) : null
+
     // If there's an active edit, apply it first
     if (editingFileId && editingFileName.trim()) {
       const currentItem = state.files.find(f => f.id === editingFileId)
@@ -299,7 +303,12 @@ export function DocumentUpload({
 
     // Build attachments list directly from state, applying any pending rename
     const successfulAttachments = state.files
-      .filter(f => f.status === 'success' && f.attachment)
+      .filter(
+        f =>
+          (!targetFileIds || targetFileIds.has(f.id)) &&
+          f.attachment &&
+          (f.status === 'success' || f.status === 'error')
+      )
       .map(f => {
         // If this file was being edited, use the editing name
         const finalFilename =
@@ -316,7 +325,7 @@ export function DocumentUpload({
 
     setIsConfirming(true)
     try {
-      await onUploadComplete(
+      const results = await onUploadComplete(
         successfulAttachments,
         splitterConfig,
         // Per-media-type prompt overrides collected by the
@@ -324,14 +333,32 @@ export function DocumentUpload({
         // multimodal files → each document inherits the KB default.
         multimodalPrompts ?? undefined
       )
-      reset()
-      setSplitterConfig(buildDefaultSplitterConfig())
-      setMultimodalPrompts(null)
+      applyDocumentCreationResults(results)
+
+      const createdAttachmentIds = new Set(
+        results.filter(result => result.documentId !== undefined).map(result => result.attachmentId)
+      )
+      const targetedFiles = state.files.filter(file => !targetFileIds || targetFileIds.has(file.id))
+      const hasRemainingTargetFiles = targetedFiles.some(
+        file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
+      )
+      if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
+        handleClose()
+      }
     } catch {
       // Error handled by parent
     } finally {
       setIsConfirming(false)
     }
+  }
+
+  const handleRetryFile = async (id: string) => {
+    const file = state.files.find(item => item.id === id)
+    if (file?.attachment) {
+      await handleConfirm([id])
+      return
+    }
+    await retryFile(id)
   }
 
   const handleClose = () => {
@@ -648,11 +675,14 @@ export function DocumentUpload({
 
   const successCount = state.files.filter(f => f.status === 'success').length
   const errorCount = state.files.filter(f => f.status === 'error').length
+  const confirmableCount = state.files.filter(
+    f => f.attachment && (f.status === 'success' || f.status === 'error')
+  ).length
   const hasFiles = state.files.length > 0
   // Can confirm when all uploads are done (no pending/uploading) and at least one success
   const allUploadsComplete =
     !state.isUploading && state.files.every(f => f.status === 'success' || f.status === 'error')
-  const canConfirm = successCount > 0 && allUploadsComplete && !isConfirming
+  const canConfirm = confirmableCount > 0 && allUploadsComplete && !isConfirming
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -951,6 +981,7 @@ export function DocumentUpload({
                 const displayName = item.attachment?.filename || item.file.name
                 const isEditing = editingFileId === item.id
                 const canEdit = item.status === 'success' && !state.isUploading
+                const isCreationFailure = item.status === 'error' && item.attachment !== null
 
                 return (
                   <div key={item.id} className="p-3">
@@ -1008,7 +1039,13 @@ export function DocumentUpload({
                               )}
                             </div>
                           )}
-                          <span className="flex-shrink-0">{getStatusIcon(item.status)}</span>
+                          <span className="flex-shrink-0">
+                            {isCreationFailure ? (
+                              <AlertCircle className="w-4 h-4 text-error" />
+                            ) : (
+                              getStatusIcon(item.status)
+                            )}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-xs text-text-muted">
@@ -1024,7 +1061,9 @@ export function DocumentUpload({
                                 'text-primary'
                             )}
                           >
-                            {getStatusText(item.status)}
+                            {isCreationFailure
+                              ? t('document.upload.status.createFailed')
+                              : getStatusText(item.status)}
                           </span>
                         </div>
                         {(item.status === 'uploading' || item.status === 'pending') && (
@@ -1041,7 +1080,12 @@ export function DocumentUpload({
                             size="icon"
                             className="h-7 w-7"
                             onClick={() => handleRetryFile(item.id)}
-                            disabled={state.isUploading}
+                            disabled={state.isUploading || isConfirming}
+                            data-testid={
+                              isCreationFailure
+                                ? `document-creation-retry-${item.id}`
+                                : `document-upload-retry-${item.id}`
+                            }
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
                           </Button>
@@ -1077,7 +1121,7 @@ export function DocumentUpload({
             )}
 
             {/* Advanced Settings - Splitter Configuration */}
-            {successCount > 0 && allUploadsComplete && (
+            {confirmableCount > 0 && allUploadsComplete && (
               <Accordion type="single" collapsible className="border-none">
                 <AccordionItem value="advanced" className="border-none">
                   <AccordionTrigger className="text-sm font-medium hover:no-underline">
@@ -1117,14 +1161,14 @@ export function DocumentUpload({
         >
           {t('common:actions.cancel')}
         </Button>
-        <Button variant="primary" onClick={handleConfirm} disabled={!canConfirm}>
+        <Button variant="primary" onClick={() => void handleConfirm()} disabled={!canConfirm}>
           {isConfirming ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               {t('document.upload.confirming')}
             </>
           ) : (
-            t('document.upload.confirmUpload', { count: successCount })
+            t('document.upload.confirmUpload', { count: confirmableCount })
           )}
         </Button>
       </div>

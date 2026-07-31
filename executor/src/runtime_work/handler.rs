@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use tokio::time::sleep;
 
 use crate::{
@@ -40,6 +40,7 @@ use crate::{
 };
 
 mod archives;
+mod automation_rpc;
 mod codex_config;
 mod collection;
 mod fork_transfer;
@@ -53,6 +54,7 @@ mod turns;
 mod workspaces;
 
 use super::{
+    automations::{AutomationRunStatus, AutomationStore},
     codex_global_state::{
         activate_codex_global_project, open_codex_global_project,
         register_codex_global_thread_workspace_root, remove_codex_global_project,
@@ -72,8 +74,9 @@ use super::{
         workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, clear_runtime_handle_messages,
-        set_runtime_handle_messages,
+        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
+        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
+        user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{full_transcript_messages, normalized_user_request_content, transcript_messages},
@@ -282,6 +285,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
     codex_app_server: CodexAppServerClient,
+    codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
@@ -290,12 +294,19 @@ pub struct RuntimeWorkRpcHandler {
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
+    automation_store: AutomationStore,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
     connectors: ConnectorRuntime,
+}
+
+#[derive(Default)]
+struct CodexRuntimeProxyConfig {
+    initialized: bool,
+    proxy_url: Option<String>,
 }
 
 struct ActiveTurnCancellation {
@@ -341,6 +352,9 @@ impl RuntimeWorkRpcHandler {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
+            codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
+                CodexRuntimeProxyConfig::default(),
+            )),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -349,6 +363,7 @@ impl RuntimeWorkRpcHandler {
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
+            automation_store: AutomationStore::from_env(),
             store: RuntimeWorkStore::from_env(),
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
@@ -371,6 +386,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(sender) = handler.event_tx.clone() {
             handler.hook_service.set_event_sender(sender);
         }
+        handler.start_automation_scheduler();
         handler
     }
 
@@ -391,6 +407,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.archive" => self.archive_task(payload).await,
             "runtime.tasks.rename" => self.rename_task(payload).await,
             "runtime.tasks.cancel" => self.cancel_task(payload).await,
+            "runtime.automations.list" => self.list_automations().await,
+            "runtime.automations.get" => self.get_automation(payload).await,
+            "runtime.automations.create" => self.create_automation(payload).await,
+            "runtime.automations.update" => self.update_automation(payload).await,
+            "runtime.automations.delete" => self.delete_automation(payload).await,
+            "runtime.automations.toggle" => self.toggle_automation(payload).await,
+            "runtime.automations.run_now" => self.run_automation_now(payload).await,
+            "runtime.automation_runs.list" => self.list_automation_runs(payload).await,
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
@@ -407,12 +431,16 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.runtime_config.update" => {
+                self.update_codex_runtime_config(payload).await
+            }
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,

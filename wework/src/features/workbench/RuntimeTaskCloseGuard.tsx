@@ -6,11 +6,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { updateAppPreferences } from '@/tauri/appPreferences'
 import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
-import { useRuntimeTaskLifecycleStoreSnapshot } from './runtimeTaskLifecycle'
 
 export function RuntimeTaskCloseGuard() {
   const { t } = useTranslation('common')
-  const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
   const [closing, setClosing] = useState(false)
 
@@ -21,7 +19,6 @@ export function RuntimeTaskCloseGuard() {
     let cancelled = false
 
     void installRuntimeTaskCloseGuard(() => {
-      if (lifecycle.runningTaskKeys.size === 0) return
       setClosing(false)
       setCloseDialogOpen(true)
     })
@@ -40,7 +37,7 @@ export function RuntimeTaskCloseGuard() {
       cancelled = true
       unlisten?.()
     }
-  }, [lifecycle.runningTaskKeys.size])
+  }, [])
 
   return (
     <RuntimeTaskCloseConfirmDialog

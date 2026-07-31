@@ -1213,8 +1213,7 @@ describe('PluginsWorkspace', () => {
       value: {},
     })
     vi.mocked(isTauri).mockReturnValue(true)
-    let localExecutorRequestCount = 0
-    vi.mocked(invoke).mockImplementation((command: string) => {
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
       if (command === 'local_executor_codex_home_migration_status') {
         return Promise.resolve({
           weworkCodexHome: '/Users/test/.wegent-executor/codex',
@@ -1239,11 +1238,20 @@ describe('PluginsWorkspace', () => {
         })
       }
       if (command === 'local_executor_request') {
-        localExecutorRequestCount += 1
-        if (localExecutorRequestCount === 1) {
+        const request = args as { method?: string; params?: { method?: string } } | undefined
+        if (request?.method === 'runtime.codex.runtime_config.update') {
+          return Promise.resolve({ updated: true })
+        }
+        if (
+          request?.method === 'codex.app_server_request' &&
+          request.params?.method === 'plugin/list'
+        ) {
           return Promise.resolve({ marketplaces: [] })
         }
-        if (localExecutorRequestCount === 2) {
+        if (
+          request?.method === 'codex.app_server_request' &&
+          request.params?.method === 'marketplace/add'
+        ) {
           return Promise.resolve({ marketplaceName: 'wework-personal' })
         }
         return new Promise(() => undefined)

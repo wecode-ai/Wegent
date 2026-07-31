@@ -782,6 +782,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "side-chat-follow-up").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -803,7 +804,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        0
+        2
     );
     assert_eq!(
         calls
@@ -815,7 +816,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
 }
 
 #[tokio::test]
-async fn runtime_tasks_keep_thread_subscription_until_archive() {
+async fn runtime_tasks_unsubscribe_after_each_terminal_turn() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -886,6 +887,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
     assert_eq!(sent["accepted"], true);
     wait_for_turn_count(&log_path, 2).await;
     wait_until_task_idle(&handler, "local-task-persistent").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 3).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -914,7 +916,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        1
+        3
     );
 
     let archived = handler
@@ -928,7 +930,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 4).await;
 }
 
 #[tokio::test]
@@ -977,6 +979,139 @@ async fn runtime_tasks_share_one_codex_app_server_across_handlers() {
         1,
         "handlers using the same Codex binary should share one app-server process"
     );
+}
+
+#[tokio::test]
+async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-shared-proxy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-shared-proxy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-shared-proxy-log", "jsonl");
+    let fake_codex = write_fake_codex_auxiliary_rpc_then_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.runtime_config.update",
+            "payload": {"proxyUrl": "http://127.0.0.1:7890"}
+        }))
+        .await
+        .expect("runtime proxy configuration should succeed");
+    let startup = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.ensure_started",
+            "payload": {}
+        }))
+        .await
+        .expect("Codex startup barrier should succeed");
+    assert_eq!(startup["ready"], true);
+    assert_eq!(startup["started"], true);
+    assert!(startup["initializeElapsedMs"].as_u64().is_some());
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.codex.rate_limits.read",
+            "payload": {}
+        }))
+        .await
+        .expect("rate limits should start the proxy-configured app-server");
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-shared-proxy",
+                "workspacePath": "/tmp/project",
+                "message": "implement feature",
+                "executionRequest": codex_execution_request(
+                    "implement feature",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("task should be accepted");
+
+    wait_until_task_idle(&handler, "local-task-shared-proxy").await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(calls[0]["env"]["HTTP_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(calls[0]["env"]["HTTPS_PROXY"], "http://127.0.0.1:7890");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "initialize")
+            .count(),
+        1,
+        "auxiliary RPC and task should share one Codex app-server process"
+    );
+    assert!(calls
+        .iter()
+        .any(|call| call["method"] == "account/rateLimits/read"));
+    assert!(calls.iter().any(|call| call["method"] == "turn/start"));
+}
+
+#[tokio::test]
+async fn duplicate_runtime_proxy_update_does_not_wait_for_stalled_codex_startup() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-duplicate-proxy-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-duplicate-proxy-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-duplicate-proxy-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_initialize(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+    let proxy_payload = json!({
+        "method": "runtime.codex.runtime_config.update",
+        "payload": {"proxyUrl": "http://127.0.0.1:7890"}
+    });
+
+    let configured = handler
+        .handle_runtime_rpc(proxy_payload.clone())
+        .await
+        .expect("initial runtime proxy configuration should succeed");
+    assert_eq!(configured["updated"], true);
+
+    let stalled_models = {
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            handler
+                .handle_runtime_rpc(json!({
+                    "method": "runtime.codex.models.list",
+                    "payload": {}
+                }))
+                .await
+        })
+    };
+    wait_for_method_count(&log_path, "initialize", 1).await;
+
+    let duplicate = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        handler.handle_runtime_rpc(proxy_payload),
+    )
+    .await
+    .expect("duplicate proxy update should not wait for Codex startup")
+    .expect("duplicate proxy update should succeed");
+
+    assert_eq!(duplicate["updated"], false);
+    stalled_models.abort();
+    let _ = stalled_models.await;
 }
 
 #[tokio::test]
@@ -1265,6 +1400,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
         .is_some()
     );
     wait_until_task_idle(&handler, "local-task-goal-loop").await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 
     let calls = read_json_lines(&log_path);
     assert_eq!(
@@ -1281,6 +1417,15 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
             .count(),
         1
     );
+    let continuation_marker = calls
+        .iter()
+        .position(|call| call["event"] == "goal-continuation-completed")
+        .expect("goal continuation should finish before the thread is released");
+    let unsubscribe = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("terminal goal turn should release its subscription");
+    assert!(continuation_marker < unsubscribe);
 }
 
 #[tokio::test]
@@ -1912,7 +2057,68 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
 
     assert_eq!(cancelled["accepted"], true);
     wait_for_method_count(&log_path, "turn/interrupt", 1).await;
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0,
+        "cancellation must keep the subscription until Codex terminal output is observed"
+    );
     assert_process_alive(pid);
+}
+
+#[tokio::test]
+async fn runtime_tasks_cancel_uses_startup_interrupt_before_first_turn_progress() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-cancel-startup-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-cancel-startup-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-cancel-startup-log", "jsonl");
+    let fake_codex = write_fake_codex_startup_interrupt_race(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-cancel-startup",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let cancelled = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-cancel-startup"
+            }
+        }))
+        .await
+        .expect("cancel should be accepted");
+
+    assert_eq!(cancelled["accepted"], true);
+    wait_for_method_count(&log_path, "turn/interrupt", 1).await;
+    let interrupt = read_json_lines(&log_path)
+        .into_iter()
+        .find(|call| call["method"] == "turn/interrupt")
+        .expect("startup turn should be interrupted");
+    assert_eq!(interrupt["params"]["turnId"], "");
 }
 
 #[tokio::test]
@@ -2319,6 +2525,9 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"ephemeral thread should not resume"}}}}'
       ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
     *'"method":"turn/start"'*)
       turn_count=$((turn_count + 1))
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
@@ -2370,7 +2579,10 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-goal","turnId":"turn-2","delta":"second","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-goal","turnId":"turn-2","goal":{{"threadId":"thread-goal","objective":"ship goal","status":"complete","tokenBudget":null,"tokensUsed":10,"timeUsedSeconds":2,"createdAt":1780000000,"updatedAt":1780000002}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-goal","turn":{{"id":"turn-2","status":"completed"}}}}}}'
-      exit 0
+      printf '%s\n' '{{"event":"goal-continuation-completed"}}' >> "$LOG_PATH"
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
       ;;
   esac
 done
@@ -2423,6 +2635,53 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-persistent","turnId":"turn-'"$turn_count"'","delta":"done '"$turn_count"'","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-persistent","turn":{{"id":"turn-'"$turn_count"'","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_auxiliary_rpc_then_turn(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-auxiliary-rpc-then-turn", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+http_proxy=$(printenv HTTP_PROXY)
+https_proxy=$(printenv HTTPS_PROXY)
+printf '{{"env":{{"HTTP_PROXY":"%s","HTTPS_PROXY":"%s"}}}}\n' "$http_proxy" "$https_proxy" >> "$LOG_PATH"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"account/rateLimits/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"rateLimits":[]}}}}'
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-shared-proxy"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-shared-proxy","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-shared-proxy","turnId":"turn-shared-proxy","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-shared-proxy","turn":{{"id":"turn-shared-proxy","status":"completed"}}}}}}'
       ;;
   esac
 done
@@ -2691,6 +2950,22 @@ done
     path
 }
 
+fn write_fake_codex_hanging_initialize(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-hanging-initialize", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
 fn write_fake_codex_interruptible_turn(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-cancel-kill", "sh");
     let _ = fs::remove_file(log_path);
@@ -2719,6 +2994,47 @@ while IFS= read -r line; do
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_startup_interrupt_race(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-cancel-startup", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/interrupt"'*)
+      if printf '%s\n' "$line" | grep -q '"turnId":""'; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32600,"message":"no active turn to interrupt"}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      fi
       ;;
   esac
 done

@@ -32,6 +32,8 @@ const config: Config = {
     '^react-syntax-highlighter$': '<rootDir>/src/__mocks__/react-syntax-highlighter.tsx',
     '^react-syntax-highlighter/dist/esm/styles/prism(/.*)?$':
       '<rootDir>/src/__mocks__/syntax-highlighter-styles.ts',
+    // Mock CodeMirror Vim because its transitive core package ships ESM that Jest does not parse.
+    '^@replit/codemirror-vim$': '<rootDir>/src/__mocks__/codemirror-vim.ts',
     // Mock react-diff-viewer-continued
     '^react-diff-viewer-continued$': '<rootDir>/src/__mocks__/react-diff-viewer-continued.tsx',
     // Mock OpenTelemetry instrumentation packages

@@ -7,7 +7,7 @@ use std::{
     env, fs,
     future::Future,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
     sync::{
@@ -36,6 +36,7 @@ use crate::{
     claude_session,
     emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
+    process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
@@ -816,9 +817,7 @@ enum StreamingStdoutOutcome {
 }
 
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
-    let mut command = Command::new(&spec.program);
-    command.args(&spec.args).envs(&spec.env);
-    command.kill_on_drop(true);
+    let mut command = command_from_spec(&spec);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -865,14 +864,11 @@ async fn run_streaming_command_output<S>(
 where
     S: EventSink,
 {
-    let mut command = Command::new(&spec.program);
+    let mut command = command_from_spec(&spec);
     command
-        .args(&spec.args)
-        .envs(&spec.env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -922,6 +918,21 @@ where
     }
     log_executor_event("process finished", &fields);
     outcome
+}
+
+fn command_from_spec(spec: &CommandSpec) -> Command {
+    let extra_env = spec
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    let mut command = Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .env_clear()
+        .envs(process_environment::process_env(&extra_env))
+        .kill_on_drop(true);
+    command
 }
 
 async fn run_prepared_streaming_command<S>(
@@ -1554,8 +1565,15 @@ fn debug_claude_stdout_path_for_spec(
     task_id: Option<&str>,
     subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
-    (spec.program == "claude" && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
+    (is_claude_program(&spec.program) && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
+}
+
+fn is_claude_program(program: &str) -> bool {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("claude")
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -1742,6 +1760,15 @@ mod tests {
         let spec = CommandSpec::new("claude");
 
         assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_none());
+    }
+
+    #[test]
+    fn debug_claude_stdout_accepts_resolved_claude_path() {
+        let _lock = env_lock();
+        let _debug = EnvGuard::set(DEBUG_CLAUDE_STDOUT_ENV, "1");
+        let spec = CommandSpec::new("/usr/bin/claude");
+
+        assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_some());
     }
 
     #[test]
