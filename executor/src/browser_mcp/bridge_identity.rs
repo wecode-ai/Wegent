@@ -25,12 +25,26 @@ struct BridgeRuntimeRecord {
 }
 
 pub(crate) fn current_bridge_identity() -> BridgeIdentity {
-    read_runtime_identity().unwrap_or_else(environment_identity)
+    bridge_identity_from_sources(environment_identity(), runtime_file_path())
 }
 
-fn read_runtime_identity() -> Option<BridgeIdentity> {
-    let content = fs::read_to_string(runtime_file_path()?).ok()?;
-    parse_runtime_identity(&content).ok()
+fn bridge_identity_from_sources(
+    environment: Option<BridgeIdentity>,
+    runtime_path: Option<PathBuf>,
+) -> BridgeIdentity {
+    environment
+        .or_else(|| read_runtime_identity(runtime_path))
+        .unwrap_or_else(default_identity)
+}
+
+fn read_runtime_identity(path: Option<PathBuf>) -> Option<BridgeIdentity> {
+    let content = fs::read_to_string(path?).ok()?;
+    let identity = parse_runtime_identity(&content).ok()?;
+    if identity.runtime_process_is_alive() {
+        Some(identity)
+    } else {
+        None
+    }
 }
 
 fn parse_runtime_identity(content: &str) -> Result<BridgeIdentity, String> {
@@ -57,9 +71,17 @@ fn parse_runtime_identity(content: &str) -> Result<BridgeIdentity, String> {
     })
 }
 
-fn environment_identity() -> BridgeIdentity {
+fn environment_identity() -> Option<BridgeIdentity> {
+    non_empty_env(BRIDGE_URL_ENV).map(|base_url| BridgeIdentity {
+        base_url,
+        token: non_empty_env(BRIDGE_TOKEN_ENV),
+        generation: None,
+    })
+}
+
+fn default_identity() -> BridgeIdentity {
     BridgeIdentity {
-        base_url: non_empty_env(BRIDGE_URL_ENV).unwrap_or_else(|| DEFAULT_BRIDGE_URL.to_owned()),
+        base_url: DEFAULT_BRIDGE_URL.to_owned(),
         token: non_empty_env(BRIDGE_TOKEN_ENV),
         generation: None,
     }
@@ -86,9 +108,35 @@ fn non_empty_env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+impl BridgeIdentity {
+    fn runtime_process_is_alive(&self) -> bool {
+        self.generation
+            .map(|(pid, _)| process_is_alive(pid))
+            .unwrap_or(true)
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn process_is_alive(pid: u32) -> bool {
+    pid != 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_runtime_identity;
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{bridge_identity_from_sources, parse_runtime_identity, BridgeIdentity};
 
     #[test]
     fn runtime_identity_accepts_only_authenticated_loopback_bridges() {
@@ -107,5 +155,62 @@ mod tests {
             r#"{"schemaVersion":1,"pid":42,"address":"127.0.0.1:43127","token":"","startedAtUnixMs":123}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn environment_bridge_identity_takes_precedence_over_runtime_file() {
+        let directory = tempdir().unwrap();
+        let runtime_path = directory.path().join("embedded-browser-bridge.json");
+        fs::write(
+            &runtime_path,
+            r#"{"schemaVersion":1,"pid":999999,"address":"127.0.0.1:43127","token":"stale","startedAtUnixMs":123}"#,
+        )
+        .unwrap();
+
+        let identity = bridge_identity_from_sources(
+            Some(BridgeIdentity {
+                base_url: "http://127.0.0.1:60398".to_owned(),
+                token: Some("current-token".to_owned()),
+                generation: None,
+            }),
+            Some(runtime_path),
+        );
+
+        assert_eq!(identity.base_url, "http://127.0.0.1:60398");
+        assert_eq!(identity.token.as_deref(), Some("current-token"));
+    }
+
+    #[test]
+    fn stale_runtime_file_falls_back_to_default_identity() {
+        let directory = tempdir().unwrap();
+        let runtime_path = directory.path().join("embedded-browser-bridge.json");
+        fs::write(
+            &runtime_path,
+            r#"{"schemaVersion":1,"pid":999999,"address":"127.0.0.1:43127","token":"stale","startedAtUnixMs":123}"#,
+        )
+        .unwrap();
+
+        let identity = bridge_identity_from_sources(None, Some(runtime_path));
+
+        assert_eq!(identity.base_url, "http://127.0.0.1:9231");
+    }
+
+    #[test]
+    fn live_runtime_file_is_used_when_environment_url_is_missing() {
+        let directory = tempdir().unwrap();
+        let runtime_path = directory.path().join("embedded-browser-bridge.json");
+        fs::write(
+            &runtime_path,
+            format!(
+                r#"{{"schemaVersion":1,"pid":{},"address":"127.0.0.1:43127","token":"runtime-token","startedAtUnixMs":123}}"#,
+                std::process::id()
+            ),
+        )
+        .unwrap();
+
+        let identity = bridge_identity_from_sources(None, Some(runtime_path));
+
+        assert_eq!(identity.base_url, "http://127.0.0.1:43127");
+        assert_eq!(identity.token.as_deref(), Some("runtime-token"));
     }
 }
