@@ -157,6 +157,7 @@ function cloudLoopItemStatusLabel(
     case 'completed':
       return t('workbench.cloud_todo_status_completed', '已完成')
   }
+  return ''
 }
 
 function cloudItemAsLocalWorkItem(

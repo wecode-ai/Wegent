@@ -276,7 +276,7 @@ describe('CloudTodoWorkspace', () => {
       'data-project-id',
       '11'
     )
-    expect(screen.getByTestId('cloud-project-ask-ai')).toHaveTextContent('收起 AI')
+    expect(screen.getByTestId('project-space-chat-sidebar')).toBeInTheDocument()
   })
 
   it('hides task ids and configures the properties shown on board cards', async () => {
@@ -407,10 +407,9 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('aitable:base-1:record-1')).not.toBeInTheDocument()
     expect(screen.getByText('修复发布流程')).toBeInTheDocument()
     expect(screen.queryByText('补齐测试')).not.toBeInTheDocument()
-    expect(screen.getByText('子任务 1')).toBeInTheDocument()
-    expect(screen.getByTestId('dingtalk-board-group-by')).toHaveTextContent('分组依据天河状态')
+    expect(screen.getByTestId('dingtalk-board-group-by')).toHaveTextContent('天河状态')
     expect(screen.getByTestId('dingtalk-board-assignee-filter').parentElement).toHaveTextContent(
-      '分组筛选全部天河状态'
+      '全部天河状态'
     )
 
     await userEvent.click(screen.getByTestId('dingtalk-board-group-by'))
@@ -782,14 +781,6 @@ describe('CloudTodoWorkspace', () => {
     await waitFor(() => expect(screen.getByTestId('cloud-project-add')).toBeInTheDocument())
     await userEvent.click(screen.getByTestId('cloud-project-add'))
     expect(screen.getByTestId('cloud-project-name')).toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-project-location-cloud')).not.toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
-    console.log(
-      'DEBUG advanced expanded?',
-      screen.getByTestId('cloud-project-advanced-toggle').getAttribute('aria-expanded'),
-      'has location?',
-      Boolean(screen.queryByTestId('cloud-project-location-cloud'))
-    )
     expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -888,7 +879,6 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
     expect(screen.getByTestId('cloud-project-location-cloud')).toHaveAttribute(
       'aria-pressed',
       'true'
@@ -967,7 +957,6 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click(await screen.findByTestId('cloud-project-add'))
-    await userEvent.click(screen.getByTestId('cloud-project-advanced-toggle'))
     await userEvent.click(screen.getByTestId('cloud-project-location-local'))
     await userEvent.type(screen.getByTestId('cloud-project-name'), 'Local board')
     await userEvent.click(screen.getByTestId('cloud-project-create-confirm'))

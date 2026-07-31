@@ -673,7 +673,7 @@ export function CloudProjectManageView({
                     }}
                     className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm"
                   >
-                    连接钉钉
+                    {aitableBusy ? '等待浏览器授权…' : '连接钉钉'}
                   </button>
                   <button
                     type="button"

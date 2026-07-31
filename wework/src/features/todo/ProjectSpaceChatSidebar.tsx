@@ -125,18 +125,20 @@ export function ProjectSpaceChatSidebar({
   const conversations = useMemo(
     () =>
       projectSpaceConversations(
-        [
-          ...state.runtimeWork.projects.flatMap(item =>
-            item.deviceWorkspaces.map(workspace => ({
-              ...workspace,
-              projectId: workspace.projectId ?? item.project.id,
-            }))
-          ),
-          ...state.runtimeWork.chats,
-        ],
+        state.runtimeWork
+          ? [
+              ...state.runtimeWork.projects.flatMap(item =>
+                item.deviceWorkspaces.map(workspace => ({
+                  ...workspace,
+                  projectId: workspace.projectId ?? item.project.id,
+                }))
+              ),
+              ...state.runtimeWork.chats,
+            ]
+          : [],
         String(project.id)
       ),
-    [project.id, state.runtimeWork.chats, state.runtimeWork.projects]
+    [project.id, state.runtimeWork]
   )
   const [localProjectId, setLocalProjectId] = useState<number | null>(
     launchRequest ? launchRequest.localProjectId : (localProjects[0]?.id ?? null)
@@ -454,7 +456,7 @@ export function ProjectSpaceChatSidebar({
                       </span>
                       <span className="block truncate text-xs text-text-muted">
                         {formatRelativeSidebarTime(
-                          conversation.task.updatedAt ?? conversation.task.createdAt
+                          conversation.task.updatedAt ?? conversation.task.createdAt ?? undefined
                         )}
                       </span>
                     </span>

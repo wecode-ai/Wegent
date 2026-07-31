@@ -86,6 +86,17 @@ const nativeBoardGroupFields: AITableField[] = [
   { id: 'tag', name: '标签', type: 'tag', config: null, raw: {} },
 ]
 
+const nativeBoardStatusColors: Record<
+  CloudLoopItem['status'],
+  'gray' | 'blue' | 'orange' | 'purple' | 'green'
+> = {
+  inbox: 'gray',
+  pending: 'blue',
+  in_progress: 'orange',
+  in_review: 'purple',
+  completed: 'green',
+}
+
 function aitableCellLabels(value: unknown): string[] {
   if (value === null || value === undefined || value === '') return []
   return (Array.isArray(value) ? value : [value])
@@ -855,7 +866,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     columns.map(column => ({
       id: column.status,
       name: column.label,
-      color: column.status,
+      color: nativeBoardStatusColors[column.status],
     }))
 
   useEffect(() => {
