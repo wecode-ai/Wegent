@@ -37,6 +37,47 @@ describe('runtime transcript status', () => {
     ])
   })
 
+  test('uses the turn timestamp for restored blocks without their own timestamp', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'user-item-1',
+            type: 'user_message',
+            message: {
+              id: 'user-message-1',
+              role: 'user',
+              content: 'run it',
+              createdAt: '2026-07-30T08:00:00.000Z',
+            },
+          },
+          {
+            id: 'block-item-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toContainEqual(
+      expect.objectContaining({
+        id: 'block-item-1',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: Date.parse('2026-07-30T08:00:00.000Z'),
+        }),
+      })
+    )
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {

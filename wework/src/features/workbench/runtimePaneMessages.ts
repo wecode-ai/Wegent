@@ -459,6 +459,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
 ): RuntimeConversationTurn[] {
   return turns.flatMap(turn => {
     if (typeof turn.id !== 'string' || !turn.id.trim() || !Array.isArray(turn.items)) return []
+    const fallbackTimestamp = runtimeTurnFallbackTimestamp(turn)
     const items: RuntimeConversationItem[] = []
     for (const item of turn.items) {
       if (!item || typeof item.id !== 'string' || !item.id.trim()) continue
@@ -486,7 +487,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
           break
         }
         case 'block': {
-          const block = normalizeProcessingBlock(turn.id, item.block, 0)
+          const block = normalizeProcessingBlock(turn.id, item.block, 0, fallbackTimestamp)
           if (block) items.push({ id: item.id, type: 'block', block })
           break
         }
@@ -727,6 +728,20 @@ function runtimeContentCharacterCount(content: string): number {
 function runtimeTimestampToIso(value: string | number | null | undefined): string {
   const timestamp = typeof value === 'number' ? value : Date.parse(value ?? '')
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : new Date().toISOString()
+}
+
+function runtimeTurnFallbackTimestamp(turn: RuntimeTranscriptTurn): number | undefined {
+  for (const item of turn.items) {
+    const value =
+      item.type === 'user_message'
+        ? item.message.createdAt
+        : item.type === 'assistant_text'
+          ? item.createdAt
+          : (item.block.createdAt ?? item.block.created_at ?? item.block.timestamp)
+    const timestamp = typeof value === 'number' ? value : Date.parse(value ?? '')
+    if (Number.isFinite(timestamp)) return timestamp
+  }
+  return undefined
 }
 
 function warnAndDropRuntimeStreamEvent(

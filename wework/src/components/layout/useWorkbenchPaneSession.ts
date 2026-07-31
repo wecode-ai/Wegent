@@ -1249,11 +1249,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       if (!activeAssistantMessage) return
-      if (!activeAssistantMessage.turnId) return
+      const activeTurnId = activeAssistantMessage.turnId ?? activeAssistantMessage.subtaskId
+      if (!activeTurnId) return
 
       dispatchMessages({
         type: 'assistant_cancelled',
-        subtaskId: activeAssistantMessage.turnId,
+        subtaskId: activeTurnId,
       })
     },
     [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages]

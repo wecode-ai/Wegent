@@ -68,7 +68,8 @@ export function reduceRuntimeConversationTurns(
       return updateStartedTurn(turns, action)
     case 'assistant_chunk':
       return updateTurn(turns, action.subtaskId, turn => {
-        let items = upsertBlocks(turn.items, action.blocks)
+        let items = upsertReasoningChunk(turn.items, action.subtaskId, action.reasoningChunk)
+        items = upsertBlocks(items, action.blocks)
         if (action.content) {
           if (action.itemId) {
             items = upsertAssistantText(
@@ -351,9 +352,7 @@ function upsertAssistantText(
         type: 'assistant_text',
         content,
         streamTextOffset:
-          contentMode === 'snapshot' || offset === undefined
-            ? undefined
-            : offset + [...content].length,
+          contentMode === 'snapshot' || offset === undefined ? undefined : offset + content.length,
         createdAt: new Date().toISOString(),
       },
     ]
@@ -371,12 +370,49 @@ function upsertAssistantText(
     offset === undefined
       ? `${current.content}${content}`
       : `${current.content.slice(0, offset)}${content}${current.content.slice(
-          offset + [...content].length
+          offset + content.length
         )}`
   return replaceAt(items, index, {
     ...current,
     content: mergedContent,
-    streamTextOffset: offset === undefined ? undefined : offset + [...content].length,
+    streamTextOffset: offset === undefined ? undefined : offset + content.length,
+  })
+}
+
+function upsertReasoningChunk(
+  items: RuntimeConversationItem[],
+  subtaskId: string | undefined,
+  reasoningChunk: string | undefined
+): RuntimeConversationItem[] {
+  if (!subtaskId || !reasoningChunk) return items
+  const itemId = `runtime-reasoning:${subtaskId}`
+  const index = items.findIndex(item => item.type === 'block' && item.id === itemId)
+  if (index < 0) {
+    return [
+      ...items,
+      {
+        id: itemId,
+        type: 'block',
+        block: {
+          id: itemId,
+          subtaskId,
+          type: 'thinking',
+          content: reasoningChunk,
+          status: 'streaming',
+          createdAt: Date.now(),
+        },
+      },
+    ]
+  }
+  const current = items[index]
+  if (current.type !== 'block' || current.block.type !== 'thinking') return items
+  return replaceAt(items, index, {
+    ...current,
+    block: {
+      ...current.block,
+      content: `${current.block.content}${reasoningChunk}`,
+      status: 'streaming',
+    },
   })
 }
 

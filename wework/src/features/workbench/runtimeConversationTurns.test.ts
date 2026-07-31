@@ -733,6 +733,61 @@ describe('runtimeConversationTurns', () => {
       '[Wework] Dropped runtime assistant text without Codex item identity',
       { subtaskId: 'turn-1' }
     )
+    warn.mockRestore()
+  })
+
+  test('preserves reasoning chunks as one streaming thinking block', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'Reading files',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: ' and checking tests',
+    })
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'runtime-reasoning:turn-1',
+        type: 'block',
+        block: expect.objectContaining({
+          type: 'thinking',
+          content: 'Reading files and checking tests',
+          status: 'streaming',
+        }),
+      }),
+    ])
+  })
+
+  test('uses UTF-16 code-unit offsets when replacing streamed text', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'A😀B',
+      offset: 0,
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: '😎',
+      offset: 1,
+    })
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        type: 'assistant_text',
+        content: 'A😎B',
+        streamTextOffset: 3,
+      }),
+    ])
   })
 
   test('replaces a streamed item with the completed snapshot by exact item id', () => {
