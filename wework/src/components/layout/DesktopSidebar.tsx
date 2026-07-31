@@ -2965,7 +2965,7 @@ export function DesktopSidebar({
           <DesktopSidebarHeader
             actions={
               <>
-                {onToggleSidebar && !isWindowsTauri && (
+                {onToggleSidebar && (
                   <DesktopWindowControls
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}

@@ -48,7 +48,6 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { getPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { AITableView } from '@/features/todo/AITableView'
 import type { ProjectWithTasks, User as UserProfile } from '@/types/api'
@@ -656,7 +655,6 @@ function ProjectDialog({
 }
 
 export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoWorkspaceProps) {
-  const platform = getPlatform()
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -1454,14 +1452,12 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
               actionsTestId="cloud-todo-sidebar-chrome-controls"
               actions={
                 <>
-                  {platform !== 'win' && (
-                    <DesktopWindowControls
-                      sidebarCollapsed={false}
-                      onToggleSidebar={() => setSidebarCollapsed(true)}
-                      className="gap-0"
-                      toggleTestId="cloud-todo-collapse-sidebar"
-                    />
-                  )}
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={() => setSidebarCollapsed(true)}
+                    className="gap-0"
+                    toggleTestId="cloud-todo-collapse-sidebar"
+                  />
                   <button
                     type="button"
                     data-testid="cloud-search-toggle"

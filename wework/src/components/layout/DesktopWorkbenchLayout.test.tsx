@@ -2658,14 +2658,14 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('desktop-window-controls')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
     expect(screen.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
     expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('workbench-main-header')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-main-header')).toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-tl-xl')
   })
 
-  test('moves Windows panel toggles into the application titlebar center slot', async () => {
+  test('renders Windows workbench actions in the shared workbench header', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2676,20 +2676,10 @@ describe('DesktopWorkbenchLayout', () => {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
     })
 
-    const titlebarCenter = document.createElement('div')
-    titlebarCenter.id = TITLEBAR_CENTER_PORTAL_ID
-    document.body.appendChild(titlebarCenter)
-
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
-    const panelToggles = await screen.findByTestId('workbench-panel-toggles')
-    expect(panelToggles).toContainElement(screen.getByTestId('toggle-right-workspace-panel-button'))
-    expect(panelToggles).toContainElement(
-      screen.getByTestId('toggle-bottom-workspace-panel-button')
-    )
-    expect(screen.queryByTestId('workbench-pinned-panel-toggles')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('workbench-main-header')).toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {

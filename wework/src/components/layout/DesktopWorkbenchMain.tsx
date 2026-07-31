@@ -63,7 +63,6 @@ import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBann
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
-  TitlebarCenterPortal,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WorkbenchMainHeaderPortal,
@@ -71,9 +70,7 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { WindowFrameControls } from './WindowFrameControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
@@ -448,21 +445,16 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
   if (!isTauri) return paneStack
 
-  const platform = getPlatform()
-  const showWindowsTopBar = platform === 'win'
-
   return (
     <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-      {!showWindowsTopBar && (
-        <header
-          id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
-          data-testid="workbench-main-header"
-          className={cn(
-            'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
-            background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
-          )}
-        />
-      )}
+      <header
+        id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
+        data-testid="workbench-main-header"
+        className={cn(
+          'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
+          background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
+        )}
+      />
       {paneStack}
     </div>
   )
@@ -499,7 +491,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
 }) {
-  const platform = getPlatform()
   const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
@@ -1042,10 +1033,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
-  const [environmentInfoChatTopRightContainer, setEnvironmentInfoChatTopRightContainer] =
-    useState<HTMLElement | null>(null)
-  const [panelTogglesWidth, setPanelTogglesWidth] = useState(72)
-  const panelTogglesRef = useRef<HTMLDivElement | null>(null)
   const setEnvironmentInfoPanelRef = useCallback((element: HTMLElement | null) => {
     environmentInfoPanelRef.current = element
   }, [])
@@ -1059,20 +1046,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workbenchScroll.scrollLeft = 0
     }
   }, [paneActive])
-  useLayoutEffect(() => {
-    const el = panelTogglesRef.current
-    if (!el) return
-
-    const updateWidth = () => {
-      setPanelTogglesWidth(el.getBoundingClientRect().width)
-    }
-    updateWidth()
-    if (typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver(updateWidth)
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -1141,7 +1114,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? '100%'
       : `calc(100% - ${rightSplitChatWidth}px)`
     : '0px'
-  const rightPanelTabBarRightOffset = getPlatform() === 'mac' ? '0px' : '138px'
+  const rightPanelTabBarRightOffset = '0px'
   const rightPanelTabBarWidth = rightPanelOpen
     ? `calc(${rightPanelExpanded ? '100%' : `100% - ${rightSplitChatWidth}px`} - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
     : '0px'
@@ -2066,11 +2039,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
-  const windowsEnvironmentInfoAction = renderWorkspacePanelActions(
-    'environment',
-    environmentInfoChatTopRightContainer,
-    true
-  )
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const paneTaskTitle =
     runtimeTaskTitle && !isTauri ? (
@@ -2152,18 +2120,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {mainHeaderEnvironmentAction}
     </>
   )
-  const windowsTitlebarMainActions = (
-    <>
-      {forkTaskButton}
-      {continueInImButton}
-      {mainHeaderProjectAction}
-      {windowsEnvironmentInfoAction}
-    </>
-  )
   const topRightActions = isTauri ? (
-    platform === 'win' ? null : (
-      <>{panelChromeActions}</>
-    )
+    <>{panelChromeActions}</>
   ) : (
     <>
       {forkTaskButton}
@@ -2174,12 +2132,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const tauriMainHeaderContent = isTauri ? (
     <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden">
       <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
-      {(sidebarCollapsed || platform === 'win') && (
+      {sidebarCollapsed && (
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
             'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
-            platform === 'mac' && MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS
+            MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS
           )}
         >
           <DesktopWindowControls
@@ -2230,10 +2188,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          right:
-            platform === 'mac'
-              ? COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE
-              : `calc(138px + ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`,
+          right: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
           width: rightPanelTabBarWidth,
         }}
       >
@@ -2251,86 +2206,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
         style={{
-          right: platform === 'mac' ? '0px' : '138px',
+          right: '0px',
           width: COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE,
         }}
       >
         {topRightActions}
       </div>
-      {platform === 'win' && (
-        <div
-          className="relative z-chrome w-[138px] shrink-0 self-stretch"
-          data-tauri-drag-region={false}
-        >
-          <WindowFrameControls className="h-full justify-end" />
-        </div>
-      )}
     </div>
   ) : undefined
-  const windowsTitlebarMiddleContent =
-    isTauri && platform === 'win' ? (
-      <div className="relative flex h-full w-full min-w-0 items-center">
-        <div data-tauri-drag-region className="absolute inset-0 z-0" />
-        {runtimeTaskTitle ? (
-          <div
-            data-testid="workbench-pane-task-title"
-            className={cn(
-              'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate text-sm font-medium leading-none text-text-primary',
-              sidebarCollapsed ? 'pl-[8.5rem]' : 'pl-4',
-              rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
-            )}
-          >
-            <span className="block min-w-0 truncate">{runtimeTaskTitle}</span>
-          </div>
-        ) : (
-          <div className="relative z-10 min-w-0 flex-1" />
-        )}
-        <div
-          data-testid="titlebar-main-actions"
-          className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1"
-        >
-          {windowsTitlebarMainActions}
-        </div>
-        <div
-          data-testid="workbench-chat-top-right-spacer"
-          className={cn(
-            'pointer-events-none shrink-0',
-            rightSplitResizing
-              ? 'transition-none'
-              : 'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
-          )}
-          style={{
-            width: rightPanelOpen
-              ? `${Math.max(
-                  0,
-                  workbenchContentWidth - rightSplitChatWidth - 138 - panelTogglesWidth
-                )}px`
-              : 0,
-          }}
-        />
-        <div
-          ref={setEnvironmentInfoChatTopRightContainer}
-          className={cn(
-            'pointer-events-none absolute top-[100%] z-popover h-0 w-[308px]',
-            rightSplitResizing
-              ? 'transition-none'
-              : 'transition-[right] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[right]'
-          )}
-          style={{
-            right: rightPanelOpen
-              ? `${Math.max(0, workbenchContentWidth - rightSplitChatWidth - 138)}px`
-              : `${panelTogglesWidth}px`,
-          }}
-        />
-        <div
-          ref={panelTogglesRef}
-          data-testid="workbench-panel-toggles"
-          className="relative z-10 flex h-full shrink-0 items-center gap-1 pr-1"
-        >
-          {panelChromeActions}
-        </div>
-      </div>
-    ) : undefined
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -2372,9 +2255,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
       {tauriMainHeaderContent && paneActive && workbenchVisible ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
-      ) : null}
-      {isTauri && windowsTitlebarMiddleContent ? (
-        <TitlebarCenterPortal>{windowsTitlebarMiddleContent}</TitlebarCenterPortal>
       ) : null}
       <>
         {!isTauri && (
