@@ -171,6 +171,29 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByText(/"query"/)).not.toBeInTheDocument()
   })
 
+
+
+  test('summarizes quoted pwsh -Command wrappers before expanding', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-pwsh-quoted',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: {
+            command:
+              '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-ChildItem -Recurse -File -Path D:\\jiaqi62\\Projects\\Wegent | Select-String -Pattern \"pattern\" -CaseSensitive"',
+          },
+          status: 'streaming',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText(/Get-ChildItem/)).toBeInTheDocument()
+    expect(screen.queryByText(/PowerShell/)).not.toBeInTheDocument()
+  })
   test('summarizes wrapped Windows PowerShell commands before expanding', () => {
     render(
       <ToolBlockItem
