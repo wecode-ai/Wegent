@@ -14,6 +14,50 @@
 
 final result: passed
 
+---
+
+# Wework 工作区标签设计 QA
+
+## 目标
+
+- 参考图：`/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785512913569/image.png`
+- 实现范围：Wework 顶层任务 / 项目空间文档标签、项目名标题、关闭与恢复、新窗口。
+- 验证环境：macOS 真实 Tauri 隔离实例，主窗口 1280×720；独立项目窗口 1280×800。
+
+## 对照结果
+
+- 对照图：`wework/test-results/ai-verify/final-workspace-tabs/10-reference-vs-implementation.png`
+- 标题栏高度、文档标签宽度、圆角连接、关闭按钮、加号位置与参考方向一致。
+- 标题栏使用稳定浅灰底色，选中标签使用内容表面色；未选中标签留在标题栏层，状态差异清晰。
+- 顶层产品名统一为“项目空间”；具体项目打开后标签标题显示项目名，例如“产品规划”。
+- 主窗口与独立项目窗口均无裁切、重叠、错误边框或圆角断裂。
+
+## 核心流程截图
+
+1. `01-task-active.png`：任务标签初始选中。
+2. `02-new-tab-menu.png`：新建标签菜单。
+3. `03-project-spaces-active.png`：项目空间顶层标签选中。
+4. `04-project-name-active.png`：具体项目标题显示“产品规划”。
+5. `05-switch-back-to-task.png`：切回任务，选中态同步。
+6. `06-close-project-tab.png`：关闭项目标签后回退到任务。
+7. `07-restore-closed-project-tab.png`：快捷键恢复已关闭项目标签。
+8. `08-tab-context-menu.png`：标签上下文菜单。
+9. `09-project-new-window.png`：项目在独立窗口中打开。
+
+截图目录：`wework/test-results/ai-verify/final-workspace-tabs/`
+
+## 缺陷审查
+
+- P0：选中与未选中标签底色过于接近。已拆分标题栏和活动标签表面色，并重新截图验证。
+- P0：新建项目后标签仍显示“项目空间”。已改为直接使用创建结果更新活动标签，真实流程与单测均通过。
+- P1：右键菜单只能依赖鼠标。已增加 Shift+F10 / Context Menu 键入口。
+- P1：动态项目窗口无法纳入隔离截图链。已增加工作区窗口 WebView 截图命令并验证。
+- P2：未发现。
+
+## 最终结论
+
+final result: passed
+
 ## Dropdown alignment follow-up
 
 - Source visual truth: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785311314363/image.png`

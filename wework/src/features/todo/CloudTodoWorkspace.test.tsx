@@ -201,6 +201,28 @@ describe('CloudTodoWorkspace', () => {
     localStorage.clear()
   })
 
+  it('reports the concrete project name for the active document tab', async () => {
+    const onActiveProjectChange = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+        activeProjectId={null}
+        onActiveProjectChange={onActiveProjectChange}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 11, name: 'Wegent V4' })
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: '项目空间' }))
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(null)
+  })
+
   it('renames and archives a project from the sidebar menu', async () => {
     const workbenchServices = services()
 
@@ -810,11 +832,14 @@ describe('CloudTodoWorkspace', () => {
 
   it('creates a project space without requesting a project key', async () => {
     const workbenchServices = services()
+    const onActiveProjectChange = vi.fn()
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
         services={workbenchServices}
+        activeProjectId={null}
+        onActiveProjectChange={onActiveProjectChange}
       />
     )
 
@@ -830,6 +855,9 @@ describe('CloudTodoWorkspace', () => {
         provider_config: {},
         visibility: 'private',
       })
+    )
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 12, name: 'Wegent Test', location: 'cloud' })
     )
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
   })

@@ -717,11 +717,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   const getWindowFocusSnapshot = async () => {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const popoutWindow = await WebviewWindow.getByLabel('popout-window')
+    const workspaceWindows = (await WebviewWindow.getAll()).filter(window =>
+      window.label.startsWith('workspace-')
+    )
     return JSON.stringify({
       mainFocused: await getCurrentWindow().isFocused(),
       popoutExists: Boolean(popoutWindow),
       popoutFocused: popoutWindow ? await popoutWindow.isFocused() : false,
       popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
+      workspaceWindows: await Promise.all(
+        workspaceWindows.map(async window => ({
+          label: window.label,
+          focused: await window.isFocused(),
+          visible: await window.isVisible(),
+        }))
+      ),
     })
   }
 
@@ -735,6 +745,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return captureDesktopControlScreenshot(command.selector)
     case 'capturePopoutWindow':
       return invoke<string>('capture_popout_webview')
+    case 'captureWorkspaceWindow':
+      return invoke<string>('capture_workspace_webview')
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':

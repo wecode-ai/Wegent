@@ -211,6 +211,8 @@ interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
   services: WorkbenchServices
+  activeProjectId?: string | null
+  onActiveProjectChange?: (project: LocatedCloudProject | null) => void
 }
 
 const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
@@ -654,7 +656,13 @@ function ProjectDialog({
   )
 }
 
-export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoWorkspaceProps) {
+export function CloudTodoWorkspace({
+  user,
+  localProjects,
+  services,
+  activeProjectId,
+  onActiveProjectChange,
+}: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -677,7 +685,9 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [internalSelectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const selectedProjectId =
+    activeProjectId === undefined ? internalSelectedProjectId : activeProjectId
   const [items, setItems] = useState<CloudLoopItem[]>([])
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
@@ -1060,7 +1070,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     breadcrumbItem = items.find(candidate => candidate.id === breadcrumbItem?.parent_id) ?? null
   }
 
-  function selectProject(projectId: string | null) {
+  function applyProjectSelection(projectId: string | null) {
     setSelectedProjectId(projectId)
     setProjectView('board')
     setBoardParentId(null)
@@ -1069,6 +1079,13 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     setProjectSearchOpen(false)
     setProjectSearchQuery('')
     setProjectSearchFilters(emptyTaskSearchFilters)
+  }
+
+  function selectProject(projectId: string | null) {
+    applyProjectSelection(projectId)
+    onActiveProjectChange?.(
+      projectId === null ? null : (projects.find(project => project.id === projectId) ?? null)
+    )
   }
 
   async function renameSelectedProject() {
@@ -2275,7 +2292,8 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                   setProjectMembers(current => ({ ...current, [project.id]: members }))
                 )
             }
-            selectProject(project.id)
+            applyProjectSelection(project.id)
+            onActiveProjectChange?.(locatedProject)
             setCreateProjectOpen(false)
           }}
         />

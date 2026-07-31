@@ -19,6 +19,26 @@ pub async fn capture_popout_webview(app: tauri::AppHandle) -> Result<String, Str
     capture_webview_impl(app, "popout-window", false).await
 }
 
+#[tauri::command]
+pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+
+    let label = app
+        .webview_windows()
+        .into_iter()
+        .find_map(|(label, window)| {
+            (label.starts_with("workspace-") && window.is_focused().unwrap_or(false))
+                .then_some(label)
+        })
+        .or_else(|| {
+            app.webview_windows()
+                .into_keys()
+                .find(|label| label.starts_with("workspace-"))
+        })
+        .ok_or_else(|| "No workspace window is available".to_string())?;
+    capture_webview_impl(app, &label, false).await
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) async fn capture_embedded_webview_png(
     webview: tauri::Webview<tauri::Wry>,

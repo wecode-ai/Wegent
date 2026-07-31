@@ -38,6 +38,7 @@ import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { WorkbenchBackground } from '@/features/appearance'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { useResizableSidebar } from './useResizableSidebar'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -50,6 +51,12 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
     if (message) return message
   }
   return fallback
+}
+
+function boardProjectIdFromRoute(contentRoute: string): string | null {
+  const searchIndex = contentRoute.indexOf('?')
+  if (searchIndex < 0) return null
+  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get('projectId')
 }
 
 export function DesktopWorkbenchLayout() {
@@ -107,6 +114,7 @@ export function DesktopWorkbenchLayout() {
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
     [state.projects, state.runtimeWork]
   )
+  const workspaceTabs = useOptionalWorkspaceTabs()
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
   const todoOpen = currentPath === '/todo'
@@ -674,6 +682,27 @@ export function DesktopWorkbenchLayout() {
                 user={state.user}
                 localProjects={localTodoProjects}
                 services={services}
+                activeProjectId={
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardProjectIdFromRoute(workspaceTabs.activeTab.contentRoute)
+                    : undefined
+                }
+                onActiveProjectChange={project => {
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  if (!project) {
+                    workspaceTabs.updateActiveTab({
+                      title: t('workbench.workspace_tab_board', '项目空间'),
+                      contentRoute: '/todo',
+                    })
+                    return
+                  }
+                  const params = new URLSearchParams()
+                  params.set('projectId', project.id)
+                  workspaceTabs.updateActiveTab({
+                    title: project.name,
+                    contentRoute: `/todo?${params.toString()}`,
+                  })
+                }}
               />
             ) : (
               <div

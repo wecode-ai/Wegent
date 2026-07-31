@@ -136,7 +136,7 @@ export function DesktopAppSwitcher({
     if (experimentalFeaturesEnabled || activeApp === 'todo') {
       appOptions.push({
         key: 'todo',
-        label: t('workbench.app_weloop_label', '看板'),
+        label: t('workbench.app_weloop_label', '项目空间'),
         description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
       })
     }

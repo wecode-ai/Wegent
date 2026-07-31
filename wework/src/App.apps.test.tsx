@@ -202,7 +202,7 @@ describe('App center route', () => {
     })
   }
 
-  test('renders the app center with fixed titlebar tabs on the app route', async () => {
+  test('renders the app center in an Apps document tab', async () => {
     window.history.pushState({}, '', '/apps')
 
     render(<App />)
@@ -210,14 +210,14 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('Apps')
+    expect(screen.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('desktop-auxiliary-surface')).toHaveClass(
       'app-view-surface',
       'rounded-xl',
       'border'
     )
-    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-add')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -339,7 +339,7 @@ describe('App center route', () => {
     expect(sectionTabs).not.toHaveClass('xl:hidden')
   })
 
-  test('uses the fixed global view switcher on the app center route', async () => {
+  test('uses the document tab strip on the app center route', async () => {
     window.history.pushState({}, '', '/apps')
 
     render(<App />)
@@ -347,10 +347,8 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
-    const weworkTab = screen.getByTestId('chrome-tab-wework')
-    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(weworkTab).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-tab-add')).toBeInTheDocument()
 
     expect(screen.getByTestId('apps-sidebar-nav')).toBeInTheDocument()
   })

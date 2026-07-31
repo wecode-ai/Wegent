@@ -2911,6 +2911,49 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   return screenshotPath
 }
 
+async function verifyWorkspaceDocumentTabs(control) {
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="workspace-tab-add-board"]')
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-tabs-01-project-spaces-active.png')
+
+  await control.command(
+    'click',
+    '[data-tab-kind="task"] [data-testid^="workspace-tab-select-"]'
+  )
+  await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
+    text: '任务',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'click',
+    '[data-tab-kind="board"] [data-testid^="workspace-tab-close-"]'
+  )
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    snapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
+    false,
+    'Closing the project-space document tab did not remove it from the titlebar'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
+}
+
 async function verifyCloudWorkPage(control) {
   await control.command('navigate', 'body', { value: '/cloud-work' })
   await control.command('waitFor', '[data-testid="cloud-work-page"]', {
@@ -10544,6 +10587,9 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       if (!GUIDANCE_SCROLL_ONLY) {
+        phase = 'workspace-document-tabs'
+        await verifyWorkspaceDocumentTabs(control)
+
         phase = 'automation-lifecycle'
         await verifyAutomationLifecycle(control, workspacePath)
 

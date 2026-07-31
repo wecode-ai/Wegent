@@ -53,7 +53,7 @@ describe('DesktopAppSwitcher', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} variant="tabs" />)
 
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByTestId('chrome-tab-todo')).toHaveTextContent('看板')
+    expect(screen.getByTestId('chrome-tab-todo')).toHaveTextContent('项目空间')
     expect(screen.getByTestId('chrome-tab-todo')).not.toHaveAttribute('aria-haspopup')
     fireEvent.click(screen.getByTestId('chrome-tab-todo'))
     expect(onNavigate).toHaveBeenCalledWith('todo')
@@ -115,11 +115,11 @@ describe('DesktopAppSwitcher', () => {
         .map(option => option.textContent)
     ).toEqual([
       '任务使用 AI 解决具体问题',
-      '看板用 AI 管理项目的规划、执行与反馈',
+      '项目空间用 AI 管理项目的规划、执行与反馈',
       '智能体构建并交付可嵌入业务的云端智能体',
     ])
     expect(screen.getByTestId('app-switcher-option-todo')).toHaveTextContent(
-      '看板用 AI 管理项目的规划、执行与反馈'
+      '项目空间用 AI 管理项目的规划、执行与反馈'
     )
   })
 
@@ -138,7 +138,7 @@ describe('DesktopAppSwitcher', () => {
         .map(option => option.textContent)
     ).toEqual([
       '任务使用 AI 解决具体问题',
-      '看板用 AI 管理项目的规划、执行与反馈',
+      '项目空间用 AI 管理项目的规划、执行与反馈',
       '智能体构建并交付可嵌入业务的云端智能体',
     ])
   })
@@ -162,7 +162,7 @@ describe('DesktopAppSwitcher', () => {
     experimentalFeatures.enabled = true
     render(<DesktopAppSwitcher activeApp="todo" onNavigate={vi.fn()} />)
 
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('看板')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('项目空间')
   })
 
   test('opens settings from the switcher menu', () => {

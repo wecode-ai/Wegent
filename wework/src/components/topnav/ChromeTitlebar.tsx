@@ -1,7 +1,6 @@
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
-import type { AppTab } from '@/config/apps'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_CENTER_PORTAL_ID,
@@ -9,34 +8,26 @@ import {
 } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MessageSquareWarning } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useState, type ReactNode } from 'react'
+import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 
 interface ChromeTitlebarProps {
-  tabs: AppTab[]
-  activeKey: string
-  onNavigate: (appKey: string) => void
   beforeTabs?: ReactNode
   afterTabs?: ReactNode
   className?: string
-  iconOnlyTabs?: boolean
   showWorkspacePortals?: boolean
   showFeedback?: boolean
 }
 
 export function ChromeTitlebar({
-  tabs,
-  activeKey,
-  onNavigate,
   beforeTabs,
   afterTabs,
   className,
-  iconOnlyTabs = false,
   showWorkspacePortals = true,
   showFeedback = true,
 }: ChromeTitlebarProps) {
@@ -47,8 +38,7 @@ export function ChromeTitlebar({
     <div
       data-testid="chrome-titlebar"
       className={cn(
-        'z-titlebar flex h-[38px] shrink-0 items-center pr-2 backdrop-blur-xl backdrop-saturate-150 select-none',
-        isTauri && platform === 'mac' ? 'bg-transparent' : 'bg-surface',
+        'z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 backdrop-blur-xl backdrop-saturate-150 select-none',
         className
       )}
     >
@@ -69,43 +59,7 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      {/* Tab strip */}
-      {iconOnlyTabs ? (
-        <DesktopAppSwitcher
-          activeApp={
-            activeKey === 'apps'
-              ? 'apps'
-              : activeKey === 'todo'
-                ? 'todo'
-                : activeKey === 'wegent'
-                  ? 'wegent'
-                  : 'wework'
-          }
-          onNavigate={onNavigate}
-          variant="tabs"
-        />
-      ) : (
-        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              data-testid={`chrome-tab-${tab.key}`}
-              onClick={() => onNavigate(tab.key)}
-              title={tab.label}
-              aria-label={tab.label}
-              className={cn(
-                'group relative flex h-8 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-sm font-medium leading-none transition-colors',
-                activeKey === tab.key
-                  ? 'bg-black/[0.045] text-text-primary'
-                  : 'text-text-secondary hover:bg-black/[0.04]'
-              )}
-            >
-              <span className="truncate">{tab.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <WorkspaceTabStrip />
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
           {afterTabs}

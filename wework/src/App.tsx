@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -77,6 +78,8 @@ import { useExperimentalFeaturesState } from '@/features/experimental-features/u
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useTranslation } from '@/hooks/useTranslation'
+import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -97,15 +100,26 @@ function hasTauriIpc() {
 }
 
 function useCurrentPath() {
-  const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
+  return useCurrentLocation().pathname
+}
+
+function useCurrentLocation() {
+  const [location, setLocation] = useState(() => ({
+    pathname: stripAppBasePath(window.location.pathname),
+    search: window.location.search,
+  }))
 
   useEffect(() => {
-    const handlePopState = () => setPath(stripAppBasePath(window.location.pathname))
+    const handlePopState = () =>
+      setLocation({
+        pathname: stripAppBasePath(window.location.pathname),
+        search: window.location.search,
+      })
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  return path
+  return location
 }
 
 interface AppRoutesProps {
@@ -288,7 +302,8 @@ function LanguagePreferenceInitializer() {
 }
 
 function AppShell() {
-  const path = useCurrentPath()
+  const { t } = useTranslation('common')
+  const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
@@ -296,13 +311,22 @@ function AppShell() {
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
   }
-  const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
+  const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
   const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
-  const titlebarActiveKey = path === '/todo' ? 'todo' : activeAppKey
+  const workspaceTabStorageScope = isTauri ? getCurrentWindow().label : 'browser'
+  const workspaceTabLabels = useMemo(
+    () => ({
+      task: t('workbench.workspace_tab_task', '任务'),
+      board: t('workbench.workspace_tab_board', '项目空间'),
+      agent: t('workbench.workspace_tab_agent', '智能体'),
+      auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
+    }),
+    [t]
+  )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
   const openWeworkForAppshot = useCallback(() => {
@@ -496,41 +520,44 @@ function AppShell() {
   }
 
   const shell = (
-    <div
-      className={cn(
-        'h-dvh',
-        isPopoutWindow
-          ? 'overflow-visible bg-transparent'
-          : usesDesktopVibrancy
-            ? 'overflow-hidden bg-transparent'
-            : 'overflow-hidden bg-surface',
-        titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-      )}
+    <WorkspaceTabsProvider
+      pathname={path}
+      search={search}
+      storageScope={workspaceTabStorageScope}
+      labels={workspaceTabLabels}
     >
-      {showChromeTitlebar && (
-        <ChromeTitlebar
-          tabs={tabs}
-          activeKey={titlebarActiveKey}
-          onNavigate={appKey => (appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey))}
-          iconOnlyTabs={isTauri}
-          showWorkspacePortals={activeAppKey !== 'wework'}
-          showFeedback={activeAppKey !== 'wework'}
-        />
-      )}
       <div
         className={cn(
-          'min-h-0',
-          isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-          titlebarOverlaysContent ? 'h-full' : 'flex-1'
+          'h-dvh',
+          isPopoutWindow
+            ? 'overflow-visible bg-transparent'
+            : usesDesktopVibrancy
+              ? 'overflow-hidden bg-transparent'
+              : 'overflow-hidden bg-surface',
+          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >
-        <AppRoutes
-          onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-          onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
-        />
+        {showChromeTitlebar && (
+          <ChromeTitlebar
+            showWorkspacePortals={activeAppKey !== 'wework'}
+            showFeedback={activeAppKey !== 'wework'}
+          />
+        )}
+        <div
+          className={cn(
+            'min-h-0',
+            isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+            titlebarOverlaysContent ? 'h-full' : 'flex-1'
+          )}
+        >
+          <AppRoutes
+            onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+            onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+          />
+        </div>
+        {!isPopoutWindow && <WeworkDevInstanceBadge />}
       </div>
-      {!isPopoutWindow && <WeworkDevInstanceBadge />}
-    </div>
+    </WorkspaceTabsProvider>
   )
 
   if (isPopoutWindow) {

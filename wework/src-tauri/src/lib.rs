@@ -4527,6 +4527,7 @@ pub fn run() {
             cloud_authorization_window::position_cloud_authorization_window,
             desktop_capture::capture_main_webview,
             desktop_capture::capture_popout_webview,
+            desktop_capture::capture_workspace_webview,
             acknowledge_frontend_resume_probe,
             register_frontend_recovery_bridge,
             #[cfg(desktop)]
