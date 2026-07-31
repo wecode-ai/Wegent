@@ -9620,22 +9620,18 @@ function findCodexPackageRoot(codexBinary, binaryRelativePath) {
   return resolve(packageRoot, binaryRelativePath) === resolve(codexBinary) ? packageRoot : null
 }
 
-async function bundleMacCodex(contentsPath, codexBinary, appCodexBinary) {
+async function bundleMacCodex(contentsPath, codexBinary) {
   const { binaryRelativePath, target } = macCodexBundleLayout()
   const bundledPackageRoot = join(contentsPath, 'Resources', 'binaries', 'codex', target)
   const bundledCodexBinary = join(bundledPackageRoot, binaryRelativePath)
   const packageRoot = findCodexPackageRoot(codexBinary, binaryRelativePath)
 
   await mkdir(dirname(bundledPackageRoot), { recursive: true })
-  if (packageRoot && resolve(codexBinary) === resolve(appCodexBinary)) {
+  if (packageRoot) {
     await symlink(packageRoot, bundledPackageRoot, 'dir')
-  } else if (packageRoot) {
-    await cp(packageRoot, bundledPackageRoot, { recursive: true })
-    await copyFile(appCodexBinary, bundledCodexBinary)
-    await chmod(bundledCodexBinary, 0o755)
   } else {
     await mkdir(dirname(bundledCodexBinary), { recursive: true })
-    await copyFile(appCodexBinary, bundledCodexBinary)
+    await copyFile(codexBinary, bundledCodexBinary)
     await chmod(bundledCodexBinary, 0o755)
   }
 
@@ -9648,13 +9644,7 @@ async function bundleMacCodex(contentsPath, codexBinary, appCodexBinary) {
   return bundledCodexBinary
 }
 
-async function wrapMacDesktopApp(
-  binaryPath,
-  binaryName,
-  appIdentifier,
-  codexBinary,
-  appCodexBinary
-) {
+async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier, codexBinary) {
   if (process.platform !== 'darwin') {
     return { binaryPath, appBundlePath: null, codexBinaryPath: null }
   }
@@ -9686,7 +9676,7 @@ async function wrapMacDesktopApp(
     `,
     'utf8'
   )
-  const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary, appCodexBinary)
+  const bundledCodexBinary = await bundleMacCodex(contentsPath, codexBinary)
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: bundledBinaryPath,
@@ -9701,19 +9691,12 @@ async function buildDesktopApp(
   cloudToken,
   appIdentifier,
   modelServerUrl,
-  codexBinary,
-  appCodexBinary
+  codexBinary
 ) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
-    return wrapMacDesktopApp(
-      binaryPath,
-      binaryPath.split('/').at(-1),
-      appIdentifier,
-      codexBinary,
-      appCodexBinary
-    )
+    return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier, codexBinary)
   }
 
   const windows = (await readTauriE2EWindowConfig()).map(window => ({
@@ -9784,7 +9767,7 @@ async function buildDesktopApp(
   ]
   for (const candidate of candidates) {
     if (await isExecutable(candidate)) {
-      return wrapMacDesktopApp(candidate, binaryName, appIdentifier, codexBinary, appCodexBinary)
+      return wrapMacDesktopApp(candidate, binaryName, appIdentifier, codexBinary)
     }
   }
   throw new Error(
@@ -10525,12 +10508,11 @@ async function main() {
       cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
       appIdentifier,
       control.url,
-      codexBinary,
-      appCodexBinary
+      codexBinary
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
-    const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? appCodexBinary
+    const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
     }
