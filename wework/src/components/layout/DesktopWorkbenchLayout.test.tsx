@@ -2439,10 +2439,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass('h-8', 'w-8', 'rounded-lg')
+    expect(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    ).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('sidebar-resize-handle')).toHaveClass('right-[-14px]', 'w-[18px]')
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
-      screen.getByTestId('desktop-window-controls')
+      screen.getAllByTestId('desktop-window-controls')[1]
     )
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
@@ -2642,7 +2644,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
   })
 
-  test('renders the Windows titlebar above the sidebar and workbench content', () => {
+  test('leaves Windows window chrome to the application titlebar', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2655,27 +2657,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('workbench-windows-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-windows-titlebar')).not.toHaveClass(
-      'border-b',
-      'border-border/40'
-    )
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveClass(
-      'bg-[rgb(var(--color-sidebar-unfocused))]'
-    )
-    expect(screen.getByTestId('workbench-windows-titlebar-middle')).toHaveStyle({
-      left: '240px',
-      right: '138px',
-    })
-    expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
-    expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+    expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-window-controls')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-app-switcher')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-main-header')).not.toBeInTheDocument()
-    expect(getDesktopWorkbenchMainElement()).toHaveClass('rounded-tl-xl')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-tl-xl')
   })
 
-  test('places panel toggles in the Windows titlebar actions, next to the window controls', async () => {
+  test('moves Windows panel toggles into the application titlebar center slot', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2686,9 +2676,13 @@ describe('DesktopWorkbenchLayout', () => {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
     })
 
+    const titlebarCenter = document.createElement('div')
+    titlebarCenter.id = TITLEBAR_CENTER_PORTAL_ID
+    document.body.appendChild(titlebarCenter)
+
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
-    const panelToggles = screen.getByTestId('workbench-panel-toggles')
+    const panelToggles = await screen.findByTestId('workbench-panel-toggles')
     expect(panelToggles).toContainElement(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(panelToggles).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
@@ -4303,7 +4297,9 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
 
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '0px' })
     expect(panelShell).toHaveStyle({ width: '100%' })

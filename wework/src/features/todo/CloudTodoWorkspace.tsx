@@ -40,7 +40,6 @@ import {
   DesktopSidebarHeader,
   DesktopSidebarNavItem,
 } from '@/components/layout/DesktopSidebarPrimitives'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type {
   DeliveryApi,
@@ -49,7 +48,6 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { getPlatform } from '@/lib/platform'
 import { cn } from '@/lib/utils'
 import { AITableView } from '@/features/todo/AITableView'
@@ -1440,17 +1438,10 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   return (
     <div
       className={cn(
-        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary',
-        platform === 'win' && 'flex-col'
+        'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
       )}
       data-testid="cloud-todo-workspace"
     >
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="todo"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <aside
           className={cn(

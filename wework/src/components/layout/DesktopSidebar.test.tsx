@@ -196,7 +196,7 @@ describe('DesktopSidebar', () => {
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
   })
 
-  test('removes right border on Windows', () => {
+  test('keeps the shared right border on Windows', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -208,7 +208,7 @@ describe('DesktopSidebar', () => {
     })
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
-    expect(sidebar).not.toHaveClass('border-r')
+    expect(sidebar).toHaveClass('border-r')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {

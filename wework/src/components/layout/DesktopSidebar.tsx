@@ -2924,7 +2924,7 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
-        !collapsed && !isWindowsTauri && 'border-r border-black/[0.08] dark:border-white/[0.08]',
+        !collapsed && 'border-r border-black/[0.08] dark:border-white/[0.08]',
         background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))]',
@@ -2965,7 +2965,7 @@ export function DesktopSidebar({
           <DesktopSidebarHeader
             actions={
               <>
-                {onToggleSidebar && (
+                {onToggleSidebar && !isWindowsTauri && (
                   <DesktopWindowControls
                     sidebarCollapsed={false}
                     onToggleSidebar={onToggleSidebar}

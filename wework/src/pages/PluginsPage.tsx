@@ -14,10 +14,9 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -164,12 +163,6 @@ export function PluginsPage() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed && !isMobile}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="wework"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
       <div className="flex flex-1 overflow-hidden">
         {!isMobile && isTauri && (
           <DesktopCollapsedSidebarToggle

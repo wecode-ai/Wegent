@@ -21,11 +21,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { buildRuntimeTaskRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 class SitesDeviceSyncConfirmationError extends Error {}
 
@@ -247,12 +246,6 @@ export function SitesPage() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed && !isMobile}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="wework"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
       <div className="flex flex-1 overflow-hidden">
         {!isMobile && isTauri && (
           <DesktopCollapsedSidebarToggle

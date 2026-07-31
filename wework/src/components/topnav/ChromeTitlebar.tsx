@@ -10,7 +10,9 @@ import {
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
+import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MessageSquareWarning } from 'lucide-react'
@@ -42,6 +44,7 @@ export function ChromeTitlebar({
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
 
   return (
     <div
@@ -60,6 +63,16 @@ export function ChromeTitlebar({
           data-tauri-drag-region
         >
           <MacOSTitleBarDragRegion />
+        </div>
+      )}
+
+      {isTauri && platform === 'win' && (
+        <div className="ml-1 mr-1 flex shrink-0 items-center">
+          <DesktopWindowControls
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
+            className="gap-1"
+          />
         </div>
       )}
 

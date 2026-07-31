@@ -139,8 +139,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/apps' ||
     path === '/popout' ||
     isPopoutWindow
-  const usesAuxiliaryDesktopSurface =
-    isAuxiliaryRoute && !isPopoutWindow && isTauriRuntime() && getPlatform() === 'mac'
+  const usesAuxiliaryDesktopSurface = isAuxiliaryRoute && !isPopoutWindow && isTauriRuntime()
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
   const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
     activeIframeTab ? [activeIframeTab] : []

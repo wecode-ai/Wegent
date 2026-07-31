@@ -63,10 +63,10 @@ import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBann
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
+  TitlebarCenterPortal,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WorkbenchMainHeaderPortal,
-  WorkbenchWindowsTitlebarMiddlePortal,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -2366,9 +2366,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
-        !isTauri &&
-          'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
-        isTauri && platform === 'win' && 'rounded-tl-xl'
+        !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
       {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
@@ -2376,9 +2374,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
       {isTauri && windowsTitlebarMiddleContent ? (
-        <WorkbenchWindowsTitlebarMiddlePortal>
-          {windowsTitlebarMiddleContent}
-        </WorkbenchWindowsTitlebarMiddlePortal>
+        <TitlebarCenterPortal>{windowsTitlebarMiddleContent}</TitlebarCenterPortal>
       ) : null}
       <>
         {!isTauri && (

@@ -211,6 +211,8 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
+    expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
     disableTauri()
