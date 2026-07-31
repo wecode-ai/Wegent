@@ -61,6 +61,8 @@ pub struct ProjectUpdate {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub provider_config: Option<Value>,
+    pub board_config: Option<Value>,
+    pub card_display: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

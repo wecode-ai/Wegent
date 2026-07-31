@@ -77,7 +77,6 @@ export function DesktopWorkbenchLayout() {
     startNewChat: onNewChat,
     startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
-    createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
@@ -758,28 +757,6 @@ export function DesktopWorkbenchLayout() {
                 user={state.user}
                 localProjects={localTodoProjects}
                 services={services}
-                onRunTodo={({
-                  project,
-                  message,
-                  goal,
-                  attachments,
-                  collaborationMode,
-                  deliveryId,
-                  cloudProjectId,
-                }) =>
-                  onCreateProjectRuntimeTask(message, {
-                    project,
-                    attachments,
-                    initialGoal: goal ? { objective: goal } : null,
-                    collaborationMode,
-                    deliveryId,
-                    cloudProjectId,
-                  })
-                }
-                onOpenRuntimeTask={async address => {
-                  navigateTo('/')
-                  await onOpenRuntimeTask?.(address)
-                }}
               />
             ) : (
               <div

@@ -307,6 +307,20 @@ def update_loop_item(
     return _loop_item_response(db, item, current_user)
 
 
+@router.delete("/loop-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def archive_loop_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "External provider tasks cannot be archived from Wegent",
+        )
+    loop_item_service.delete(db, item_id, current_user.id)
+
+
 @router.post(
     "/loop-items/{item_id}/comments",
     response_model=LoopItemCommentResponse,

@@ -103,9 +103,10 @@ mod diagnostics;
 mod home;
 
 use diagnostics::{json_scalar_field, json_string_field};
+pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-use home::{prepare_wework_codex_home, wework_codex_home, CODEX_HOME_ENV};
+use home::{prepare_wework_codex_home, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;

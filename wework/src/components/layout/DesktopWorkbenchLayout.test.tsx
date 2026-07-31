@@ -4792,6 +4792,11 @@ describe('DesktopWorkbenchLayout', () => {
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     expect(sideChat).toBeInTheDocument()
+    expect(screen.getByTestId('side-chat-composer-layout')).toHaveClass(
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'max-w-[calc(100%_-_2rem)]'
+    )
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
     await waitFor(() => {
       expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
@@ -4841,8 +4846,20 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
-    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    expect(sideChatInput).toHaveValue('')
+
+    expect(
+      screen.getByTestId('right-workspace-chat-scroll-area-content').lastElementChild
+    ).toHaveClass(
+      'mx-auto',
+      'w-[min(46rem,calc(100%_-_6rem))]',
+      'max-w-[calc(100%_-_6rem)]',
+      'px-0'
+    )
 
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -4877,8 +4894,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
-    await userEvent.type(within(sideChat).getByTestId('chat-message-input'), 'side chat')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(sideChatInput).toHaveValue('')
 
     await waitFor(() =>
       expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalledWith(
@@ -4893,6 +4912,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
+    expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   })
 

@@ -227,7 +227,7 @@ export interface TodoEditorEditProps {
   project?: CloudProject
   onUpdated: (item: CloudLoopItem) => void
   onAddChild: () => void
-  onStart: () => void
+  onStartConversation: () => void
 }
 
 export type TodoEditorProps = {
@@ -248,6 +248,10 @@ export function TodoEditor(props: TodoEditorProps) {
   const isCreate = createProps !== null
   const item = editProps?.item ?? null
   const isAITableEdit = item !== null && editProps?.project?.task_provider === 'dingtalk_aitable'
+  const project = createProps?.project ?? editProps?.project
+  const statusOptions =
+    project?.board_config?.statuses ??
+    columns.map(column => ({ id: column.status, name: column.label, color: 'gray' as const }))
 
   const draftKey = createProps
     ? todoDraftKey(createProps.project.id, createProps.initialStatus)
@@ -395,7 +399,7 @@ export function TodoEditor(props: TodoEditorProps) {
     display_name: file.name,
     size_bytes: file.size,
   }))
-  const statusLabel = columns.find(column => column.status === status)?.label ?? ''
+  const statusLabel = statusOptions.find(option => option.id === status)?.name ?? '未设置'
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
   const creator =
@@ -714,7 +718,9 @@ export function TodoEditor(props: TodoEditorProps) {
             <span className={propChipClass}>
               <Circle className="h-3.5 w-3.5 text-text-muted" />
               <span className="text-text-muted">状态</span>
-              <span className={cn('h-2 w-2 rounded-full', columnDotClasses[status])} />
+              <span
+                className={cn('h-2 w-2 rounded-full', columnDotClasses[status] ?? 'bg-zinc-400')}
+              />
               {statusLabel}
               <ChevronDown className="h-3 w-3 text-text-muted" />
               <select
@@ -724,9 +730,10 @@ export function TodoEditor(props: TodoEditorProps) {
                 onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
                 className={overlayControlClass}
               >
-                {columns.map(column => (
-                  <option key={column.status} value={column.status}>
-                    {column.label}
+                {status === '' ? <option value="">未设置</option> : null}
+                {statusOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
                   </option>
                 ))}
               </select>
@@ -1089,10 +1096,10 @@ export function TodoEditor(props: TodoEditorProps) {
               <button
                 type="button"
                 data-testid="cloud-todo-start-task"
-                onClick={() => editProps?.onStart()}
+                onClick={() => editProps?.onStartConversation()}
                 className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
               >
-                {item?.status === 'completed' ? '开启后续任务' : '开启本地任务'}
+                开始对话
               </button>
               {dirty && (
                 <button
