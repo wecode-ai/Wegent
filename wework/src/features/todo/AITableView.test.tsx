@@ -3,11 +3,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ComponentType } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudProject } from '@/api/deliveries'
 import { AITableView } from './AITableView'
+
+vi.mock('ag-grid-react', () => {
+  return {
+    AgGridReact: ({
+      columnDefs = [],
+      context,
+      rowData = [],
+    }: {
+      columnDefs?: Array<{
+        cellRenderer?: ComponentType<Record<string, unknown>>
+        context?: unknown
+        headerComponentParams?: {
+          innerHeaderComponent?: ComponentType<Record<string, unknown>>
+        }
+        headerName?: string
+      }>
+      context?: unknown
+      rowData?: AITableRecord[]
+    }) => (
+      <div data-testid="aitable-grid-content">
+        {columnDefs.map((column, index) => {
+          const Header = column.headerComponentParams?.innerHeaderComponent
+          return Header ? (
+            <Header
+              key={`header-${column.headerName ?? index}`}
+              column={{ getColDef: () => column }}
+              context={context}
+              displayName={column.headerName ?? ''}
+            />
+          ) : null
+        })}
+        {rowData.flatMap(record =>
+          columnDefs.map((column, index) => {
+            const Cell = column.cellRenderer
+            return Cell ? (
+              <Cell
+                key={`${record.id}-${column.headerName ?? index}`}
+                colDef={column}
+                context={context}
+                data={record}
+              />
+            ) : null
+          })
+        )}
+      </div>
+    ),
+  }
+})
 
 function field(overrides: Partial<AITableField>): AITableField {
   return {
