@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
@@ -162,7 +163,7 @@ export function PluginsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <DesktopWindowsTitlebar
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -170,6 +171,12 @@ export function PluginsPage() {
         onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
       />
       <div className="flex flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {!isMobile && (
           <DesktopSidebar
             user={state.user}
@@ -185,6 +192,7 @@ export function PluginsPage() {
             }
             activeItem="plugins"
             collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}

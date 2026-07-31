@@ -644,7 +644,11 @@ describe('CloudTodoWorkspace', () => {
     )
     expect(screen.getAllByTestId('macos-titlebar-drag-region')).toHaveLength(1)
     expect((await screen.findAllByText('项目空间')).length).toBeGreaterThan(0)
-    expect(screen.getByText('我的工作')).toHaveClass('h-[30px]', 'px-2', 'text-base')
+    expect(screen.getByText('我的工作').closest('button')).toHaveClass(
+      'h-[30px]',
+      'px-2',
+      'text-base'
+    )
     await waitFor(() => expect(screen.getAllByText('Wegent V4').length).toBeGreaterThan(0))
     await userEvent.click(screen.getAllByText('Wegent V4')[0])
     const projectHeader = screen.getByTestId('cloud-project-header')

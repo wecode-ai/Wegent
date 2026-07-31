@@ -211,6 +211,11 @@ describe('App center route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.getByTestId('desktop-auxiliary-surface')).toHaveClass(
+      'app-view-surface',
+      'rounded-xl',
+      'border'
+    )
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()

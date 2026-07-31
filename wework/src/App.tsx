@@ -37,7 +37,6 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
@@ -75,6 +74,8 @@ import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
@@ -138,6 +139,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/apps' ||
     path === '/popout' ||
     isPopoutWindow
+  const usesAuxiliaryDesktopSurface =
+    isAuxiliaryRoute && !isPopoutWindow && isTauriRuntime() && getPlatform() === 'mac'
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
   const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
     activeIframeTab ? [activeIframeTab] : []
@@ -181,6 +184,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
+  // Route surfaces and their sidebars must read one resolved preference snapshot.
+  // Mounting them before it is available makes experimental navigation items briefly
+  // disappear when a route change creates a new sidebar instance.
+  if (!experimentalFeatures.loaded) {
+    return null
+  }
+
   const auxiliaryPage = isPopoutWindow ? (
     <PopoutWorkbenchPage />
   ) : path === '/plugins/manage' ? (
@@ -219,7 +229,18 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           <AppIframe src={tab.url ?? ''} title={tab.label} />
         </div>
       ))}
-      {auxiliaryPage}
+      {auxiliaryPage && (
+        <div
+          data-testid="desktop-auxiliary-surface"
+          className={cn(
+            'h-full',
+            usesAuxiliaryDesktopSurface &&
+              'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
+          )}
+        >
+          {auxiliaryPage}
+        </div>
+      )}
     </WorkbenchProvider>
   )
 }
@@ -240,40 +261,31 @@ function MainApp() {
     document.title = getWeworkDocumentTitle()
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-
-    getAppPreferences()
-      .then(preferences => {
-        if (!cancelled) {
-          return applyLanguagePreference(preferences.language)
-        }
-        return undefined
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to initialize language preference:', error)
-        if (!cancelled) {
-          return applyLanguagePreference(defaultAppPreferences.language)
-        }
-        return undefined
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
     <AppearanceProvider>
-      <AppUpdateProvider>
-        <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
-          <AuthProvider>
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
+      <AppPreferencesProvider>
+        <LanguagePreferenceInitializer />
+        <AppUpdateProvider>
+          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+            <AuthProvider>
+              <AppShell />
+            </AuthProvider>
+          </CloudConnectionProvider>
+        </AppUpdateProvider>
+      </AppPreferencesProvider>
     </AppearanceProvider>
   )
+}
+
+function LanguagePreferenceInitializer() {
+  const appPreferences = useAppPreferencesState()
+
+  useEffect(() => {
+    if (!appPreferences?.loaded) return
+    void applyLanguagePreference(appPreferences.preferences.language)
+  }, [appPreferences?.loaded, appPreferences?.preferences.language])
+
+  return null
 }
 
 function AppShell() {

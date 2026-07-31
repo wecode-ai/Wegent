@@ -700,7 +700,7 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(searchButton.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })

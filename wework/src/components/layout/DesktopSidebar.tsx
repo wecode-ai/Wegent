@@ -28,7 +28,6 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent,
   PointerEventHandler,
-  ReactNode,
   RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -109,6 +108,11 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import {
+  DesktopSidebarHeader,
+  DesktopSidebarNavItem,
+  DesktopSidebarSectionHeader,
+} from './DesktopSidebarPrimitives'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
@@ -475,38 +479,6 @@ function getSidebarDeviceColor(colorKey: string): string {
   return SIDEBAR_DEVICE_COLORS[hash % SIDEBAR_DEVICE_COLORS.length]
 }
 
-function SidebarButton({
-  icon: Icon,
-  label,
-  testId,
-  selected,
-  onClick,
-}: {
-  icon: typeof Plus
-  label: string
-  testId: string
-  selected?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      aria-current={selected ? 'page' : undefined}
-      onClick={onClick}
-      className={[
-        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
-        selected
-          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
-      ].join(' ')}
-    >
-      <Icon className="h-4 w-4 text-current" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
 const DESKTOP_SIDEBAR_STORAGE_PREFIX = 'wework.desktop.sidebar'
 
 function getDesktopSidebarStorageScope(user: UserProfile | null): string {
@@ -566,57 +538,6 @@ function handleSidebarRowKeyDown(event: KeyboardEvent<HTMLDivElement>, onOpen: (
 
   event.preventDefault()
   onOpen()
-}
-
-function SidebarSectionHeader({
-  title,
-  expanded,
-  hasContent,
-  toggleTestId,
-  iconTestId,
-  onToggle,
-  children,
-}: {
-  title: string
-  expanded: boolean
-  hasContent: boolean
-  toggleTestId: string
-  iconTestId: string
-  onToggle: () => void
-  children: ReactNode
-}) {
-  const iconVisibilityClass =
-    hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
-
-  return (
-    <div className="group/section relative mb-2 flex h-[30px] items-center px-2.5">
-      <button
-        type="button"
-        data-testid={toggleTestId}
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pr-8 text-left"
-      >
-        <span className="truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
-          {title}
-        </span>
-        <ChevronRight
-          data-testid={iconTestId}
-          className={cn(
-            'h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))] transition-[opacity,transform]',
-            expanded ? 'rotate-90' : 'rotate-0',
-            iconVisibilityClass
-          )}
-        />
-      </button>
-      <div
-        data-testid={`${toggleTestId}-actions`}
-        className="pointer-events-none absolute right-2.5 top-1/2 z-[70] flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
-      >
-        {children}
-      </div>
-    </div>
-  )
 }
 
 type SidebarDeviceStatus = DeviceInfo['status'] | 'unavailable'
@@ -3041,34 +2962,33 @@ export function DesktopSidebar({
               />
             </div>
           )}
-          <div className="mb-1 flex h-9 items-center justify-between px-2">
-            <span className="min-w-0 truncate text-heading-sm font-semibold leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
-              Wework
-            </span>
-            <div className="flex items-center gap-1">
-              {onToggleSidebar && (
-                <DesktopWindowControls
-                  sidebarCollapsed={false}
-                  onToggleSidebar={onToggleSidebar}
-                  className="gap-0"
-                />
-              )}
-              {onOpenSearch && (
-                <button
-                  type="button"
-                  data-testid="runtime-search-button"
-                  onClick={onOpenSearch}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                  title={t('workbench.search')}
-                  aria-label={t('workbench.search')}
-                >
-                  <Search className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </div>
+          <DesktopSidebarHeader
+            actions={
+              <>
+                {onToggleSidebar && (
+                  <DesktopWindowControls
+                    sidebarCollapsed={false}
+                    onToggleSidebar={onToggleSidebar}
+                    className="gap-0"
+                  />
+                )}
+                {onOpenSearch && (
+                  <button
+                    type="button"
+                    data-testid="runtime-search-button"
+                    onClick={onOpenSearch}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                    title={t('workbench.search')}
+                    aria-label={t('workbench.search')}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                )}
+              </>
+            }
+          />
           <nav className="space-y-0.5">
-            <SidebarButton
+            <DesktopSidebarNavItem
               icon={Plus}
               label={t('workbench.new_task')}
               testId="new-chat-button"
@@ -3088,7 +3008,7 @@ export function DesktopSidebar({
           >
             <nav className="mb-4 space-y-0.5">
               {experimentalFeaturesEnabled && (
-                <SidebarButton
+                <DesktopSidebarNavItem
                   icon={AlarmClock}
                   label={t('workbench.automation', '已安排')}
                   testId="automation-button"
@@ -3097,7 +3017,7 @@ export function DesktopSidebar({
                 />
               )}
               {SHOW_PLUGINS_NAVIGATION && (
-                <SidebarButton
+                <DesktopSidebarNavItem
                   icon={Sparkles}
                   label={t('workbench.plugins', '插件')}
                   testId="plugins-button"
@@ -3106,7 +3026,7 @@ export function DesktopSidebar({
                 />
               )}
               {experimentalFeaturesEnabled && (
-                <SidebarButton
+                <DesktopSidebarNavItem
                   icon={Grid3X3}
                   label={t('workbench.sites', '站点')}
                   testId="sites-button"
@@ -3266,7 +3186,7 @@ export function DesktopSidebar({
             )}
             <section>
               <div>
-                <SidebarSectionHeader
+                <DesktopSidebarSectionHeader
                   title={t('workbench.projects', '项目')}
                   expanded={displayedProjectsExpanded}
                   hasContent={sidebarProjects.length > 0}
@@ -3306,7 +3226,7 @@ export function DesktopSidebar({
                       <FolderPlus className="h-4 w-4" />
                     </button>
                   </div>
-                </SidebarSectionHeader>
+                </DesktopSidebarSectionHeader>
               </div>
               {projectCreateDialogOpen &&
                 createPortal(
@@ -3459,7 +3379,7 @@ export function DesktopSidebar({
             </section>
 
             <section data-testid="runtime-chat-section" className="mt-8">
-              <SidebarSectionHeader
+              <DesktopSidebarSectionHeader
                 title={t('workbench.tasks')}
                 expanded={displayedChatsExpanded}
                 hasContent={regularChatTaskItems.length > 0}
@@ -3498,7 +3418,7 @@ export function DesktopSidebar({
                     <MessageSquarePlus className="h-4 w-4" />
                   </button>
                 </div>
-              </SidebarSectionHeader>
+              </DesktopSidebarSectionHeader>
               {displayedChatsExpanded && (
                 <div className="space-y-0.5 pb-2">
                   {regularChatTaskItems.length === 0 ? (

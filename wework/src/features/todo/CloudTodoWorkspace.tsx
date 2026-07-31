@@ -36,6 +36,10 @@ import type {
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import {
+  DesktopSidebarHeader,
+  DesktopSidebarNavItem,
+} from '@/components/layout/DesktopSidebarPrimitives'
 import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type {
@@ -1455,64 +1459,49 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
           )}
         >
           <div className="flex h-full w-[240px] flex-col px-1.5 pt-1.5">
-            <div className="mb-1 flex h-9 shrink-0 items-center justify-between px-2">
-              <span className="min-w-0 truncate text-heading-sm font-semibold leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
-                Wework
-              </span>
-              <div
-                data-testid="cloud-todo-sidebar-chrome-controls"
-                className="flex items-center gap-1"
-              >
-                {platform !== 'win' && (
-                  <DesktopWindowControls
-                    sidebarCollapsed={false}
-                    onToggleSidebar={() => setSidebarCollapsed(true)}
-                    className="gap-0"
-                    toggleTestId="cloud-todo-collapse-sidebar"
-                  />
-                )}
-                <button
-                  type="button"
-                  data-testid="cloud-search-toggle"
-                  onClick={() => setGlobalSearchOpen(true)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
-                  title={t('workbench.search')}
-                  aria-label={t('workbench.search')}
-                >
-                  <Search className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
+            <DesktopSidebarHeader
+              actionsTestId="cloud-todo-sidebar-chrome-controls"
+              actions={
+                <>
+                  {platform !== 'win' && (
+                    <DesktopWindowControls
+                      sidebarCollapsed={false}
+                      onToggleSidebar={() => setSidebarCollapsed(true)}
+                      className="gap-0"
+                      toggleTestId="cloud-todo-collapse-sidebar"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    data-testid="cloud-search-toggle"
+                    onClick={() => setGlobalSearchOpen(true)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                    title={t('workbench.search')}
+                    aria-label={t('workbench.search')}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                </>
+              }
+            />
             <nav className="space-y-0.5">
-              <button
-                type="button"
+              <DesktopSidebarNavItem
+                icon={Cloud}
+                label="项目空间"
+                selected={rootView === 'projects'}
                 onClick={() => {
                   setRootView('projects')
                   selectProject(null)
                   setSelectedItem(null)
                 }}
-                className={cn(
-                  'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
-                  rootView === 'projects'
-                    ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-                    : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
-                )}
-              >
-                <Cloud className="h-4 w-4" /> 项目空间
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-my-work"
+              />
+              <DesktopSidebarNavItem
+                icon={CircleUserRound}
+                label="我的工作"
+                testId="cloud-my-work"
+                selected={rootView === 'my-work'}
                 onClick={() => setRootView('my-work')}
-                className={cn(
-                  'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
-                  rootView === 'my-work'
-                    ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
-                    : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
-                )}
-              >
-                <CircleUserRound className="h-4 w-4" /> 我的工作
-              </button>
+              />
             </nav>
             <div className="mt-6 flex h-[30px] items-center px-2.5 text-xs font-medium text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
               项目空间

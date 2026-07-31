@@ -1,12 +1,14 @@
 import { Cloud, FolderGit2, Menu, Plus, Settings } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import { DeviceSection } from '@/components/settings/ConnectionsSettingsPage'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { useAuth } from '@/features/auth/useAuth'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -44,6 +46,7 @@ export function CloudWorkPage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const isMobile = useIsMobile()
+  const isTauri = isTauriRuntime()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
@@ -132,7 +135,7 @@ export function CloudWorkPage() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <DesktopWindowsTitlebar
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -140,6 +143,12 @@ export function CloudWorkPage() {
         onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {!isMobile && (
           <DesktopSidebar
             user={state.user}
@@ -155,6 +164,7 @@ export function CloudWorkPage() {
             }
             activeItem="cloud-work"
             collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}

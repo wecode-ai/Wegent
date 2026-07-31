@@ -4,6 +4,7 @@ import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
@@ -245,7 +246,7 @@ export function SitesPage() {
     ) : undefined
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <DesktopWindowsTitlebar
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -253,6 +254,12 @@ export function SitesPage() {
         onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
       />
       <div className="flex flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {!isMobile && (
           <DesktopSidebar
             user={state.user}
@@ -268,6 +275,7 @@ export function SitesPage() {
             }
             activeItem="sites"
             collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}
