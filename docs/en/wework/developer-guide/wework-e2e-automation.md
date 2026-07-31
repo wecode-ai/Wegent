@@ -122,9 +122,11 @@ project initialization, then runs only the selected checkpoint.
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
-feature paths. Shared desktop infrastructure, main, merge queue, scheduled
-runs, and `ci:all` still run the complete desktop suites. The mapping lives in
-`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
+`ci:all` still run the complete desktop suites. Merge queue validates the final
+commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E do not
+repeat the same validation after the merge through a `push main` trigger. The
+mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
 feature coverage is registered. Segment commands are also useful for focused
 local iteration:
 
@@ -373,6 +375,11 @@ Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
+The three scenarios inject different build-time Vite environment variables, so
+their Tauri/Cargo build caches must be isolated by E2E command. The plugins
+scenario must not restore an application binary built by the core or cloud
+scenario, because that binary may contain a different Codex Home initialization
+setting.
 
 The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
 dependencies in the runner user's home directory. Cache keys rotate weekly and
@@ -390,9 +397,11 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Regular draft PRs do not run browser or Linux desktop E2E. The macOS memory gate
-runs by default only on `main`, scheduled runs, and manual runs. Add the
-`ci:memory` label when a PR must validate the memory boundary. Applying that
+Regular draft PRs do not run browser or Linux desktop E2E. Merge queue runs the
+complete browser and Linux desktop suites before a commit enters `main`; `main`
+does not repeat checks that already passed for the merge group. The macOS memory
+gate runs by default only on scheduled and manual runs. Add the `ci:memory`
+label when a PR must validate the memory boundary. Applying that
 label starts only the memory gate and does not repeat browser or Linux desktop
 E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
 when the PR's changed paths would not normally select Wework E2E. The workflow

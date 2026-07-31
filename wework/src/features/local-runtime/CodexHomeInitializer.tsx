@@ -100,9 +100,11 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
         setStatus(nextStatus.shouldPromptMigration ? nextStatus : null)
         setChecked(true)
       })
-      .catch(() => {
+      .catch((statusError: Error) => {
         if (!isCurrent) return
+        console.warn('[Wework Codex init] status check failed', statusError)
         setStatus(null)
+        setError(statusError.message)
         setChecked(true)
       })
 
@@ -139,7 +141,7 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
 
   if (!checked) return null
 
-  if (!status) return <>{children}</>
+  if (!status && !error) return <>{children}</>
 
   return (
     <CodexHomeInitializationDialog

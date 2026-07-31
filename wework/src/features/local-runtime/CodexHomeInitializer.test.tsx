@@ -104,4 +104,22 @@ describe('CodexHomeInitializer', () => {
     expect(await screen.findByTestId('workbench-child')).toBeInTheDocument()
     expect(screen.queryByTestId('codex-home-initializer-dialog')).not.toBeInTheDocument()
   })
+
+  test('surfaces status lookup failures instead of bypassing initialization', async () => {
+    localCodexPluginApiMock.codexHomeMigrationStatus.mockRejectedValue(
+      new Error('Codex home status unavailable')
+    )
+
+    render(
+      <CodexHomeInitializer>
+        <div data-testid="workbench-child" />
+      </CodexHomeInitializer>
+    )
+
+    expect(await screen.findByTestId('codex-home-initializer-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-home-initializer-error')).toHaveTextContent(
+      'Codex home status unavailable'
+    )
+    expect(screen.queryByTestId('workbench-child')).not.toBeInTheDocument()
+  })
 })

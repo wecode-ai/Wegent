@@ -147,16 +147,9 @@ fi
 
 for workflow in e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
-  push_config="$(
-    sed -n '/^  push:/,/^  pull_request:/p' "$workflow_path"
-  )"
   pull_request_config="$(
     sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$workflow_path"
   )"
-  if grep -q "paths:" <<<"$push_config"; then
-    printf '%s must run for every push to main\n' "$workflow" >&2
-    exit 1
-  fi
   if ! grep -q "ready_for_review" <<<"$pull_request_config"; then
     printf '%s must run E2E when a draft PR becomes ready for review\n' \
       "$workflow" >&2
@@ -195,7 +188,7 @@ done
 for workflow in test.yml lint.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
   if ! grep -q "classify-ci-changes.sh --all" "$workflow_path"; then
-    printf '%s must classify every module for pushes to main\n' "$workflow" >&2
+    printf '%s must classify every module for merge groups\n' "$workflow" >&2
     exit 1
   fi
   if ! grep -q "merge_group:" "$workflow_path"; then
@@ -211,6 +204,13 @@ done
 
 for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
+  if grep -q "^  push:" "$workflow_path"; then
+    printf '%s must not repeat merge queue validation after entering main\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  # GitHub expressions are matched literally in workflow source.
+  # shellcheck disable=SC2016
   if ! grep -Fq 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' "$workflow_path"; then
     printf '%s must classify pull request changes from the merge base\n' \
       "$workflow" >&2
@@ -242,6 +242,13 @@ fi
 
 if ! grep -q "wework_desktop_e2e_matrix" "$wework_workflow"; then
   printf 'Wework desktop E2E must use the changed-feature segment matrix\n' >&2
+  exit 1
+fi
+
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '${{ matrix.command }}-e2e-' "$wework_workflow"; then
+  printf 'Wework desktop E2E caches must be isolated by E2E command\n' >&2
   exit 1
 fi
 
