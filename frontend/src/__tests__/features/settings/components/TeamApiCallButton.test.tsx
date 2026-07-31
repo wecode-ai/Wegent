@@ -177,6 +177,15 @@ describe('TeamApiCallButton', () => {
     expect(apiCallButton.querySelector('.lucide-code-xml')).not.toBeInTheDocument()
   })
 
+  it('visually distinguishes the API call action when emphasized', () => {
+    render(<TeamApiCallButton team={makeTeam()} emphasized />)
+
+    expect(screen.getByTestId('team-api-call-button-17')).toHaveClass(
+      'bg-primary/10',
+      'text-primary'
+    )
+  })
+
   it('renders language tabs in the API call dialog', () => {
     render(<TeamApiCallButton team={makeTeam()} />)
 

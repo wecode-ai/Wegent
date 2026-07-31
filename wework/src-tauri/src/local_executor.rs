@@ -1827,6 +1827,8 @@ fn spawn_configured_sidecar(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.env_clear();
+    command.envs(process_environment::sanitized_current_environment());
     command.envs(envs.iter().map(|(key, value)| (key, value)));
     configure_managed_process_group(&mut command);
     let mut child = command.spawn().map_err(|error| {
@@ -1892,6 +1894,8 @@ fn spawn_bundled_sidecar(
         .map_err(|error| {
             format!("Failed to resolve local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
         })?
+        .env_clear()
+        .envs(process_environment::sanitized_current_environment())
         .envs(envs.iter().map(|(key, value)| (key, value)));
     let (mut rx, child) = sidecar.spawn().map_err(|error| {
         format!("Failed to start local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")

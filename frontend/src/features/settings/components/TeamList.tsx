@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
 import '@/features/common/scrollbar.css'
 import LoadingState from '@/features/common/LoadingState'
@@ -34,6 +34,7 @@ import TeamEditDialog from './TeamEditDialog'
 import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
 import TeamShareModal from './TeamShareModal'
 import { TeamChildNamespaceAuthorizationDialog } from './TeamChildNamespaceAuthorizationDialog'
+import { TeamCardActionsMenu } from './TeamCardActionsMenu'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -53,6 +54,13 @@ import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -61,6 +69,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
+import { ResourceCardFooter } from '@/components/common/ResourceCardFooter'
+import {
+  ResourceCardIcon,
+  getResourceCardActionsClassName,
+  getResourceCardBodyClassName,
+  getResourceCardClassName,
+  getResourceGridClassName,
+} from '@/components/common/resourceCardLayout'
 import { TeamIconDisplay } from './teams/TeamIconDisplay'
 import {
   DropdownMenu,
@@ -74,6 +90,7 @@ import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
+  type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import {
   buildTeamTargetHref,
@@ -85,11 +102,15 @@ import {
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import {
   buildGroupDisplayNameMap,
+  filterResourceLibraryItemsByGroups,
   sortResourceLibraryItems,
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { cn } from '@/lib/utils'
+import { useUser } from '@/features/common/UserContext'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -100,7 +121,21 @@ interface TeamListProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  modeFilter?: TeamModeFilter
+  onModeFilterChange?: (mode: TeamModeFilter) => void
+  hideModeFilter?: boolean
+  createRequest?: ResourceCreateRequest
+  onCreated?: (team: Team) => void
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  compact?: boolean
+  hideCreateActions?: boolean
+}
+
+function deduplicateResourcesById<T extends { id: number }>(items: T[]): T[] {
+  return Array.from(new Map(items.map(item => [item.id, item])).values())
 }
 
 /**
@@ -120,10 +155,21 @@ export default function TeamList({
   sortControls,
   sourceFilter = 'all',
   groups = [],
+  groupFilter,
   sortMode = 'default',
+  modeFilter: controlledModeFilter,
+  onModeFilterChange,
+  hideModeFilter = false,
+  createRequest,
+  onCreated,
+  onCreateRequestClose,
+  creationOnly = false,
+  compact = false,
+  hideCreateActions = false,
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const { toast } = useToast()
+  const { user } = useUser()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -140,11 +186,12 @@ export default function TeamList({
   const [sharingId, setSharingId] = useState<number | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [modeFilter, setModeFilter] = useState<TeamModeFilter>('all')
+  const [internalModeFilter, setInternalModeFilter] = useState<TeamModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [wizardTarget, setWizardTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
+  const [apiCallTeam, setApiCallTeam] = useState<Team | null>(null)
   const [childAuthorizationTeam, setChildAuthorizationTeam] = useState<Team | null>(null)
   const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
   const [pendingCopy, setPendingCopy] = useState<{
@@ -152,6 +199,9 @@ export default function TeamList({
     targetNamespace: string
     personalSkills: Array<{ id: number; name: string; description: string }>
   } | null>(null)
+  const modeFilter = controlledModeFilter ?? internalModeFilter
+  const handledCreateRequestId = useRef<number | null>(null)
+  const pendingCreateRequestRef = useRef<ResourceCreateRequest | null>(null)
   // Groups where user has at least Developer role (for copy target selection)
   const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
@@ -173,10 +223,22 @@ export default function TeamList({
         setIsLoading(true)
       }
       try {
-        const [teamsData, botsData] = await Promise.all([
-          fetchTeamsList(scope, groupName),
-          fetchBotsList(scope, groupName),
-        ])
+        const selectedGroupNames =
+          scope === 'group' && !groupName && groupFilter !== undefined ? groupFilter : null
+        const [teamsData, botsData] = selectedGroupNames
+          ? await Promise.all([
+              Promise.all(
+                selectedGroupNames.map(selectedGroupName =>
+                  fetchTeamsList('group', selectedGroupName)
+                )
+              ).then(groupTeams => deduplicateResourcesById(groupTeams.flat())),
+              Promise.all(
+                selectedGroupNames.map(selectedGroupName =>
+                  fetchBotsList('group', selectedGroupName)
+                )
+              ).then(groupBots => deduplicateResourcesById(groupBots.flat())),
+            ])
+          : await Promise.all([fetchTeamsList(scope, groupName), fetchBotsList(scope, groupName)])
         setTeams(teamsData)
         setBotsSorted(botsData)
       } catch {
@@ -190,16 +252,57 @@ export default function TeamList({
         }
       }
     },
-    [groupName, scope, setBotsSorted, t, toast]
+    [groupFilter, groupName, scope, setBotsSorted, t, toast]
   )
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  const handleTeamSaved = useCallback(async () => {
-    await loadData(false)
-  }, [loadData])
+  const handleTeamSaved = useCallback(
+    async (team: Team) => {
+      await loadData(false)
+      if (pendingCreateRequestRef.current?.publishAfterCreate) {
+        try {
+          await resourceLibraryApi.createListing({
+            resource_type: 'agent',
+            source_id: team.id,
+            name: team.name,
+            display_name: team.displayName || team.name,
+            description: team.description || null,
+            icon: team.icon || null,
+            tags: [],
+            version: '1.0.0',
+            manifest_options: {},
+          })
+          toast({ title: t('resource-library:messages.publish_success') })
+        } catch (error) {
+          toast({
+            variant: 'destructive',
+            title: t('resource-library:messages.publish_failed'),
+            description: error instanceof Error ? error.message : undefined,
+          })
+        }
+      }
+      if (pendingCreateRequestRef.current) onCreated?.(team)
+      pendingCreateRequestRef.current = null
+    },
+    [loadData, onCreated, t, toast]
+  )
+
+  const handleCreateOptionsChange = useCallback(
+    (target: ResourceCreateTarget, publishAfterCreate: boolean) => {
+      setCreateTarget(target)
+      if (pendingCreateRequestRef.current) {
+        pendingCreateRequestRef.current = {
+          ...pendingCreateRequestRef.current,
+          target,
+          publishAfterCreate,
+        }
+      }
+    },
+    []
+  )
 
   // Load groups where user has at least Developer role (for copy target selection)
   useEffect(() => {
@@ -219,21 +322,31 @@ export default function TeamList({
     }
   }, [editingTeamId])
 
-  const handleCreateTeam = (target: ResourceCreateTarget) => {
-    if (target.scope === 'group' && !target.groupName) {
-      toast({
-        variant: 'destructive',
-        title: t('teams.group_required_title'),
-        description: t('teams.group_required_message'),
-      })
-      return
-    }
+  const handleCreateTeam = useCallback(
+    (target: ResourceCreateTarget) => {
+      if (target.scope === 'group' && !target.groupName) {
+        toast({
+          variant: 'destructive',
+          title: t('teams.group_required_title'),
+          description: t('teams.group_required_message'),
+        })
+        return
+      }
 
-    setCreateTarget(target)
-    setPrefillTeam(null)
-    setEditingTeamId(0) // Use 0 to mark new creation
-    setEditDialogOpen(true)
-  }
+      setCreateTarget(target)
+      setPrefillTeam(null)
+      setEditingTeamId(0) // Use 0 to mark new creation
+      setEditDialogOpen(true)
+    },
+    [t, toast]
+  )
+
+  useEffect(() => {
+    if (!createRequest || handledCreateRequestId.current === createRequest.id) return
+    handledCreateRequestId.current = createRequest.id
+    pendingCreateRequestRef.current = createRequest
+    handleCreateTeam(createRequest.target)
+  }, [createRequest, handleCreateTeam])
 
   const handleEditTeam = (team: Team) => {
     // Notify parent to update group selector if editing a group resource
@@ -305,10 +418,13 @@ export default function TeamList({
   }
 
   const handleCloseEditDialog = () => {
+    const hadPendingCreateRequest = pendingCreateRequestRef.current !== null
+    pendingCreateRequestRef.current = null
     setEditDialogOpen(false)
     setEditingTeamId(null)
     setPrefillTeam(null)
     setCreateTarget({ scope: 'personal' })
+    if (hadPendingCreateRequest) onCreateRequestClose?.()
   }
 
   const handleWizardSuccess = async (_teamId: number, teamName: string) => {
@@ -341,7 +457,7 @@ export default function TeamList({
     }
 
     if (targetPage === 'devices/chat') {
-      return t('settings:team.list.goToDevice')
+      return t('settings:team.list.runOnDevice')
     }
 
     return t('teams.go_to_chat')
@@ -360,7 +476,9 @@ export default function TeamList({
       return teams.filter(team => !isPublicTeam(team) && !isGroupTeam(team) && !isSharedTeam(team))
     }
     if (sourceFilter === 'group') {
-      return teams.filter(isGroupTeam)
+      return teams.filter(
+        team => isGroupTeam(team) || isSharedTeam(team) || isNamespaceAuthorizedTeam(team)
+      )
     }
     if (sourceFilter === 'system') {
       return teams.filter(isPublicTeam)
@@ -368,15 +486,22 @@ export default function TeamList({
     return teams
   }, [teams, sourceFilter])
 
+  const groupFilteredTeams = useMemo(() => {
+    const isFilteredByGroupApi = scope === 'group' && !groupName && groupFilter !== undefined
+    return isFilteredByGroupApi
+      ? sourceFilteredTeams
+      : filterResourceLibraryItemsByGroups(sourceFilteredTeams, groupFilter, team => team.namespace)
+  }, [sourceFilteredTeams, groupFilter, groupName, scope])
+
   const filteredTeams = useMemo(() => {
-    return filterTeamsByMode(sourceFilteredTeams, modeFilter)
-  }, [sourceFilteredTeams, modeFilter])
+    return filterTeamsByMode(groupFilteredTeams, modeFilter)
+  }, [groupFilteredTeams, modeFilter])
 
   const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
   const getTeamSource = useCallback((team: Team): ResourceLibrarySortSource => {
     if (isPublicTeam(team)) return 'system'
-    if (isGroupTeam(team) || isSharedTeam(team)) return 'group'
+    if (isGroupTeam(team) || isSharedTeam(team) || isNamespaceAuthorizedTeam(team)) return 'group'
     return 'personal'
   }, [])
 
@@ -529,6 +654,9 @@ export default function TeamList({
   const shouldShowDelete = (team: Team) => {
     // Public teams cannot be deleted by regular users (managed by admin)
     if (isPublicTeam(team)) return false
+    // Namespace-authorized teams are managed by the publisher's binding settings.
+    // Group members must not remove the authorization for the whole group.
+    if (isNamespaceAuthorizedTeam(team)) return false
     // For group teams, check group permissions
     if (isGroupTeam(team)) {
       return canDeleteGroupResource(team.namespace!)
@@ -572,7 +700,6 @@ export default function TeamList({
   const modeFilterOptions: Array<{
     value: TeamModeFilter
     label: string
-    icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>
     testId: string
   }> = [
     {
@@ -583,19 +710,16 @@ export default function TeamList({
     {
       value: 'chat',
       label: t('teams.filter_chat'),
-      icon: ChatBubbleLeftEllipsisIcon,
       testId: 'team-mode-filter-chat',
     },
     {
       value: 'code',
       label: t('teams.filter_code'),
-      icon: CodeBracketIcon,
       testId: 'team-mode-filter-code',
     },
     {
       value: 'task',
       label: t('settings:team.list.filterDevice'),
-      icon: CpuChipIcon,
       testId: 'team-mode-filter-device',
     },
   ]
@@ -629,318 +753,394 @@ export default function TeamList({
   ) : null
 
   const filters = (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-      <div className="flex min-w-0 flex-col gap-3">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end">
         {sourceControls}
-        <div
-          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-          data-testid="team-mode-filter"
-        >
-          <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
-          <div className="flex flex-wrap items-center gap-2">
-            {modeFilterOptions.map(option => {
-              const Icon = option.icon
-              return (
-                <Button
-                  key={option.value}
-                  type="button"
-                  variant={modeFilter === option.value ? 'primary' : 'outline'}
-                  aria-pressed={modeFilter === option.value}
-                  onClick={() => setModeFilter(option.value)}
-                  data-testid={option.testId}
-                  className="h-11 min-w-[44px] px-4 lg:h-9"
-                >
-                  {Icon && <Icon className="h-4 w-4" aria-hidden />}
-                  {option.label}
-                </Button>
-              )
-            })}
+        {!hideModeFilter && (
+          <div
+            className="flex flex-col gap-2 sm:flex-row sm:items-center"
+            data-testid="team-mode-filter"
+          >
+            <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
+            <Select
+              value={modeFilter}
+              onValueChange={value => {
+                const nextMode = value as TeamModeFilter
+                setInternalModeFilter(nextMode)
+                onModeFilterChange?.(nextMode)
+              }}
+            >
+              <SelectTrigger
+                className="h-11 w-full min-w-36 bg-base sm:w-36 lg:h-9"
+                aria-label={t('teams.filter_mode')}
+                data-testid="team-mode-filter-select"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {modeFilterOptions.map(option => (
+                  <SelectItem key={option.value} value={option.value} data-testid={option.testId}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </div>
+        )}
       </div>
-      {sortControls}
+      <div className="flex flex-wrap items-end gap-2 sm:justify-end">
+        {sortControls}
+        {compact && !hideCreateActions && createActions}
+      </div>
     </div>
   )
+  const visibleFilters =
+    sourceControls ||
+    !hideModeFilter ||
+    sortControls ||
+    (compact && !hideCreateActions && createActions)
+      ? filters
+      : undefined
 
   return (
     <>
-      <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
-        <ResourceManagementLayout
-          title={t('teams.title')}
-          description={t('teams.description')}
-          actions={createActions}
-          filters={filters}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          {isLoading ? (
-            <div className="py-12">
-              <LoadingState fullScreen={false} message={t('teams.loading')} />
-            </div>
-          ) : (
-            <div
-              className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 pr-1"
-              data-testid="team-list-items"
-            >
-              {sortedTeams.length > 0 ? (
-                sortedTeams.map(team => (
-                  <Card
-                    key={team.id}
-                    className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
-                    data-testid={`team-card-${team.id}`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
-                      <ResourceListItem
-                        name={team.name}
-                        displayName={getTeamDisplayName(team)}
-                        description={team.description}
-                        icon={
-                          <TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />
-                        }
-                        tags={[
-                          ...(isPublicTeam(team)
-                            ? [
-                                {
-                                  key: 'public',
-                                  label: t('teams.public'),
-                                  variant: 'default' as const,
-                                },
-                              ]
-                            : []),
-                          ...(isGroupTeam(team)
-                            ? [
-                                {
-                                  key: 'group',
-                                  label: team.namespace!,
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.workflow?.mode
-                            ? [
-                                {
-                                  key: 'mode',
-                                  label: t(`team_model.${String(team.workflow.mode)}`),
-                                  variant: 'default' as const,
-                                  className: 'capitalize text-xs',
-                                },
-                              ]
-                            : []),
-                          ...(team.share_status === 1
-                            ? [
-                                {
-                                  key: 'sharing',
-                                  label: t('teams.sharing'),
-                                  variant: 'info' as const,
-                                },
-                              ]
-                            : []),
-                          ...(isNamespaceAuthorizedTeam(team) && team.namespace
-                            ? [
-                                {
-                                  key: 'namespace-authorization',
-                                  label: t('teams.authorized_from_group', {
-                                    group: team.namespace,
-                                  }),
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.share_status === 2 &&
-                          team.user?.user_name &&
-                          !isNamespaceAuthorizedTeam(team)
-                            ? [
-                                {
-                                  key: 'shared',
-                                  label: t('teams.shared_by', {
-                                    author: team.user.user_name,
-                                  }),
-                                  variant: 'success' as const,
-                                },
-                              ]
-                            : []),
-                          ...(team.bots.length > 0
-                            ? [
-                                {
-                                  key: 'bots',
-                                  label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
-                                  variant: 'info' as const,
-                                  className: 'hidden sm:inline-flex text-xs',
-                                },
-                              ]
-                            : []),
-                        ]}
-                      >
-                        <div className="flex items-center space-x-1 flex-shrink-0">
-                          <div
-                            className="w-2 h-2 rounded-full"
-                            style={{
-                              backgroundColor: team.is_active
-                                ? 'rgb(var(--color-success))'
-                                : 'rgb(var(--color-border))',
-                            }}
-                          ></div>
-                          <span className="text-xs text-text-muted">
-                            {team.is_active ? t('teams.active') : t('teams.inactive')}
-                          </span>
-                        </div>
-                      </ResourceListItem>
-                      <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleChatTeam(team)}
-                          title={getActionTitle(getTeamTargetPage(team, modeFilter))}
-                          className="h-7 w-7 sm:h-8 sm:w-8"
-                        >
-                          {getTeamTargetPage(team, modeFilter) === 'code' ? (
-                            <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
-                            <CpuChipIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          ) : (
-                            <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          )}
-                        </Button>
-                        <TeamApiCallButton team={team} />
-                        {shouldShowEdit(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditTeam(team)}
-                            title={t('teams.edit')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                          >
-                            <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowChildAuthorization(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setChildAuthorizationTeam(team)}
-                            title={t('teams.child_authorization.action')}
-                            className="h-11 min-w-[44px] md:h-8 md:min-w-8"
-                            data-testid={`team-child-auth-button-${team.id}`}
-                          >
-                            <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowCopy(team) && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                disabled={copyingTeamId === team.id}
-                                title={t('teams.copy')}
-                                className="h-7 w-7 sm:h-8 sm:w-8"
-                                data-testid={`copy-team-button-${team.id}`}
-                              >
-                                {copyingTeamId === team.id ? (
-                                  <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
-                                ) : (
-                                  <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                )}
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent
-                              align="end"
-                              className="w-44 max-h-64 overflow-y-auto py-1"
-                              style={{ boxShadow: 'var(--shadow-popover)' }}
-                            >
-                              {/* Section label */}
-                              <div className="px-2.5 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
-                                {t('teams.copy_to_label')}
-                              </div>
-                              {/* Personal space */}
-                              <DropdownMenuItem
-                                onClick={() => handleCopyTeam(team, 'default')}
-                                className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
-                                data-testid={`copy-team-to-personal-${team.id}`}
-                              >
-                                <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
-                                  <svg
-                                    className="h-3 w-3"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
-                                    />
-                                  </svg>
-                                </div>
-                                <span className="truncate">{t('teams.copy_to_personal')}</span>
-                              </DropdownMenuItem>
-                              {/* Groups */}
-                              {writableGroups.length > 0 && (
-                                <>
-                                  <div className="my-1 h-px bg-border/60" />
-                                  {writableGroups.map(group => {
-                                    const label = group.display_name || group.name
-                                    const initials = label.slice(0, 2).toUpperCase()
-                                    return (
-                                      <DropdownMenuItem
-                                        key={group.name}
-                                        onClick={() => handleCopyTeam(team, group.name)}
-                                        className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
-                                        data-testid={`copy-team-to-group-${team.id}-${group.name}`}
-                                      >
-                                        <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-[9px] font-semibold text-primary">
-                                          {initials}
-                                        </div>
-                                        <span className="truncate">{label}</span>
-                                      </DropdownMenuItem>
-                                    )
-                                  })}
-                                </>
+      {!creationOnly && (
+        <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
+          <ResourceManagementLayout
+            title={t('teams.title')}
+            description={t('teams.description')}
+            actions={compact || hideCreateActions ? undefined : createActions}
+            filters={visibleFilters}
+            hideHeader={compact}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {isLoading ? (
+              <div className="py-12">
+                <LoadingState fullScreen={false} message={t('teams.loading')} />
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  'min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1',
+                  getResourceGridClassName(compact)
+                )}
+                data-testid="team-list-items"
+              >
+                {sortedTeams.length > 0 ? (
+                  sortedTeams.map(team => (
+                    <Card
+                      key={team.id}
+                      className={cn(
+                        getResourceCardClassName(compact),
+                        compact && 'group relative min-h-[160px] gap-4'
+                      )}
+                      data-testid={`team-card-${team.id}`}
+                    >
+                      <div className={getResourceCardBodyClassName(compact)}>
+                        <ResourceListItem
+                          cardLayout={compact}
+                          name={team.name}
+                          displayName={getTeamDisplayName(team)}
+                          description={team.description}
+                          identity={
+                            isGroupTeam(team) && !isNamespaceAuthorizedTeam(team)
+                              ? team.namespace
+                              : undefined
+                          }
+                          icon={
+                            <ResourceCardIcon compact={compact}>
+                              {compact ? (
+                                <TeamIconDisplay iconId={team.icon} size="md" />
+                              ) : (
+                                <TeamIconDisplay
+                                  iconId={team.icon}
+                                  size="md"
+                                  className="text-primary"
+                                />
                               )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                        {shouldShowShare(team) && (
+                            </ResourceCardIcon>
+                          }
+                          tags={[
+                            {
+                              key: 'status',
+                              label: team.is_active ? t('teams.active') : t('teams.inactive'),
+                              variant: team.is_active ? ('success' as const) : ('default' as const),
+                            },
+                            ...(isPublicTeam(team)
+                              ? [
+                                  {
+                                    key: 'public',
+                                    label: t('teams.public'),
+                                    variant: 'default' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.workflow?.mode
+                              ? [
+                                  {
+                                    key: 'mode',
+                                    label: t(`team_model.${String(team.workflow.mode)}`),
+                                    variant: 'default' as const,
+                                    className: 'capitalize text-xs',
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 1
+                              ? [
+                                  {
+                                    key: 'sharing',
+                                    label: t('teams.sharing'),
+                                    variant: 'info' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(isNamespaceAuthorizedTeam(team) && team.namespace
+                              ? [
+                                  {
+                                    key: 'namespace-authorization',
+                                    label: t('teams.authorized_from_group', {
+                                      group: team.namespace,
+                                    }),
+                                    variant: 'success' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 2 &&
+                            team.user?.user_name &&
+                            !isNamespaceAuthorizedTeam(team)
+                              ? [
+                                  {
+                                    key: 'shared',
+                                    label: t('teams.shared_by', {
+                                      author: team.user.user_name,
+                                    }),
+                                    variant: 'success' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.bots.length > 0
+                              ? [
+                                  {
+                                    key: 'bots',
+                                    label: t('teams.bot_count', { count: team.bots.length }),
+                                    variant: 'info' as const,
+                                    className: 'hidden sm:inline-flex text-xs',
+                                  },
+                                ]
+                              : []),
+                          ]}
+                        />
+                        <div
+                          className={cn(
+                            'flex flex-shrink-0 items-center gap-0.5 sm:gap-1',
+                            getResourceCardActionsClassName(compact),
+                            compact &&
+                              'absolute right-4 top-4 z-20 mt-0 w-auto gap-1 border-0 pt-0 opacity-100 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100'
+                          )}
+                        >
                           <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleShareTeam(team)}
-                            title={t('teams.share.title')}
-                            className="h-7 w-7 sm:h-8 sm:w-8"
-                            disabled={sharingId === team.id}
+                            variant={compact ? 'primary' : 'ghost'}
+                            size={compact ? 'default' : 'icon'}
+                            onClick={() => handleChatTeam(team)}
+                            title={getActionTitle(getTeamTargetPage(team, modeFilter))}
+                            className={cn(
+                              compact ? 'h-8 min-w-0 px-2.5 text-xs' : 'h-7 w-7 sm:h-8 sm:w-8'
+                            )}
+                            data-testid={`use-team-button-${team.id}`}
                           >
-                            <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </Button>
-                        )}
-                        {shouldShowDelete(team) && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(team.id)}
-                            disabled={isCheckingTasks}
-                            title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
-                            className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
-                          >
-                            {isSharedTeam(team) ? (
-                              <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                            ) : (
-                              <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            {!compact &&
+                              (getTeamTargetPage(team, modeFilter) === 'code' ? (
+                                <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
+                                <CpuChipIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              ) : (
+                                <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              ))}
+                            {compact && (
+                              <span>{getActionTitle(getTeamTargetPage(team, modeFilter))}</span>
                             )}
                           </Button>
-                        )}
+                          {compact ? (
+                            <div
+                              className="shrink-0"
+                              data-testid={`team-management-actions-${team.id}`}
+                            >
+                              <TeamCardActionsMenu
+                                team={team}
+                                writableGroups={writableGroups}
+                                copying={copyingTeamId === team.id}
+                                checkingTasks={isCheckingTasks}
+                                canEdit={shouldShowEdit(team)}
+                                canAuthorizeChildren={shouldShowChildAuthorization(team)}
+                                canCopy={shouldShowCopy(team)}
+                                canShare={shouldShowShare(team)}
+                                canDelete={shouldShowDelete(team)}
+                                shared={isSharedTeam(team)}
+                                onOpenApi={() => setApiCallTeam(team)}
+                                onEdit={() => handleEditTeam(team)}
+                                onAuthorizeChildren={() => setChildAuthorizationTeam(team)}
+                                onCopy={targetNamespace => handleCopyTeam(team, targetNamespace)}
+                                onShare={() => handleShareTeam(team)}
+                                onDelete={() => handleDelete(team.id)}
+                              />
+                            </div>
+                          ) : (
+                            <div className="contents">
+                              <TeamApiCallButton team={team} />
+                              {shouldShowEdit(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleEditTeam(team)}
+                                  title={t('teams.edit')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                >
+                                  <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowChildAuthorization(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => setChildAuthorizationTeam(team)}
+                                  title={t('teams.child_authorization.action')}
+                                  className="h-11 min-w-[44px] md:h-8 md:min-w-8"
+                                  data-testid={`team-child-auth-button-${team.id}`}
+                                >
+                                  <UserGroupIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowCopy(team) && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={copyingTeamId === team.id}
+                                      title={t('teams.copy')}
+                                      className="h-7 w-7 sm:h-8 sm:w-8"
+                                      data-testid={`copy-team-button-${team.id}`}
+                                    >
+                                      {copyingTeamId === team.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-spin" />
+                                      ) : (
+                                        <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                      )}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent
+                                    align="end"
+                                    className="w-44 max-h-64 overflow-y-auto py-1"
+                                    style={{ boxShadow: 'var(--shadow-popover)' }}
+                                  >
+                                    <div className="px-2.5 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                                      {t('teams.copy_to_label')}
+                                    </div>
+                                    <DropdownMenuItem
+                                      onClick={() => handleCopyTeam(team, 'default')}
+                                      className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                      data-testid={`copy-team-to-personal-${team.id}`}
+                                    >
+                                      <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-primary">
+                                        <svg
+                                          className="h-3 w-3"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                          viewBox="0 0 24 24"
+                                        >
+                                          <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+                                          />
+                                        </svg>
+                                      </div>
+                                      <span className="truncate">
+                                        {t('teams.copy_to_personal')}
+                                      </span>
+                                    </DropdownMenuItem>
+                                    {writableGroups.length > 0 && (
+                                      <>
+                                        <div className="my-1 h-px bg-border/60" />
+                                        {writableGroups.map(group => {
+                                          const label = group.display_name || group.name
+                                          const initials = label.slice(0, 2).toUpperCase()
+                                          return (
+                                            <DropdownMenuItem
+                                              key={group.name}
+                                              onClick={() => handleCopyTeam(team, group.name)}
+                                              className="gap-2 px-2.5 py-1.5 text-xs focus:bg-muted"
+                                              data-testid={`copy-team-to-group-${team.id}-${group.name}`}
+                                            >
+                                              <div className="flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-[4px] bg-primary/10 text-[9px] font-semibold text-primary">
+                                                {initials}
+                                              </div>
+                                              <span className="truncate">{label}</span>
+                                            </DropdownMenuItem>
+                                          )
+                                        })}
+                                      </>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              )}
+                              {shouldShowShare(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleShareTeam(team)}
+                                  title={t('teams.share.title')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
+                                  disabled={sharingId === team.id}
+                                >
+                                  <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                </Button>
+                              )}
+                              {shouldShowDelete(team) && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(team.id)}
+                                  disabled={isCheckingTasks}
+                                  title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
+                                  className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
+                                >
+                                  {isSharedTeam(team) ? (
+                                    <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                  ) : (
+                                    <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                  )}
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-                ))
-              ) : (
-                <div className="text-center text-text-muted py-8" data-testid="team-empty-state">
-                  <p className="text-sm">{t('teams.no_teams')}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </ResourceManagementLayout>
-      </div>
+                      {compact && (
+                        <ResourceCardFooter
+                          owner={
+                            team.user_id === 0
+                              ? t('resource-library:fields.official_publisher')
+                              : team.user?.user_name ||
+                                (user?.id === team.user_id ? user.user_name : null)
+                          }
+                          updatedAt={team.updated_at}
+                          testId={`team-card-footer-${team.id}`}
+                        />
+                      )}
+                    </Card>
+                  ))
+                ) : (
+                  <div className="text-center text-text-muted py-8" data-testid="team-empty-state">
+                    <p className="text-sm">{t('teams.no_teams')}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </ResourceManagementLayout>
+        </div>
+      )}
 
       {/* Team Edit Dialog */}
       <TeamEditDialog
@@ -958,6 +1158,10 @@ export default function TeamList({
           editingTeamId === 0 && createTarget.scope === 'group' ? createTarget.groupName : groupName
         }
         onSaved={handleTeamSaved}
+        createTarget={createTarget}
+        writableGroups={writableGroups}
+        publishAfterCreate={Boolean(pendingCreateRequestRef.current?.publishAfterCreate)}
+        onCreateOptionsChange={handleCreateOptionsChange}
       />
 
       <TeamChildNamespaceAuthorizationDialog
@@ -967,6 +1171,17 @@ export default function TeamList({
           if (!open) setChildAuthorizationTeam(null)
         }}
       />
+
+      {apiCallTeam && (
+        <TeamApiCallButton
+          team={apiCallTeam}
+          hideTrigger
+          open
+          onOpenChange={open => {
+            if (!open) setApiCallTeam(null)
+          }}
+        />
+      )}
 
       {/* Delete/Unbind confirmation dialog */}
       <Dialog

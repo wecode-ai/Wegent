@@ -208,7 +208,7 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 不要把引导成功后的 user message append 到对话底部，也不要等 `runtime.tasks.guidance` 返回后才拆分 assistant；这会让引导请求等待期间产生的 assistant 文本出现在用户引导消息之前，造成流式显示和刷新后 transcript 顺序不一致。
 
-如果引导应用时源 pane 没有挂载，后台订阅者必须从 `queuedMessages` 移除对应条目，并把已确认的 user message 写入 `runtimeConversationCache.messages` 的内存 live projection。用户在 Codex transcript 尚未覆盖当前运行中 turn 时重新打开源对话，必须先看到这条已确认消息；Provider transcript 覆盖同一 turn 后再整体接管内容和顺序。该缓存不得持久化，也不得与 Provider 分页消息做并集合并，因此不会成为第二份持久 transcript 信源。
+如果引导应用时源 pane 没有挂载，后台订阅者必须从 `queuedMessages` 移除对应条目，并把已确认的 user message 写入 `runtimeConversationCache.messages` 的内存 live projection。后台路径必须复用前台的 `AppliedRuntimeGuidanceMessage` 构造和 assistant 拆分入口，禁止直接执行 `[...messages, guidance]`；否则重新打开仍在运行的会话时，user message 会落在整个 assistant 后面。拆分前缀边界必须按 conversation key 共享，使后台拆分后切回前台的 `chat:done` 仍能去掉已展示的 assistant 前缀。用户在 Codex transcript 尚未覆盖当前运行中 turn 时重新打开源对话，必须先看到这条已确认消息；Provider transcript 覆盖同一 turn 后再整体接管内容和顺序。该缓存不得持久化，也不得与 Provider 分页消息做并集合并，因此不会成为第二份持久 transcript 信源。
 
 引导消息插入后，即使用户此前已经向上滚动，消息区域也必须主动滚动到底部并保持一段短暂的稳定跟随，使新插入的 user message 和 assistant continuation 可见。该强制滚动只适用于当前会话中新应用的引导；加载包含旧引导的历史页面时，必须保留用户当前的视口锚点。
 

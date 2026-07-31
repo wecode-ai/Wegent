@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|click|close-to-tray|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|capture-popout|snapshot|click|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -386,6 +386,7 @@ async function main() {
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    'request-close': 'requestMainWindowClose',
     'dismiss-popout': 'dismissPopoutWindow',
     drag: 'drag',
     'drop-file': 'dropFile',
@@ -422,7 +423,8 @@ async function main() {
     command === 'show-popout' ||
     command === 'system-drag-drop' ||
     command === 'window-focus-snapshot' ||
-    command === 'close-to-tray'
+    command === 'close-to-tray' ||
+    command === 'request-close'
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')
