@@ -6,6 +6,7 @@ import {
   getToolActivityKind,
   getToolActivitySearchItem,
   summarizeToolBlocks,
+  stripShellPrefix,
   unwrapShellCommand,
 } from './toolBlockActivity'
 
@@ -126,6 +127,45 @@ describe('toolBlockActivity', () => {
     expect(
       getToolActivityKind(
         tool('pwsh-rg', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"')
+      )
+    ).toBe('search')
+  })
+
+
+  test('strips cd prefix before identifying command executable', () => {
+    expect(stripShellPrefix('cd D:\\Wegent && rg pattern .')).toBe('rg pattern .')
+    expect(stripShellPrefix('cd /tmp; cat file.txt')).toBe('cat file.txt')
+  })
+
+  test('classifies PowerShell Select-String as search activity', () => {
+    expect(
+      getToolActivityKind(
+        tool(
+          'pwsh-select-string',
+          '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "cd D:\\Wegent && Select-String -Path src/cli.ts -Pattern \"foo\""'
+        )
+      )
+    ).toBe('search')
+  })
+
+  test('classifies PowerShell Get-Content as file read activity', () => {
+    expect(
+      getToolActivityFilePaths(
+        tool(
+          'pwsh-get-content',
+          '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "cd D:\\Wegent && Get-Content -Path src/app.ts"'
+        )
+      )
+    ).toEqual(['src/app.ts'])
+  })
+
+  test('classifies PowerShell Get-ChildItem with -File as search activity', () => {
+    expect(
+      getToolActivityKind(
+        tool(
+          'pwsh-gci',
+          'pwsh -c "Get-ChildItem -Recurse -File -Path src | Select-String -Pattern foo"'
+        )
       )
     ).toBe('search')
   })

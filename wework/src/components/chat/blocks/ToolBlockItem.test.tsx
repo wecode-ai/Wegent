@@ -183,7 +183,7 @@ describe('ToolBlockItem', () => {
           toolName: 'bash',
           toolInput: {
             command:
-              '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-ChildItem -Recurse -File -Path D:\\jiaqi62\\Projects\\Wegent | Select-String -Pattern \"pattern\" -CaseSensitive"',
+              '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "cd D:\\jiaqi62\\Projects\\Wegent && Get-ChildItem -Recurse -File -Path src | Select-String -Pattern \"pattern\" -CaseSensitive"',
           },
           status: 'streaming',
           createdAt: 1770000000002,
@@ -191,7 +191,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText(/Get-ChildItem/)).toBeInTheDocument()
+    // Get-ChildItem | Select-String should be classified as code search.
+    expect(screen.getByText('正在搜索代码')).toBeInTheDocument()
     expect(screen.queryByText(/PowerShell/)).not.toBeInTheDocument()
   })
   test('summarizes wrapped Windows PowerShell commands before expanding', () => {
