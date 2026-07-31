@@ -2457,7 +2457,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     const sidebar = screen.getByTestId('desktop-sidebar')
     expect(sidebar).toHaveStyle({ width: '240px' })
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
@@ -2467,9 +2469,10 @@ describe('DesktopWorkbenchLayout', () => {
       'will-change-[width]'
     )
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
-      screen.getByTestId('desktop-window-controls')
-    )
+    const workbenchControls = within(
+      screen.getByTestId('workbench-topbar-left-actions')
+    ).getByTestId('desktop-window-controls')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(workbenchControls)
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
@@ -2492,7 +2495,9 @@ describe('DesktopWorkbenchLayout', () => {
   test('slides out a sidebar preview from the left edge without resizing the workspace', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     const main = getDesktopWorkbenchMainElement()
     const preview = screen.getByTestId('desktop-sidebar-preview')
