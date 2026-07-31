@@ -162,15 +162,15 @@ describe('TeamCapabilities', () => {
     expect(screen.getByTestId('team-capability-group-filter')).toHaveTextContent('Platform')
   })
 
-  it('does not offer marketplace add for foundation resource types', async () => {
+  it('offers marketplace add for foundation resource types', async () => {
     render(
       <TeamCapabilities resourceType="model" modelCategoryFilter="embedding" hideGlobalControls />
     )
 
     await waitFor(() => expect(screen.getByTestId('team-resource-manager')).toBeInTheDocument())
     expect(screen.getByTestId('team-resource-manager')).toHaveAttribute('data-types', 'model')
-    expect(screen.queryByTestId('team-capability-add-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('team-capability-mode-switch')).not.toBeInTheDocument()
+    expect(screen.getByTestId('team-capability-add-button')).toBeInTheDocument()
+    expect(screen.getByTestId('team-capability-mode-switch')).toBeInTheDocument()
     expect(screen.getByTestId('team-resource-manager')).toHaveAttribute(
       'data-model-category-filter',
       'embedding'

@@ -17,6 +17,10 @@ from app.models.namespace import Namespace
 from app.models.user import User
 from app.schemas.kind import Retriever
 from app.services.base import BaseService
+from app.services.capability_reference_service import (
+    get_referenced_capability,
+    list_referenced_capabilities,
+)
 from app.services.group_permission import check_group_permission, get_user_groups
 from app.services.knowledge.namespace_utils import is_organization_namespace
 
@@ -85,6 +89,7 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             raise ValueError(f"Invalid scope: {scope}")
 
         retrievers = []
+        referenced_summaries: list[dict[str, Any]] = []
 
         # Query personal retrievers (with user_id filter)
         if personal_namespaces:
@@ -100,6 +105,16 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 .all()
             )
             retrievers.extend(personal_retrievers)
+            referenced_summaries.extend(
+                self._kind_to_summary(kind, "default", is_reference=True)
+                for kind in list_referenced_capabilities(
+                    db,
+                    kind="Retriever",
+                    user_id=user_id,
+                    namespace="default",
+                )
+                if kind.id not in {item.id for item in personal_retrievers}
+            )
 
         # Query group retrievers (without user_id filter)
         if group_namespaces:
@@ -114,6 +129,18 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 .all()
             )
             retrievers.extend(group_retrievers)
+            local_ids = {item.id for item in group_retrievers}
+            for namespace in group_namespaces:
+                referenced_summaries.extend(
+                    self._kind_to_summary(kind, namespace, is_reference=True)
+                    for kind in list_referenced_capabilities(
+                        db,
+                        kind="Retriever",
+                        user_id=user_id,
+                        namespace=namespace,
+                    )
+                    if kind.id not in local_ids
+                )
 
         # Query public retrievers (user_id=0) - always include
         if include_public:
@@ -135,7 +162,10 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             # as personal/group retrievers. Frontend displays them in separate sections.
             retrievers.extend(public_retrievers)
 
-        return [self._kind_to_summary(kind) for kind in retrievers]
+        return [
+            *[self._kind_to_summary(kind) for kind in retrievers],
+            *referenced_summaries,
+        ]
 
     def get_retriever(
         self,
@@ -200,6 +230,14 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )  # Prioritize user's retriever (user_id > 0)
                 .first()
             )
+            if not kind:
+                kind = get_referenced_capability(
+                    db,
+                    kind="Retriever",
+                    name=name,
+                    user_id=user_id,
+                    namespace=namespace,
+                )
         else:
             # Group retriever: no user_id filter
             kind = (
@@ -212,6 +250,14 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 )
                 .first()
             )
+            if not kind:
+                kind = get_referenced_capability(
+                    db,
+                    kind="Retriever",
+                    name=name,
+                    user_id=user_id,
+                    namespace=namespace,
+                )
             # Fallback to public retriever if not found in group
             if not kind:
                 kind = (
@@ -577,7 +623,13 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
 
         return total_count
 
-    def _kind_to_summary(self, kind: Kind) -> Dict[str, Any]:
+    def _kind_to_summary(
+        self,
+        kind: Kind,
+        visible_namespace: str | None = None,
+        *,
+        is_reference: bool = False,
+    ) -> Dict[str, Any]:
         """
         Convert Kind to retriever summary.
 
@@ -593,9 +645,10 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
             # - user_id=0: public retriever
             # - namespace!='default': group retriever
             # - otherwise: user (personal) retriever
-            if kind.user_id == 0:
+            namespace = visible_namespace or kind.namespace
+            if kind.user_id == 0 and visible_namespace is None:
                 type_ = "public"
-            elif kind.namespace != "default":
+            elif namespace != "default":
                 type_ = "group"
             else:
                 type_ = "user"
@@ -604,17 +657,20 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 "type": type_,
                 "displayName": retriever.metadata.displayName or kind.name,
                 "storageType": retriever.spec.storageConfig.type,
-                "namespace": kind.namespace,
+                "namespace": namespace,
                 "description": retriever.spec.description,
                 "created_at": kind.created_at,
                 "updated_at": kind.updated_at,
+                "isReference": is_reference,
+                "listingId": kind.id if is_reference else None,
             }
         except Exception as e:
             logger.warning(f"Failed to parse retriever {kind.name}: {e}")
             # Determine type based on user_id and namespace
-            if kind.user_id == 0:
+            namespace = visible_namespace or kind.namespace
+            if kind.user_id == 0 and visible_namespace is None:
                 type_ = "public"
-            elif kind.namespace != "default":
+            elif namespace != "default":
                 type_ = "group"
             else:
                 type_ = "user"
@@ -623,10 +679,12 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 "type": type_,
                 "displayName": kind.name,
                 "storageType": "unknown",
-                "namespace": kind.namespace,
+                "namespace": namespace,
                 "description": None,
                 "created_at": kind.created_at,
                 "updated_at": kind.updated_at,
+                "isReference": is_reference,
+                "listingId": kind.id if is_reference else None,
             }
 
 

@@ -264,7 +264,7 @@ export function TeamCapabilities({
     [addTargetGroup, writableGroups]
   )
   const canAdd = writableGroups.length > 0
-  const canAddMarketplaceCapability = resourceType === 'agent' || resourceType === 'skill'
+  const canAddMarketplaceCapability = resourceType !== 'all'
   const effectiveGroupNames = teamSelection.all
     ? groups.map(group => group.name)
     : teamSelection.groupNames
