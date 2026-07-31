@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::queries::{attach_paginated_codex_items, reconcile_persisted_codex_turn_status};
+use super::queries::reconcile_persisted_codex_turn_status;
 use super::*;
 
 #[tokio::test]
@@ -1326,27 +1326,6 @@ fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
         codex_guidance_failure_code("turn/steer response missing turnId"),
         "guidance_failed"
     );
-}
-
-#[test]
-fn paginated_codex_items_attach_by_turn_id_in_provider_order() {
-    let mut turns = vec![
-        json!({"id": "turn-1", "status": "completed"}),
-        json!({"id": "turn-2", "status": "inProgress"}),
-    ];
-    attach_paginated_codex_items(
-        &mut turns,
-        vec![
-            json!({"turnId": "turn-1", "item": {"id": "user-1", "type": "userMessage"}}),
-            json!({"turnId": "turn-1", "item": {"id": "assistant-1", "type": "agentMessage"}}),
-            json!({"turnId": "turn-2", "item": {"id": "user-2", "type": "userMessage"}}),
-        ],
-    )
-    .expect("paginated items should attach");
-
-    assert_eq!(turns[0]["items"][0]["id"], "user-1");
-    assert_eq!(turns[0]["items"][1]["id"], "assistant-1");
-    assert_eq!(turns[1]["items"][0]["id"], "user-2");
 }
 
 #[test]

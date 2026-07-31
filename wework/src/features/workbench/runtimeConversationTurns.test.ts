@@ -59,6 +59,59 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('binds Codex turn started to the latest unbound optimistic turn', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('client-user-1', 'First'),
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'user_added',
+      message: userMessage('client-user-2', 'Second'),
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-2',
+    })
+
+    expect(turns.map(turn => [turn.id, turn.clientUserMessageId])).toEqual([
+      [null, 'client-user-1'],
+      ['turn-2', 'client-user-2'],
+    ])
+  })
+
+  test('does not synthesize a Codex turn from a terminal event', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: null,
+          clientUserMessageId: 'client-user-1',
+          items: [
+            {
+              id: 'client-user-1',
+              type: 'user_message',
+              message: userMessage('client-user-1', 'Prompt'),
+            },
+          ],
+          status: 'pending',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        blocks: [],
+      }
+    )
+
+    expect(turns).toEqual([
+      expect.objectContaining({
+        id: null,
+        clientUserMessageId: 'client-user-1',
+        status: 'pending',
+      }),
+    ])
+  })
+
   test('clears terminal metadata when the same Codex turn starts again', () => {
     const turns = reduceRuntimeConversationTurns(
       [
@@ -192,6 +245,173 @@ describe('runtimeConversationTurns', () => {
     expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
       'Prompt',
       'Answer',
+    ])
+  })
+
+  test('uses a complete legacy snapshot instead of retaining reissued process items', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Prompt'),
+          },
+          {
+            id: 'rs-realtime-1',
+            type: 'block',
+            block: {
+              id: 'rs-realtime-1',
+              subtaskId: 'turn-1',
+              type: 'thinking',
+              content: 'Checking',
+              status: 'done',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'call-1',
+            type: 'block',
+            block: {
+              id: 'call-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 2,
+            },
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Prompt'),
+          },
+          {
+            id: 'item-2',
+            type: 'block',
+            block: {
+              id: 'item-2',
+              subtaskId: 'turn-1',
+              type: 'thinking',
+              content: 'Checking',
+              status: 'done',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'call-1',
+            type: 'block',
+            block: {
+              id: 'call-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+              createdAt: 2,
+            },
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items).toEqual(snapshot[0].items)
+    expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'item-2', 'call-1'])
+  })
+
+  test('converges a lagging legacy final answer onto the realtime Codex item', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'process-1',
+            type: 'block',
+            block: requestBlock('process-1', 'turn-1'),
+          },
+          {
+            id: 'msg-realtime-1',
+            type: 'assistant_text',
+            content: 'Final answer',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'item-1',
+            type: 'assistant_text',
+            content: 'Final answer',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(local, snapshot)[0].items).toEqual([
+      local[0].items[0],
+      {
+        ...snapshot[0].items[0],
+        id: 'msg-realtime-1',
+      },
+    ])
+  })
+
+  test('appends an unmatched final answer from a lagging legacy snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'process-1',
+            type: 'block',
+            block: requestBlock('process-1', 'turn-1'),
+          },
+          {
+            id: 'msg-realtime-1',
+            type: 'assistant_text',
+            content: 'First answer',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'item-1',
+            type: 'assistant_text',
+            content: 'Different answer',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(local, snapshot)[0].items).toEqual([
+      ...local[0].items,
+      snapshot[0].items[0],
     ])
   })
 

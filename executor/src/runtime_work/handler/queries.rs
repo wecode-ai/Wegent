@@ -13,99 +13,10 @@ impl RuntimeWorkRpcHandler {
             .codex_app_server
             .request(
                 "thread/read",
-                json!({"threadId": thread_id, "includeTurns": false}),
+                json!({"threadId": thread_id, "includeTurns": true}),
             )
             .await?;
-        let mut thread = response.get("thread").unwrap_or(&response).clone();
-        if string_field(&thread, "historyMode").as_deref() != Some("paginated") {
-            let response = self
-                .codex_app_server
-                .request(
-                    "thread/read",
-                    json!({"threadId": thread_id, "includeTurns": true}),
-                )
-                .await?;
-            return Ok(response.get("thread").unwrap_or(&response).clone());
-        }
-
-        let mut turns = self.read_paginated_codex_turns(thread_id).await?;
-        attach_paginated_codex_items(
-            &mut turns,
-            self.read_paginated_codex_items(thread_id).await?,
-        )?;
-
-        thread
-            .as_object_mut()
-            .ok_or_else(|| "thread/read response missing thread object".to_owned())?
-            .insert("turns".to_owned(), Value::Array(turns));
-        Ok(thread)
-    }
-
-    async fn read_paginated_codex_turns(&self, thread_id: &str) -> Result<Vec<Value>, String> {
-        let mut cursor = None;
-        let mut turns = Vec::new();
-        loop {
-            let response = self
-                .codex_app_server
-                .request(
-                    "thread/turns/list",
-                    json!({
-                        "threadId": thread_id,
-                        "cursor": cursor.clone(),
-                        "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-                        "sortDirection": "asc",
-                        "itemsView": "notLoaded",
-                    }),
-                )
-                .await?;
-            let page = response
-                .get("data")
-                .and_then(Value::as_array)
-                .ok_or_else(|| "thread/turns/list response missing data".to_owned())?;
-            turns.extend(page.iter().cloned());
-
-            let next_cursor = string_field(&response, "nextCursor");
-            let Some(next_cursor) = next_cursor else {
-                return Ok(turns);
-            };
-            if cursor.as_deref() == Some(next_cursor.as_str()) {
-                return Err("thread/turns/list returned a repeated cursor".to_owned());
-            }
-            cursor = Some(next_cursor);
-        }
-    }
-
-    async fn read_paginated_codex_items(&self, thread_id: &str) -> Result<Vec<Value>, String> {
-        let mut cursor = None;
-        let mut items = Vec::new();
-        loop {
-            let response = self
-                .codex_app_server
-                .request(
-                    "thread/items/list",
-                    json!({
-                        "threadId": thread_id,
-                        "cursor": cursor.clone(),
-                        "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-                        "sortDirection": "asc",
-                    }),
-                )
-                .await?;
-            let page = response
-                .get("data")
-                .and_then(Value::as_array)
-                .ok_or_else(|| "thread/items/list response missing data".to_owned())?;
-            items.extend(page.iter().cloned());
-
-            let next_cursor = string_field(&response, "nextCursor");
-            let Some(next_cursor) = next_cursor else {
-                return Ok(items);
-            };
-            if cursor.as_deref() == Some(next_cursor.as_str()) {
-                return Err("thread/items/list returned a repeated cursor".to_owned());
-            }
-            cursor = Some(next_cursor);
-        }
+        Ok(response.get("thread").unwrap_or(&response).clone())
     }
 
     pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
@@ -404,45 +315,6 @@ impl RuntimeWorkRpcHandler {
             turn_item_source: TranscriptTurnItemSource::CodexItems,
         }))
     }
-}
-
-pub(super) fn attach_paginated_codex_items(
-    turns: &mut [Value],
-    entries: Vec<Value>,
-) -> Result<(), String> {
-    let turn_indexes = turns
-        .iter()
-        .enumerate()
-        .map(|(index, turn)| {
-            string_field(turn, "id")
-                .map(|turn_id| (turn_id, index))
-                .ok_or_else(|| "Codex paginated turn missing id".to_owned())
-        })
-        .collect::<Result<HashMap<_, _>, _>>()?;
-    for turn in turns.iter_mut() {
-        turn.as_object_mut()
-            .ok_or_else(|| "Codex paginated turn is not an object".to_owned())?
-            .insert("items".to_owned(), Value::Array(Vec::new()));
-    }
-    for entry in entries {
-        let turn_id = string_field(&entry, "turnId")
-            .ok_or_else(|| "Codex paginated item missing turnId".to_owned())?;
-        let item = entry
-            .get("item")
-            .cloned()
-            .ok_or_else(|| "Codex paginated item missing item".to_owned())?;
-        let Some(index) = turn_indexes.get(&turn_id).copied() else {
-            return Err(format!(
-                "Codex paginated item references unknown turn {turn_id}"
-            ));
-        };
-        turns[index]
-            .get_mut("items")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| format!("Codex paginated turn {turn_id} has invalid items"))?
-            .push(item);
-    }
-    Ok(())
 }
 
 pub(super) fn reconcile_persisted_codex_turn_status(thread: &mut Value, link: &RuntimeTaskLink) {

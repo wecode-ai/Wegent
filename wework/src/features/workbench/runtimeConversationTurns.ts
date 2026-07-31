@@ -189,7 +189,7 @@ function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn
 ): RuntimeConversationTurn {
-  const items = mergeOrderedById(local.items, snapshot.items, (_local, item) => item)
+  const items = mergeRuntimeConversationItems(local.items, snapshot.items)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   return {
     ...local,
@@ -203,43 +203,28 @@ function mergeRuntimeConversationTurn(
   }
 }
 
-function mergeOrderedById<T extends { id: string }>(
-  localItems: T[],
-  snapshotItems: T[],
-  mergeMatched: (local: T, snapshot: T) => T
-): T[] {
+function mergeRuntimeConversationItems(
+  localItems: RuntimeConversationItem[],
+  snapshotItems: RuntimeConversationItem[]
+): RuntimeConversationItem[] {
+  if (localItems.length <= snapshotItems.length) return snapshotItems
+
   const snapshotById = new Map(snapshotItems.map(item => [item.id, item]))
-  const localIndexById = new Map(localItems.map((item, index) => [item.id, index]))
-  const emittedLocalIndexes = new Set<number>()
-  const merged: T[] = []
-  let localCursor = 0
-
-  for (const snapshotItem of snapshotItems) {
-    const matchedIndex = localIndexById.get(snapshotItem.id)
-    if (matchedIndex !== undefined) {
-      while (localCursor < matchedIndex) {
-        const localItem = localItems[localCursor]
-        if (localItem && !snapshotById.has(localItem.id)) {
-          merged.push(localItem)
-        }
-        emittedLocalIndexes.add(localCursor)
-        localCursor += 1
-      }
-      const localItem = localItems[matchedIndex]
-      merged.push(localItem ? mergeMatched(localItem, snapshotItem) : snapshotItem)
-      emittedLocalIndexes.add(matchedIndex)
-      localCursor = Math.max(localCursor, matchedIndex + 1)
-      continue
-    }
-    merged.push(snapshotItem)
+  const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
+  for (let index = snapshotItems.length - 1; index >= 0; index -= 1) {
+    const snapshotItem = snapshotItems[index]
+    if (snapshotItem?.type !== 'assistant_text') continue
+    const localMatch = mergedLocalItems.find(
+      item =>
+        item.type === 'assistant_text' &&
+        (item.id === snapshotItem.id || item.content === snapshotItem.content)
+    )
+    if (!localMatch) return [...mergedLocalItems, snapshotItem]
+    return mergedLocalItems.map(item =>
+      item === localMatch ? { ...snapshotItem, id: localMatch.id } : item
+    )
   }
-
-  localItems.forEach((item, index) => {
-    if (!emittedLocalIndexes.has(index) && !snapshotById.has(item.id)) {
-      merged.push(item)
-    }
-  })
-  return merged
+  return mergedLocalItems
 }
 
 function seedRuntimeConversationTurns(
@@ -302,7 +287,9 @@ function updateStartedTurn(
     ? turns.findIndex(
         turn => turn.id === null && turn.clientUserMessageId === action.clientUserMessageId
       )
-    : -1
+    : turns.findLastIndex(
+        turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
+      )
   if (optimisticIndex >= 0) {
     const optimistic = turns[optimisticIndex]
     return replaceAt(turns, optimisticIndex, {
@@ -344,12 +331,7 @@ function updateTurn(
 ): RuntimeConversationTurn[] {
   if (!turnId) return turns
   const index = turns.findIndex(turn => turn.id === turnId)
-  if (index < 0) {
-    return updateStartedTurn(turns, {
-      type: 'assistant_started',
-      subtaskId: turnId,
-    }).map(turn => (turn.id === turnId ? update(turn) : turn))
-  }
+  if (index < 0) return turns
   return replaceAt(turns, index, update(turns[index]))
 }
 

@@ -184,10 +184,16 @@ export function completeRuntimeConversationHydration(
   const hydration = hydrationByConversation.get(key)
   if (hydration?.token !== token) return getRuntimeConversationMessages(address)
 
-  let turns = mergeRuntimeConversationTurns(turnsByConversation.get(key) ?? [], snapshotTurns)
+  const localTurns = turnsByConversation.get(key) ?? []
+  logRuntimeConversationState('hydrate:before', key, localTurns, {
+    snapshot: summarizeRuntimeConversationTurns(snapshotTurns),
+    bufferedActions: hydration.bufferedActions.map(summarizeRuntimeConversationAction),
+  })
+  let turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
   for (const action of hydration.bufferedActions) {
     turns = reduceRuntimeConversationTurns(turns, action)
   }
+  logRuntimeConversationState('hydrate:after', key, turns)
   hydrationByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns)
   notifyHydratedRuntimeConversation(key, hydration.bufferedActions)
@@ -218,7 +224,11 @@ export function reconcileRuntimeConversationSnapshot(
 ): WorkbenchMessage[] {
   const key = runtimeConversationKey(address)
   const localTurns = turnsByConversation.get(key) ?? []
+  logRuntimeConversationState('snapshot:before', key, localTurns, {
+    snapshot: summarizeRuntimeConversationTurns(snapshotTurns),
+  })
   const turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
+  logRuntimeConversationState('snapshot:after', key, turns)
   cacheBoundedEntry(turnsByConversation, key, turns)
   notifyRuntimeConversation(key)
   return projectRuntimeConversationTurns(turns)
@@ -249,10 +259,20 @@ export function applyRuntimeConversationAction(
   const hydration = hydrationByConversation.get(key)
   if (hydration) {
     hydration.bufferedActions.push(action)
+    logRuntimeConversationState('action:buffered', key, turnsByConversation.get(key) ?? [], {
+      action: summarizeRuntimeConversationAction(action),
+      bufferedActionCount: hydration.bufferedActions.length,
+    })
     return projectRuntimeConversationTurns(turnsByConversation.get(key) ?? [])
   }
   const currentTurns = turnsByConversation.get(key) ?? []
+  logRuntimeConversationState('action:before', key, currentTurns, {
+    action: summarizeRuntimeConversationAction(action),
+  })
   const nextTurns = reduceRuntimeConversationTurns(currentTurns, action)
+  logRuntimeConversationState('action:after', key, nextTurns, {
+    action: summarizeRuntimeConversationAction(action),
+  })
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
   notifyRuntimeConversation(key, action)
   return projectRuntimeConversationTurns(nextTurns)
@@ -448,6 +468,49 @@ function turnContainsClientUserMessage(
 
 function isUnsettledTurn(turn: RuntimeConversationTurn): boolean {
   return turn.status === 'pending' || turn.status === 'streaming'
+}
+
+function logRuntimeConversationState(
+  stage: string,
+  key: string,
+  turns: RuntimeConversationTurn[],
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[Wework] Runtime canonical conversation', {
+    stage,
+    conversationKey: key,
+    turns: summarizeRuntimeConversationTurns(turns),
+    ...details,
+  })
+}
+
+function summarizeRuntimeConversationTurns(turns: RuntimeConversationTurn[]) {
+  return turns.map(turn => ({
+    turnId: turn.id,
+    clientUserMessageId: turn.clientUserMessageId ?? null,
+    status: turn.status,
+    items: turn.items.map(item => ({
+      itemId: item.id,
+      itemType: item.type,
+      blockType: item.type === 'block' ? item.block.type : null,
+    })),
+  }))
+}
+
+function summarizeRuntimeConversationAction(action: RuntimePaneMessageAction) {
+  return {
+    type: action.type,
+    subtaskId: 'subtaskId' in action ? (action.subtaskId ?? null) : null,
+    clientUserMessageId:
+      'clientUserMessageId' in action ? (action.clientUserMessageId ?? null) : null,
+    itemId: 'itemId' in action ? (action.itemId ?? null) : null,
+    blockId:
+      action.type === 'block_created'
+        ? action.block.id
+        : action.type === 'block_updated'
+          ? action.blockId
+          : null,
+  }
 }
 
 export function getRuntimeConversationQueuePaused(address: RuntimeTaskAddress): boolean {

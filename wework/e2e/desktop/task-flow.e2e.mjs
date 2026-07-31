@@ -20,6 +20,7 @@ import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from './checkpoints.mjs'
 import { loadDesktopScenario } from './scenario-loader.mjs'
 import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
 
@@ -343,16 +344,6 @@ const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
-const DESKTOP_CHECKPOINTS = [
-  'core-task-flow',
-  'window-lifecycle',
-  'goal-lifecycle',
-  'resilience',
-  'conversation-state',
-  'workspace-attachments',
-  'rendering-extensions',
-]
-const PLUGIN_SEGMENTS = ['plugin-lifecycle', 'skill-mention-rendering', 'sites-plugin-auto-install']
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
 const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
 const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
