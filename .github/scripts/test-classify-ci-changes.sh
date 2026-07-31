@@ -6,6 +6,102 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 classifier="$script_dir/classify-ci-changes.sh"
 desktop_classifier="$script_dir/classify-wework-desktop-e2e.sh"
 
+workflow_has_top_level_trigger() {
+  local workflow_path="$1"
+  local trigger="$2"
+
+  awk -v target="$trigger" '
+    function normalize_token(token) {
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", token)
+      gsub(/^\047+|\047+$/, "", token)
+      return token
+    }
+
+    function inline_has_target(value, tokens, token_count, token_index) {
+      sub(/[[:space:]]+#.*/, "", value)
+      gsub(/[\[\],]/, " ", value)
+      token_count = split(value, tokens, /[[:space:]]+/)
+      for (token_index = 1; token_index <= token_count; token_index++) {
+        if (normalize_token(tokens[token_index]) == target) return 1
+      }
+      return 0
+    }
+
+    /^[[:space:]]*(#|$)/ {
+      next
+    }
+
+    {
+      line = $0
+      if (!in_on) {
+        if (line !~ /^on:[[:space:]]*/) next
+        sub(/^on:[[:space:]]*/, "", line)
+        sub(/^[[:space:]]*#.*/, "", line)
+        if (line != "") {
+          found = inline_has_target(line)
+          exit
+        }
+        in_on = 1
+        child_indent = -1
+        next
+      }
+
+      if (line ~ /^[^[:space:]]/) exit
+
+      indentation = line
+      sub(/[^[:space:]].*$/, "", indentation)
+      indent = length(indentation)
+      if (child_indent == -1) child_indent = indent
+      if (indent != child_indent) next
+
+      sub(/^[[:space:]]+/, "", line)
+      sub(/[[:space:]]+#.*/, "", line)
+      sub(/^-[[:space:]]*/, "", line)
+      sub(/:.*/, "", line)
+      if (normalize_token(line) == target) {
+        found = 1
+        exit
+      }
+    }
+
+    END {
+      exit found ? 0 : 1
+    }
+  ' "$workflow_path"
+}
+
+assert_workflow_trigger_case() {
+  local name="$1"
+  local expected="$2"
+  local workflow="$3"
+  local actual="false"
+
+  if workflow_has_top_level_trigger <(printf '%s\n' "$workflow") "push"; then
+    actual="true"
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'Workflow trigger case "%s" failed.\n' "$name" >&2
+    exit 1
+  fi
+}
+
+extract_named_workflow_step() {
+  local workflow_path="$1"
+  local step_name="$2"
+
+  awk -v target="$step_name" '
+    found && /^      - name:/ {
+      exit
+    }
+    $0 == "      - name: " target {
+      found = 1
+    }
+    found {
+      print
+    }
+  ' "$workflow_path"
+}
+
 assert_case() {
   local name="$1"
   local expected="$2"
@@ -147,16 +243,9 @@ fi
 
 for workflow in e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
-  push_config="$(
-    sed -n '/^  push:/,/^  pull_request:/p' "$workflow_path"
-  )"
   pull_request_config="$(
     sed -n '/^  pull_request:/,/^  [a-z_]*:/p' "$workflow_path"
   )"
-  if grep -q "paths:" <<<"$push_config"; then
-    printf '%s must run for every push to main\n' "$workflow" >&2
-    exit 1
-  fi
   if ! grep -q "ready_for_review" <<<"$pull_request_config"; then
     printf '%s must run E2E when a draft PR becomes ready for review\n' \
       "$workflow" >&2
@@ -195,7 +284,7 @@ done
 for workflow in test.yml lint.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
   if ! grep -q "classify-ci-changes.sh --all" "$workflow_path"; then
-    printf '%s must classify every module for pushes to main\n' "$workflow" >&2
+    printf '%s must classify every module for merge groups\n' "$workflow" >&2
     exit 1
   fi
   if ! grep -q "merge_group:" "$workflow_path"; then
@@ -209,8 +298,22 @@ for workflow in test.yml lint.yml; do
   fi
 done
 
+assert_workflow_trigger_case "block mapping push trigger" "true" $'on:\n  push:\n  pull_request:'
+assert_workflow_trigger_case "block mapping with on comment" "true" $'on: # workflow triggers\n  push:\n  pull_request:'
+assert_workflow_trigger_case "block sequence push trigger" "true" $'on:\n  - push\n  - pull_request'
+assert_workflow_trigger_case "inline scalar push trigger" "true" "on: push"
+assert_workflow_trigger_case "inline array push trigger" "true" "on: [push, pull_request]"
+assert_workflow_trigger_case "push job is not a trigger" "false" $'on: pull_request\njobs:\n  push:\n    runs-on: ubuntu-latest'
+
 for workflow in lint.yml test.yml e2e-tests.yml wework-e2e.yml; do
   workflow_path="$script_dir/../workflows/$workflow"
+  if workflow_has_top_level_trigger "$workflow_path" "push"; then
+    printf '%s must not repeat merge queue validation after entering main\n' \
+      "$workflow" >&2
+    exit 1
+  fi
+  # GitHub expressions are matched literally in workflow source.
+  # shellcheck disable=SC2016
   if ! grep -Fq 'git diff --name-only "$BASE_SHA...$HEAD_SHA"' "$workflow_path"; then
     printf '%s must classify pull request changes from the merge base\n' \
       "$workflow" >&2
@@ -242,6 +345,34 @@ fi
 
 if ! grep -q "wework_desktop_e2e_matrix" "$wework_workflow"; then
   printf 'Wework desktop E2E must use the changed-feature segment matrix\n' >&2
+  exit 1
+fi
+
+desktop_cache_step="$(
+  extract_named_workflow_step "$wework_workflow" "Cache Cargo dependencies"
+)"
+desktop_cache_key="$(
+  sed -n 's/^          key:[[:space:]]*//p' <<<"$desktop_cache_step"
+)"
+desktop_cache_restore_keys="$(
+  awk '
+    /^          restore-keys:/ {
+      in_restore_keys = 1
+      next
+    }
+    in_restore_keys && /^          [[:alnum:]_-]+:/ {
+      exit
+    }
+    in_restore_keys {
+      print
+    }
+  ' <<<"$desktop_cache_step"
+)"
+# GitHub expressions are matched literally in workflow source.
+# shellcheck disable=SC2016
+if ! grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_key" ||
+  ! grep -Fq '${{ matrix.command }}' <<<"$desktop_cache_restore_keys"; then
+  printf 'Wework desktop E2E caches must be isolated by E2E command\n' >&2
   exit 1
 fi
 
