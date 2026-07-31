@@ -20,6 +20,7 @@ docs/marketplace/
 ├── check_github_plugin.sql               # GitHub 插件检查 SQL
 ├── 发布官方插件说明.md                   # 官方插件发布指南
 ├── 发布EchoID插件.md                     # EchoID 企业内部发布上手
+├── 发布微博开放平台内部WIKI插件.md       # 微博开放平台内部WIKI 企业发布上手
 └── README.md                             # 本文件
 ```
 
