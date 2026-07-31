@@ -5,6 +5,21 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn ensure_codex_started(&self) -> Result<Value, AppIpcError> {
+        let initialize_elapsed = self
+            .codex_app_server
+            .ensure_started()
+            .await
+            .map_err(|error| AppIpcError::new("codex_start_failed", error))?;
+        Ok(json!({
+            "ready": true,
+            "started": initialize_elapsed.is_some(),
+            "initializeElapsedMs": initialize_elapsed
+                .map(|elapsed| elapsed.as_millis() as u64)
+                .unwrap_or(0),
+        }))
+    }
+
     pub(super) async fn configure_codex_runtime_proxy(
         &self,
         proxy_url: Option<String>,

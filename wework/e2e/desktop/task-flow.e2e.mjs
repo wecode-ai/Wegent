@@ -377,6 +377,10 @@ const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
 const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
+const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
+  'https://desktop-e2e-startup-probe.invalid/marketplace.git'
+const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -696,6 +700,23 @@ class BlockingNetworkProxy {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
     }
     throw new Error('Codex did not reach the blocking network proxy')
+  }
+
+  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
+    }
+    const observedRequests = this.requests.slice(requestCount)
+    throw new Error(
+      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
+    )
+  }
+
+  requestCount() {
+    return this.requests.length
   }
 
   release() {
@@ -2875,35 +2896,62 @@ async function waitForBundledMarketplaceRegistration(codexHome) {
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
   blockingNetworkProxy,
-  codexNetworkProbeEnabledPath,
   control,
   restartDesktopApp,
 }) {
+  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
+  const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-  await writeFile(codexNetworkProbeEnabledPath, 'enabled\n', 'utf8')
   await restartDesktopApp()
-  await control.command('waitFor', '[data-testid="projects-create-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  const blockedRequest = await blockingNetworkProxy.waitForRequest()
-  await rm(codexNetworkProbeEnabledPath, { force: true })
+  const [blockedRequest] = await Promise.all([
+    blockingNetworkProxy.waitForRequestMatchingAfter(
+      requestCountBeforeRestart,
+      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
+      DEFAULT_STEP_TIMEOUT_MS
+    ),
+    control.command('waitFor', '[data-testid="projects-create-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }),
+  ])
   assert.match(
     blockedRequest,
     /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture an HTTP request'
+    'The blocking proxy did not capture a Codex startup request'
   )
-  blockingNetworkProxy.release()
-  await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('setLocalProxyUrl', 'body', { value: '' })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
-    'Blocked Codex network traffic hid the ready workbench'
+    'Blocked Codex network traffic prevented the workbench from becoming usable'
+  )
+  const executorStatus = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  assert.equal(
+    executorStatus.ready,
+    true,
+    'The local executor was not ready after Codex initialize'
+  )
+  assert.ok(
+    Number.isFinite(executorStatus.codexInitializeElapsedMs),
+    'The local executor did not report the Codex initialize duration'
+  )
+  assert.ok(
+    executorStatus.codexInitializeElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+    `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
+  )
+  console.log(
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+  )
+  assert.equal(
+    control.modelRequests.length,
+    modelRequestCountBeforeRestart,
+    'The workbench sent an agent model request while Codex was still starting'
   )
 
+  blockingNetworkProxy.release()
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('setLocalProxyUrl', 'body', { value: '' })
   await control.command('navigate', 'body', { value: '/' })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -9050,68 +9098,6 @@ async function writeCodexConfig(
   )
 }
 
-async function createBlockingCodexLauncher(realCodexBinary, expectedProxyUrl, resultDir) {
-  const launcherPath = join(resultDir, 'codex-network-probe.mjs')
-  const enabledPath = join(resultDir, 'codex-network-probe.enabled')
-  await writeFile(
-    launcherPath,
-    `#!/usr/bin/env node
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { connect } from 'node:net'
-
-const realCodexBinary = ${JSON.stringify(realCodexBinary)}
-const expectedProxyUrl = ${JSON.stringify(expectedProxyUrl)}
-const enabledPath = ${JSON.stringify(enabledPath)}
-const args = process.argv.slice(2)
-let delegated = false
-
-function delegateToRealCodex() {
-  if (delegated) return
-  delegated = true
-  const child = spawn(realCodexBinary, args, {
-    env: process.env,
-    stdio: 'inherit',
-  })
-  for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => child.kill(signal))
-  }
-  child.once('error', error => {
-    console.error(error)
-    process.exitCode = 1
-  })
-  child.once('exit', (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal)
-      return
-    }
-    process.exit(code ?? 1)
-  })
-}
-
-if (!args.includes('app-server') || !existsSync(enabledPath)) {
-  delegateToRealCodex()
-} else {
-  const proxy = new URL(expectedProxyUrl)
-  const socket = connect({
-    host: proxy.hostname,
-    port: Number(proxy.port),
-  })
-  socket.once('connect', () => {
-    socket.write(
-      'CONNECT chatgpt.com:443 HTTP/1.1\\r\\nHost: chatgpt.com:443\\r\\nConnection: keep-alive\\r\\n\\r\\n'
-    )
-  })
-  socket.once('close', delegateToRealCodex)
-  socket.once('error', delegateToRealCodex)
-}
-`,
-    'utf8'
-  )
-  await chmod(launcherPath, 0o755)
-  return { enabledPath, launcherPath }
-}
-
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -9990,11 +9976,6 @@ async function main() {
     const codexVersion = commandOutput(codexBinary, ['--version'])
     assert.ok(codexVersion.length > 0, 'Real Codex did not return a version')
     console.log(`Using real Codex: ${codexVersion}`)
-    const blockingCodexLauncher = RUNS_PLUGIN_E2E
-      ? await createBlockingCodexLauncher(codexBinary, blockingNetworkProxy.url, resultDir)
-      : null
-    const appCodexBinary = blockingCodexLauncher?.launcherPath ?? codexBinary
-
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     const executorBinary = await buildExecutor()
     if (CLOUD_ONLY) {
@@ -10021,7 +10002,7 @@ async function main() {
 
     const appEnvironment = {
       ...process.env,
-      CODEX_BIN: appCodexBinary,
+      CODEX_BIN: codexBinary,
       HOME: homePath,
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
@@ -10036,7 +10017,14 @@ async function main() {
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
-      ...(RUNS_PLUGIN_E2E ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+      ...(RUNS_PLUGIN_E2E
+        ? {
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.proxy',
+            GIT_CONFIG_VALUE_0: blockingNetworkProxy.url,
+            WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
+          }
+        : {}),
     }
     const startDesktopAppProcess = async () => {
       if (process.platform === 'darwin') {
@@ -10057,7 +10045,14 @@ async function main() {
           'WEWORK_E2E_MODEL_API_KEY',
           'WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR',
           'WEWORK_EXECUTOR_SIDECAR',
-          ...(RUNS_PLUGIN_E2E ? ['WEWORK_E2E_NATIVE_CODEX_HOME'] : []),
+          ...(RUNS_PLUGIN_E2E
+            ? [
+                'GIT_CONFIG_COUNT',
+                'GIT_CONFIG_KEY_0',
+                'GIT_CONFIG_VALUE_0',
+                'WEWORK_E2E_NATIVE_CODEX_HOME',
+              ]
+            : []),
         ].flatMap(key => ['--env', `${key}=${appEnvironment[key]}`])
         const launcher = spawn(
           'open',
@@ -10132,10 +10127,19 @@ async function main() {
         codexHome,
         control,
       })
-      await writeCodexConfig(codexHome, control.url, '[features]\nplugins = true')
+      await writeCodexConfig(
+        codexHome,
+        control.url,
+        `[features]
+plugins = true
+
+[marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
+source_type = "git"
+source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
+last_updated = "2026-07-30T00:00:00Z"`
+      )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
-        codexNetworkProbeEnabledPath: blockingCodexLauncher.enabledPath,
         control,
         restartDesktopApp,
       })

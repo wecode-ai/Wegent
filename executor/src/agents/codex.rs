@@ -267,6 +267,12 @@ impl CodexAppServerClient {
         .await
     }
 
+    pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(_, initialize_elapsed)| initialize_elapsed)
+    }
+
     pub async fn configure_runtime_proxy(&self, proxy_url: Option<&str>) -> Result<bool, String> {
         self.configure_runtime_proxy_with_active_turns(proxy_url, false)
             .await
@@ -670,6 +676,14 @@ impl CodexAppServerClient {
     }
 
     async fn ensure_process(&self) -> Result<CodexAppServerHandle, String> {
+        self.ensure_process_with_startup()
+            .await
+            .map(|(handle, _)| handle)
+    }
+
+    async fn ensure_process_with_startup(
+        &self,
+    ) -> Result<(CodexAppServerHandle, Option<Duration>), String> {
         let mut state = self.state.lock().await;
         if state
             .process
@@ -678,22 +692,28 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        let mut initialize_elapsed = None;
         if state.process.is_none() {
             let launch_config = CodexLaunchConfig {
                 env: state.runtime_proxy_env.clone(),
                 ..CodexLaunchConfig::default()
             };
+            let initialize_started_at = Instant::now();
             let (process, next_id) =
                 start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
                     .await?;
+            initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
             state.next_id = next_id;
         }
-        Ok(state
-            .process
-            .as_ref()
-            .expect("persistent Codex app-server should be initialized")
-            .handle())
+        Ok((
+            state
+                .process
+                .as_ref()
+                .expect("persistent Codex app-server should be initialized")
+                .handle(),
+            initialize_elapsed,
+        ))
     }
 
     async fn ensure_process_for_launch_config(
@@ -931,7 +951,6 @@ async fn start_persistent_codex_app_server(
         Ok(rpc.into_parts())
     }
     .await;
-
     match result {
         Ok((stdin, stdout, next_id)) => {
             let pending = Arc::new(Mutex::new(HashMap::new()));

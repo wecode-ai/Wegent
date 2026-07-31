@@ -431,6 +431,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
