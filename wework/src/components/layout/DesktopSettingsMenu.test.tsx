@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 const mockCheckNow = vi.fn()
@@ -42,6 +43,8 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
 }))
 
+const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
+
 function renderMenu({
   showLogout,
   onLogout = vi.fn(),
@@ -70,6 +73,13 @@ describe('DesktopSettingsMenu', () => {
       installUpdate: mockInstallUpdate,
     }
     runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(false)
+    getLocalCodexUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      fiveHour: { label: '5h', title: '5小时额度', value: '90%', percent: 90, resetsAt: 1 },
+      sevenDay: { label: '7d', title: '7天额度', value: '80%', percent: 80, resetsAt: 2 },
+      trayTitle: '5h 90%\n7d 80%',
+      tooltip: '5小时额度 90%\n7天额度 80%',
+    })
   })
 
   test('checks for app updates from the settings menu', async () => {
@@ -184,5 +194,62 @@ describe('DesktopSettingsMenu', () => {
 
     expect(await screen.findByText('11:30 重置')).toBeInTheDocument()
     expect(screen.getByText('1月5日 09:15 重置')).toBeInTheDocument()
+  })
+
+  test('hides an unavailable five-hour quota without leaving an empty value row', async () => {
+    getLocalCodexUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      fiveHour: {
+        label: '5h',
+        title: '5小时额度',
+        value: '无',
+        percent: null,
+        resetsAt: null,
+      },
+      sevenDay: {
+        label: '7d',
+        title: '7天额度',
+        value: '44%',
+        percent: 44,
+        resetsAt: 2,
+      },
+      trayTitle: '5h --\n7d 44%',
+      tooltip: '5小时额度 无\n7天额度 44%',
+    })
+
+    renderMenu()
+    await userEvent.click(screen.getByTestId('usage-menu-button'))
+
+    expect(await screen.findByText('44%')).toBeInTheDocument()
+    expect(screen.queryByText('5小时额度')).not.toBeInTheDocument()
+    expect(screen.queryByText('无')).not.toBeInTheDocument()
+  })
+
+  test('keeps an exhausted five-hour quota visible', async () => {
+    getLocalCodexUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      fiveHour: {
+        label: '5h',
+        title: '5小时额度',
+        value: '0%',
+        percent: 0,
+        resetsAt: 1,
+      },
+      sevenDay: {
+        label: '7d',
+        title: '7天额度',
+        value: '44%',
+        percent: 44,
+        resetsAt: 2,
+      },
+      trayTitle: '5h 0%\n7d 44%',
+      tooltip: '5小时额度 0%\n7天额度 44%',
+    })
+
+    renderMenu()
+    await userEvent.click(screen.getByTestId('usage-menu-button'))
+
+    expect(await screen.findByText('5小时额度')).toBeInTheDocument()
+    expect(screen.getByText('0%')).toBeInTheDocument()
   })
 })

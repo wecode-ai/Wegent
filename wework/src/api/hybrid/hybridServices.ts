@@ -11,6 +11,7 @@ import {
   notifyWorkbenchCloudSearchResults,
   notifyWorkbenchModelsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
+import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import {
@@ -405,6 +406,10 @@ export function createHybridWorkbenchServices(
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
         cloudModelGateway,
         transportLabel: 'Cloud',
+        syncConfiguredModelCatalog: true,
+        requestModelCatalogSync: requestCloudModelCatalogSync,
+        resolveDeviceName: deviceId =>
+          rememberedCloudDevices.find(device => device.device_id === deviceId)?.name,
       }
     ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
     cloudRuntimeApis.set(logicalDeviceId, api)
@@ -600,6 +605,9 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    prepareRuntimeModel(data) {
+      return runtimeApi(data.deviceId).prepareRuntimeModel(data)
+    },
     async listRuntimeWork() {
       return listLocalRuntimeWork()
     },

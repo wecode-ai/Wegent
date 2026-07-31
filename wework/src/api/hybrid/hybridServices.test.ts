@@ -63,6 +63,7 @@ const mocks = vi.hoisted(() => {
       readWorkspaceTextFile: vi.fn(),
     },
     runtimeWorkApi: {
+      prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
@@ -100,6 +101,7 @@ const mocks = vi.hoisted(() => {
       createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
     },
     runtimeWorkApi: {
+      prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
@@ -164,6 +166,12 @@ vi.mock('@/api/local/localServices', () => ({
   ) => {
     mocks.captureRuntimeIpcOptions(options)
     return {
+      async prepareRuntimeModel(data: Record<string, unknown>) {
+        const deviceId = String(data.deviceId ?? (await getDefaultDeviceId()))
+        const syncConfiguredModelCatalog = options.syncConfiguredModelCatalog === true
+        if (!syncConfiguredModelCatalog) return true
+        return request('runtime.model.prepare', data, deviceId).then(() => true)
+      },
       async listRuntimeWork() {
         const deviceId = await getDefaultDeviceId()
         return request('runtime.tasks.list', {}, deviceId)

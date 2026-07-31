@@ -121,7 +121,16 @@ interface PendingRuntimeGoalState {
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
-const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const configuredRuntimeTranscriptPageSize = Number(
+  import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+)
+const RUNTIME_TRANSCRIPT_PAGE_SIZE =
+  import.meta.env.VITE_WEWORK_E2E === 'true' &&
+  Number.isInteger(configuredRuntimeTranscriptPageSize) &&
+  configuredRuntimeTranscriptPageSize > 0
+    ? configuredRuntimeTranscriptPageSize
+    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const noopSetInput = () => undefined
 

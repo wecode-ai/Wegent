@@ -65,7 +65,7 @@ describe('localModelSettings', () => {
     ).toThrow('Model ID is required')
   })
 
-  test('saves optional API key without requiring one', () => {
+  test('saves optional API key with a durable browser fallback', () => {
     const withoutKey = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -97,6 +97,27 @@ describe('localModelSettings', () => {
     expect(withoutKey.apiKey).toBeUndefined()
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+  })
+
+  test('preserves legacy persisted API keys when the native credential store is unavailable', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'legacy-secret',
+          displayName: 'Legacy secret',
+          modelId: 'legacy-model',
+          baseUrl: 'https://models.local/v1',
+          apiKey: 'legacy-api-key',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('legacy-api-key')
   })
 
   test('normalizes full responses endpoint to model base URL', () => {
