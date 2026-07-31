@@ -24,6 +24,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,7 +39,34 @@ import type { ResourceLibraryInstall } from '../types'
 
 interface GroupInstallItem {
   groupNamespace: string
-  install: ResourceLibraryInstall
+  skillId: number
+  displayName: string
+  description: string
+  owner: string | null
+  isOfficial: boolean
+  updatedAt: string | null
+  install?: ResourceLibraryInstall
+}
+
+export function GroupInstalledSkillsSkeleton() {
+  const { t } = useTranslation('resource-library')
+
+  return (
+    <section
+      className="space-y-3"
+      aria-label={t('states.loading')}
+      data-testid="group-installed-skills-loading"
+    >
+      <h2 className="text-sm font-semibold text-text-secondary">
+        {t('fields.group_added_skills')}
+      </h2>
+      <div className={getResourceGridClassName(true)}>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Skeleton key={index} className="h-40 rounded-lg" />
+        ))}
+      </div>
+    </section>
+  )
 }
 
 export function GroupInstalledSkills({
@@ -51,11 +79,14 @@ export function GroupInstalledSkills({
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
   const [installs, setInstalls] = useState<GroupInstallItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
   const [pendingRemoval, setPendingRemoval] = useState<GroupInstallItem | null>(null)
   const [removingKey, setRemovingKey] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
+    setIsLoading(true)
+    setInstalls([])
 
     Promise.all(
       groupNamespaces.map(async groupNamespace => {
@@ -65,13 +96,31 @@ export function GroupInstalledSkills({
             page: 1,
             limit: 100,
           })
-          return response.items.map(install => ({ groupNamespace, install }))
+          return response.items.flatMap(install => {
+            const listing = install.listing
+            if (!listing) return []
+            return [
+              {
+                groupNamespace,
+                skillId: listing.id,
+                displayName: listing.display_name || listing.name,
+                description: listing.description || listing.name,
+                owner: listing.publisher_user_name || listing.publisher_namespace || null,
+                isOfficial: listing.publisher_user_id === 0,
+                updatedAt: listing.updated_at,
+                install,
+              },
+            ]
+          })
         } catch {
           return []
         }
       })
     ).then(results => {
-      if (isMounted) setInstalls(results.flat())
+      if (isMounted) {
+        setInstalls(results.flat())
+        setIsLoading(false)
+      }
     })
 
     return () => {
@@ -79,15 +128,20 @@ export function GroupInstalledSkills({
     }
   }, [groupNamespaces])
 
+  if (isLoading) {
+    return <GroupInstalledSkillsSkeleton />
+  }
+
   if (installs.length === 0) {
     return null
   }
 
   const removePendingSkill = async () => {
-    const listing = pendingRemoval?.install.listing
-    if (!pendingRemoval || !listing) return
+    const install = pendingRemoval?.install
+    const listing = install?.listing
+    if (!pendingRemoval || !install || !listing) return
 
-    const key = `${pendingRemoval.groupNamespace}:${pendingRemoval.install.id}`
+    const key = `${pendingRemoval.groupNamespace}:${install.id}`
     setRemovingKey(key)
     try {
       await removeSkillFromGroup(listing.id, pendingRemoval.groupNamespace)
@@ -96,7 +150,7 @@ export function GroupInstalledSkills({
           item =>
             !(
               item.groupNamespace === pendingRemoval.groupNamespace &&
-              item.install.id === pendingRemoval.install.id
+              item.install?.id === install.id
             )
         )
       )
@@ -113,7 +167,7 @@ export function GroupInstalledSkills({
     }
   }
 
-  const pendingListing = pendingRemoval?.install.listing
+  const pendingListing = pendingRemoval?.install?.listing
   const pendingGroup = groups.find(item => item.name === pendingRemoval?.groupNamespace)
 
   return (
@@ -123,12 +177,14 @@ export function GroupInstalledSkills({
           {t('fields.group_added_skills')}
         </h2>
         <div className={getResourceGridClassName(true)}>
-          {installs.map(({ groupNamespace, install }) => {
-            const listing = install.listing
-            if (!listing) return null
+          {installs.map(item => {
+            const { groupNamespace, install } = item
             const group = groups.find(item => item.name === groupNamespace)
-            const key = `${groupNamespace}:${install.id}`
-            const canRemove = isEditor(group?.my_role)
+            const key = `${groupNamespace}:${item.skillId}`
+            const canRemove =
+              install?.installed_reference.kind === 'SkillBinding' && isEditor(group?.my_role)
+            const itemTestId = install?.id ?? `legacy-${item.skillId}`
+            const removingItemKey = `${groupNamespace}:${install?.id ?? item.skillId}`
             return (
               <Card key={key} className="flex min-h-32 flex-col gap-3 p-4">
                 <div className="flex items-start gap-3">
@@ -136,9 +192,7 @@ export function GroupInstalledSkills({
                     <Code2 className="h-5 w-5" aria-hidden />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <h3 className="truncate font-semibold text-text-primary">
-                      {listing.display_name || listing.name}
-                    </h3>
+                    <h3 className="truncate font-semibold text-text-primary">{item.displayName}</h3>
                     <div className="flex flex-wrap gap-1">
                       <Badge variant="info">{t('filters.skill')}</Badge>
                       <Badge variant="secondary">
@@ -153,9 +207,9 @@ export function GroupInstalledSkills({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 shrink-0"
-                          disabled={removingKey === key}
+                          disabled={removingKey === removingItemKey}
                           aria-label={t('actions.more')}
-                          data-testid={`group-skill-actions-${install.id}`}
+                          data-testid={`group-skill-actions-${itemTestId}`}
                         >
                           <MoreHorizontal className="h-4 w-4" aria-hidden />
                         </Button>
@@ -163,8 +217,8 @@ export function GroupInstalledSkills({
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           danger
-                          onSelect={() => setPendingRemoval({ groupNamespace, install })}
-                          data-testid={`group-skill-remove-${install.id}`}
+                          onSelect={() => setPendingRemoval(item)}
+                          data-testid={`group-skill-remove-${itemTestId}`}
                         >
                           <Unlink className="mr-2 h-4 w-4" aria-hidden />
                           {t('actions.remove_from_team')}
@@ -173,17 +227,11 @@ export function GroupInstalledSkills({
                     </DropdownMenu>
                   )}
                 </div>
-                <p className="line-clamp-2 text-sm text-text-secondary">
-                  {listing.description || listing.name}
-                </p>
+                <p className="line-clamp-2 text-sm text-text-secondary">{item.description}</p>
                 <ResourceCardFooter
-                  owner={
-                    listing.publisher_user_id === 0
-                      ? t('fields.official_publisher')
-                      : listing.publisher_user_name || listing.publisher_namespace
-                  }
-                  updatedAt={listing.updated_at}
-                  testId={`group-installed-skill-footer-${install.id}`}
+                  owner={item.isOfficial ? t('fields.official_publisher') : item.owner}
+                  updatedAt={item.updatedAt}
+                  testId={`group-installed-skill-footer-${itemTestId}`}
                 />
               </Card>
             )

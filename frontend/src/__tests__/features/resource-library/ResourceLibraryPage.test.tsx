@@ -193,6 +193,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.shell': '执行器',
         'filters.retriever': '检索器',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'actions.search': '搜索',
         'actions.filter': '筛选',
         'actions.publish': '发布资源',
@@ -285,6 +287,10 @@ describe('ResourceLibraryPage', () => {
       'border-border',
       'bg-surface'
     )
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索智能体或描述'
+    )
     expect(screen.queryByTestId('resource-library-marketplace-sort')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '模型' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '执行器' })).toBeInTheDocument()
@@ -295,6 +301,17 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('discover-resources')).toHaveAttribute('data-type', 'agent')
     expect(mockResourceLibraryApi.listListings).not.toHaveBeenCalled()
     expect(mockResourceLibraryApi.listMyInstalls).not.toHaveBeenCalled()
+  })
+
+  it('uses the skill-specific search placeholder', () => {
+    mockSearchParams = new URLSearchParams('type=skill')
+
+    render(<ResourceLibraryPage />)
+
+    expect(screen.getByTestId('resource-library-header-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
   })
 
   it('opens the agent creator directly without changing tabs', async () => {

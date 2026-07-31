@@ -147,6 +147,8 @@
   },
   "search": {
     "placeholder": "搜索资源",
+    "agent_placeholder": "搜索智能体或描述",
+    "skill_placeholder": "搜索技能",
     "groups_placeholder": "搜索团队",
     "groups_empty": "没有匹配的团队"
   },
