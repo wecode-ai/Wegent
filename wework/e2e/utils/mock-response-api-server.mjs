@@ -120,7 +120,8 @@ function capabilityRequestError(req, request, apiFormat) {
   if (request?.stream !== false) return 'Capability probe must be non-streaming'
 
   if (apiFormat === 'responses') {
-    if (request?.store !== false || request?.max_output_tokens !== 64) {
+    const expectedMaxOutputTokens = tool.type === 'custom' ? 256 : 64
+    if (request?.store !== false || request?.max_output_tokens !== expectedMaxOutputTokens) {
       return 'Responses probe options are incorrect'
     }
     if (!String(request?.input || '').includes('PING')) return 'Responses probe prompt is missing'
