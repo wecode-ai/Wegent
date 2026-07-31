@@ -464,4 +464,4 @@ def test_submit_executor_cleans_up_pod_on_prepare_failure(mocker):
     result = executor.submit_executor(prepare_task)
 
     assert result["status"] == "failed"
-    cleanup.assert_called_once_with(result["executor_name"])
+    cleanup.assert_called_once_with(result["executor_name"], K8S_NAMESPACE)

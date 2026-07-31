@@ -363,7 +363,7 @@ class K8sExecutor(Executor):
         AlreadyExists. Best-effort: failures here must not mask the original error.
         """
         try:
-            result = self.delete_executor(executor_name)
+            result = self.delete_executor(executor_name, K8S_NAMESPACE)
             logger.info(
                 f"Cleaned up leftover prepare pod '{executor_name}' for task "
                 f"{task_id}: {result.get('status')}"
@@ -724,8 +724,8 @@ class K8sExecutor(Executor):
                 "pod_name": pod_name,
             }
         except ApiException as e:
-            # The pod was left by a prior prepare whose response was cut off
-            # (e.g. gateway timeout).
+            # HTTP 409 AlreadyExists: the pod was left by a prior prepare whose
+            # response was cut off (e.g. gateway timeout).
             already_exists = e.status == HTTPStatus.CONFLICT
             if already_exists and allow_reconcile:
                 return self._reconcile_existing_pod(
