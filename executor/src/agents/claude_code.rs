@@ -543,16 +543,15 @@ fn apply_claude_header_environment(
         runtime_custom_headers.as_str(),
     ]);
 
-    let mut default_headers = extract_default_headers(request);
+    let mut default_headers = merge_missing_header_map(
+        extract_default_headers(request),
+        vec![
+            ("wecode-action".to_owned(), "wegent".to_owned()),
+            ("wecode-source".to_owned(), "wegent-local".to_owned()),
+            ("wecode-executor".to_owned(), "claudecode".to_owned()),
+        ],
+    );
     if let Some(project_id) = project_id(request) {
-        default_headers = merge_missing_header_map(
-            default_headers,
-            vec![
-                ("wecode-action".to_owned(), "wegent".to_owned()),
-                ("wecode-source".to_owned(), "wegent-local".to_owned()),
-                ("wecode-executor".to_owned(), "claudecode".to_owned()),
-            ],
-        );
         default_headers = merge_header_map(
             default_headers,
             vec![("wecode-project".to_owned(), project_id)],

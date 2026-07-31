@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from copy import deepcopy
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, Iterable
 
 from fastapi import HTTPException
@@ -57,6 +59,7 @@ RESOURCE_KIND_BY_TYPE = {
     "retriever": "Retriever",
 }
 RESOURCE_TYPE_BY_KIND = {value: key for key, value in RESOURCE_KIND_BY_TYPE.items()}
+logger = logging.getLogger(__name__)
 
 
 def _iso_now() -> str:
@@ -461,25 +464,83 @@ class ResourceLibraryService:
         page: int,
         limit: int,
     ) -> ResourceLibraryListingList:
-        resources = self._query_resources(db, resource_type)
-        manageable = [
-            resource
-            for resource in resources
-            if self._capability_publisher_id(self._capability(resource))
-            == current_user.id
-            and self._can_publish(db, resource, current_user)
+        started_at = perf_counter()
+        phase_started_at = perf_counter()
+        publication_query = db.query(MarketplaceResource).filter(
+            MarketplaceResource.owner_user_id == current_user.id
+        )
+        if resource_type:
+            publication_query = publication_query.filter(
+                MarketplaceResource.resource_type == resource_type
+            )
+        total = publication_query.order_by(None).count()
+        count_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        publications = (
+            publication_query.order_by(
+                MarketplaceResource.updated_at.desc(),
+                MarketplaceResource.kind_id.desc(),
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        index_page_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        kind_ids = [publication.kind_id for publication in publications]
+        resources = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(kind_ids),
+                Kind.is_active == True,
+            )
+            .all()
+            if kind_ids
+            else []
+        )
+        resource_by_id = {resource.id: resource for resource in resources}
+        kind_batch_ms = (perf_counter() - phase_started_at) * 1000
+
+        phase_started_at = perf_counter()
+        items = [
+            self.to_listing(
+                db,
+                resource_by_id[publication.kind_id],
+                user_id=current_user.id,
+                install_count=publication.install_count,
+            )
+            for publication in publications
+            if publication.kind_id in resource_by_id
         ]
-        manageable.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
-        page_items = manageable[(page - 1) * limit : page * limit]
-        return ResourceLibraryListingList(
-            items=[
-                self.to_listing(db, item, user_id=current_user.id)
-                for item in page_items
-            ],
-            total=len(manageable),
+        serialize_ms = (perf_counter() - phase_started_at) * 1000
+        result = ResourceLibraryListingList(
+            items=items,
+            total=total,
             page=page,
             limit=limit,
         )
+        logger.info(
+            "[resource_library_timing] my_published user_id=%s resource_type=%s "
+            "page=%s limit=%s total=%s index_rows=%s kind_rows=%s items=%s "
+            "count_ms=%.2f index_page_ms=%.2f kind_batch_ms=%.2f "
+            "serialize_ms=%.2f total_ms=%.2f",
+            current_user.id,
+            resource_type,
+            page,
+            limit,
+            total,
+            len(publications),
+            len(resources),
+            len(items),
+            count_ms,
+            index_page_ms,
+            kind_batch_ms,
+            serialize_ms,
+            (perf_counter() - started_at) * 1000,
+        )
+        return result
 
     def install(
         self,
@@ -648,14 +709,26 @@ class ResourceLibraryService:
                 )
             )
         if resource_type in {None, "skill"}:
+            group_owned_skills = self._group_owned_skill_responses(
+                db,
+                group_namespace=group_namespace,
+                user_id=current_user.id,
+            )
+            group_owned_names = {
+                item.listing.name for item in group_owned_skills if item.listing
+            }
+            group_bindings = self._skill_binding_responses(
+                db,
+                skill_binding_service.list_group_bindings(
+                    db, group_namespace, current_user.id
+                ),
+                current_user.id,
+            )
+            installs.extend(group_owned_skills)
             installs.extend(
-                self._skill_binding_responses(
-                    db,
-                    skill_binding_service.list_group_bindings(
-                        db, group_namespace, current_user.id
-                    ),
-                    current_user.id,
-                )
+                item
+                for item in group_bindings
+                if not item.listing or item.listing.name not in group_owned_names
             )
         installs.sort(key=lambda item: (item.updated_at, item.id), reverse=True)
         page_items = installs[(page - 1) * limit : page * limit]
@@ -1320,6 +1393,45 @@ class ResourceLibraryService:
             updated_at=binding.updated_at,
         )
 
+    def _group_owned_skill_responses(
+        self,
+        db: Session,
+        *,
+        group_namespace: str,
+        user_id: int,
+    ) -> list[ResourceLibraryInstall]:
+        skills = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.namespace == group_namespace,
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        return [
+            ResourceLibraryInstall(
+                id=skill.id,
+                listing_id=skill.id,
+                version_id=skill.id,
+                user_id=skill.user_id,
+                resource_type="skill",
+                listing=self.to_listing(db, skill, user_id=user_id),
+                installed_kind_id=skill.id,
+                installed_reference={
+                    "namespace": group_namespace,
+                    "name": skill.name,
+                    "kind": "Skill",
+                    "skill_id": skill.id,
+                    "resource_type": "skill",
+                    "ownership": "group",
+                },
+                installed_at=skill.created_at,
+                updated_at=skill.updated_at,
+            )
+            for skill in skills
+        ]
+
     def _skill_binding_responses(
         self,
         db: Session,
@@ -1666,12 +1778,14 @@ class ResourceLibraryService:
 
         now = datetime.utcnow()
         if publication:
+            publication.owner_user_id = source.user_id
             publication.resource_type = RESOURCE_TYPE_BY_KIND[source.kind]
             publication.updated_at = now
             return
         db.add(
             MarketplaceResource(
                 kind_id=source.id,
+                owner_user_id=source.user_id,
                 resource_type=RESOURCE_TYPE_BY_KIND[source.kind],
                 install_count=0,
                 published_at=now,

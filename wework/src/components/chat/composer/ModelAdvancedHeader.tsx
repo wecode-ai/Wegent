@@ -1,5 +1,6 @@
-import { ChevronRight, ChevronUp, Zap } from 'lucide-react'
+import { ChevronRight, ChevronUp } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { FastModeIcon } from './FastModeIcon'
 
 interface ModelAdvancedHeaderProps {
   disabled: boolean
@@ -29,7 +30,7 @@ export function ModelAdvancedHeader({
       data-testid="model-advanced-row"
       onMouseEnter={onClearSubmenu}
       onPointerEnter={onClearSubmenu}
-      className="flex h-8 items-center px-3 text-sm font-medium leading-[18px] text-text-muted"
+      className="flex h-8 items-center px-2 text-sm font-medium leading-[18px] text-text-muted"
     >
       {interacting ? (
         <>
@@ -70,9 +71,9 @@ export function ModelAdvancedHeader({
               onClick={onToggleFastMode}
               className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none"
             >
-              <Zap
+              <FastModeIcon
                 data-testid="model-advanced-intelligence-icon"
-                className={fastModeEnabled ? 'h-4 w-4 fill-current text-primary' : 'h-4 w-4'}
+                className={fastModeEnabled ? 'h-3.5 w-3.5 text-text-primary' : 'h-3.5 w-3.5'}
               />
             </button>
           ) : null}

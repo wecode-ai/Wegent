@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from datetime import datetime
 
 import pytest
@@ -476,7 +477,7 @@ def test_private_skill_sharing_scope_rejects_non_owner(test_db, test_user):
 
 
 def test_list_published_only_returns_current_user_publications(
-    test_db, test_user, test_admin_user
+    test_db, test_user, test_admin_user, caplog
 ):
     user_skill = _create_skill(
         test_db, user_id=test_user.id, name="user-published-skill"
@@ -506,13 +507,17 @@ def test_list_published_only_returns_current_user_publications(
         current_user=test_admin_user,
     )
 
-    user_result = resource_library_service.list_published(
-        test_db,
-        current_user=test_user,
-        resource_type="skill",
-        page=1,
-        limit=20,
-    )
+    with caplog.at_level(
+        logging.INFO,
+        logger="app.services.resource_library_service",
+    ):
+        user_result = resource_library_service.list_published(
+            test_db,
+            current_user=test_user,
+            resource_type="skill",
+            page=1,
+            limit=20,
+        )
     admin_result = resource_library_service.list_published(
         test_db,
         current_user=test_admin_user,
@@ -527,6 +532,21 @@ def test_list_published_only_returns_current_user_publications(
     assert admin_listing.publisher_user_id == test_admin_user.id
     assert user_listing.publisher_user_name == test_user.user_name
     assert admin_listing.publisher_user_name == test_admin_user.user_name
+    assert (
+        test_db.get(MarketplaceResource, user_listing.id).owner_user_id == test_user.id
+    )
+    assert (
+        test_db.get(MarketplaceResource, admin_listing.id).owner_user_id
+        == test_admin_user.id
+    )
+    assert "[resource_library_timing] my_published" in caplog.text
+    assert "total=1" in caplog.text
+    assert "index_rows=1" in caplog.text
+    assert "kind_rows=1" in caplog.text
+    assert "count_ms=" in caplog.text
+    assert "index_page_ms=" in caplog.text
+    assert "kind_batch_ms=" in caplog.text
+    assert "serialize_ms=" in caplog.text
 
 
 def test_update_skill_publication_distributes_to_selected_groups(test_db, test_user):
@@ -605,6 +625,29 @@ def test_group_install_list_skips_binding_with_inactive_skill(test_db, test_user
 
     assert installs.items == []
     assert installs.total == 0
+
+
+def test_group_install_list_includes_group_owned_skill(test_db, test_user):
+    group_name = _create_group_with_member(test_db, test_user)
+    source = _create_skill(
+        test_db,
+        user_id=test_user.id,
+        name="legacy-group-skill",
+        namespace=group_name,
+    )
+
+    installs = resource_library_service.list_group_installs(
+        test_db,
+        group_namespace=group_name,
+        current_user=test_user,
+        resource_type="skill",
+        page=1,
+        limit=20,
+    )
+
+    assert [item.listing_id for item in installs.items] == [source.id]
+    assert installs.items[0].installed_reference["kind"] == "Skill"
+    assert installs.items[0].installed_reference["ownership"] == "group"
 
 
 def test_missing_publication_index_does_not_scan_install_bindings(test_db, test_user):

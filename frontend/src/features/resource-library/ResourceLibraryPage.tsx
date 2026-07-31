@@ -33,6 +33,7 @@ import type {
   ResourceLibraryTypeFilter,
 } from './types'
 import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from './resourceSorting'
+import { getResourceSearchPlaceholderKey } from './resourceSearch'
 import { useTeamCapabilityGroups } from './useTeamCapabilityGroups'
 import type { TeamModeFilter } from '@/features/tasks/components/selector/team-selector-utils'
 
@@ -240,7 +241,7 @@ export function ResourceLibraryPage() {
                   <Input
                     value={searchInput}
                     onChange={event => setSearchInput(event.target.value)}
-                    placeholder={t('search.placeholder')}
+                    placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
                     className="h-11 rounded-xl border-border bg-surface pl-9 pr-3 lg:h-10"
                     data-testid="resource-library-header-search-input"
                   />

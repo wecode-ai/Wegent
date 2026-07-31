@@ -126,7 +126,7 @@ class ResourceLibraryAgentBindings(BaseModel):
 
 
 class ResourceLibraryInstall(BaseModel):
-    """Normalized install state backed by ResourceMember or SkillBinding."""
+    """Normalized installed or group-owned capability state."""
 
     id: int
     listing_id: int

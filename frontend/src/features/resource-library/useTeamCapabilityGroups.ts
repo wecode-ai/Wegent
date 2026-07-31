@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { listGroups } from '@/apis/groups'
 import type { Group } from '@/types/group'
@@ -32,8 +32,10 @@ export function useTeamCapabilityGroups({
       : { all: true, groupNames: [] }
   )
   const [status, setStatus] = useState<TeamGroupStatus>('loading')
+  const loadStateRef = useRef<'idle' | 'loading' | 'loaded'>('idle')
 
   const reload = useCallback(async () => {
+    loadStateRef.current = 'loading'
     setStatus('loading')
     try {
       const response = await listGroups({ page: 1, limit: 100 })
@@ -50,15 +52,17 @@ export function useTeamCapabilityGroups({
           ? { all: false, groupNames: availableSelection }
           : { all: true, groupNames: [] }
       })
+      loadStateRef.current = 'loaded'
       setStatus('ready')
     } catch {
+      loadStateRef.current = 'idle'
       setGroups([])
       setStatus('error')
     }
   }, [])
 
   useEffect(() => {
-    if (enabled) void reload()
+    if (enabled && loadStateRef.current === 'idle') void reload()
   }, [enabled, reload])
 
   useEffect(() => {

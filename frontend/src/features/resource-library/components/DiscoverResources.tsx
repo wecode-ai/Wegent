@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { buildChatCodeHref } from '@/config/coding-route'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getResourceSearchPlaceholderKey } from '../resourceSearch'
 import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
@@ -298,7 +299,7 @@ export function DiscoverResources({
               <Input
                 value={searchInput}
                 onChange={event => setSearchInput(event.target.value)}
-                placeholder={t('search.placeholder')}
+                placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
                 className="h-11 bg-base sm:h-10"
                 data-testid="resource-library-search-input"
               />
