@@ -319,6 +319,32 @@ export const MessageList = memo(function MessageList({
     initialMeasurementsCache,
   })
 
+  useLayoutEffect(() => {
+    if (!virtualMessages || streamingVirtualMessageIndex < 0) return
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${streamingVirtualMessageIndex}"]`
+    )
+    if (!row) return
+
+    const virtualItem = messageVirtualizer
+      .getVirtualItems()
+      .find(item => item.index === streamingVirtualMessageIndex)
+    const previousSize = virtualItem?.size
+    const previousTotalSize = messageVirtualizer.getTotalSize()
+    const measuredSize = Math.ceil(row.getBoundingClientRect().height)
+    messageVirtualizer.resizeItem(streamingVirtualMessageIndex, measuredSize)
+
+    if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' && previousSize !== measuredSize) {
+      console.info('[Wework] Streaming virtual message measured', {
+        messageId: visibleMessages[streamingVirtualMessageIndex]?.id ?? null,
+        previousSize: previousSize ?? null,
+        measuredSize,
+        previousTotalSize,
+        nextTotalSize: messageVirtualizer.getTotalSize(),
+      })
+    }
+  }, [messageVirtualizer, streamingVirtualMessageIndex, virtualMessages, visibleMessages])
+
   useEffect(
     () => () => {
       if (!virtualMessages || virtualMeasurementKey === null) return

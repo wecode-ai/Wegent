@@ -213,11 +213,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
   const loadRuntimeTranscriptForPaneRef = useRef(loadRuntimeTranscriptForPane)
-  const goalRevisionRef = useRef(0)
-  const commitThreadGoal = useCallback((nextGoal: RuntimeGoal | null) => {
-    goalRevisionRef.current += 1
-    setThreadGoal(nextGoal)
-  }, [])
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
@@ -392,7 +387,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       setSubagentStatuses(metadata.subagentStatuses)
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
-      commitThreadGoal(metadata.goal)
+      setThreadGoal(metadata.goal)
       if (metadata.goal) {
         clearRuntimePaneGoalSeed(address)
         setPendingGoalState(current =>
@@ -414,7 +409,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
       }
     })
-  }, [commitThreadGoal, runtimeTaskLoadTarget])
+  }, [runtimeTaskLoadTarget])
 
   useEffect(() => {
     messagesRef.current = messages
@@ -440,7 +435,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
-      commitThreadGoal(null)
+      setThreadGoal(null)
       setGoalContinuation(null)
       return
     }
@@ -456,11 +451,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
 
     let cancelled = false
-    const requestedGoalRevision = goalRevisionRef.current
     void getRuntimeGoal(runtimeTaskLoadTarget.address)
       .then(response => {
-        if (!cancelled && requestedGoalRevision === goalRevisionRef.current) {
+        if (!cancelled) {
           const loadedGoal = response.accepted ? response.goal : null
+          if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
+            console.info('[Wework] Runtime goal hydration resolved', {
+              address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
+              accepted: response.accepted,
+              goalStatus: loadedGoal?.status ?? null,
+            })
+          }
           setRuntimeConversationGoal(runtimeTaskLoadTarget.address, loadedGoal)
           lifecycleStore.goalStatusReceived(
             runtimeTaskLoadTarget.address,
@@ -492,7 +493,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [commitThreadGoal, getRuntimeGoal, lifecycleStore, runtimeTaskLoadTarget])
+  }, [getRuntimeGoal, lifecycleStore, runtimeTaskLoadTarget])
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {

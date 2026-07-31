@@ -8407,6 +8407,54 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
+  test('applies a delayed runtime goal after transcript hydration updates the conversation cache', async () => {
+    const runtimeGoal = deferred<{
+      accepted: boolean
+      goal: RuntimeGoal
+    }>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: false,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '继续实现目标' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '等待恢复',
+            status: 'done',
+            subtaskId: '101',
+          },
+        ],
+      }),
+      getRuntimeGoal: vi.fn().mockReturnValue(runtimeGoal.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('等待恢复')
+    )
+
+    await act(async () => {
+      runtimeGoal.resolve({
+        accepted: true,
+        goal: createRuntimeGoal({ objective: '恢复中的目标', status: 'active' }),
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('恢复中的目标')
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
   test('restores a goal task as running when reopened with a streaming transcript', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(

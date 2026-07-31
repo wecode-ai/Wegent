@@ -31,6 +31,14 @@ const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   10_000,
   'WEWORK_E2E_STEP_TIMEOUT_MS'
 )
+const DESKTOP_MODEL_SERVER_PORT = readOptionalPort(
+  process.env.WEWORK_E2E_MODEL_SERVER_PORT,
+  'WEWORK_E2E_MODEL_SERVER_PORT'
+)
+const DESKTOP_CONTROL_SERVER_PORT = readOptionalPort(
+  process.env.WEWORK_E2E_CONTROL_SERVER_PORT,
+  'WEWORK_E2E_CONTROL_SERVER_PORT'
+)
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
@@ -44,6 +52,13 @@ function readPositiveTimeout(value, fallback, name) {
     `${name} must be a positive number of milliseconds`
   )
   return timeoutMs
+}
+
+function readOptionalPort(value, name) {
+  if (value === undefined) return 0
+  const port = Number(value)
+  assert.ok(Number.isInteger(port) && port > 0 && port <= 65_535, `${name} must be a TCP port`)
+  return port
 }
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
@@ -6576,7 +6591,10 @@ class DesktopE2EServer {
   }
 
   async start() {
-    await Promise.all([this.listen(this.server), this.listen(this.controlServer)])
+    await Promise.all([
+      this.listen(this.server, DESKTOP_MODEL_SERVER_PORT),
+      this.listen(this.controlServer, DESKTOP_CONTROL_SERVER_PORT),
+    ])
     const address = this.server.address()
     const controlAddress = this.controlServer.address()
     assert.ok(address && typeof address !== 'string', 'Desktop E2E server did not bind a TCP port')
@@ -6588,10 +6606,10 @@ class DesktopE2EServer {
     this.controlUrl = `http://127.0.0.1:${controlAddress.port}`
   }
 
-  async listen(server) {
+  async listen(server, port) {
     await new Promise((resolvePromise, reject) => {
       server.once('error', reject)
-      server.listen(0, '127.0.0.1', () => {
+      server.listen(port, '127.0.0.1', () => {
         server.off('error', reject)
         resolvePromise()
       })
@@ -10399,6 +10417,7 @@ async function waitForMatrixStage(control, model, ...expectedStages) {
 async function main() {
   validateDesktopSegmentOptions()
   await mkdir(resultDir, { recursive: true })
+  console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
   const composerProjectPath = join(resultDir, 'composer-project')
@@ -10504,6 +10523,24 @@ async function main() {
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
+    const buildManifestPath = process.env.WEWORK_E2E_BUILD_MANIFEST
+    if (buildManifestPath) {
+      await mkdir(dirname(buildManifestPath), { recursive: true })
+      await writeFile(
+        buildManifestPath,
+        `${JSON.stringify(
+          {
+            appBinary,
+            controlServerPort: DESKTOP_CONTROL_SERVER_PORT,
+            executorBinary,
+            modelServerPort: DESKTOP_MODEL_SERVER_PORT,
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      )
+    }
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
     }
