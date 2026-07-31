@@ -47,9 +47,9 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
+import { ComposerTextarea } from './composer/ComposerTextarea'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
-import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -1180,28 +1180,13 @@ function UserMessageEditForm({
   onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
 }) {
   const [draft, setDraft] = useState(initialContent)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = useRef<HTMLElement | null>(null)
   const trimmedDraft = draft.trim()
   const submitDisabled = submitting || trimmedDraft.length === 0
 
-  const resizeTextarea = () => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 280)}px`
-  }
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.focus()
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-    resizeTextarea()
+  useEffect(() => {
+    textareaRef.current?.focus()
   }, [])
-
-  useLayoutEffect(() => {
-    resizeTextarea()
-  }, [draft])
 
   const submit = () => {
     if (submitDisabled) return
@@ -1213,26 +1198,26 @@ function UserMessageEditForm({
       data-testid="edit-user-message-form"
       className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-base leading-5 text-text-primary"
     >
-      <textarea
-        ref={textareaRef}
-        data-testid="edit-user-message-textarea"
+      <ComposerTextarea
+        textareaRef={textareaRef}
+        testId="edit-user-message-textarea"
         value={draft}
+        onChange={setDraft}
+        onSubmit={value => void onSubmit?.((value ?? draft).trim())}
+        canSend={trimmedDraft.length > 0}
         disabled={submitting}
-        onChange={event => setDraft(event.target.value)}
+        placeholder=""
+        rows={2}
+        disableAutocomplete
         onKeyDown={event => {
-          if (isImeEnterEvent(event)) return
-          if (event.key === 'Enter' && event.shiftKey) return
-          if (event.key === 'Enter') {
-            event.preventDefault()
-            submit()
-            return
-          }
           if (event.key === 'Escape') {
             event.preventDefault()
             onCancel?.()
+            return true
           }
+          return false
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="max-h-[280px] min-h-24 w-full overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button

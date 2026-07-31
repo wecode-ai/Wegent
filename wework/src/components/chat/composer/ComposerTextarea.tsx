@@ -70,6 +70,8 @@ export function ComposerTextarea({
   textareaRef,
   className,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+  disableAutocomplete = false,
+  onKeyDown,
   onPasteFiles,
   onOpenSkillFile,
   workspaceTarget,
@@ -509,6 +511,7 @@ export function ComposerTextarea({
 
   const updateAutocompleteTrigger = useCallback(
     (snapshot?: ComposerEditorSnapshot) => {
+      if (disableAutocomplete) return
       const editor = editorRef.current
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
@@ -560,7 +563,7 @@ export function ComposerTextarea({
         }
       }
     },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills]
+    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
   )
 
   const commitEditorValue = useCallback(
@@ -1019,14 +1022,30 @@ export function ComposerTextarea({
         return true
       }
 
-      if (event.key !== 'Backspace' && event.key !== 'Delete') return false
+      if (event.key !== 'Backspace' && event.key !== 'Delete') {
+        const handledByProp = onKeyDown?.(event, snapshot)
+        if (handledByProp) {
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+        return false
+      }
       const range = findComposerMentionDeletionRange(
         snapshot.value,
         snapshot.selectionStart,
         snapshot.selectionEnd,
         event.key
       )
-      if (!range) return false
+      if (!range) {
+        const handledByProp = onKeyDown?.(event, snapshot)
+        if (handledByProp) {
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+        return false
+      }
       event.preventDefault()
       const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
       editorRef.current?.setValue(nextValue, range.cursor)
@@ -1037,6 +1056,7 @@ export function ComposerTextarea({
       closeAutocompleteMenu,
       isComposing,
       moveHighlightedIndex,
+      onKeyDown,
       onSubmit,
       selectHighlightedMention,
       selectHighlightedSlashCommand,
