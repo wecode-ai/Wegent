@@ -629,14 +629,19 @@ export function getCommandExecutable(command?: string): string {
 }
 
 export function unwrapShellCommand(command: string): string {
-  const lcMatch = command.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1/)
+  // Strip an optional leading shell prompt such as "$ " shown in some UIs.
+  const stripped = command.replace(/^\$\s+/, '')
+  // Codex on macOS wraps shell commands as: /bin/zsh -lc "..."
+  const lcMatch = stripped.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1\s*$/i)
   if (lcMatch) return lcMatch[2].trim()
-  // Codex on Windows wraps shell commands as: pwsh -c "..." or powershell /c "..."
-  const shellMatch = command.match(
-    /^(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?(?:\s+[-\/][cC])\s+(['"])([\s\S]*)\1\s*$/i
+  // Codex on Windows wraps shell commands as:
+  //   pwsh -c "..." or powershell /c "..."
+  //   "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "..."
+  const shellMatch = stripped.match(
+    /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+(['"])([\s\S]*)\1\s*$/i
   )
   if (shellMatch) return shellMatch[2].trim()
-  return command.trim()
+  return stripped.trim()
 }
 
 function isCompletedToolBlock(block: ToolBlock): boolean {

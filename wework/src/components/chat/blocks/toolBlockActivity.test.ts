@@ -6,6 +6,7 @@ import {
   getToolActivityKind,
   getToolActivitySearchItem,
   summarizeToolBlocks,
+  unwrapShellCommand,
 } from './toolBlockActivity'
 
 function tool(
@@ -118,24 +119,52 @@ describe('toolBlockActivity', () => {
   test('unwraps Windows PowerShell wrapper commands', () => {
     expect(
       getToolActivityFilePaths(
-        tool(
-          'pwsh-cat',
-          'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "cat src/app.ts"'
-        )
+        tool('pwsh-cat', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "cat src/app.ts"')
       )
     ).toEqual(['src/app.ts'])
 
     expect(
       getToolActivityKind(
-        tool(
-          'pwsh-rg',
-          'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"'
-        )
+        tool('pwsh-rg', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"')
       )
     ).toBe('search')
   })
 
-    test('extracts read file paths from shell read commands', () => {
+  test('unwraps quoted pwsh.exe -Command wrappers', () => {
+    expect(
+      unwrapShellCommand(
+        '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n \"pattern\" src"'
+      )
+    ).toBe('rg -n \"pattern\" src')
+
+    expect(
+      unwrapShellCommand(
+        '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-ChildItem src"'
+      )
+    ).toBe('Get-ChildItem src')
+
+    expect(
+      unwrapShellCommand(
+        '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Select-String -Path src\\* -Recurse -Pattern foo"'
+      )
+    ).toBe('Select-String -Path src\\* -Recurse -Pattern foo')
+  })
+
+  test('preserves macOS zsh -lc unwrapping', () => {
+    expect(
+      getToolActivityFilePaths(
+        tool('pwsh-cat', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "cat src/app.ts"')
+      )
+    ).toEqual(['src/app.ts'])
+
+    expect(
+      getToolActivityKind(
+        tool('pwsh-rg', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"')
+      )
+    ).toBe('search')
+  })
+
+  test('extracts read file paths from shell read commands', () => {
     expect(
       getToolActivityFilePaths(
         tool('nl-1', 'nl -ba wework/src/components/chat/blocks/toolBlockActivity.ts')
