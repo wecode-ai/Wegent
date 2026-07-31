@@ -365,12 +365,12 @@ class K8sExecutor(Executor):
         try:
             result = self.delete_executor(executor_name, K8S_NAMESPACE)
             logger.info(
-                f"Cleaned up leftover prepare pod '{executor_name}' for task "
+                f"+++ Cleaned up leftover prepare pod '{executor_name}' for task "
                 f"{task_id}: {result.get('status')}"
             )
         except Exception as e:
             logger.warning(
-                f"Failed to clean up leftover prepare pod '{executor_name}' for "
+                f"+++ Failed to clean up leftover prepare pod '{executor_name}' for "
                 f"task {task_id}: {e}"
             )
 
@@ -757,13 +757,13 @@ class K8sExecutor(Executor):
         except ApiException as e:
             if e.status == HTTPStatus.NOT_FOUND:
                 logger.info(
-                    f"Pod '{pod_name}' disappeared after 409; recreating for task {task_id}"
+                    f"+++ Pod '{pod_name}' disappeared after 409; recreating for task {task_id}"
                 )
                 return self._create_pod(
                     core_v1, pod, namespace, pod_name, task_id, allow_reconcile=False
                 )
             logger.error(
-                f"Failed to read existing pod '{pod_name}' for task {task_id}: {e}"
+                f"+++ Failed to read existing pod '{pod_name}' for task {task_id}: {e}"
             )
             return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
 
@@ -773,13 +773,13 @@ class K8sExecutor(Executor):
 
         if self._is_pod_adoptable(existing):
             logger.info(
-                f"Adopting existing pod '{pod_name}' (phase={phase}, "
+                f"+++ Adopting existing pod '{pod_name}' (phase={phase}, "
                 f"age={pod_age:.0f}s) for task {task_id}"
             )
             return {"status": "success", "pod_name": pod_name}
 
         logger.warning(
-            f"Recreating existing pod '{pod_name}' for task {task_id} "
+            f"+++ Recreating existing pod '{pod_name}' for task {task_id} "
             f"(phase={phase}, deleting={being_deleted}, age={pod_age})"
         )
         self.delete_executor(pod_name, namespace)
@@ -833,7 +833,7 @@ class K8sExecutor(Executor):
                 if e.status == HTTPStatus.NOT_FOUND:
                     return True
                 logger.warning(
-                    f"Error while waiting for pod '{pod_name}' deletion: {e}"
+                    f"+++ Error while waiting for pod '{pod_name}' deletion: {e}"
                 )
             if time.monotonic() >= deadline:
                 return False
