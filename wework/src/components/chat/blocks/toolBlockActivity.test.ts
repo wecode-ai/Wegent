@@ -170,6 +170,21 @@ describe('toolBlockActivity', () => {
     ).toBe('search')
   })
 
+
+  test('falls back to extracting unbalanced PowerShell -Command contents', () => {
+    expect(
+      unwrapShellCommand(
+        "$ \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch \"\\\\"
+      )
+    ).toBe('Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch \"\\\\')
+
+    expect(
+      unwrapShellCommand(
+        'pwsh -c "rg -n pattern -g !.git -g !node_modules --no-ignore"'
+      )
+    ).toBe('rg -n pattern -g !.git -g !node_modules --no-ignore')
+  })
+
   test('unwraps quoted pwsh.exe -Command wrappers', () => {
     expect(
       unwrapShellCommand(

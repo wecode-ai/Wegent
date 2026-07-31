@@ -14,6 +14,7 @@ import {
   getToolActivityFilePaths,
   getToolActivityKind,
   getCommandExecutable,
+  stripShellPrefix,
   unwrapShellCommand,
   isWebSearchToolName,
 } from './toolBlockActivity'
@@ -1035,7 +1036,8 @@ function getCommandToolLabel(
   }
 
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
-  const innerCommand = command ? unwrapShellCommand(command.split('\n')[0]) : undefined
+  const unwrappedCommand = command ? unwrapShellCommand(command) : undefined
+  const innerCommand = unwrappedCommand ? stripShellPrefix(unwrappedCommand.split('\n')[0]) : undefined
   const executable = innerCommand ? getCommandExecutable(innerCommand) : ''
 
   // Git commands get a clean, recognizable label.

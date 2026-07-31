@@ -691,6 +691,13 @@ export function unwrapShellCommand(command: string): string {
     /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+(['"])([\s\S]*)\1\s*$/i
   )
   if (shellMatch) return shellMatch[2].trim()
+  // Some Windows wrappers quote the inner command with the opposite quote or
+  // the command is truncated before the closing quote. Try a best-effort
+  // extraction that returns everything after the -Command/-c flag.
+  const fallbackMatch = stripped.match(
+    /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+(['"])(.*)$/i
+  )
+  if (fallbackMatch) return fallbackMatch[2].trim()
   return stripped.trim()
 }
 
