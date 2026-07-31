@@ -149,11 +149,26 @@ export function MessageTurnNavigation({
   }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
-    (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
+    (
+      nextMarkers: MessageTurnMarker[],
+      reason = 'unknown',
+      anchorByMessageId?: ReadonlyMap<string, HTMLElement>
+    ) => {
       void reason
       const scroller = scrollRef.current
       if (!scroller || nextMarkers.length === 0) {
         setActiveMarkerId(null)
+        return
+      }
+
+      const mountedMessageMarker = findActiveMarkerFromMountedMessages(
+        nextMarkers,
+        messagesRef.current,
+        anchorByMessageId,
+        scroller
+      )
+      if (mountedMessageMarker) {
+        setActiveMarkerId(mountedMessageMarker.id)
         return
       }
 
@@ -162,7 +177,6 @@ export function MessageTurnNavigation({
         (marker): marker is MessageTurnMarker & { targetTop: number } => marker.targetTop !== null
       )
       if (loadedMarkers.length === 0) {
-        setActiveMarkerId(null)
         return
       }
 
@@ -215,7 +229,7 @@ export function MessageTurnNavigation({
 
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
-      updateActiveMarker(nextMarkers, reason)
+      updateActiveMarker(nextMarkers, reason, anchorByMessageId)
     },
     [contentRef, scrollRef, updateActiveMarker]
   )
@@ -745,6 +759,52 @@ function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
   return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+}
+
+function findActiveMarkerFromMountedMessages(
+  markers: MessageTurnMarker[],
+  messages: WorkbenchMessage[],
+  anchorByMessageId: ReadonlyMap<string, HTMLElement> | undefined,
+  scroller: HTMLDivElement
+): MessageTurnMarker | null {
+  if (!anchorByMessageId || anchorByMessageId.size === 0) return null
+
+  const messageIndexById = new Map(
+    messages.map((message, index) => [
+      message.id,
+      typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
+    ])
+  )
+  const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
+  let currentMessageIndex: number | null = null
+  let currentMessageTop = Number.NEGATIVE_INFINITY
+  let firstMountedMessageIndex: number | null = null
+  let firstMountedMessageTop = Number.POSITIVE_INFINITY
+
+  anchorByMessageId.forEach((anchor, messageId) => {
+    const messageIndex = messageIndexById.get(messageId)
+    if (messageIndex === undefined) return
+
+    const targetTop = getMessageAnchorTargetTop(scroller, anchor)
+    if (targetTop < firstMountedMessageTop) {
+      firstMountedMessageTop = targetTop
+      firstMountedMessageIndex = messageIndex
+    }
+    if (targetTop <= currentPosition && targetTop > currentMessageTop) {
+      currentMessageTop = targetTop
+      currentMessageIndex = messageIndex
+    }
+  })
+
+  const viewportMessageIndex = currentMessageIndex ?? firstMountedMessageIndex
+  if (viewportMessageIndex === null) return null
+
+  let activeMarker: MessageTurnMarker | null = null
+  for (const marker of markers) {
+    if (marker.messageIndex > viewportMessageIndex) break
+    activeMarker = marker
+  }
+  return activeMarker
 }
 
 function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
