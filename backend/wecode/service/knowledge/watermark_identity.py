@@ -44,6 +44,20 @@ def _normalize(value: Any) -> str:
     return normalized[:_MAX_IDENTITY_LENGTH]
 
 
+def _load_synced_erp_name(user_id: int) -> str:
+    """Read a lazily synchronized ERP name without mutating the caller's session."""
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        erp_user = (
+            db.query(WecodeErpUser).filter(WecodeErpUser.user_id == user_id).first()
+        )
+        return _normalize(erp_user.erp_name) if erp_user is not None else ""
+    finally:
+        db.close()
+
+
 def resolve_watermark_identity(
     user: Any,
     db: Session | None = None,
@@ -70,14 +84,7 @@ def resolve_watermark_identity(
             )
         )
         if employee_id:
-            db.expire_all()
-            erp_user = (
-                db.query(WecodeErpUser)
-                .filter(WecodeErpUser.user_id == getattr(user, "id", None))
-                .first()
-            )
-            if erp_user is not None:
-                display_name = _normalize(erp_user.erp_name) or display_name
+            display_name = _load_synced_erp_name(getattr(user, "id", 0)) or display_name
     display_name = display_name or _normalize(getattr(user, "user_name", ""))
     employee_id = employee_id or _normalize(getattr(user, "id", ""))
     if not display_name or not employee_id:

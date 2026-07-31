@@ -86,19 +86,26 @@ def test_resolve_watermark_identity_lazily_syncs_erp_user(
     user = SimpleNamespace(id=7, user_name="fallback", preferences={})
     empty_query = MagicMock()
     empty_query.filter.return_value = empty_query
-    empty_query.first.side_effect = [
-        None,
-        SimpleNamespace(erp_name="王五", employee_id="10003"),
-    ]
+    empty_query.first.return_value = None
     db = MagicMock()
     db.query.return_value = empty_query
+    synced_query = MagicMock()
+    synced_query.filter.return_value = synced_query
+    synced_query.first.return_value = SimpleNamespace(
+        erp_name="王五",
+        employee_id="10003",
+    )
+    synced_db = MagicMock()
+    synced_db.query.return_value = synced_query
     monkeypatch.setattr(
         "wecode.service.knowledge.watermark_identity.ErpEntityResolver.resolve_employee_id",
         lambda self, _db, _user_id: "10003",
     )
+    monkeypatch.setattr("app.db.session.SessionLocal", lambda: synced_db)
 
     identity = resolve_watermark_identity(user, db)
 
     assert identity.display_name == "王五"
     assert identity.employee_id == "10003"
-    db.expire_all.assert_called_once_with()
+    db.expire_all.assert_not_called()
+    synced_db.close.assert_called_once_with()
