@@ -1,20 +1,30 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
+  EMBEDDED_BROWSER_AGENT_STATE_EVENT,
   evalEmbeddedBrowserJson,
+  listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
   relabelEmbeddedBrowser,
+  resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
+  setEmbeddedBrowserAgentControlPaused,
 } from './embedded-browser'
 
-const unlistenMock = vi.hoisted(() => vi.fn())
+const eventMocks = vi.hoisted(() => {
+  const unlisten = vi.fn()
+  return {
+    listen: vi.fn().mockResolvedValue(unlisten),
+    unlisten,
+  }
+})
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(unlistenMock),
+  listen: eventMocks.listen,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -26,6 +36,7 @@ const invokeMock = vi.mocked(invoke)
 describe('embedded-browser', () => {
   beforeEach(() => {
     invokeMock.mockReset()
+    eventMocks.listen.mockClear()
   })
 
   test('unwraps successful eval result values', async () => {
@@ -65,6 +76,44 @@ describe('embedded-browser', () => {
       fromLabel: 'workspace-browser-blank-0',
       toLabel: 'workspace-browser-task-1',
     })
+  })
+
+  test('pauses agent control through Tauri', async () => {
+    invokeMock.mockResolvedValue(undefined)
+
+    await setEmbeddedBrowserAgentControlPaused(true, 'workspace-browser-task-1')
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_set_agent_control_paused', {
+      label: 'workspace-browser-task-1',
+      paused: true,
+    })
+  })
+
+  test('resolves agent approval through Tauri', async () => {
+    invokeMock.mockResolvedValue(undefined)
+
+    await resolveEmbeddedBrowserAgentApproval(
+      'browser-approval-1',
+      true,
+      'workspace-browser-task-1'
+    )
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_resolve_agent_approval', {
+      label: 'workspace-browser-task-1',
+      approvalId: 'browser-approval-1',
+      approved: true,
+    })
+  })
+
+  test('listens for embedded browser agent state events', async () => {
+    const handler = vi.fn()
+
+    await listenEmbeddedBrowserAgentState(handler)
+
+    expect(eventMocks.listen).toHaveBeenCalledWith(
+      EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+      expect.any(Function)
+    )
   })
 
   test('routes frontend open requests to the active embedded browser listener', async () => {

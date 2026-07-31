@@ -179,6 +179,14 @@ Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示�
 
 该能力是用户授权后的发送前快照注入，不是会话 MCP。模型不能自行列出、搜索或读取未被用户引用的其他会话；菜单搜索也只使用已经加载到 `runtimeWork` 的元数据。修改该路径时，必须同时维护引用解析与上下文构造单元测试、composer/消息渲染测试，以及 `conversation-mention.scenario.mjs` 桌面 E2E 场景。
 
+## 会话切换与 Transcript 恢复
+
+`loadedRuntimeTranscriptKeyRef` 只表示某个任务的 transcript 曾成功加载，不能单独证明当前消息区仍在展示该任务。快速从任务 A 切到仍在加载的任务 B，再切回 A 时，B 的缓存消息可能已经替换消息区，而最后完成加载的 key 仍然是 A。
+
+因此，只有已加载 key 和当前展示的 transcript 身份同时匹配目标任务时，pane 才能跳过恢复。身份不一致时必须重新应用目标任务的缓存消息并启动 transcript 加载；迟到的其他任务响应仍需由 effect cleanup 隔离，不能覆盖当前任务。
+
+这条链路必须同时覆盖组件竞态测试和真实桌面场景：保持一个任务运行，在已完成任务与运行中任务之间快速切换，切回后确认已完成任务的所有历史轮次仍然可见。
+
 ## 长输出内存边界
 
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：

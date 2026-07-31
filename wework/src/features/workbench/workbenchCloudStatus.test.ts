@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
@@ -10,6 +10,7 @@ import {
   selectRuntimeWorkView,
   selectVisibleDevices,
   startCloudRuntimeSync,
+  timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
 
 function workspace(
@@ -153,6 +154,28 @@ describe('mergeRuntimeWorkLists', () => {
     }
 
     expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
+  })
+})
+
+describe('timedWorkbenchBootstrapRequest', () => {
+  test('settles an unreachable background request after the configured timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const resultPromise = timedWorkbenchBootstrapRequest(
+        'cloudRuntimeWork',
+        new Promise(() => undefined),
+        8000
+      )
+
+      await vi.advanceTimersByTimeAsync(8000)
+
+      await expect(resultPromise).resolves.toMatchObject({
+        status: 'rejected',
+        reason: new Error('cloudRuntimeWork timed out after 8000ms'),
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -540,6 +563,76 @@ describe('cloud runtime sync state', () => {
     })
     expect(runtimeView.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)).toEqual([
       'task-cloud',
+    ])
+  })
+
+  test('merges a newly created local project with the cloud copy of the same workspace', () => {
+    const localDevice = device({
+      device_id: 'local-device',
+      name: 'Local Executor',
+      device_type: 'local',
+    })
+    const cloudDevice = device({
+      device_id: 'cloud-device',
+      app_device_id: 'local-device',
+      device_type: 'cloud',
+    })
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'local-project',
+            name: 'Repo',
+            source: 'local_project',
+          },
+          deviceWorkspaces: [
+            {
+              ...workspace('local-device', []),
+              id: null,
+              projectId: null,
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, key: 'cloud-project', name: 'Repo' },
+          deviceWorkspaces: [workspace('cloud-device', [{ taskId: 'task-cloud' }])],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'manual-refresh', [
+      'devices',
+      'runtimeWork',
+    ])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [cloudDevice] },
+      runtimeWork: { status: 'fulfilled', value: cloudWork },
+    })
+
+    const visibleDevices = selectVisibleDevices([localDevice], ready)
+    const runtimeView = selectRuntimeWorkView(localWork, ready, visibleDevices)
+
+    expect(runtimeView.projects).toHaveLength(1)
+    expect(runtimeView.projects[0].project).toMatchObject({
+      id: 7,
+      key: 'local-project',
+      source: 'local_project',
+    })
+    expect(runtimeView.projects[0].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        deviceId: 'local-device',
+        workspacePath: '/workspace/repo',
+        tasks: [expect.objectContaining({ taskId: 'task-cloud' })],
+      }),
     ])
   })
 

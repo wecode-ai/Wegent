@@ -93,6 +93,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
+            "app_device_id": spec.get("appDeviceId"),
             "cloud_config": spec.get("cloudConfig"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
@@ -195,6 +196,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
+                    "app_device_id": spec.get("appDeviceId"),
                     "cloud_config": spec.get("cloudConfig"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }

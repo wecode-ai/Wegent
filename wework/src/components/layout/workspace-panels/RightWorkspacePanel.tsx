@@ -32,7 +32,7 @@ import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
-import { FileWorkspacePanel } from './FileWorkspacePanel'
+import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
@@ -102,6 +102,7 @@ interface RightWorkspacePanelProps {
   workspaceSessionApi?: WorkspaceSessionApi
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
+  initialFileSelection?: FileWorkspacePanelSelection | null
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
@@ -111,6 +112,8 @@ interface RightWorkspacePanelProps {
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
+  onFileDirtyChange?: (dirty: boolean) => void
+  onFileSelectionChange?: (selection: FileWorkspacePanelSelection) => void
   onSelectFileWorkspaceTarget?: (target: WorkspaceTarget) => void
   onSelectReview: () => void
   onSelectTerminal: () => void
@@ -143,6 +146,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   workspaceSessionApi,
   workspaceFileApi,
   openFileRequest,
+  initialFileSelection,
   workspaceTargetError,
   review,
   planContent,
@@ -152,6 +156,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
+  onFileDirtyChange,
+  onFileSelectionChange,
   onSelectFileWorkspaceTarget,
   onSelectReview,
   onSelectTerminal,
@@ -421,7 +427,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               workspaceTargets={fileWorkspaceTargets}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
+              initialSelection={initialFileSelection}
               onAddCodeComment={onAddCodeComment}
+              onDirtyChange={onFileDirtyChange}
+              onSelectionChange={onFileSelectionChange}
               onSelectWorkspaceTarget={onSelectFileWorkspaceTarget}
             />
           )
