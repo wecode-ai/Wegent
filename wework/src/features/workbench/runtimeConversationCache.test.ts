@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  applyRuntimeConversationGoalContinuation,
+  applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
   cacheConversationScrollSnapshot,
   cacheConversationVirtualMeasurements,
@@ -10,12 +12,19 @@ import {
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
   getRuntimeConversationCacheStats,
+  getRuntimeConversationMetadata,
   getRuntimeConversationMessages,
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
+  markRuntimeConversationGuidanceInterrupted,
+  markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
   settleRuntimeConversationGuidance,
+  settleRuntimeConversationSubagents,
+  setRuntimeConversationGoal,
+  setRuntimeConversationTaskPlan,
   takeAppliedRuntimeConversationGuidance,
+  takeInterruptedRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 
 const address = {
@@ -40,6 +49,59 @@ describe('runtimeConversationCache', () => {
     })
 
     expect(getRuntimeConversationMessages(address)).toHaveLength(1)
+  })
+
+  test('keeps goal, plan, and subagent state independently from a mounted pane', () => {
+    setRuntimeConversationGoal(address, {
+      threadId: 'thread-1',
+      objective: 'Finish the fix',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    setRuntimeConversationTaskPlan(address, {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      turnId: 'turn-1',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+    applyRuntimeConversationSubagentActivity(address, {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      agentId: 'agent-1',
+      agentPath: 'agents/agent-1',
+      status: 'running',
+    })
+    markRuntimeConversationAssistantStarted(address)
+    applyRuntimeConversationGoalContinuation(address, {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      turnId: 'turn-1',
+      status: 'started',
+    })
+
+    expect(getRuntimeConversationMetadata(address)).toMatchObject({
+      goal: { objective: 'Finish the fix', status: 'active' },
+      goalContinuation: { turnId: 'turn-1', status: 'started' },
+      taskPlan: {
+        turnId: 'turn-1',
+        plan: [{ step: 'Implement', status: 'inProgress' }],
+      },
+      subagentStatuses: [
+        {
+          id: 'agent-1',
+          agentPath: 'agents/agent-1',
+          status: 'running',
+        },
+      ],
+    })
+
+    settleRuntimeConversationSubagents(address)
+
+    expect(getRuntimeConversationMetadata(address).subagentStatuses[0]?.status).toBe('done')
   })
 
   test('uses device and task identity across normalized workspace paths', () => {
@@ -236,6 +298,53 @@ describe('runtimeConversationCache', () => {
       'follow the updated direction',
       ' after guidance',
     ])
+  })
+
+  test('settles an optimistic guidance message into the active turn without duplicating its id', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: {
+        id: 'client-guidance-1',
+        role: 'user',
+        content: 'follow the updated direction',
+        status: 'done',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    })
+    cacheRuntimeConversationQueuedMessages(address, [
+      {
+        id: 'client-guidance-1',
+        content: 'follow the updated direction',
+        status: 'sending',
+        deliveryMode: 'guidance',
+        createdAt: '2026-07-27T00:00:01.000Z',
+      },
+    ])
+
+    settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      subtaskId: 'subtask-1',
+      guidanceId: 'runtime-guidance-1',
+      clientGuidanceId: 'client-guidance-1',
+      message: 'follow the updated direction',
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    const guidanceMessages = getRuntimeConversationMessages(address).filter(
+      message => message.id === 'client-guidance-1'
+    )
+    expect(guidanceMessages).toHaveLength(1)
+    expect(guidanceMessages[0]).toMatchObject({
+      runtimeGuidance: true,
+      subtaskId: 'subtask-1',
+      turnId: 'subtask-1',
+    })
   })
 
   test('preserves multiple guidance messages applied during one assistant turn', () => {
@@ -501,6 +610,7 @@ describe('runtimeConversationCache', () => {
       },
     ])
     cacheRuntimeConversationQueuePaused(address, true)
+    markRuntimeConversationGuidanceInterrupted(address, ['client-guidance-1'])
 
     evictRuntimeConversation(address)
 
@@ -509,5 +619,6 @@ describe('runtimeConversationCache', () => {
     expect(getRuntimeConversationQueuePaused(address)).toBe(false)
     expect(getConversationScrollSnapshot('device-1:task-1')).toBeUndefined()
     expect(getConversationVirtualMeasurements('device-1:task-1')).toBeUndefined()
+    expect(takeInterruptedRuntimeConversationGuidance(address, 'client-guidance-1')).toBe(false)
   })
 })

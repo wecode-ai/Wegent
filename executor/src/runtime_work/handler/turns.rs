@@ -266,7 +266,11 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
-            handler.handle_turn_result(&turn_local_task_id, &request, result);
+            let active_turn = hook_turn
+                .lock()
+                .expect("hook turn context lock should not be poisoned")
+                .clone();
+            handler.handle_turn_result(&turn_local_task_id, &request, active_turn.as_ref(), result);
             handler.clear_active_codex_turn(&turn_local_task_id);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
@@ -280,14 +284,12 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
+        active_turn: Option<&ActiveCodexTurn>,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
-        let runtime_turn_id = self.local_task_link(local_task_id).and_then(|link| {
-            tasks::runtime_turn_id_from_link(&link, &request.subtask_id.to_string())
-        });
         let mut event_request = request.clone();
-        if let Some(turn_id) = runtime_turn_id.as_ref() {
-            event_request.subtask_id = turn_id.clone();
+        if let Some(active_turn) = active_turn {
+            event_request.subtask_id = active_turn.turn_id.clone();
         }
         let automation_result = match &result {
             Ok(turn) => match &turn.outcome {
@@ -335,7 +337,10 @@ impl RuntimeWorkRpcHandler {
                         "response.completed",
                         local_task_id,
                         &event_request,
-                        json!({"value": content, "turnId": runtime_turn_id}),
+                        json!({
+                            "value": content,
+                            "turnId": active_turn.map(|turn| &turn.turn_id),
+                        }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
                         &self.event_tx,
@@ -345,7 +350,7 @@ impl RuntimeWorkRpcHandler {
                         &event_request,
                         json!({
                             "value": "",
-                            "turnId": runtime_turn_id,
+                            "turnId": active_turn.map(|turn| &turn.turn_id),
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"

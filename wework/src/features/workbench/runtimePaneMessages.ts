@@ -37,7 +37,6 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
-  consumeConversationEvents?: boolean
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
@@ -57,6 +56,17 @@ export interface RuntimeConversationStreamHandlers {
   onAssistantSettled?: (address: RuntimeTaskAddress) => void
   onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
+  onSubagentActivity?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeSubagentActivityPayload
+  ) => void
+  onRuntimeGoalUpdated?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalCleared?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalContinuation?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeGoalContinuationPayload
+  ) => void
+  onRuntimePlanUpdated?: (address: RuntimeTaskAddress, payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (address: RuntimeTaskAddress, payload: RuntimeGuidanceAppliedPayload) => void
   onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
 }
@@ -88,6 +98,11 @@ export function createRuntimeConversationStreamHandlers(
       onAssistantSettled: () => handlers.onAssistantSettled?.(address),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
+      onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
+      onRuntimeGoalUpdated: payload => handlers.onRuntimeGoalUpdated?.(address, payload),
+      onRuntimeGoalCleared: payload => handlers.onRuntimeGoalCleared?.(address, payload),
+      onRuntimeGoalContinuation: payload => handlers.onRuntimeGoalContinuation?.(address, payload),
+      onRuntimePlanUpdated: payload => handlers.onRuntimePlanUpdated?.(address, payload),
       onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
     })
     taskHandlers.set(key, created)
@@ -101,6 +116,11 @@ export function createRuntimeConversationStreamHandlers(
     onChatError: payload => resolve(payload)?.onChatError?.(payload),
     onBlockCreated: payload => resolve(payload)?.onBlockCreated?.(payload),
     onBlockUpdated: payload => resolve(payload)?.onBlockUpdated?.(payload),
+    onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
+    onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
+    onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
+    onRuntimeGoalContinuation: payload => resolve(payload)?.onRuntimeGoalContinuation?.(payload),
+    onRuntimePlanUpdated: payload => resolve(payload)?.onRuntimePlanUpdated?.(payload),
     onGuidanceApplied: payload => resolve(payload)?.onGuidanceApplied?.(payload),
     onRuntimeTransportReplaced: payload => handlers.onRuntimeTransportReplaced?.(payload),
   }
@@ -252,7 +272,6 @@ export function createRuntimeTaskStreamHandlers(
         handlers.onMessageAction({
           type: 'assistant_error',
           subtaskId: identity.subtaskId,
-          itemId: crypto.randomUUID(),
           error: payload.error,
           errorType: payload.type,
         })
@@ -406,17 +425,7 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onRuntimeTransportReplaced?.(payload)
     },
   }
-  if (handlers.consumeConversationEvents !== false) return streamHandlers
-  return {
-    scope: streamHandlers.scope,
-    onSubagentActivity: streamHandlers.onSubagentActivity,
-    onRuntimeGoalUpdated: streamHandlers.onRuntimeGoalUpdated,
-    onRuntimeGoalCleared: streamHandlers.onRuntimeGoalCleared,
-    onRuntimeGoalContinuation: streamHandlers.onRuntimeGoalContinuation,
-    onRuntimePlanUpdated: streamHandlers.onRuntimePlanUpdated,
-    onGuidanceApplied: streamHandlers.onGuidanceApplied,
-    onRuntimeTransportReplaced: streamHandlers.onRuntimeTransportReplaced,
-  }
+  return streamHandlers
 }
 
 function isStandaloneCompletedContextCompaction(
@@ -452,7 +461,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
     if (typeof turn.id !== 'string' || !turn.id.trim() || !Array.isArray(turn.items)) return []
     const items: RuntimeConversationItem[] = []
     for (const item of turn.items) {
-      if (!item || typeof item.id !== 'string' || !item.id.trim()) return []
+      if (!item || typeof item.id !== 'string' || !item.id.trim()) continue
       switch (item.type) {
         case 'user_message': {
           const message = runtimeMessageToWorkbenchMessage(item.message)
@@ -1178,7 +1187,7 @@ function debugRuntimeStreamEvent(
   details: Record<string, unknown> = {}
 ) {
   if (!isRuntimeWorkDebugEnabled()) return
-  console.debug(`[Wework runtime] ${label}`, {
+  console.info(`[Wework runtime] ${label}`, {
     matched,
     currentRuntimeTask: runtimeAddressDebug(address),
     payloadDeviceId: payload.deviceId ?? null,

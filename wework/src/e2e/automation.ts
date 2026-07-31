@@ -735,6 +735,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
+    case 'reloadMainWindow':
+      return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
@@ -1120,6 +1122,9 @@ async function runDesktopControlClient(url: string): Promise<void> {
           await closeMainWindowToTray()
         } else if (command.action === 'requestMainWindowClose') {
           await getCurrentWindow().close()
+        } else if (command.action === 'reloadMainWindow') {
+          window.location.reload()
+          return
         }
       } catch (error) {
         await postDesktopControlResult(url, {

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::queries::{attach_paginated_codex_items, reconcile_persisted_codex_turn_status};
 use super::*;
 
 #[tokio::test]
@@ -82,6 +83,10 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     handler.handle_turn_result(
         "task-1",
         &ExecutionRequest::default(),
+        Some(&ActiveCodexTurn {
+            thread_id: "thread-1".to_owned(),
+            turn_id: "turn-1".to_owned(),
+        }),
         Ok(crate::agents::CodexAppServerTurn {
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
@@ -328,7 +333,7 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
         .local_task_link("task-1")
         .expect("task should exist");
     assert_eq!(
-        tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
+        link.runtime_handle["lastTurnId"].as_str(),
         Some(codex_turn_id)
     );
     assert_eq!(
@@ -349,7 +354,7 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
 }
 
 #[test]
-fn completed_responses_include_the_persisted_runtime_turn_id() {
+fn completed_responses_use_the_active_codex_turn_id() {
     for (case, outcome) in [
         (
             "completed",
@@ -380,11 +385,13 @@ fn completed_responses_include_the_persisted_runtime_turn_id() {
             "/tmp/project".to_owned(),
             "Task".to_owned(),
         ));
-        handler.record_runtime_turn_id(&local_task_id, &request.subtask_id, "turn-1");
-
         handler.handle_turn_result(
             &local_task_id,
             &request,
+            Some(&ActiveCodexTurn {
+                thread_id: format!("thread-{case}"),
+                turn_id: "turn-1".to_owned(),
+            }),
             Ok(crate::agents::CodexAppServerTurn {
                 thread_id: format!("thread-{case}"),
                 outcome,
@@ -740,6 +747,25 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
     assert_eq!(turns[0]["items"][1]["id"], "assistant-item-1");
     assert_eq!(turns[0]["items"][2]["id"], "tool-call-1");
     assert_eq!(turns[1]["items"][0]["id"], "client-user-2");
+}
+
+#[test]
+fn transcript_canonical_turns_preserve_status_from_user_only_turns() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "turnId": "turn-1",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Pending prompt",
+            "status": "streaming",
+            "runtimeStatus": "running"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns[0]["status"], "streaming");
+    assert_eq!(turns[0]["runtimeStatus"], "running");
 }
 
 #[test]
@@ -1300,6 +1326,54 @@ fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
         codex_guidance_failure_code("turn/steer response missing turnId"),
         "guidance_failed"
     );
+}
+
+#[test]
+fn paginated_codex_items_attach_by_turn_id_in_provider_order() {
+    let mut turns = vec![
+        json!({"id": "turn-1", "status": "completed"}),
+        json!({"id": "turn-2", "status": "inProgress"}),
+    ];
+    attach_paginated_codex_items(
+        &mut turns,
+        vec![
+            json!({"turnId": "turn-1", "item": {"id": "user-1", "type": "userMessage"}}),
+            json!({"turnId": "turn-1", "item": {"id": "assistant-1", "type": "agentMessage"}}),
+            json!({"turnId": "turn-2", "item": {"id": "user-2", "type": "userMessage"}}),
+        ],
+    )
+    .expect("paginated items should attach");
+
+    assert_eq!(turns[0]["items"][0]["id"], "user-1");
+    assert_eq!(turns[0]["items"][1]["id"], "assistant-1");
+    assert_eq!(turns[1]["items"][0]["id"], "user-2");
+}
+
+#[test]
+fn persisted_terminal_status_reconciles_only_the_exact_last_turn_id() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    link.status = "done".to_owned();
+    link.turn_status = Some("completed".to_owned());
+    link.completed_at = Some(123);
+    link.runtime_handle["lastTurnId"] = json!("turn-2");
+    let mut thread = json!({
+        "id": "thread-1",
+        "turns": [
+            {"id": "turn-1", "status": "interrupted", "items": []},
+            {"id": "turn-2", "status": "interrupted", "items": []}
+        ]
+    });
+
+    reconcile_persisted_codex_turn_status(&mut thread, &link);
+
+    assert_eq!(thread["turns"][0]["status"], "interrupted");
+    assert_eq!(thread["turns"][1]["status"], "completed");
+    assert_eq!(thread["turns"][1]["completedAt"], 123);
 }
 
 #[test]

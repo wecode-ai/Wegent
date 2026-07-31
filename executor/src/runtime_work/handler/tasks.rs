@@ -13,6 +13,14 @@ impl RuntimeWorkRpcHandler {
         let source_thread_id = runtime_session_id_from_payload(&payload)
             .or_else(|| runtime_session_id_from_link(&source))
             .ok_or_else(|| AppIpcError::new("bad_request", "source task session is not ready"))?;
+        log_executor_event(
+            "runtime task fork starting",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("source_thread_id", source_thread_id.clone()),
+                ("requested_turn_id", requested_turn_id.clone()),
+            ],
+        );
         let Some(last_turn_id) = resolve_codex_turn_id(&source, &requested_turn_id) else {
             let mapping_keys = source
                 .runtime_handle
@@ -36,6 +44,15 @@ impl RuntimeWorkRpcHandler {
                 "code": "bad_request",
             }));
         };
+        log_executor_event(
+            "runtime task fork turn resolved",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("source_thread_id", source_thread_id.clone()),
+                ("requested_turn_id", requested_turn_id),
+                ("last_turn_id", last_turn_id.clone()),
+            ],
+        );
         let response = match self
             .call_codex_thread_method(
                 "thread/fork",
@@ -49,7 +66,18 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(response) => response,
-            Err(error) => return Ok(task_action_failure(&source, error)),
+            Err(error) => {
+                log_executor_event(
+                    "runtime task fork failed",
+                    &[
+                        ("local_task_id", source.local_task_id.clone()),
+                        ("source_thread_id", source_thread_id),
+                        ("last_turn_id", last_turn_id),
+                        ("error", error.clone()),
+                    ],
+                );
+                return Ok(task_action_failure(&source, error));
+            }
         };
         let thread = response.get("thread").unwrap_or(&response);
         let thread_id = string_field(thread, "id").ok_or_else(|| {
@@ -71,6 +99,13 @@ impl RuntimeWorkRpcHandler {
             json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
         );
         self.upsert_local_task(link);
+        log_executor_event(
+            "runtime task fork completed",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("target_task_id", local_task_id.clone()),
+            ],
+        );
         Ok(json!({
             "success": true,
             "accepted": true,
@@ -175,10 +210,12 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
                 link.runtime_handle = json!({
+                    "lastTurnId": turn_id,
                     "turnIdsBySubtask": {subtask_id: turn_id},
                 });
                 return;
             };
+            runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
             let mappings = runtime_handle
                 .entry("turnIdsBySubtask")
                 .or_insert_with(|| json!({}));
@@ -691,18 +728,6 @@ impl RuntimeWorkRpcHandler {
         }
         self.upsert_local_task(link);
     }
-}
-
-pub(super) fn runtime_turn_id_from_link(
-    link: &RuntimeTaskLink,
-    subtask_id: &str,
-) -> Option<String> {
-    link.runtime_handle
-        .get("turnIdsBySubtask")
-        .and_then(Value::as_object)
-        .and_then(|mappings| mappings.get(subtask_id))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
 }
 
 pub(super) fn resolve_codex_turn_id(

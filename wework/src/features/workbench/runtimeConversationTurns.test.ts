@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
@@ -58,6 +59,35 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('clears terminal metadata when the same Codex turn starts again', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'failed',
+          completedAt: '2026-07-30T00:00:01.000Z',
+          error: 'Disconnected',
+          errorType: 'response.failed',
+          stoppedNotice: true,
+        },
+      ],
+      {
+        type: 'assistant_started',
+        subtaskId: 'turn-1',
+      }
+    )
+
+    expect(turns[0]).toMatchObject({
+      id: 'turn-1',
+      status: 'streaming',
+    })
+    expect(turns[0].completedAt).toBeUndefined()
+    expect(turns[0].error).toBeUndefined()
+    expect(turns[0].errorType).toBeUndefined()
+    expect(turns[0].stoppedNotice).toBeUndefined()
+  })
+
   test('keeps local realtime items missing from a partial snapshot', () => {
     const local: RuntimeConversationTurn[] = [
       {
@@ -108,6 +138,105 @@ describe('runtimeConversationTurns', () => {
     expect(projectRuntimeConversationTurns(merged)[1].blocks?.[0].id).toBe('request-1')
   })
 
+  test('converges full Codex snapshot items by exact item id', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-1', 'Prompt'),
+              subtaskId: 'turn-1',
+              turnId: 'turn-1',
+            },
+          },
+          {
+            id: 'item-2',
+            type: 'assistant_text',
+            content: 'Streaming answer',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-1', 'Prompt'),
+              subtaskId: 'turn-1',
+              turnId: 'turn-1',
+            },
+          },
+          {
+            id: 'item-2',
+            type: 'assistant_text',
+            content: 'Answer',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+        ],
+        status: 'done',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'item-2'])
+    expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
+      'Prompt',
+      'Answer',
+    ])
+  })
+
+  test('keeps realtime tail items temporarily missing from a full Codex snapshot', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'snapshot-item',
+            type: 'assistant_text',
+            content: 'First',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+          {
+            id: 'live-tail-item',
+            type: 'assistant_text',
+            content: 'Second',
+            createdAt: '2026-07-30T00:00:02.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'snapshot-item',
+            type: 'assistant_text',
+            content: 'First from snapshot',
+            createdAt: '2026-07-30T00:00:01.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged[0].items.map(item => item.id)).toEqual(['snapshot-item', 'live-tail-item'])
+    expect(merged[0].items[0]).toMatchObject({ content: 'First from snapshot' })
+  })
+
   test('binds a missed optimistic start from the snapshot by exact client user message id', () => {
     const local = reduceRuntimeConversationTurns([], {
       type: 'user_added',
@@ -145,6 +274,108 @@ describe('runtimeConversationTurns', () => {
       id: 'client-user-1',
       message: { content: 'Snapshot prompt' },
     })
+  })
+
+  test('drops an optimistic guidance turn once the snapshot contains the same client message id', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Initial prompt'),
+          },
+        ],
+        status: 'streaming',
+      },
+      {
+        id: null,
+        clientUserMessageId: 'client-guidance-1',
+        items: [
+          {
+            id: 'client-guidance-1',
+            type: 'user_message',
+            message: userMessage('client-guidance-1', 'Updated direction'),
+          },
+        ],
+        status: 'pending',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'client-user-1',
+            type: 'user_message',
+            message: userMessage('client-user-1', 'Initial prompt'),
+          },
+          {
+            id: 'client-guidance-1',
+            type: 'user_message',
+            message: userMessage('client-guidance-1', 'Updated direction'),
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].items.map(item => item.id)).toEqual(['client-user-1', 'client-guidance-1'])
+    expect(
+      projectRuntimeConversationTurns(merged).filter(message => message.id === 'client-guidance-1')
+    ).toHaveLength(1)
+  })
+
+  test('keeps an optimistic guidance turn while the snapshot does not contain its id', () => {
+    const optimisticGuidance = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('client-guidance-1', 'Updated direction'),
+    })
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [],
+        status: 'streaming',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(optimisticGuidance, snapshot)).toEqual([
+      snapshot[0],
+      optimisticGuidance[0],
+    ])
+  })
+
+  test('moves optimistic guidance into its real turn by exact client message id', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [{ id: 'turn-1', items: [], status: 'streaming' }],
+      {
+        type: 'user_added',
+        message: userMessage('client-guidance-1', 'Updated direction'),
+      }
+    )
+
+    const merged = appendRuntimeConversationGuidance(turns, 'turn-1', {
+      ...userMessage('client-guidance-1', 'Updated direction'),
+      role: 'user',
+      runtimeGuidance: true,
+    })
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].items).toEqual([
+      expect.objectContaining({
+        id: 'client-guidance-1',
+        type: 'user_message',
+        message: expect.objectContaining({
+          runtimeGuidance: true,
+          subtaskId: 'turn-1',
+          turnId: 'turn-1',
+        }),
+      }),
+    ])
   })
 
   test('uses snapshot turn order without sorting turn ids', () => {
@@ -188,7 +419,7 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].status).toBe('done')
   })
 
-  test('keeps a live Codex error item when the provider snapshot omits the failure', () => {
+  test('keeps a live Codex turn failure when the provider snapshot omits the failure', () => {
     const local = reduceRuntimeConversationTurns(
       [
         {
@@ -200,7 +431,6 @@ describe('runtimeConversationTurns', () => {
       {
         type: 'assistant_error',
         subtaskId: 'turn-1',
-        itemId: 'local-error-1',
         error: 'Context window exceeded',
         errorType: 'response.failed',
       }
@@ -216,15 +446,8 @@ describe('runtimeConversationTurns', () => {
     const merged = mergeRuntimeConversationTurns(local, snapshot)
     const [message] = projectRuntimeConversationTurns(merged)
 
-    expect(merged[0].status).toBe('done')
-    expect(merged[0].items).toEqual([
-      expect.objectContaining({
-        id: 'local-error-1',
-        type: 'error',
-        message: 'Context window exceeded',
-        willRetry: false,
-      }),
-    ])
+    expect(merged[0].status).toBe('failed')
+    expect(merged[0].items).toEqual([])
     expect(message).toMatchObject({
       status: 'failed',
       runtimeStatus: 'failed',

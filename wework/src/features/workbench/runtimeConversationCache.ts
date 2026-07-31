@@ -1,9 +1,17 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTransportReplacedPayload } from '@/stream/chatStream'
-import type { RuntimeGuidanceAppliedPayload, RuntimeTaskAddress } from '@/types/api'
+import type {
+  RuntimeGoal,
+  RuntimeGoalContinuationPayload,
+  RuntimeGuidanceAppliedPayload,
+  RuntimePlanEventPayload,
+  RuntimeSubagentActivityPayload,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import type {
   RuntimeConversationTurn,
   RuntimePaneQueuedMessage,
+  RuntimeSubagentStatus,
   WorkbenchMessage,
   ProcessingBlock,
 } from '@/types/workbench'
@@ -15,9 +23,11 @@ import {
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
 import { createAppliedRuntimeGuidanceMessage } from './runtimeGuidanceMessages'
+import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
 const turnsByConversation = new Map<string, RuntimeConversationTurn[]>()
+const metadataByConversation = new Map<string, RuntimeConversationMetadata>()
 const listenersByConversation = new Map<string, Set<(action?: RuntimePaneMessageAction) => void>>()
 const runtimeTransportReplacedListeners = new Set<
   (payload: RuntimeTransportReplacedPayload) => void
@@ -38,6 +48,92 @@ const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
   pinnedToBottom: boolean
+}
+
+export interface RuntimeConversationMetadata {
+  goal: RuntimeGoal | null
+  goalContinuation: RuntimeGoalContinuationPayload | null
+  taskPlan: RuntimePlanEventPayload | null
+  subagentStatuses: RuntimeSubagentStatus[]
+}
+
+const EMPTY_RUNTIME_CONVERSATION_METADATA: RuntimeConversationMetadata = {
+  goal: null,
+  goalContinuation: null,
+  taskPlan: null,
+  subagentStatuses: [],
+}
+
+export function getRuntimeConversationMetadata(
+  address: RuntimeTaskAddress
+): RuntimeConversationMetadata {
+  return (
+    touchEntry(metadataByConversation, runtimeConversationKey(address)) ??
+    EMPTY_RUNTIME_CONVERSATION_METADATA
+  )
+}
+
+export function setRuntimeConversationGoal(
+  address: RuntimeTaskAddress,
+  goal: RuntimeGoal | null
+): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    goal,
+    goalContinuation:
+      goal?.status === 'active'
+        ? current.goalContinuation
+        : updateRuntimeGoalContinuation(current.goalContinuation, { type: 'goal_inactive' }),
+  }))
+}
+
+export function applyRuntimeConversationGoalContinuation(
+  address: RuntimeTaskAddress,
+  payload: RuntimeGoalContinuationPayload
+): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
+      type: 'turn_lifecycle',
+      payload,
+    }),
+  }))
+}
+
+export function markRuntimeConversationAssistantStarted(address: RuntimeTaskAddress): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    goalContinuation: updateRuntimeGoalContinuation(current.goalContinuation, {
+      type: 'assistant_started',
+    }),
+  }))
+}
+
+export function setRuntimeConversationTaskPlan(
+  address: RuntimeTaskAddress,
+  plan: RuntimePlanEventPayload | null
+): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    taskPlan: plan?.plan.length ? plan : null,
+  }))
+}
+
+export function applyRuntimeConversationSubagentActivity(
+  address: RuntimeTaskAddress,
+  activity: RuntimeSubagentActivityPayload
+): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    subagentStatuses: updateRuntimeSubagentStatuses(current.subagentStatuses, activity),
+  }))
+}
+
+export function settleRuntimeConversationSubagents(address: RuntimeTaskAddress): void {
+  updateRuntimeConversationMetadata(address, current => ({
+    ...current,
+    subagentStatuses: markRuntimeSubagentsSettled(current.subagentStatuses),
+  }))
 }
 
 export function getRuntimeConversationMessages(address: RuntimeTaskAddress): WorkbenchMessage[] {
@@ -289,11 +385,6 @@ export function settleRuntimeConversationGuidance(
     return guidanceMessage
   }
 
-  if (turns.some(turn => turnContainsClientUserMessage(turn, guidanceMessage.id))) {
-    notifyRuntimeConversation(key)
-    return guidanceMessage
-  }
-
   const appliedGuidance = createAppliedRuntimeGuidanceMessage(guidanceMessage, payload)
   const nextTurns = appendRuntimeConversationGuidance(turns, payload.subtaskId, appliedGuidance)
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
@@ -406,12 +497,106 @@ export function cacheConversationVirtualMeasurements(key: string, measurements: 
   }
 }
 
+function updateRuntimeConversationMetadata(
+  address: RuntimeTaskAddress,
+  update: (current: RuntimeConversationMetadata) => RuntimeConversationMetadata
+): void {
+  const key = runtimeConversationKey(address)
+  const current = metadataByConversation.get(key) ?? EMPTY_RUNTIME_CONVERSATION_METADATA
+  const next = update(current)
+  if (next === current) return
+  cacheBoundedEntry(metadataByConversation, key, next)
+  notifyRuntimeConversation(key)
+}
+
+function updateRuntimeSubagentStatuses(
+  current: RuntimeSubagentStatus[],
+  activity: RuntimeSubagentActivityPayload
+): RuntimeSubagentStatus[] {
+  const agentPath = activity.agentPath.trim()
+  if (!agentPath) return current
+
+  const agentId = runtimeSubagentId(activity)
+  const previousStatus = current.find(item => item.id === agentId)
+  const nextStatus: RuntimeSubagentStatus = {
+    id: agentId,
+    agentId,
+    agentPath,
+    agentName:
+      activity.agentName?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
+    status: normalizeRuntimeSubagentStatus(activity.status ?? activity.kind),
+    kind: activity.kind,
+    updatedAtMs: activity.occurredAtMs ?? Date.now(),
+  }
+
+  return [...current.filter(item => item.id !== agentId), nextStatus].sort(
+    (left, right) => (right.updatedAtMs ?? 0) - (left.updatedAtMs ?? 0)
+  )
+}
+
+function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {
+  let changed = false
+  const settled = current.map(status => {
+    if (status.status !== 'running') return status
+    changed = true
+    return {
+      ...status,
+      status: 'done' as const,
+      updatedAtMs: Date.now(),
+    }
+  })
+  return changed ? settled : current
+}
+
+function normalizeRuntimeSubagentStatus(
+  value: string | undefined
+): RuntimeSubagentStatus['status'] {
+  const normalized = value?.replace(/_/g, '').toLowerCase()
+  if (normalized === 'done' || normalized === 'completed' || normalized === 'taskcomplete') {
+    return 'done'
+  }
+  if (normalized === 'interrupted' || normalized === 'cancelled' || normalized === 'canceled') {
+    return 'interrupted'
+  }
+  return 'running'
+}
+
+function runtimeSubagentId(activity: RuntimeSubagentActivityPayload): string {
+  const agentId = activity.agentId?.trim()
+  if (agentId) return agentId
+
+  const threadId = activity.agentThreadId?.trim()
+  if (threadId) return threadId
+
+  const agentPath = activity.agentPath.trim()
+  if (agentPath.startsWith('thread:')) {
+    return agentPath.slice('thread:'.length).trim() || agentPath
+  }
+  return agentPath
+}
+
+function runtimeSubagentName(agentId: string): string {
+  const parts = agentId.split('/').filter(Boolean)
+  const lastPart = parts.at(-1) ?? agentId
+  if (!lastPart || lastPart.startsWith('019') || lastPart.length > 16) {
+    return `Agent ${shortRuntimeAgentId(agentId)}`
+  }
+  return lastPart
+}
+
+function shortRuntimeAgentId(agentId: string): string {
+  const normalized = agentId.replace(/^thread:/, '').trim()
+  return normalized.length > 8 ? normalized.slice(-8) : normalized || 'subagent'
+}
+
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
   turnsByConversation.delete(key)
+  metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
   queuedMessagesByConversation.delete(key)
   queuedMessagesPausedByConversation.delete(key)
+  interruptedGuidanceIdsByConversation.delete(key)
   scrollSnapshotsByConversation.delete(key)
   virtualMeasurementsByConversation.delete(key)
 }
@@ -426,6 +611,7 @@ export function getRuntimeConversationCacheStats() {
 
 export function clearRuntimeConversationCacheForTests() {
   turnsByConversation.clear()
+  metadataByConversation.clear()
   listenersByConversation.clear()
   runtimeTransportReplacedListeners.clear()
   hydrationByConversation.clear()

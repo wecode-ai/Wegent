@@ -20,6 +20,7 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
@@ -496,7 +497,10 @@ export function createDesktopScenario({
         response.write(sse(stream.start))
         await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
         await appendRelease
-        await writeSseEvents(response, [assistantMessage(APPENDED_TEXT)])
+        await writeSseEvents(
+          response,
+          textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
+        )
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -675,7 +679,7 @@ export function createDesktopScenario({
       )
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const streamingSnapshot = JSON.parse(
@@ -683,7 +687,15 @@ export function createDesktopScenario({
       )
       assert.ok(
         streamingSnapshot.text.includes(MARKER),
-        'The process text after the streaming tool call lost its prefix'
+        'The assistant text after the streaming tool call lost its prefix'
+      )
+      assert.ok(
+        streamingSnapshot.testIds.includes('assistant-message-content'),
+        'The phase-less streaming response was not rendered as assistant content'
+      )
+      assert.ok(
+        !streamingSnapshot.text.includes(APPEND_MARKER),
+        'The later assistant delta was visible before the runtime released it'
       )
       await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.18' })
       await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
@@ -768,6 +780,11 @@ export function createDesktopScenario({
       await capture(control, 'streaming-text-02-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
         'The streaming conversation before switching tasks',
@@ -785,7 +802,7 @@ export function createDesktopScenario({
       })
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const pinnedAfterSwitch = await waitForBottom(
@@ -808,7 +825,7 @@ export function createDesktopScenario({
       })
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       assert.equal(
@@ -859,7 +876,7 @@ export function createDesktopScenario({
       )
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
+        ASSISTANT_CONTENT_SELECTOR,
         { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
       )
       const completedSnapshot = JSON.parse(
@@ -871,7 +888,7 @@ export function createDesktopScenario({
       )
       assert.ok(
         completedSnapshot.testIds.includes('assistant-message-content'),
-        'The completed response did not promote ambiguous text to final assistant content'
+        'The completed response was not retained as assistant content'
       )
       assert.ok(
         !completedSnapshot.testIds.includes('thinking-indicator'),

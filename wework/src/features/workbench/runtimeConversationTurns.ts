@@ -23,6 +23,11 @@ export function mergeRuntimeConversationTurns(
     )
   )
   const emittedLocalIndexes = new Set<number>()
+  const snapshotUserMessageIds = new Set(
+    snapshotTurns.flatMap(turn =>
+      turn.items.flatMap(item => (item.type === 'user_message' ? [item.id] : []))
+    )
+  )
   const merged = snapshotTurns.map(snapshotTurn => {
     const localIndex =
       (snapshotTurn.id === null ? undefined : localIndexByTurnId.get(snapshotTurn.id)) ??
@@ -36,6 +41,13 @@ export function mergeRuntimeConversationTurns(
 
   localTurns.forEach((turn, index) => {
     if (emittedLocalIndexes.has(index)) return
+    if (
+      turn.id === null &&
+      turn.clientUserMessageId &&
+      snapshotUserMessageIds.has(turn.clientUserMessageId)
+    ) {
+      return
+    }
     if (turn.id === null || !snapshotTurns.some(snapshotTurn => snapshotTurn.id === turn.id)) {
       merged.push(turn)
     }
@@ -98,26 +110,6 @@ export function reduceRuntimeConversationTurns(
         stoppedNotice: true,
       }))
     case 'assistant_error':
-      if (action.itemId) {
-        const itemId = action.itemId
-        const createdAt = new Date().toISOString()
-        return updateTurn(turns, action.subtaskId, turn => ({
-          ...turn,
-          items: [
-            ...turn.items,
-            {
-              id: itemId,
-              type: 'error',
-              message: action.error,
-              errorType: action.errorType,
-              willRetry: false,
-              createdAt,
-            },
-          ],
-          status: 'failed',
-          completedAt: createdAt,
-        }))
-      }
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'failed',
@@ -162,7 +154,22 @@ export function appendRuntimeConversationGuidance(
   guidance: AppliedRuntimeGuidanceMessage
 ): RuntimeConversationTurn[] {
   if (!turnId) return turns
-  return updateTurn(turns, turnId, turn => {
+  const withoutOptimisticDuplicate = turns.filter(
+    turn =>
+      !(
+        turn.id === null &&
+        turn.clientUserMessageId === guidance.id &&
+        turn.items.every(item => item.type === 'user_message' && item.id === guidance.id)
+      )
+  )
+  if (
+    withoutOptimisticDuplicate.some(turn =>
+      turn.items.some(item => item.type === 'user_message' && item.id === guidance.id)
+    )
+  ) {
+    return withoutOptimisticDuplicate
+  }
+  return updateTurn(withoutOptimisticDuplicate, turnId, turn => {
     if (turn.items.some(item => item.type === 'user_message' && item.id === guidance.id)) {
       return turn
     }
@@ -182,11 +189,17 @@ function mergeRuntimeConversationTurn(
   local: RuntimeConversationTurn,
   snapshot: RuntimeConversationTurn
 ): RuntimeConversationTurn {
+  const items = mergeOrderedById(local.items, snapshot.items, (_local, item) => item)
+  const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
   return {
     ...local,
     ...snapshot,
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
-    items: mergeOrderedById(local.items, snapshot.items, (_local, item) => item),
+    items,
+    status: preserveLocalFailure ? local.status : snapshot.status,
+    completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
+    error: preserveLocalFailure ? local.error : snapshot.error,
+    errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
   }
 }
 
@@ -279,6 +292,10 @@ function updateStartedTurn(
     return replaceAt(turns, existingIndex, {
       ...turns[existingIndex],
       status: 'streaming',
+      completedAt: undefined,
+      error: undefined,
+      errorType: undefined,
+      stoppedNotice: undefined,
     })
   }
   const optimisticIndex = action.clientUserMessageId
@@ -292,6 +309,10 @@ function updateStartedTurn(
       ...optimistic,
       id: action.subtaskId,
       status: 'streaming',
+      completedAt: undefined,
+      error: undefined,
+      errorType: undefined,
+      stoppedNotice: undefined,
       items: optimistic.items.map(item =>
         item.type === 'user_message'
           ? {
@@ -406,34 +427,24 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
     }
     const textItems = assistantItems.filter(item => item.type === 'assistant_text')
     const blocks = assistantItems.flatMap(item => (item.type === 'block' ? [item.block] : []))
-    const terminalError = lastTerminalError(assistantItems)
     const firstItem = assistantItems[0]
     const createdAt =
       textItems[0]?.createdAt ??
-      (blocks[0]
-        ? new Date(blocks[0].createdAt).toISOString()
-        : (terminalError?.createdAt ?? new Date().toISOString()))
+      (blocks[0] ? new Date(blocks[0].createdAt).toISOString() : new Date().toISOString())
     messages.push({
       id: `runtime-view:${turn.id ?? turn.clientUserMessageId ?? 'pending'}:${
         firstItem?.id ?? 'assistant'
       }`,
       role: 'assistant',
       content: textItems.map(item => item.content).join('\n\n'),
-      status:
-        isLast && terminalError
-          ? 'failed'
-          : isLast && turn.status === 'failed'
-            ? 'failed'
-            : isLast
-              ? turnStatus(turn)
-              : 'done',
-      runtimeStatus: isLast && terminalError ? 'failed' : isLast ? turn.status : 'done',
+      status: isLast ? turnStatus(turn) : 'done',
+      runtimeStatus: isLast ? turn.status : 'done',
       subtaskId: turn.id ?? undefined,
       turnId: turn.id ?? undefined,
       blocks: blocks.length > 0 ? blocks : undefined,
       fileChanges: isLast ? turn.fileChanges : undefined,
-      error: isLast ? (terminalError?.message ?? turn.error) : undefined,
-      errorType: isLast ? (terminalError?.errorType ?? turn.errorType) : undefined,
+      error: isLast ? turn.error : undefined,
+      errorType: isLast ? turn.errorType : undefined,
       completedAt: isLast ? turn.completedAt : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
       references: isLast ? turn.references : undefined,
@@ -462,16 +473,6 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
   }
   flushAssistant(true, false)
   return messages
-}
-
-function lastTerminalError(
-  items: RuntimeConversationItem[]
-): Extract<RuntimeConversationItem, { type: 'error' }> | undefined {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]
-    if (item?.type === 'error' && !item.willRetry) return item
-  }
-  return undefined
 }
 
 function projectedGuidanceBlock(

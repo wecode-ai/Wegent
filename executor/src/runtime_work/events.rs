@@ -196,7 +196,6 @@ pub(crate) struct CodexNotificationEventMapper {
     final_message_id: Option<String>,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
-    completed_user_message_count: usize,
     goal_status: Option<String>,
     reconnecting_block_id: Option<String>,
 }
@@ -548,8 +547,15 @@ impl CodexNotificationEventMapper {
             return false;
         }
 
-        self.completed_user_message_count += 1;
-        if self.completed_user_message_count == 1 {
+        let item_client_id =
+            string_field(item, "clientId").or_else(|| string_field(item, "client_id"));
+        let initial_client_id = context
+            .request
+            .extra
+            .get("client_user_message_id")
+            .or_else(|| context.request.extra.get("clientUserMessageId"))
+            .and_then(Value::as_str);
+        if item_client_id.is_none() || item_client_id.as_deref() == initial_client_id {
             return true;
         }
 
@@ -564,8 +570,7 @@ impl CodexNotificationEventMapper {
             context.request,
             json!({
                 "guidanceId": item_id(item, "guidance"),
-                "clientGuidanceId": string_field(item, "clientId")
-                    .or_else(|| string_field(item, "client_id")),
+                "clientGuidanceId": item_client_id,
                 "message": extract_text(item).unwrap_or_default(),
                 "appliedAtMs": params
                     .get("completedAtMs")
@@ -1895,21 +1900,23 @@ mod tests {
     }
 
     #[test]
-    fn emits_guidance_applied_for_second_completed_user_message() {
+    fn identifies_initial_user_message_and_guidance_by_client_id() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
+            extra: Map::from_iter([("client_user_message_id".to_owned(), json!("client-initial"))]),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationEventMapper::default();
-        let user_message = |id: &str, text: &str, completed_at_ms: i64| {
+        let user_message = |id: &str, client_id: &str, text: &str, completed_at_ms: i64| {
             json!({
                 "method": "item/completed",
                 "params": {
                     "completedAtMs": completed_at_ms,
                     "item": {
                         "id": id,
+                        "clientId": client_id,
                         "type": "userMessage",
                         "content": [{"type": "text", "text": text}]
                     }
@@ -1922,7 +1929,7 @@ mod tests {
             "device-1",
             "local-1",
             &request,
-            user_message("user-initial", "first", 100),
+            user_message("user-initial", "client-initial", "first", 100),
         );
         assert!(event_rx.try_recv().is_err());
 
@@ -1931,7 +1938,12 @@ mod tests {
             "device-1",
             "local-1",
             &request,
-            user_message("user-guidance", "also inspect memory", 200),
+            user_message(
+                "user-guidance",
+                "client-guidance",
+                "also inspect memory",
+                200,
+            ),
         );
 
         let event = event_rx
@@ -1940,8 +1952,51 @@ mod tests {
         assert_eq!(event["event"], "response.guidance.applied");
         assert_eq!(event["payload"]["subtaskId"], "8");
         assert_eq!(event["payload"]["data"]["guidanceId"], "user-guidance");
+        assert_eq!(
+            event["payload"]["data"]["clientGuidanceId"],
+            "client-guidance"
+        );
         assert_eq!(event["payload"]["data"]["message"], "also inspect memory");
         assert_eq!(event["payload"]["data"]["appliedAtMs"], 200);
+    }
+
+    #[test]
+    fn emits_first_completed_user_message_as_guidance_without_an_initial_client_id() {
+        let (event_tx, mut event_rx) = broadcast::channel(2);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "completedAtMs": 200,
+                    "item": {
+                        "id": "user-guidance",
+                        "clientId": "queued-runtime-pane-1",
+                        "type": "userMessage",
+                        "content": [{"type": "text", "text": "also inspect memory"}]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("goal continuation guidance event should be emitted");
+        assert_eq!(event["event"], "response.guidance.applied");
+        assert_eq!(
+            event["payload"]["data"]["clientGuidanceId"],
+            "queued-runtime-pane-1"
+        );
     }
 
     #[test]

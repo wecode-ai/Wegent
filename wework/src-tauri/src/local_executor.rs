@@ -1622,6 +1622,22 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
+            let debug_text_delta = event.event == "response.output_text.delta"
+                && std::env::var_os("WEGENT_CODEX_STREAM_DEBUG").is_some();
+            if debug_text_delta {
+                let data = event.payload.get("data").unwrap_or(&Value::Null);
+                log::info!(
+                    "Forwarding runtime text delta to frontend: task_id={:?}, subtask_id={:?}, item_id={:?}, offset={:?}, delta_len={}",
+                    event.payload.get("taskId"),
+                    event.payload.get("subtaskId"),
+                    data.get("itemId").or_else(|| data.get("item_id")),
+                    data.get("offset"),
+                    data.get("delta")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default()
+                );
+            }
             app.state::<crate::system_sleep::SystemSleepState>()
                 .handle_runtime_event(
                     &event.event,
@@ -1692,6 +1708,9 @@ fn handle_executor_line_inner(
                     );
                 }
                 return Err(error.to_string());
+            }
+            if debug_text_delta {
+                log::info!("Forwarded runtime text delta to frontend event bus");
             }
             if terminal {
                 log::info!(

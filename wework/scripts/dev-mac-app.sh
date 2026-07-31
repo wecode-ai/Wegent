@@ -47,6 +47,9 @@ Environment:
                         Set to 1 to disable automatic sccache detection.
   WEWORK_EXECUTOR_SIDECAR
                         Executor sidecar path. Defaults to source reload sidecar.
+  WEWORK_DEV_CODEX_BINARY
+                        Explicit development Codex binary. When unset, dev:mac
+                        prepares and uses the repository-locked Codex package.
   WEGENT_EXECUTOR_DEV_RELOAD
                         Set to 0 to run executor source once without reload.
   WEWORK_SHARED_EXECUTOR_HOME
@@ -270,6 +273,41 @@ fi
 install_wegent_sccache_with_homebrew
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
+resolve_dev_codex_target() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin|x86_64-apple-darwin)
+      echo "$MACOS_BUILD_TARGET"
+      return
+      ;;
+  esac
+
+  case "$(uname -m)" in
+    arm64)
+      echo "aarch64-apple-darwin"
+      ;;
+    x86_64)
+      echo "x86_64-apple-darwin"
+      ;;
+    *)
+      echo "Error: unsupported macOS architecture: $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+}
+
+MANAGED_DEV_CODEX="false"
+unset CODEX_BIN
+if [ -n "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
+  export CODEX_BINARY_PATH="$WEWORK_DEV_CODEX_BINARY"
+else
+  DEV_CODEX_TARGET="$(resolve_dev_codex_target)"
+  DEV_CODEX_PACKAGE_ROOT="$WEWORK_DIR/src-tauri/binaries/codex/$DEV_CODEX_TARGET"
+  DEV_CODEX_BINARY="$DEV_CODEX_PACKAGE_ROOT/vendor/$DEV_CODEX_TARGET/bin/codex"
+  export CODEX_BINARY_PATH="$DEV_CODEX_BINARY"
+  export CODEX_MANAGED_PACKAGE_ROOT="$DEV_CODEX_PACKAGE_ROOT"
+  MANAGED_DEV_CODEX="true"
+fi
+
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 
@@ -332,6 +370,7 @@ echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
 echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
 echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
+echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
@@ -348,6 +387,14 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
+if [ "$MANAGED_DEV_CODEX" = "true" ]; then
+  WEWORK_CODEX_TARGET="$DEV_CODEX_TARGET" pnpm run prepare:codex
+  if [ ! -x "$DEV_CODEX_BINARY" ]; then
+    echo "Error: prepared Codex binary is not executable: $DEV_CODEX_BINARY" >&2
+    exit 1
+  fi
+  echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
+fi
 WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
 if [ "$WEWORK_RELEASE_UI" = "true" ]; then

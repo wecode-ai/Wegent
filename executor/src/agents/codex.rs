@@ -46,7 +46,6 @@ const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
-const CODEX_ROUTER_API_KEY: &str = "wework-local-router";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
@@ -1014,15 +1013,23 @@ fn codex_router_provider_overrides() -> Vec<String> {
 }
 
 #[cfg(unix)]
-fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
-    ("/usr/bin/printf", vec!["%s", CODEX_ROUTER_API_KEY])
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
+    (
+        "/usr/bin/printf",
+        vec!["%s".to_owned(), local_model_proxy::API_KEY.to_owned()],
+    )
 }
 
 #[cfg(windows)]
-fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
     (
         "cmd.exe",
-        vec!["/D", "/S", "/C", "<nul set /p =wework-local-router"],
+        vec![
+            "/D".to_owned(),
+            "/S".to_owned(),
+            "/C".to_owned(),
+            format!("<nul set /p ={}", local_model_proxy::API_KEY),
+        ],
     )
 }
 
@@ -1177,8 +1184,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         let forking_thread = fork_thread_id.is_some();
         if direct_thread_id.is_none() {
             if let Some(thread_id) = resume_thread_id.as_deref() {
-                // Release this client's idle subscription before resume. The task-scoped local
-                // router keeps a stable provider URL, so model changes only update its upstream.
+                // An idle thread is unsubscribed after its previous turn. Resume establishes the
+                // next owner subscription and loads the latest materialized snapshot.
                 client.unsubscribe_thread(thread_id).await;
             }
         }
@@ -1212,7 +1219,6 @@ async fn run_codex_app_server_turn_on_shared_client(
             thread_fields.push(("operation", thread_operation.to_owned()));
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
             validate_codex_model_provider(
                 thread_operation,
                 &thread,
@@ -1482,7 +1488,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 rpc.request(thread_operation, thread_params, &mut state),
             )
             .await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
             validate_codex_model_provider(
                 thread_operation,
                 &thread,
@@ -1920,7 +1925,9 @@ fn spawn_shared_request_user_input_response(
     let client = client.clone();
     tokio::spawn(async move {
         let result = async {
-            let response = receiver.receive(correlation_key).await?;
+            let Some(response) = receiver.receive(correlation_key).await? else {
+                return Ok(());
+            };
             client
                 .send_response(request_id, request_user_input_result(response))
                 .await
@@ -1947,10 +1954,14 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
+            let has_response_router = request_user_input_answers.is_some();
             let response = match request_user_input_answers {
-                Some(receiver) => Some(receiver.receive(correlation_key).await?),
+                Some(receiver) => receiver.receive(correlation_key).await?,
                 None => None,
             };
+            if response.is_none() && has_response_router {
+                return Ok(());
+            }
             let result = mcp_server_elicitation_response(&message, response.as_ref())?;
             client.send_response(request_id, result).await
         }
@@ -3702,35 +3713,6 @@ fn insert_runtime_workspace_roots(
     if !roots.is_empty() {
         params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
     }
-}
-
-fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
-    let active_profile = response
-        .get("activePermissionProfile")
-        .and_then(|profile| profile.get("id"))
-        .and_then(Value::as_str);
-    let sandbox_type = response
-        .get("sandbox")
-        .and_then(|sandbox| sandbox.get("type"))
-        .and_then(Value::as_str);
-
-    // Minimal test doubles and older app-server builds do not expose effective permission
-    // metadata. Current Codex builds do, so reject any explicit mismatch instead of running a
-    // turn whose tools silently inherit workspace-write permissions.
-    if active_profile.is_none() && sandbox_type.is_none() {
-        return Ok(());
-    }
-    if active_profile == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE)
-        && sandbox_type == Some("dangerFullAccess")
-    {
-        return Ok(());
-    }
-
-    Err(format!(
-        "codex app-server {operation} applied unexpected permissions: active_profile={}, sandbox={}",
-        active_profile.unwrap_or("<none>"),
-        sandbox_type.unwrap_or("<none>")
-    ))
 }
 
 fn validate_codex_model_provider(

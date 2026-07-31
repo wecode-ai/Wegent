@@ -81,9 +81,15 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import {
+  applyRuntimeConversationGoalContinuation,
+  applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
+  setRuntimeConversationGoal,
+  setRuntimeConversationTaskPlan,
+  settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
 import { createRuntimeConversationStreamHandlers } from './runtimePaneMessages'
@@ -1219,6 +1225,15 @@ export function WorkbenchProvider({
     ) => settleRuntimeConversationGuidance(address, payload)
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Runtime work list refresh failed', {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        error,
+      })
+    })
+  })
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -1240,27 +1255,42 @@ export function WorkbenchProvider({
         createRuntimeConversationStreamHandlers({
           onMessageAction: applyCanonicalRuntimeAction,
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
-          onAssistantStart: address => lifecycleStore.turnStarted(address),
-          onAssistantSettled: address => lifecycleStore.turnSettled(address),
-          onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
-          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
-          onRefreshWorkLists: address => {
-            void stableRefreshWorkLists().catch(error => {
-              console.warn('[Wework] Runtime work list refresh failed', {
-                deviceId: address.deviceId,
-                taskId: address.taskId,
-                error,
-              })
-            })
+          onAssistantStart: address => {
+            markRuntimeConversationAssistantStarted(address)
+            lifecycleStore.turnStarted(address)
           },
+          onAssistantSettled: address => {
+            settleRuntimeConversationSubagents(address)
+            lifecycleStore.turnSettled(address)
+          },
+          onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
+          onSubagentActivity: applyRuntimeConversationSubagentActivity,
+          onRuntimeGoalUpdated: (address, payload) => {
+            const goal = payload.goal ?? null
+            setRuntimeConversationGoal(address, goal)
+            lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalCleared: address => {
+            setRuntimeConversationGoal(address, null)
+            lifecycleStore.goalStatusReceived(address, null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalContinuation: (address, payload) => {
+            applyRuntimeConversationGoalContinuation(address, payload)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
+          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
+          onRefreshWorkLists: refreshRuntimeWorkLists,
         })
       ),
     [
       applyCanonicalRuntimeAction,
       lifecycleStore,
+      refreshRuntimeWorkLists,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
-      stableRefreshWorkLists,
       updateCanonicalRuntimeContextUsage,
     ]
   )

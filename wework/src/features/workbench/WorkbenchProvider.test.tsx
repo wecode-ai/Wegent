@@ -24,7 +24,6 @@ import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
-import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
   getWorkbenchPaneKey,
@@ -7221,10 +7220,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
   })
 
-  test('keeps the runtime stream subscription when the same task address is rebuilt', async () => {
-    const runtimeCleanup = vi.fn()
+  test('does not create a pane-scoped stream subscription when the same task is rebuilt', async () => {
+    const globalCleanup = vi.fn()
     const subscribe = vi.fn((handlers: ChatStreamHandlers) =>
-      handlers.scope?.taskId === 'runtime-a' ? runtimeCleanup : vi.fn()
+      handlers.scope ? vi.fn() : globalCleanup
     )
     const runtimeWorkApi = createRuntimeWorkApiMock({
       getRuntimeTranscript: vi.fn().mockResolvedValue({
@@ -7250,18 +7249,31 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-session-messages')).toHaveTextContent('message a')
     )
-    const runtimeSubscribeCount = () =>
+    const paneSubscribeCount = () =>
       subscribe.mock.calls.filter(([handlers]) => handlers.scope?.taskId === 'runtime-a').length
-    await waitFor(() => expect(runtimeSubscribeCount()).toBe(1))
+    const globalSubscribeCount = () =>
+      subscribe.mock.calls.filter(([handlers]) => hasRuntimeStreamHandler(handlers)).length
+    await waitFor(() => expect(globalSubscribeCount()).toBe(1))
+    expect(paneSubscribeCount()).toBe(0)
 
     await userEvent.click(screen.getByText('rebuild same runtime address'))
 
-    expect(runtimeSubscribeCount()).toBe(1)
-    expect(runtimeCleanup).not.toHaveBeenCalled()
+    expect(globalSubscribeCount()).toBe(1)
+    expect(paneSubscribeCount()).toBe(0)
   })
 
   test('clears the task plan progress when starting a new chat', async () => {
-    renderWorkbench(<RuntimePlanScopeProbe />)
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const services = createWorkbenchServices({
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+    renderWorkbench(<RuntimePlanScopeProbe />, services)
 
     await userEvent.click(await screen.findByText('open runtime plan scope'))
     await waitFor(() =>
@@ -7269,19 +7281,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     await act(async () => {
-      emitResponseApiEvent(
-        {},
-        'runtime.plan.updated',
-        {
-          taskId: 'runtime-plan-scope',
-          deviceId: 'device-1',
-          data: {
-            plan: [{ step: 'Implement the fix', status: 'inProgress' }],
-          },
-        },
-        createResponseApiStreamState()
-      )
-      globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
+      streamHandlers.onRuntimePlanUpdated?.({
+        taskId: 'runtime-plan-scope',
+        deviceId: 'device-1',
+        plan: [{ step: 'Implement the fix', status: 'inProgress' }],
+      })
     })
 
     await waitFor(() =>
@@ -8314,16 +8318,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
-    const getRuntimeGoal = vi
-      .fn()
-      .mockResolvedValueOnce({
-        accepted: true,
-        goal: createRuntimeGoal({ objective: '实现目标', status: 'active' }),
-      })
-      .mockResolvedValueOnce({
-        accepted: true,
-        goal: createRuntimeGoal({ objective: '实现目标', status: 'complete' }),
-      })
+    const getRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({ objective: '实现目标', status: 'active' }),
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeGoal })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -8340,11 +8338,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
 
     await act(async () => {
-      streamHandlers.onChatDone?.({
+      streamHandlers.onRuntimeGoalUpdated?.({
         taskId: 'runtime-a',
         subtaskId: '101',
         deviceId: 'device-1',
-        result: { value: 'done' },
+        goal: createRuntimeGoal({ objective: '实现目标', status: 'complete' }),
       })
     })
 

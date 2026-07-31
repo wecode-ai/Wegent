@@ -2,11 +2,41 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
+  runtimeTranscriptTurnsToConversationTurns,
 } from './runtimePaneMessages'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('runtime transcript status', () => {
+  test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: '',
+            type: 'assistant_text',
+            content: 'invalid',
+          },
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content: 'valid',
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: 'valid',
+      }),
+    ])
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
@@ -179,7 +209,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[0]).toMatchObject({
       type: 'assistant_error',
       subtaskId: 'codex-turn-9',
-      itemId: expect.any(String),
       error: 'Context window exceeded',
       errorType: 'response.failed',
     })

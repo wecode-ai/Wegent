@@ -120,6 +120,21 @@ fn transcript_canonical_turns(
         let Some(turn) = turns.get_mut(turn_index).and_then(Value::as_object_mut) else {
             continue;
         };
+        for key in [
+            "status",
+            "runtimeStatus",
+            "completedAt",
+            "error",
+            "errorType",
+            "stoppedNotice",
+            "fileChanges",
+            "references",
+            "memoryCitations",
+        ] {
+            if let Some(value) = message.get(key) {
+                turn.insert(key.to_owned(), value.clone());
+            }
+        }
         let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) else {
             continue;
         };
@@ -155,21 +170,6 @@ fn transcript_canonical_turns(
             }
         }
 
-        for key in [
-            "status",
-            "runtimeStatus",
-            "completedAt",
-            "error",
-            "errorType",
-            "stoppedNotice",
-            "fileChanges",
-            "references",
-            "memoryCitations",
-        ] {
-            if let Some(value) = message.get(key) {
-                turn.insert(key.to_owned(), value.clone());
-            }
-        }
     }
 
     turns

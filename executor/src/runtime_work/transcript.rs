@@ -114,6 +114,7 @@ fn transcript_messages_with_options(
                         &item,
                         created_at,
                         &subtask_id,
+                        assistant_status,
                         &mut seen_user_messages,
                     );
                     if is_guidance && pushed_user {
@@ -253,6 +254,7 @@ fn transcript_messages_with_options(
                             &item,
                             created_at,
                             &subtask_id,
+                            assistant_status,
                             &mut seen_user_messages,
                         );
                         if is_guidance && pushed_user {
@@ -891,8 +893,8 @@ struct AssistantTextPart {
 }
 
 enum AssistantItemIdentity {
-    Block(String),
-    Text(String),
+    Block(usize),
+    Text(usize),
 }
 
 impl AssistantTurnAccumulation {
@@ -935,9 +937,9 @@ impl AssistantTurnAccumulation {
         self.item_order.extend(
             self.blocks[block_start..]
                 .iter()
-                .filter(|block| !is_projected_guidance_block(block))
-                .filter_map(|block| string_field(block, "id"))
-                .map(AssistantItemIdentity::Block),
+                .enumerate()
+                .filter(|(_, block)| !is_projected_guidance_block(block))
+                .map(|(index, _)| AssistantItemIdentity::Block(block_start + index)),
         );
 
         let part_start = if started_new_segment {
@@ -945,40 +947,33 @@ impl AssistantTurnAccumulation {
         } else {
             previous_part_count.min(self.assistant_parts.len())
         };
-        self.item_order.extend(
-            self.assistant_parts[part_start..]
-                .iter()
-                .map(|part| AssistantItemIdentity::Text(part.id.clone())),
-        );
+        self.item_order
+            .extend((part_start..self.assistant_parts.len()).map(AssistantItemIdentity::Text));
     }
 
     fn runtime_items(&self) -> Vec<Value> {
         self.item_order
             .iter()
             .filter_map(|identity| match identity {
-                AssistantItemIdentity::Block(id) => self
-                    .blocks
-                    .iter()
-                    .find(|block| string_field(block, "id").as_deref() == Some(id.as_str()))
-                    .map(|block| {
-                        json!({
-                            "id": id,
-                            "type": "block",
-                            "block": block,
-                        })
-                    }),
-                AssistantItemIdentity::Text(id) => self
-                    .assistant_parts
-                    .iter()
-                    .find(|part| part.id == *id)
-                    .map(|part| {
+                AssistantItemIdentity::Block(index) => {
+                    let block = self.blocks.get(*index)?;
+                    let id = string_field(block, "id")?;
+                    Some(json!({
+                        "id": id,
+                        "type": "block",
+                        "block": block,
+                    }))
+                }
+                AssistantItemIdentity::Text(index) => {
+                    self.assistant_parts.get(*index).map(|part| {
                         json!({
                             "id": part.id,
                             "type": "assistant_text",
                             "content": part.content,
                             "createdAt": part.created_at,
                         })
-                    }),
+                    })
+                }
             })
             .collect()
     }
@@ -1044,7 +1039,12 @@ fn push_accumulated_assistant(
     assistant.clear_after_emit();
 }
 
-fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
+fn user_message(
+    item: &Value,
+    created_at: i64,
+    turn_id: &str,
+    runtime_status: &str,
+) -> Option<Value> {
     let content = extract_text(item).unwrap_or_default();
     let attachments = user_message_image_attachments(item, created_at);
     if content.trim().is_empty() && attachments.is_empty() {
@@ -1056,6 +1056,7 @@ fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
         "role": "user",
         "content": content,
         "status": "done",
+        "runtimeStatus": runtime_status,
         "createdAt": item_timestamp(item).unwrap_or(created_at),
         "subtaskId": turn_id,
         "turnId": turn_id,
@@ -1083,9 +1084,10 @@ fn push_user_message_once(
     item: &Value,
     created_at: i64,
     turn_id: &str,
+    runtime_status: &str,
     seen: &mut HashMap<String, usize>,
 ) -> bool {
-    let Some(message) = user_message(item, created_at, turn_id) else {
+    let Some(message) = user_message(item, created_at, turn_id, runtime_status) else {
         return false;
     };
 
@@ -3624,6 +3626,22 @@ mod tests {
             ]
         );
         assert_eq!(messages[2]["clientUserMessageId"], "runtime-local-pane-1");
+    }
+
+    #[test]
+    fn transcript_runtime_items_preserve_duplicate_block_contents_by_position() {
+        let mut assistant = AssistantTurnAccumulation::new(None);
+        assistant.blocks = vec![
+            json!({"id": "duplicate-block", "title": "first"}),
+            json!({"id": "duplicate-block", "title": "second"}),
+        ];
+        assistant.record_new_items(0, 0);
+
+        let items = assistant.runtime_items();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["block"]["title"], "first");
+        assert_eq!(items[1]["block"]["title"], "second");
     }
 
     #[test]
