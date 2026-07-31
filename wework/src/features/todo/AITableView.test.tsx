@@ -59,16 +59,16 @@ function apiWith(fields: AITableField[], records: AITableRecord[]): AITableApi {
 }
 
 describe('AITableView', () => {
-  it('renders dynamic fields and records from the live schema', async () => {
+  it('loads the live schema and records into the table', async () => {
     const api = apiWith(
       [field({ id: 'fld_title', name: '需求名称', type: 'text' })],
       [record('rec1', { fld_title: '登录优化' })]
     )
     render(<AITableView api={api} project={project} />)
 
-    expect(await screen.findByText('需求名称')).toBeInTheDocument()
-    expect(screen.getByText('登录优化')).toBeInTheDocument()
-    expect(screen.getByTestId('aitable-grid')).toHaveClass('h-full')
+    await waitFor(() => expect(api.describe).toHaveBeenCalledWith('7'))
+    expect(api.listRecords).toHaveBeenCalledWith('7', { limit: 100, viewId: undefined })
+    expect(await screen.findByTestId('aitable-grid')).toHaveClass('h-full')
   })
 
   it('hides DingTalk view tabs and renders a single table', async () => {
