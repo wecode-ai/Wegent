@@ -26,7 +26,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
         }),
         {
           status: 200,
@@ -58,7 +58,7 @@ describe('localModelConnectionTest', () => {
     )
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'gpt-oss:20b',
-      input: 'Call the capability probe with value PING.',
+      tools: [{ type: 'custom', name: 'apply_patch' }],
     })
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
   })
@@ -117,7 +117,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
         })
       )
     )
@@ -141,7 +141,7 @@ describe('localModelConnectionTest', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
         })
       )
     )

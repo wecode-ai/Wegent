@@ -718,7 +718,7 @@ describe('ConnectionsSettingsPage', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [{ type: 'custom_tool_call', name: 'apply_patch' }],
         }),
         {
           status: 200,

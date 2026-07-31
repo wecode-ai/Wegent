@@ -104,6 +104,7 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
+  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -146,6 +147,8 @@ const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
 const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
+const DEEPSEEK_V4_REASONING_EFFORTS = ['low', 'high', 'max']
+const DEEPSEEK_V4_DEFAULT_REASONING_EFFORT = 'high'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -270,6 +273,9 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
   if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
     return KIMI_K3_REASONING_EFFORTS
   }
+  if (config.codexCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_REASONING_EFFORTS
+  }
   const values = config.catalogEntry?.supported_reasoning_levels
   if (!Array.isArray(values)) return []
   return values.flatMap(value => {
@@ -283,6 +289,9 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
 function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
   if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
     return KIMI_K3_DEFAULT_REASONING_EFFORT
+  }
+  if (config.codexCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_DEFAULT_REASONING_EFFORT
   }
   const value = config.catalogEntry?.default_reasoning_level
   return typeof value === 'string' ? value : null

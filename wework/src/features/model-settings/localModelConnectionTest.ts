@@ -32,6 +32,28 @@ export interface TestLocalModelConnectionResult {
 }
 
 const PROBE_TOOL_NAME = 'wework_capability_probe'
+const APPLY_PATCH_TOOL_NAME = 'apply_patch'
+const APPLY_PATCH_PROBE =
+  '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n'
+const APPLY_PATCH_GRAMMAR = `start: begin_patch hunk+ end_patch
+begin_patch: "*** Begin Patch" LF
+end_patch: "*** End Patch" LF?
+
+hunk: add_hunk | delete_hunk | update_hunk
+add_hunk: "*** Add File: " filename LF add_line+
+delete_hunk: "*** Delete File: " filename LF
+update_hunk: "*** Update File: " filename LF change_move? change?
+
+filename: /(.+)/
+add_line: "+" /(.*)/ LF -> line
+
+change_move: "*** Move to: " filename LF
+change: (change_context | change_line)+ eof_line?
+change_context: ("@@" | "@@ " /(.+)/) LF
+change_line: ("+" | "-" | " ") /(.*)/ LF
+eof_line: "*** End of File" LF
+
+%import common.LF`
 
 function testRequestBody(
   apiFormat: LocalModelApiFormat,
@@ -82,7 +104,9 @@ function testRequestBody(
   const custom = toolProfile === 'custom'
   return {
     model,
-    input: 'Call the capability probe with value PING.',
+    input: custom
+      ? `Call apply_patch with this exact patch:\n${APPLY_PATCH_PROBE}`
+      : 'Call the capability probe with value PING.',
     max_output_tokens: 64,
     stream: false,
     store: false,
@@ -90,9 +114,10 @@ function testRequestBody(
       ? [
           {
             type: 'custom',
-            name: PROBE_TOOL_NAME,
-            description: 'Return the exact probe value.',
-            format: { type: 'grammar', syntax: 'lark', definition: 'start: "PING"' },
+            name: APPLY_PATCH_TOOL_NAME,
+            description:
+              'Use the apply_patch tool to edit files. This is a freeform tool, so do not wrap the patch in JSON.',
+            format: { type: 'grammar', syntax: 'lark', definition: APPLY_PATCH_GRAMMAR },
           },
         ]
       : [
@@ -110,7 +135,11 @@ function testRequestBody(
   }
 }
 
-function hasProbeToolCall(apiFormat: LocalModelApiFormat, body: unknown): boolean {
+function hasProbeToolCall(
+  apiFormat: LocalModelApiFormat,
+  toolProfile: LocalModelToolProfile,
+  body: unknown
+): boolean {
   const record = (value: unknown): Record<string, unknown> | null =>
     value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null
   const array = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
@@ -131,11 +160,12 @@ function hasProbeToolCall(apiFormat: LocalModelApiFormat, body: unknown): boolea
       })
     })
   }
+  const expectedToolName = toolProfile === 'custom' ? APPLY_PATCH_TOOL_NAME : PROBE_TOOL_NAME
   return array(value.output).some(item => {
     const candidate = record(item)
     return (
       (candidate?.type === 'custom_tool_call' || candidate?.type === 'function_call') &&
-      candidate.name === PROBE_TOOL_NAME
+      candidate.name === expectedToolName
     )
   })
 }
@@ -202,7 +232,7 @@ export async function testLocalModelConnection(
     } catch (parseError) {
       throw new Error('Model returned a non-JSON response body', { cause: parseError })
     }
-    if (!hasProbeToolCall(apiFormat, body)) {
+    if (!hasProbeToolCall(apiFormat, toolProfile, body)) {
       throw new Error('Model did not return the required capability probe tool call')
     }
     return { status: response.status, toolCalling: true }
