@@ -28,9 +28,13 @@ function tabKindIcon(kind: WorkspaceTabKind) {
 
 function menuPosition(trigger: HTMLElement, width: number): MenuPosition {
   const rect = trigger.getBoundingClientRect()
+  return clampMenuPosition({ left: rect.left, top: rect.bottom + 4 }, width, 120)
+}
+
+function clampMenuPosition(position: MenuPosition, width: number, height: number): MenuPosition {
   return {
-    left: Math.min(rect.left, window.innerWidth - width - 8),
-    top: rect.bottom + 4,
+    left: Math.max(8, Math.min(position.left, window.innerWidth - width - 8)),
+    top: Math.max(8, Math.min(position.top, window.innerHeight - height - 8)),
   }
 }
 
@@ -59,60 +63,74 @@ function useOutsideMenu(
 function WorkspaceTabButton({
   tab,
   active,
+  draggedTabId,
+  onDragStartTab,
+  onDragEndTab,
+  onDragOverTab,
   onContextMenu,
 }: {
   tab: WorkspaceTab
   active: boolean
+  draggedTabId: string | null
+  onDragStartTab: (tabId: string) => void
+  onDragEndTab: () => void
+  onDragOverTab: (tabId: string) => void
   onContextMenu: (position: MenuPosition, tabId: string) => void
 }) {
-  const { selectTab, closeTab, moveTab } = useWorkspaceTabs()
-  const [dragging, setDragging] = useState(false)
+  const { t } = useTranslation('common')
+  const { selectTab, closeTab } = useWorkspaceTabs()
+  const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title: tab.title })
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
-    setDragging(true)
+    onDragStartTab(tab.id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', tab.id)
   }
   const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-    const sourceId = event.dataTransfer.getData('text/plain')
-    if (sourceId && sourceId !== tab.id) moveTab(sourceId, tab.id)
+    if (draggedTabId && draggedTabId !== tab.id) onDragOverTab(tab.id)
   }
 
   return (
     <div
-      role="tab"
-      aria-selected={active}
       data-testid={`workspace-tab-${tab.id}`}
-      data-tab-kind={tab.kind}
       draggable
       onDragStart={handleDragStart}
-      onDragEnd={() => setDragging(false)}
+      onDragEnd={onDragEndTab}
       onDragOver={handleDragOver}
       onAuxClick={event => {
         if (event.button === 1) closeTab(tab.id)
-      }}
-      onContextMenu={event => {
-        event.preventDefault()
-        onContextMenu({ left: event.clientX, top: event.clientY }, tab.id)
       }}
       className={cn(
         'group relative flex h-9 w-44 min-w-28 max-w-[220px] flex-none items-center overflow-visible text-sm transition-[background-color,color,opacity] duration-150',
         active
           ? 'workspace-document-tab-active z-10 rounded-t-[10px] bg-surface text-text-primary'
           : 'rounded-lg text-text-secondary hover:bg-black/[0.05] hover:text-text-primary',
-        dragging && 'opacity-55'
+        draggedTabId === tab.id && 'opacity-55'
       )}
     >
       <button
         type="button"
+        role="tab"
+        aria-selected={active}
         data-testid={`workspace-tab-select-${tab.id}`}
+        data-tab-kind={tab.kind}
         onClick={() => selectTab(tab.id)}
+        onContextMenu={event => {
+          event.preventDefault()
+          onContextMenu(
+            clampMenuPosition({ left: event.clientX, top: event.clientY }, 196, 80),
+            tab.id
+          )
+        }}
         onKeyDown={event => {
           if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
           event.preventDefault()
           const rect = event.currentTarget.getBoundingClientRect()
-          onContextMenu({ left: rect.left + 12, top: rect.bottom + 4 }, tab.id)
+          onContextMenu(
+            clampMenuPosition({ left: rect.left + 12, top: rect.bottom + 4 }, 196, 80),
+            tab.id
+          )
         }}
         className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
         title={tab.title}
@@ -131,8 +149,8 @@ function WorkspaceTabButton({
           'mr-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-blue-500',
           active ? 'text-text-secondary' : 'text-text-muted group-hover:text-text-secondary'
         )}
-        aria-label={`关闭 ${tab.title}`}
-        title={`关闭 ${tab.title}`}
+        aria-label={closeLabel}
+        title={closeLabel}
       >
         <X aria-hidden="true" className="h-3.5 w-3.5" />
       </button>
@@ -142,13 +160,22 @@ function WorkspaceTabButton({
 
 export function WorkspaceTabStrip() {
   const { t } = useTranslation('common')
-  const { tabs, activeTabId, openTab, selectTab, closeTab, closeOtherTabs, restoreClosedTab } =
-    useWorkspaceTabs()
+  const {
+    tabs,
+    activeTabId,
+    openTab,
+    selectTab,
+    closeTab,
+    closeOtherTabs,
+    restoreClosedTab,
+    moveTab,
+  } = useWorkspaceTabs()
   const addButtonRef = useRef<HTMLButtonElement>(null)
   const addMenuRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
@@ -189,13 +216,19 @@ export function WorkspaceTabStrip() {
         role="tablist"
         data-testid="workspace-tab-strip"
         aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-        className="flex h-full min-w-0 max-w-[760px] flex-1 items-end gap-0.5 overflow-hidden"
+        className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[760px] flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden px-3"
       >
         {tabs.map(tab => (
           <WorkspaceTabButton
             key={tab.id}
             tab={tab}
             active={tab.id === activeTabId}
+            draggedTabId={draggedTabId}
+            onDragStartTab={setDraggedTabId}
+            onDragEndTab={() => setDraggedTabId(null)}
+            onDragOverTab={targetId => {
+              if (draggedTabId) moveTab(draggedTabId, targetId)
+            }}
             onContextMenu={(position, tabId) => {
               setAddMenuPosition(null)
               setContextMenu({ tabId, ...position })

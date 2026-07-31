@@ -29,7 +29,7 @@ type WorkspaceTabsAction =
   | { type: 'open'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
   | { type: 'closeOthers'; tabId: string }
-  | { type: 'restoreClosed' }
+  | { type: 'restoreClosed'; restored: WorkspaceTab }
   | { type: 'move'; sourceId: string; targetId: string }
   | { type: 'updateActive'; updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>> }
 
@@ -147,14 +147,11 @@ function workspaceTabsReducer(
       }
     }
     case 'restoreClosed': {
-      const [tab, ...closedTabs] = state.closedTabs
-      if (!tab) return state
-      const restored = state.tabs.some(candidate => candidate.id === tab.id)
-        ? { ...tab, id: `${tab.kind}-${crypto.randomUUID()}` }
-        : tab
+      if (state.closedTabs.length === 0) return state
+      const [, ...closedTabs] = state.closedTabs
       return {
-        tabs: [...state.tabs, restored],
-        activeTabId: restored.id,
+        tabs: [...state.tabs, action.restored],
+        activeTabId: action.restored.id,
         closedTabs,
       }
     }
@@ -253,7 +250,7 @@ export function WorkspaceTabsProvider({
     const restored = state.tabs.some(candidate => candidate.id === tab.id)
       ? { ...tab, id: `${tab.kind}-${crypto.randomUUID()}` }
       : tab
-    dispatch({ type: 'restoreClosed' })
+    dispatch({ type: 'restoreClosed', restored })
     navigateTo(workspaceTabRoute(restored))
   }, [state.closedTabs, state.tabs])
 

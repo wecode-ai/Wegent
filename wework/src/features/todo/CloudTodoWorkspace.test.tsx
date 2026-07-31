@@ -223,6 +223,34 @@ describe('CloudTodoWorkspace', () => {
     expect(onActiveProjectChange).toHaveBeenLastCalledWith(null)
   })
 
+  it('resets project-specific view state when a controlled project changes externally', async () => {
+    const user = { id: 1, user_name: 'local', email: 'local@example.com' } as User
+    const workbenchServices = services()
+    const view = render(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectId={project.id as unknown as string}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    expect(screen.getByText('管理项目')).toBeInTheDocument()
+
+    view.rerender(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectId={null}
+      />
+    )
+
+    await waitFor(() => expect(screen.queryByText('管理项目')).not.toBeInTheDocument())
+    expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
+  })
+
   it('renames and archives a project from the sidebar menu', async () => {
     const workbenchServices = services()
 

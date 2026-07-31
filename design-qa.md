@@ -16,6 +16,52 @@ final result: passed
 
 ---
 
+# Workspace Document Tabs Follow-up Review
+
+## Source visual truth
+
+- Reference: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785512913569/image.model-input.png`
+
+## Implementation evidence
+
+- Task tab active: `wework/test-results/ai-verify/final-workspace-tabs-review/01-task-active.png`
+- New-tab menu: `wework/test-results/ai-verify/final-workspace-tabs-review/02-new-tab-menu.png`
+- Project spaces active: `wework/test-results/ai-verify/final-workspace-tabs-review/03-project-spaces-active.png`
+- Concrete project title active: `wework/test-results/ai-verify/final-workspace-tabs-review/04-project-name-active.png`
+- Switch back to task: `wework/test-results/ai-verify/final-workspace-tabs-review/05-switch-back-to-task.png`
+- Close project tab: `wework/test-results/ai-verify/final-workspace-tabs-review/06-close-project-tab.png`
+- Restore closed project tab: `wework/test-results/ai-verify/final-workspace-tabs-review/07-restore-closed-project-tab.png`
+- Tab context menu: `wework/test-results/ai-verify/final-workspace-tabs-review/08-tab-context-menu.png`
+- Independent project window: `wework/test-results/ai-verify/final-workspace-tabs-review/09-project-new-window.png`
+- Side-by-side comparison: `wework/test-results/ai-verify/final-workspace-tabs-review/10-reference-vs-implementation.png`
+
+## Review findings
+
+- The active document tab uses the content surface color, stronger text, and connected corner
+  shapes; inactive tabs remain on the muted titlebar. The selected and unselected states are
+  visibly distinct at a glance.
+- Horizontal tab padding and a hidden-scrollbar overflow region preserve both active-tab corner
+  shapes at the first and last positions while allowing future multi-tab growth.
+- The reference hierarchy is preserved: native traffic lights, document tabs, a quiet titlebar,
+  sidebar/content separation, and the active tab visually joining the page below.
+- Top-level navigation consistently uses “项目空间”; an opened project uses its concrete name
+  (“产品规划”) in both the main window and the independent window.
+- Add-tab and context menus remain compact, aligned to their trigger, and clamped to the viewport.
+- The real Tauri independent-window capture confirms that the reduced workspace-window capability
+  still supports the complete project-space experience.
+
+## Interaction and accessibility verification
+
+- Open, select, close, restore, reorder, keyboard context-menu, and open-in-new-window flows were
+  exercised.
+- Tabs expose semantic `tablist`/`tab` roles without nesting another button inside the tab.
+- Close labels and auxiliary route titles are localized in Chinese and English.
+- No actionable P0, P1, or P2 visual mismatch remains.
+
+final result: passed
+
+---
+
 # Wework 工作区标签设计 QA
 
 ## 目标

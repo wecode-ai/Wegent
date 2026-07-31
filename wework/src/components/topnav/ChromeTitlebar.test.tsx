@@ -22,6 +22,13 @@ const labels = {
   board: '项目空间',
   agent: '智能体',
   auxiliary: '工作区',
+  auxiliaryRoutes: {
+    plugins: '插件',
+    sites: '站点',
+    automations: '自动化',
+    cloud: '云端工作',
+    apps: '应用',
+  },
 }
 
 function renderTitlebar(props: React.ComponentProps<typeof ChromeTitlebar> = {}) {

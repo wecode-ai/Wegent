@@ -725,6 +725,7 @@ export function CloudTodoWorkspace({
   const [projectSearchQuery, setProjectSearchQuery] = useState('')
   const [projectSearchFilters, setProjectSearchFilters] =
     useState<TaskSearchFilters>(emptyTaskSearchFilters)
+  const locallyRequestedProjectIdRef = useRef<string | null | undefined>(undefined)
   const projectHeaderRef = useRef<HTMLElement>(null)
   const projectHeaderContentRef = useRef<HTMLDivElement>(null)
   const projectHeaderTabsRef = useRef<HTMLElement>(null)
@@ -740,6 +741,25 @@ export function CloudTodoWorkspace({
     add: 0,
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
+
+  const resetProjectViewState = useCallback(() => {
+    setProjectView('board')
+    setBoardParentId(null)
+    setNativeGroupFilter('')
+    setNativeBoardQuery('')
+    setProjectSearchOpen(false)
+    setProjectSearchQuery('')
+    setProjectSearchFilters(emptyTaskSearchFilters)
+  }, [])
+
+  useEffect(() => {
+    if (activeProjectId === undefined) return
+    if (locallyRequestedProjectIdRef.current === activeProjectId) {
+      locallyRequestedProjectIdRef.current = undefined
+      return
+    }
+    resetProjectViewState()
+  }, [activeProjectId, resetProjectViewState])
 
   useLayoutEffect(() => {
     const header = projectHeaderRef.current
@@ -1071,14 +1091,9 @@ export function CloudTodoWorkspace({
   }
 
   function applyProjectSelection(projectId: string | null) {
+    locallyRequestedProjectIdRef.current = projectId
     setSelectedProjectId(projectId)
-    setProjectView('board')
-    setBoardParentId(null)
-    setNativeGroupFilter('')
-    setNativeBoardQuery('')
-    setProjectSearchOpen(false)
-    setProjectSearchQuery('')
-    setProjectSearchFilters(emptyTaskSearchFilters)
+    resetProjectViewState()
   }
 
   function selectProject(projectId: string | null) {

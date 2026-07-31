@@ -4,8 +4,9 @@ import type { WorkspaceTab } from './workspaceTabs'
 const once = vi.fn()
 const show = vi.fn().mockResolvedValue(undefined)
 const setFocus = vi.fn().mockResolvedValue(undefined)
+const destroy = vi.fn().mockResolvedValue(undefined)
 const WebviewWindow = vi.fn(function MockWebviewWindow() {
-  return { once, show, setFocus }
+  return { once, show, setFocus, destroy }
 })
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ WebviewWindow }))
@@ -72,5 +73,38 @@ describe('openWorkspaceTabWindow', () => {
     )
     expect(show).toHaveBeenCalledOnce()
     expect(setFocus).toHaveBeenCalledOnce()
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  test('destroys a hidden Tauri window when creation reports an error', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    once.mockImplementation(
+      (eventName: string, callback: (event: { payload: unknown }) => void) => {
+        if (eventName === 'tauri://error') callback({ payload: 'window failed' })
+        return Promise.resolve(vi.fn())
+      }
+    )
+    const { openWorkspaceTabWindow } = await import('./workspaceWindow')
+
+    await expect(openWorkspaceTabWindow(tab)).rejects.toThrow('window failed')
+
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(show).not.toHaveBeenCalled()
+  })
+
+  test('destroys a hidden Tauri window when creation times out', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    once.mockResolvedValue(vi.fn())
+    const { openWorkspaceTabWindow } = await import('./workspaceWindow')
+
+    const opening = openWorkspaceTabWindow(tab)
+    const rejection = expect(opening).rejects.toThrow('Timed out creating workspace window')
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    await rejection
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(show).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })

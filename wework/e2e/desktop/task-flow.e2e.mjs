@@ -2935,7 +2935,7 @@ async function verifyWorkspaceDocumentTabs(control) {
 
   await control.command(
     'click',
-    '[data-tab-kind="task"] [data-testid^="workspace-tab-select-"]'
+    '[data-testid^="workspace-tab-select-task-"]'
   )
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
@@ -2943,12 +2943,11 @@ async function verifyWorkspaceDocumentTabs(control) {
   })
   await control.command(
     'click',
-    '[data-tab-kind="board"] [data-testid^="workspace-tab-close-"]'
+    '[data-testid^="workspace-tab-close-board-"]'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.equal(
-    snapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
-    false,
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
     'Closing the project-space document tab did not remove it from the titlebar'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')

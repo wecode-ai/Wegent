@@ -33,7 +33,17 @@ pub async fn capture_workspace_webview(app: tauri::AppHandle) -> Result<String, 
         .or_else(|| {
             app.webview_windows()
                 .into_keys()
-                .find(|label| label.starts_with("workspace-"))
+                .filter(|label| label.starts_with("workspace-"))
+                .max_by_key(|label| {
+                    (
+                        label
+                            .rsplit('-')
+                            .next()
+                            .and_then(|timestamp| timestamp.parse::<u128>().ok())
+                            .unwrap_or_default(),
+                        label.clone(),
+                    )
+                })
         })
         .ok_or_else(|| "No workspace window is available".to_string())?;
     capture_webview_impl(app, &label, false).await

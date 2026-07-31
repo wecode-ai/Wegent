@@ -53,18 +53,31 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
       unlisten.forEach(dispose => dispose())
       callback()
     }
+    const fail = (error: unknown) => {
+      finish(() => {
+        void workspaceWindow.destroy().catch(() => undefined)
+        reject(error instanceof Error ? error : new Error(errorMessage(error)))
+      })
+    }
+    const rememberUnlisten = (listener: Promise<UnlistenFn>) => {
+      void listener
+        .then(dispose => {
+          if (settled) {
+            dispose()
+            return
+          }
+          unlisten.push(dispose)
+        })
+        .catch(fail)
+    }
     const timeout = window.setTimeout(() => {
-      finish(() => reject(new Error('Timed out creating workspace window')))
+      fail(new Error('Timed out creating workspace window'))
     }, WINDOW_CREATION_TIMEOUT_MS)
 
-    void workspaceWindow
-      .once('tauri://created', () => finish(resolve))
-      .then(dispose => unlisten.push(dispose))
-      .catch(error => finish(() => reject(error)))
-    void workspaceWindow
-      .once('tauri://error', event => finish(() => reject(new Error(errorMessage(event.payload)))))
-      .then(dispose => unlisten.push(dispose))
-      .catch(error => finish(() => reject(error)))
+    rememberUnlisten(workspaceWindow.once('tauri://created', () => finish(resolve)))
+    rememberUnlisten(
+      workspaceWindow.once('tauri://error', event => fail(new Error(errorMessage(event.payload))))
+    )
   })
 
   await workspaceWindow.show()

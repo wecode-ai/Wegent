@@ -301,6 +301,15 @@ function LanguagePreferenceInitializer() {
   return null
 }
 
+const BROWSER_WORKSPACE_SCOPE_PREFIX = 'wework-workspace-'
+
+function browserWorkspaceTabStorageScope(): string {
+  if (!window.name.startsWith(BROWSER_WORKSPACE_SCOPE_PREFIX)) {
+    window.name = `${BROWSER_WORKSPACE_SCOPE_PREFIX}${crypto.randomUUID()}`
+  }
+  return `browser:${window.name}`
+}
+
 function AppShell() {
   const { t } = useTranslation('common')
   const { pathname: path, search } = useCurrentLocation()
@@ -317,13 +326,23 @@ function AppShell() {
   const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
-  const workspaceTabStorageScope = isTauri ? getCurrentWindow().label : 'browser'
+  const workspaceTabStorageScope = useMemo(
+    () => (isTauri ? getCurrentWindow().label : browserWorkspaceTabStorageScope()),
+    [isTauri]
+  )
   const workspaceTabLabels = useMemo(
     () => ({
       task: t('workbench.workspace_tab_task', '任务'),
       board: t('workbench.workspace_tab_board', '项目空间'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
+      auxiliaryRoutes: {
+        plugins: t('workbench.workspace_tab_plugins', '插件'),
+        sites: t('workbench.workspace_tab_sites', '站点'),
+        automations: t('workbench.workspace_tab_automations', '自动化'),
+        cloud: t('workbench.workspace_tab_cloud', '云端工作'),
+        apps: t('workbench.workspace_tab_apps', '应用'),
+      },
     }),
     [t]
   )

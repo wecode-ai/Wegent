@@ -210,8 +210,8 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('Apps')
-    expect(screen.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('应用')
+    expect(screen.getByRole('tab', { name: /应用/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('desktop-auxiliary-surface')).toHaveClass(
       'app-view-surface',
       'rounded-xl',
@@ -347,7 +347,7 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
-    expect(screen.getByRole('tab', { name: /Apps/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /应用/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('workspace-tab-add')).toBeInTheDocument()
 
     expect(screen.getByTestId('apps-sidebar-nav')).toBeInTheDocument()

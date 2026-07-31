@@ -94,6 +94,14 @@
   box-shadow: -5px 5px 0 5px var(--workspace-tab-surface);
 }
 
+.workspace-tab-strip-scrollbar {
+  scrollbar-width: none;
+}
+
+.workspace-tab-strip-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 .task-description-editor .tiptap p.is-editor-empty:first-child::before {
   color: rgb(var(--color-text-muted));
   content: attr(data-placeholder);

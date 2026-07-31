@@ -12,6 +12,13 @@ const labels = {
   board: '项目空间',
   agent: '智能体',
   auxiliary: '工作区',
+  auxiliaryRoutes: {
+    plugins: '插件',
+    sites: '站点',
+    automations: '自动化',
+    cloud: '云端工作',
+    apps: '应用',
+  },
 }
 
 describe('workspaceTabs', () => {
@@ -50,6 +57,13 @@ describe('workspaceTabs', () => {
       tabId: 'board-1',
       tabTitle: '产品规划',
     })
+  })
+
+  test('uses localized labels for auxiliary routes', () => {
+    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/plugins' }).title).toBe('插件')
+    expect(createWorkspaceTab('auxiliary', labels, { contentRoute: '/cloud-work' }).title).toBe(
+      '云端工作'
+    )
   })
 
   test('moves tabs and selects the nearest survivor when closing the active tab', () => {
