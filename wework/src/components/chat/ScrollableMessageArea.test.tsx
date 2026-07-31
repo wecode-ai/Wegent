@@ -1297,7 +1297,7 @@ describe('ScrollableMessageArea', () => {
         content: 'First request',
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:00.000Z',
-        runtimeMessageIndex: 0,
+        runtimeMessageIndex: 100,
       },
       {
         id: 'virtual-active-assistant-1',
@@ -1305,7 +1305,7 @@ describe('ScrollableMessageArea', () => {
         content: 'First response',
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:01.000Z',
-        runtimeMessageIndex: 1,
+        runtimeMessageIndex: 101,
       },
       {
         id: 'virtual-active-user-2',
@@ -1313,7 +1313,7 @@ describe('ScrollableMessageArea', () => {
         content: 'Second request',
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:02.000Z',
-        runtimeMessageIndex: 2,
+        runtimeMessageIndex: 102,
       },
       {
         id: 'virtual-active-assistant-2',
@@ -1321,7 +1321,7 @@ describe('ScrollableMessageArea', () => {
         content: 'Long second response',
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:03.000Z',
-        runtimeMessageIndex: 3,
+        runtimeMessageIndex: 103,
       },
       {
         id: 'virtual-active-user-3',
@@ -1329,14 +1329,25 @@ describe('ScrollableMessageArea', () => {
         content: 'Third request',
         status: 'done' as const,
         createdAt: '2026-07-31T00:00:04.000Z',
-        runtimeMessageIndex: 4,
+        runtimeMessageIndex: 104,
+      },
+      {
+        id: 'virtual-active-unindexed-assistant',
+        role: 'assistant' as const,
+        content: 'Transient response without a transcript index',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:05.000Z',
       },
     ]
 
     render(
       <div ref={scrollRef}>
         <div ref={contentRef}>
+          <div data-message-id="virtual-active-assistant-1">First response</div>
           <div data-message-id="virtual-active-assistant-2">Long second response</div>
+          <div data-message-id="virtual-active-unindexed-assistant">
+            Transient response without a transcript index
+          </div>
         </div>
         <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
       </div>
@@ -1351,7 +1362,9 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('First response'), -200, 120)
     mockRect(screen.getByText('Long second response'), 40, 1_200)
+    mockRect(screen.getByText('Transient response without a transcript index'), 80, 120)
 
     fireEvent.resize(window)
     flushScheduledTimers()

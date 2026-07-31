@@ -277,6 +277,8 @@ export function MessageTurnNavigation({
     const content = contentRef.current
     if (!scroller || !content) return
 
+    // Mounted anchors are recalculated by observers; raw scroll events reuse
+    // measured user targets and preserve the last valid virtualized marker.
     const handleScroll = () => updateActiveMarker(markersRef.current, 'scroll')
     const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
@@ -770,10 +772,11 @@ function findActiveMarkerFromMountedMessages(
   if (!anchorByMessageId || anchorByMessageId.size === 0) return null
 
   const messageIndexById = new Map(
-    messages.map((message, index) => [
-      message.id,
-      typeof message.runtimeMessageIndex === 'number' ? message.runtimeMessageIndex : index,
-    ])
+    messages.flatMap(message =>
+      Number.isFinite(message.runtimeMessageIndex)
+        ? [[message.id, message.runtimeMessageIndex as number] as const]
+        : []
+    )
   )
   const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
   let currentMessageIndex: number | null = null
