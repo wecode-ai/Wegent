@@ -200,7 +200,9 @@ function serializeComposerFragment(fragment: Fragment): string {
     } else if (node.type === composerSchema.nodes.composer_mention) {
       parts.push(String(node.attrs.reference ?? ''))
     } else if (node.type === composerSchema.nodes.composer_link) {
-      parts.push(String(node.attrs.url ?? ''))
+      const label = String(node.attrs.label ?? '')
+      const url = String(node.attrs.url ?? '')
+      parts.push(label ? `[${label}](${url})` : url)
     } else if (node.type === composerSchema.nodes.hard_break) {
       parts.push('\n')
     }

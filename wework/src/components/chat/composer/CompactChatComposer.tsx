@@ -28,15 +28,12 @@ import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/ty
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
-import { LinkPreviewCard } from './LinkPreviewCard'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
-import { useMemo } from 'react'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
-import { extractFirstLink } from '@/lib/link-preview'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
@@ -148,8 +145,6 @@ export function CompactChatComposer({
     !disabled &&
     !submitDisabled
   const explicitLineCount = value.split('\n').length
-  const linkPreview = useMemo(() => extractFirstLink(value), [value])
-  const linkPreviewVisible = Boolean(linkPreview)
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
     if (!text) return
@@ -173,22 +168,6 @@ export function CompactChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-  const handleRemoveLinkPreview = () => {
-    if (!linkPreview) return
-    onChange(value.replace(linkPreview.url, '').replace(/\s+/g, ' ').trim())
-  }
-  const handleChangeLinkText = (text: string) => {
-    if (!linkPreview) return
-    const escaped = linkPreview.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$\u0026')
-    const nextValue = value.replace(new RegExp(escaped, 'g'), text)
-    onChange(nextValue)
-  }
-  const handleChangeLinkUrl = (nextUrl: string) => {
-    if (!linkPreview) return
-    const escaped = linkPreview.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$\u0026')
-    onChange(value.replace(new RegExp(escaped, 'g'), nextUrl))
-  }
-
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files && files.length > 0) {
@@ -229,16 +208,6 @@ export function CompactChatComposer({
         onShowTextAttachment={handleShowTextAttachment}
         onClearCodeComments={onClearCodeComments}
       />
-      {linkPreviewVisible && linkPreview && (
-        <LinkPreviewCard
-          preview={linkPreview}
-          linkText={linkPreview.displayUrl}
-          onRemove={handleRemoveLinkPreview}
-          onChangeLinkText={handleChangeLinkText}
-          onChangeUrl={handleChangeLinkUrl}
-          disabled={disabled}
-        />
-      )}
       <input
         ref={imageInputRef}
         type="file"

@@ -32,18 +32,39 @@ describe('recognized links', () => {
     const link = getRecognizedLink('https://github.com/wecode-ai/Wegent')
     expect(link?.label).toBe('wecode-ai/Wegent')
     expect(link?.provider).toBe('github')
+    expect(link?.isAbbreviated).toBe(true)
   })
 
   test('recognizes GitHub pull requests', () => {
     const link = getRecognizedLink('https://github.com/wecode-ai/Wegent/pull/2350')
     expect(link?.label).toBe('wecode-ai/Wegent#2350')
     expect(link?.provider).toBe('github')
+    expect(link?.isAbbreviated).toBe(true)
   })
 
   test('recognizes GitHub issues', () => {
     const link = getRecognizedLink('https://github.com/wecode-ai/Wegent/issues/42')
     expect(link?.label).toBe('wecode-ai/Wegent#42')
     expect(link?.provider).toBe('github')
+    expect(link?.isAbbreviated).toBe(true)
+  })
+
+  test('keeps the full URL for unrecognized GitHub repo sub-paths', () => {
+    const link = getRecognizedLink(
+      'https://github.com/wecode-ai/Wegent/actions/runs/30603861794/job/91072055935?pr=2348'
+    )
+    expect(link?.label).toBe(
+      'https://github.com/wecode-ai/Wegent/actions/runs/30603861794/job/91072055935?pr=2348'
+    )
+    expect(link?.provider).toBe('github')
+    expect(link?.isAbbreviated).toBe(false)
+  })
+
+  test('keeps the full URL for trailing-slash GitHub repositories', () => {
+    const link = getRecognizedLink('https://github.com/wecode-ai/Wegent/')
+    expect(link?.label).toBe('wecode-ai/Wegent')
+    expect(link?.provider).toBe('github')
+    expect(link?.isAbbreviated).toBe(true)
   })
 
   test('returns undefined for unsupported URLs', () => {

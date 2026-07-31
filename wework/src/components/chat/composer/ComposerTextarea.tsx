@@ -1191,8 +1191,11 @@ export function ComposerTextarea({
             const editor = editorRef.current
             if (!editor) return
             const snapshot = editor.getSnapshot()
-            const nextValue = snapshot.value.replaceAll(editingLink.url, nextPayload.url)
-            commitEditorValue(nextValue, snapshot.selectionOffset)
+            const oldMarkdown = `[${editingLink.label}](${editingLink.url})`
+            const nextMarkdown = `[${nextPayload.label}](${nextPayload.url})`
+            const nextValue = snapshot.value.replaceAll(oldMarkdown, nextMarkdown)
+            const nextCursor = snapshot.selectionOffset + (nextMarkdown.length - oldMarkdown.length)
+            commitEditorValue(nextValue, Math.max(0, nextCursor))
             setEditingLink(null)
             setEditingLinkAnchor(null)
           }}
@@ -1201,7 +1204,7 @@ export function ComposerTextarea({
             if (!editor) return
             const snapshot = editor.getSnapshot()
             const nextValue = snapshot.value
-              .replaceAll(editingLink.url, '')
+              .replaceAll(`[${editingLink.label}](${editingLink.url})`, '')
               .replace(/\s+/g, ' ')
               .trim()
             commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, nextValue.length))

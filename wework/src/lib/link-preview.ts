@@ -11,6 +11,8 @@ export interface RecognizedLink {
   iconUrl: string
   provider: string
   fullUrl: string
+  /** When true, the label is a human-readable simplification and not the full URL. */
+  isAbbreviated: boolean
 }
 
 interface LinkRecognizer {
@@ -54,6 +56,7 @@ class GitHubRecognizer implements LinkRecognizer {
         iconUrl: GitHubRecognizer.GITHUB_ICON,
         provider: this.provider,
         fullUrl: url,
+        isAbbreviated: true,
       }
     }
 
@@ -66,6 +69,7 @@ class GitHubRecognizer implements LinkRecognizer {
         iconUrl: GitHubRecognizer.GITHUB_ICON,
         provider: this.provider,
         fullUrl: url,
+        isAbbreviated: true,
       }
     }
 
@@ -80,15 +84,17 @@ class GitHubRecognizer implements LinkRecognizer {
         iconUrl: GitHubRecognizer.GITHUB_ICON,
         provider: this.provider,
         fullUrl: url,
+        isAbbreviated: true,
       }
     }
 
     return {
       url,
-      label: repoRef,
+      label: url,
       iconUrl: GitHubRecognizer.GITHUB_ICON,
       provider: this.provider,
       fullUrl: url,
+      isAbbreviated: false,
     }
   }
 }

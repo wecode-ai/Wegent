@@ -34,6 +34,11 @@ export class ComposerLinkNodeView implements NodeView {
   update(node: ProseMirrorNode): boolean {
     if (!node.sameMarkup(this.node)) return false
     this.node = node
+    const payload = node.attrs as ComposerLinkPayload
+    const label = this.dom.querySelector('.composer-mention-label')
+    if (label) label.textContent = payload.label
+    this.dom.setAttribute('data-composer-link-url', payload.url)
+    this.dom.setAttribute('aria-label', payload.label)
     return true
   }
 
