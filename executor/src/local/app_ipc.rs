@@ -712,6 +712,17 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .map_err(task_runtime_error)?,
             )
         }
+        "projects.archive" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppIpcError::new("bad_request", "version is required"))?;
+            runtime
+                .archive_project(project_id, version)
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
+        }
         "external_projects.configure" => {
             let project = task_input::<ProjectDescriptor>(&params, "project")?;
             serialize_task_value(
@@ -998,6 +1009,15 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                     .await
                     .map_err(task_runtime_error)?,
             )
+        }
+        "todos.archive" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            runtime
+                .archive_task(project_id, task_id)
+                .await
+                .map_err(task_runtime_error)?;
+            Ok(json!({}))
         }
         "todos.comment" => {
             let project_id = required_task_string(&params, "project_id")?;

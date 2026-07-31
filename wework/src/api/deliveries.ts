@@ -274,6 +274,9 @@ export function createDeliveryApi(client: HttpClient) {
     ): Promise<CloudProject> {
       return client.patch(`/v1/cloud-projects/${projectId}`, data)
     },
+    archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
+      return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
+    },
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
     },
@@ -324,6 +327,9 @@ export function createDeliveryApi(client: HttpClient) {
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
+    },
+    archiveLoopItem(itemId: string): Promise<void> {
+      return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)
     },
     reorderLoopItems(
       projectId: CloudProjectIdInput,

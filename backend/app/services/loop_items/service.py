@@ -579,12 +579,28 @@ class LoopItemService:
         return item
 
     def delete(self, db: Session, item_id: str, user_id: int) -> LoopItem:
-        """Soft delete a TODO; the row is kept for the recycle bin."""
+        """Soft delete a TODO subtree; rows are kept for the recycle bin."""
 
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
-        item.deleted_at = self._now()
-        item.version += 1
+        archived_at = self._now()
+        pending_parent_ids = [item.id]
+        archived_items = [item]
+        while pending_parent_ids:
+            children = (
+                db.query(LoopItem)
+                .filter(
+                    LoopItem.cloud_project_id == item.cloud_project_id,
+                    LoopItem.parent_id.in_(pending_parent_ids),
+                    loop_datetime_is_unset(LoopItem.deleted_at),
+                )
+                .all()
+            )
+            pending_parent_ids = [child.id for child in children]
+            archived_items.extend(children)
+        for archived_item in archived_items:
+            archived_item.deleted_at = archived_at
+            archived_item.version += 1
         db.commit()
         db.refresh(item)
         return item

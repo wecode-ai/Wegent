@@ -4,14 +4,12 @@ import {
   DragOverlay,
   PointerSensor,
   pointerWithin,
-  useDraggable,
   useDroppable,
   useSensor,
   useSensors,
   type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core'
-import { CSS } from '@dnd-kit/utilities'
 import {
   Bot,
   Check,
@@ -57,6 +55,11 @@ import { AITableView } from '@/features/todo/AITableView'
 import type { ProjectWithTasks, User as UserProfile } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
+import {
+  CloudTodoBoardCard,
+  CloudTodoCardContent,
+  type BoardCardDisplaySettings,
+} from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
@@ -69,14 +72,7 @@ import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectPro
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
-import {
-  boardStatusColorClasses,
-  columnDotClasses,
-  columns,
-  memberAvatarClasses,
-  priorityBadgeClasses,
-  reorderLaneItems,
-} from './todoShared'
+import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 
 type ProjectView = 'board' | 'table' | 'files' | 'manage'
 type RootView = 'projects' | 'my-work'
@@ -89,21 +85,6 @@ const nativeBoardGroupFields: AITableField[] = [
   { id: 'assignee', name: '负责人', type: 'user', config: null, raw: {} },
   { id: 'tag', name: '标签', type: 'tag', config: null, raw: {} },
 ]
-
-export interface BoardCardDisplaySettings {
-  showAssignee: boolean
-  showPriority: boolean
-  showTags: boolean
-  showDate: boolean
-}
-
-const priorityLabels: Record<CloudLoopItem['priority'], string> = {
-  none: '普通',
-  low: '低',
-  medium: '中',
-  high: '高',
-  urgent: '紧急',
-}
 
 function aitableCellLabels(value: unknown): string[] {
   if (value === null || value === undefined || value === '') return []
@@ -248,168 +229,6 @@ const boardCollisionDetection: CollisionDetection = args => {
   const collisions = pointerWithin(args)
   const cardCollision = collisions.find(collision => boardCardIdFromDropId(collision.id))
   return cardCollision ? [cardCollision] : collisions.slice(0, 1)
-}
-
-function TodoCardContent({
-  item,
-  display,
-  dingtalk = false,
-}: {
-  item: CloudLoopItem
-  display: BoardCardDisplaySettings
-  dingtalk?: boolean
-}) {
-  const tags = item.tags ?? []
-  return (
-    <>
-      <span className="block text-base font-medium leading-5">{item.title}</span>
-      {dingtalk && item.description ? (
-        <span className="mt-1.5 line-clamp-2 block text-xs leading-5 text-text-muted">
-          {item.description}
-        </span>
-      ) : null}
-      {display.showPriority || display.showTags || display.showDate ? (
-        <span className="mt-2.5 flex items-center gap-1">
-          {display.showPriority ? (
-            <span
-              className={cn(
-                'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium',
-                priorityBadgeClasses[item.priority]
-              )}
-            >
-              {priorityLabels[item.priority]}
-            </span>
-          ) : null}
-          {display.showTags
-            ? tags.slice(0, 3).map(tag => (
-                <span
-                  key={tag}
-                  className="inline-flex max-w-24 items-center truncate rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary"
-                >
-                  {tag}
-                </span>
-              ))
-            : null}
-          {display.showTags && tags.length > 3 ? (
-            <span className="text-xs text-text-muted">+{tags.length - 3}</span>
-          ) : null}
-          {display.showDate ? (
-            <span className="ml-auto shrink-0 text-xs text-text-muted">
-              {(item.due_at ?? item.updated_at).slice(5, 10)}
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-      {display.showAssignee ? (
-        <span className="mt-2 flex min-w-0 items-center gap-1.5 text-xs">
-          <CircleUserRound className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-          <span className="shrink-0 text-text-muted">负责人</span>
-          {item.assignee_name ? (
-            <span
-              data-testid={`cloud-todo-card-assignee-avatar-${item.id}`}
-              className={cn(
-                'flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-semibold text-background',
-                memberAvatarClasses[0]
-              )}
-            >
-              {item.assignee_name.slice(0, 1).toUpperCase()}
-            </span>
-          ) : null}
-          <span
-            className={cn('truncate', item.assignee_name ? 'text-text-primary' : 'text-text-muted')}
-          >
-            {item.assignee_name ?? '未指定'}
-          </span>
-        </span>
-      ) : null}
-    </>
-  )
-}
-
-function DraggableTodoCard({
-  item,
-  childCount,
-  onClick,
-  onAddChild,
-  onOpenChildren,
-  display,
-  dingtalk = false,
-  dragDisabled = false,
-}: {
-  item: CloudLoopItem
-  childCount: number
-  onClick: () => void
-  onAddChild: () => void
-  onOpenChildren: () => void
-  display: BoardCardDisplaySettings
-  dingtalk?: boolean
-  dragDisabled?: boolean
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef: setDragRef,
-    transform,
-    isDragging,
-  } = useDraggable({
-    id: item.id,
-    disabled: item.can_edit === false || dragDisabled,
-  })
-  const { isOver, setNodeRef: setDropRef } = useDroppable({ id: `todo-card:${item.id}` })
-  return (
-    <div
-      ref={node => {
-        setDragRef(node)
-        setDropRef(node)
-      }}
-      data-testid={`cloud-todo-card-drop-${item.id}`}
-      style={{ transform: CSS.Translate.toString(transform) }}
-      className={cn(
-        'group w-full touch-none overflow-hidden rounded-xl border border-border bg-background text-left shadow-sm transition hover:-translate-y-px hover:shadow-md',
-        isDragging && 'opacity-25 shadow-none',
-        isOver && !isDragging && 'border-focus ring-1 ring-focus/50'
-      )}
-    >
-      <button
-        type="button"
-        data-testid={`cloud-todo-card-${item.id}`}
-        disabled={item.can_view_detail === false}
-        onClick={onClick}
-        className="w-full px-3 pt-3 text-left disabled:cursor-default"
-        {...listeners}
-        {...attributes}
-      >
-        <TodoCardContent item={item} display={display} dingtalk={dingtalk} />
-      </button>
-      <div className="mx-3 mt-2.5 flex items-center border-t border-border py-2">
-        {childCount > 0 ? (
-          <button
-            type="button"
-            data-testid={`cloud-todo-open-children-${item.id}`}
-            onClick={onOpenChildren}
-            className="flex min-w-0 items-center gap-1.5 text-xs text-text-secondary transition hover:text-text-primary"
-          >
-            <ListTodo className="h-3.5 w-3.5" />
-            {childCount} 个子任务
-            <ChevronRight className="h-3 w-3" />
-          </button>
-        ) : (
-          <span className="min-w-0 text-xs text-text-muted">暂无子任务</span>
-        )}
-        <button
-          type="button"
-          data-testid={`cloud-todo-card-add-child-${item.id}`}
-          disabled={item.can_edit === false}
-          onClick={onAddChild}
-          className={cn(
-            'ml-auto flex items-center gap-1 text-xs text-text-muted opacity-0 transition hover:text-text-primary focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden'
-          )}
-        >
-          <Plus className="h-3.5 w-3.5" /> 子任务
-        </button>
-      </div>
-    </div>
-  )
 }
 
 function TodoColumnDropzone({ status, children }: { status: string; children: React.ReactNode }) {
@@ -964,6 +783,14 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [copiedProjectId, setCopiedProjectId] = useState<string | null>(null)
   const [projectMenuId, setProjectMenuId] = useState<string | null>(null)
+  const [renameProject, setRenameProject] = useState<LocatedCloudProject | null>(null)
+  const [renameProjectName, setRenameProjectName] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [archiveProject, setArchiveProject] = useState<LocatedCloudProject | null>(null)
+  const [archiveItem, setArchiveItem] = useState<CloudLoopItem | null>(null)
+  const [archiveBusy, setArchiveBusy] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
   useEffect(() => {
     if (projectMenuId === null) return
 
@@ -1234,6 +1061,100 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     setProjectSearchOpen(false)
     setProjectSearchQuery('')
     setProjectSearchFilters(emptyTaskSearchFilters)
+  }
+
+  async function renameSelectedProject() {
+    if (!renameProject) return
+    const api = apiForProjectId(renameProject.id)
+    if (!api) throw new Error('项目空间接口当前不可用')
+    setRenameBusy(true)
+    setRenameError(null)
+    try {
+      const updated = await api.updateCloudProject(renameProject.id, {
+        name: renameProjectName.trim(),
+        version: renameProject.version,
+      })
+      setProjects(current =>
+        current.map(project =>
+          project.id === updated.id ? { ...updated, location: project.location } : project
+        )
+      )
+      setRenameProject(null)
+    } catch (cause) {
+      setRenameError(cause instanceof Error ? cause.message : '修改项目名称失败')
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  async function confirmArchiveProject() {
+    if (!archiveProject || archiveBusy) return
+    const api = apiForProjectId(archiveProject.id)
+    if (!api) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    try {
+      await api.archiveCloudProject(archiveProject.id, archiveProject.version)
+      setProjects(current => current.filter(project => project.id !== archiveProject.id))
+      setProjectCounts(current => {
+        const next = { ...current }
+        delete next[archiveProject.id]
+        return next
+      })
+      if (selectedProjectId === archiveProject.id) selectProject(null)
+      setArchiveProject(null)
+    } catch (cause) {
+      setArchiveError(cause instanceof Error ? cause.message : '归档项目失败')
+    } finally {
+      setArchiveBusy(false)
+    }
+  }
+
+  async function confirmArchiveItem() {
+    if (!archiveItem || archiveBusy) return
+    const api = apiForProjectId(archiveItem.cloud_project_id)
+    if (!api) return
+    setArchiveBusy(true)
+    setArchiveError(null)
+    try {
+      await api.archiveLoopItem(archiveItem.id)
+      const archivedIds = new Set([archiveItem.id])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const candidate of items) {
+          if (
+            candidate.parent_id &&
+            archivedIds.has(candidate.parent_id) &&
+            !archivedIds.has(candidate.id)
+          ) {
+            archivedIds.add(candidate.id)
+            changed = true
+          }
+        }
+      }
+      setItems(current => current.filter(item => !archivedIds.has(item.id)))
+      setProjectItems(current => ({
+        ...current,
+        [archiveItem.cloud_project_id]: (current[archiveItem.cloud_project_id] ?? []).filter(
+          item => !archivedIds.has(item.id)
+        ),
+      }))
+      setProjectCounts(current => ({
+        ...current,
+        [archiveItem.cloud_project_id]: Math.max(
+          0,
+          (current[archiveItem.cloud_project_id] ?? 0) - archivedIds.size
+        ),
+      }))
+      if (boardParentId && archivedIds.has(boardParentId)) setBoardParentId(null)
+      if (selectedItem && archivedIds.has(selectedItem.id)) setSelectedItem(null)
+      setArchiveItem(null)
+    } catch (cause) {
+      setArchiveError(cause instanceof Error ? cause.message : '归档任务失败')
+    } finally {
+      setArchiveBusy(false)
+    }
   }
 
   useEffect(() => {
@@ -1657,6 +1578,45 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                         role="menu"
                         className="absolute right-0 top-8 z-30 w-36 rounded-lg border border-border bg-background p-1 shadow-md"
                       >
+                        {project.created_by_user_id === user.id ||
+                        project.access_role === 'Owner' ||
+                        project.access_role === 'Maintainer' ? (
+                          <>
+                            <button
+                              type="button"
+                              data-testid={`cloud-sidebar-rename-project-${project.id}`}
+                              onClick={() => {
+                                setRenameProject(project)
+                                setRenameProjectName(project.name)
+                                setRenameError(null)
+                                setProjectMenuId(null)
+                              }}
+                              role="menuitem"
+                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-text-secondary hover:bg-muted"
+                            >
+                              <span className="w-3.5 text-center" aria-hidden="true">
+                                Aa
+                              </span>
+                              修改项目名称
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`cloud-sidebar-archive-project-${project.id}`}
+                              onClick={() => {
+                                setArchiveError(null)
+                                setArchiveProject(project)
+                                setProjectMenuId(null)
+                              }}
+                              role="menuitem"
+                              className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-xs text-red-600 hover:bg-muted"
+                            >
+                              <span className="w-3.5 text-center" aria-hidden="true">
+                                ×
+                              </span>
+                              归档项目
+                            </button>
+                          </>
+                        ) : null}
                         <button
                           type="button"
                           data-testid={`cloud-sidebar-copy-project-id-${project.id}`}
@@ -2203,7 +2163,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                                 </header>
                                 <TodoColumnDropzone status={column.key}>
                                   {columnItems.map(item => (
-                                    <DraggableTodoCard
+                                    <CloudTodoBoardCard
                                       key={item.id}
                                       item={item}
                                       childCount={
@@ -2214,9 +2174,13 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                                       }}
                                       onAddChild={() => openTodoCreation(item)}
                                       onOpenChildren={() => setBoardParentId(item.id)}
+                                      onArchive={() => {
+                                        setArchiveError(null)
+                                        setArchiveItem(item)
+                                      }}
                                       display={boardCardDisplay}
-                                      dingtalk={isAITableProject}
                                       dragDisabled={isAITableProject}
+                                      archiveDisabled={selectedProject.task_provider !== 'local'}
                                     />
                                   ))}
                                   {columnItems.length === 0 && columnEmptyHints[column.status] && (
@@ -2248,10 +2212,9 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                         <DragOverlay dropAnimation={null}>
                           {activeDragItemId ? (
                             <div className="w-[272px] rotate-1 rounded-xl border border-border bg-background p-3 text-left shadow-lg">
-                              <TodoCardContent
+                              <CloudTodoCardContent
                                 item={items.find(item => item.id === activeDragItemId)!}
                                 display={boardCardDisplay}
-                                dingtalk={isAITableProject}
                               />
                             </div>
                           ) : null}
@@ -2379,6 +2342,96 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
             setCreateTodoParent(null)
           }}
         />
+      )}
+      {renameProject && (
+        <Modal title="修改项目名称" onClose={() => !renameBusy && setRenameProject(null)}>
+          <div className="px-5 pb-5 pt-4">
+            <label className="block text-sm font-medium text-text-secondary">
+              项目名称
+              <input
+                data-testid="cloud-project-rename-input"
+                value={renameProjectName}
+                autoFocus
+                onFocus={event => event.currentTarget.select()}
+                onChange={event => {
+                  setRenameProjectName(event.target.value)
+                  setRenameError(null)
+                }}
+                className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+              />
+            </label>
+            <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>
+            {renameError ? <p className="mt-3 text-xs text-red-600">{renameError}</p> : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenameProject(null)}
+                disabled={renameBusy}
+                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid="cloud-project-rename-confirm"
+                disabled={!renameProjectName.trim() || renameBusy}
+                onClick={() => void renameSelectedProject()}
+                className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+              >
+                {renameBusy ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {(archiveProject || archiveItem) && (
+        <Modal
+          title={archiveProject ? '归档项目？' : '归档任务？'}
+          onClose={() => {
+            if (archiveBusy) return
+            setArchiveProject(null)
+            setArchiveItem(null)
+            setArchiveError(null)
+          }}
+        >
+          <div className="px-5 pb-5 pt-4">
+            <p className="text-sm leading-5 text-text-secondary">
+              {archiveProject
+                ? `“${archiveProject.name}”及其中任务将从项目列表中隐藏。`
+                : `“${archiveItem?.title}”${items.some(item => item.parent_id === archiveItem?.id) ? '及其子任务' : ''}将从看板中隐藏。`}
+            </p>
+            <p className="mt-2 text-xs text-text-muted">归档数据会保留，不会立即永久删除。</p>
+            {archiveError ? <p className="mt-3 text-xs text-red-600">{archiveError}</p> : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="cloud-archive-cancel"
+                disabled={archiveBusy}
+                onClick={() => {
+                  setArchiveProject(null)
+                  setArchiveItem(null)
+                  setArchiveError(null)
+                }}
+                className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid={
+                  archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
+                }
+                disabled={archiveBusy}
+                onClick={() => {
+                  void (archiveProject ? confirmArchiveProject() : confirmArchiveItem())
+                }}
+                className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {archiveBusy ? '归档中…' : '确认归档'}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   )

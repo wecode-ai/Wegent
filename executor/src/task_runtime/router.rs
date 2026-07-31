@@ -57,6 +57,10 @@ impl TaskRuntime {
             .map(mask_project)
     }
 
+    pub fn archive_project(&self, project_id: &str, version: i64) -> Result<(), TaskRuntimeError> {
+        self.local_store.archive_project(project_id, version)
+    }
+
     pub fn configure_external_project(
         &self,
         project: ProjectDescriptor,
@@ -454,6 +458,20 @@ impl TaskRuntime {
                     .update_board(&project, task_id, input)
                     .await
             }
+            provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
+                "{provider:?}"
+            ))),
+        }
+    }
+
+    pub async fn archive_task(
+        &self,
+        project_id: &str,
+        task_id: &str,
+    ) -> Result<(), TaskRuntimeError> {
+        let project = self.local_store.get_project(project_id)?;
+        match task_provider(&project)? {
+            TaskProviderKind::Local => self.local_store.archive_task(project_id, task_id),
             provider => Err(TaskRuntimeError::UnsupportedProvider(format!(
                 "{provider:?}"
             ))),

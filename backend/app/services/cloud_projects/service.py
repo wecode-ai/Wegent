@@ -245,6 +245,31 @@ class CloudProjectService:
         db.refresh(project)
         return project
 
+    def archive(self, db: Session, project_id: int, user_id: int, version: int) -> None:
+        """Archive a project so it no longer appears in active project lists."""
+
+        project = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.Maintainer
+        ).project
+        updated = (
+            db.query(CloudProject)
+            .filter(
+                CloudProject.id == project.id,
+                CloudProject.version == version,
+                CloudProject.status == "active",
+            )
+            .update(
+                {
+                    "status": "archived",
+                    "version": CloudProject.version + 1,
+                }
+            )
+        )
+        if updated != 1:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
+        db.commit()
+
     def add_local_binding(
         self,
         db: Session,

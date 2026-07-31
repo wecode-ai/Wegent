@@ -12,7 +12,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
-import type { BoardCardDisplaySettings } from './CloudTodoWorkspace'
+import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import {
   parseDingTalkAITableLink,
   repositoryAddress,

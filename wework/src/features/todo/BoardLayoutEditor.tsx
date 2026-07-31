@@ -22,7 +22,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { cn } from '@/lib/utils'
-import type { BoardCardDisplaySettings } from './CloudTodoWorkspace'
+import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 
 type BoardStatus = NonNullable<CloudProject['board_config']>['statuses'][number]
 

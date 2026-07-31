@@ -385,6 +385,12 @@ export function createLocalDeliveryApi(
       })
       return localProject(record)
     },
+    async archiveCloudProject(projectId: CloudProjectId, version: number) {
+      await request('projects.archive', {
+        project_id: projectId,
+        version,
+      })
+    },
     async listMyWork() {
       return { items: [] }
     },
@@ -439,6 +445,14 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async archiveLoopItem(itemId: string) {
+      const projectId = await resolveProjectId(itemId)
+      await request('todos.archive', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      taskProjects.delete(itemId)
     },
     async reorderLoopItems(
       projectId: CloudProjectId,

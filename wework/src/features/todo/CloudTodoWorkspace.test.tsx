@@ -83,6 +83,13 @@ function services(): WorkbenchServices {
         task_provider: values.task_provider ?? 'local',
         provider_config: values.provider_config ?? {},
       })),
+      updateCloudProject: vi.fn(async (_projectId, values) => ({
+        ...project,
+        ...values,
+        version: project.version + 1,
+      })),
+      archiveCloudProject: vi.fn(async () => undefined),
+      archiveLoopItem: vi.fn(async () => undefined),
       updateLoopItem: vi.fn(async (_itemId, values) => ({
         ...item,
         ...values,
@@ -192,6 +199,63 @@ describe('CloudTodoWorkspace', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     localStorage.clear()
+  })
+
+  it('renames and archives a project from the sidebar menu', async () => {
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-more-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-rename-project-11'))
+    await userEvent.clear(screen.getByTestId('cloud-project-rename-input'))
+    await userEvent.type(screen.getByTestId('cloud-project-rename-input'), 'Wegent Next')
+    await userEvent.click(screen.getByTestId('cloud-project-rename-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(11, {
+        name: 'Wegent Next',
+        version: 1,
+      })
+    )
+    expect((await screen.findAllByText('Wegent Next')).length).toBeGreaterThan(0)
+
+    await userEvent.click(screen.getByTestId('cloud-sidebar-project-more-11'))
+    await userEvent.click(screen.getByTestId('cloud-sidebar-archive-project-11'))
+    await userEvent.click(screen.getByTestId('cloud-project-archive-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.archiveCloudProject).toHaveBeenCalledWith(11, 2)
+    )
+    expect(screen.queryByTestId('cloud-sidebar-project-11')).not.toBeInTheDocument()
+  })
+
+  it('archives a task from its board card', async () => {
+    const workbenchServices = services()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-more-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-card-archive-WEG-1'))
+    await userEvent.click(screen.getByTestId('cloud-todo-archive-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-1')
+    )
+    expect(screen.queryByTestId('cloud-todo-card-WEG-1')).not.toBeInTheDocument()
   })
 
   it('opens project chat for every project provider', async () => {
@@ -343,7 +407,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByText('aitable:base-1:record-1')).not.toBeInTheDocument()
     expect(screen.getByText('修复发布流程')).toBeInTheDocument()
     expect(screen.queryByText('补齐测试')).not.toBeInTheDocument()
-    expect(screen.getByText('1 个子任务')).toBeInTheDocument()
+    expect(screen.getByText('子任务 1')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-board-group-by')).toHaveTextContent('分组依据天河状态')
     expect(screen.getByTestId('dingtalk-board-assignee-filter').parentElement).toHaveTextContent(
       '分组筛选全部天河状态'
@@ -464,6 +528,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-project-board-view'))
     expect(await screen.findByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-card-WEG-2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-open-children-WEG-1')).toHaveTextContent('子任务 1')
 
     await userEvent.click(screen.getByTestId('cloud-todo-open-children-WEG-1'))
     expect(await screen.findByTestId('cloud-todo-card-WEG-2')).toBeInTheDocument()
@@ -498,6 +563,9 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
     await userEvent.click(await screen.findByTestId('cloud-project-board-view'))
+    expect(await screen.findByTestId('cloud-todo-card-add-child-WEG-1')).toHaveTextContent(
+      '新建子任务'
+    )
     await userEvent.click(await screen.findByTestId('cloud-todo-card-add-child-WEG-1'))
     expect(screen.getByTestId('cloud-todo-create-parent')).toHaveValue('WEG-1')
     await userEvent.type(screen.getByTestId('cloud-todo-title'), 'Frontend')
