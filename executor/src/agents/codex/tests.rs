@@ -134,12 +134,12 @@ fn streaming_patch_overrides_enable_freeform_apply_patch() {
 }
 
 #[test]
-fn persistent_app_server_enables_deferred_mcp_tool_search() {
+fn persistent_app_server_uses_direct_mcp_tools() {
     let request_config = CodexLaunchConfig::default();
 
     let config = persistent_codex_app_server_launch_config(&request_config);
 
-    assert!(config
+    assert!(!config
         .config_overrides
         .contains(&"features.tool_search=true".to_owned()));
     assert!(!config

@@ -381,7 +381,6 @@ const OFFICIAL_PLUGIN_SKILL_NAME = 'openai-platform-api-key'
 const OFFICIAL_PLUGIN_SKILL_MARKER = '# OpenAI API Key'
 const OFFICIAL_PLUGIN_MCP_NAMESPACE = 'openai_api_key_local_confirmation'
 const OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION = 'local env-file destination'
-const OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID = 'wework-e2e-official-plugin-mcp-search'
 const OFFICIAL_PLUGIN_SKILL_READY_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_SKILL_READY'
 const OFFICIAL_PLUGIN_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_OFFICIAL_PLUGIN_COMPLETE'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
@@ -3506,11 +3505,11 @@ async function verifyPluginLifecycle({ control, fixture }) {
     text: OFFICIAL_PLUGIN_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.awaitScenarioRequestCount('official_plugin', 5, WORKBENCH_READY_TIMEOUT_MS)
+  await control.awaitScenarioRequestCount('official_plugin', 4, WORKBENCH_READY_TIMEOUT_MS)
   assert.equal(
     control.scenarioRequests.get('official_plugin')?.length,
-    5,
-    'The official plugin flow did not execute the expected skill-read, tool-search, and MCP-call turns'
+    4,
+    'The official plugin flow did not execute the expected skill-read and direct MCP-call turns'
   )
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
@@ -5471,18 +5470,6 @@ function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
   }))
 }
 
-function toolSearchCall(callId, query) {
-  return {
-    type: 'response.output_item.done',
-    item: {
-      type: 'tool_search_call',
-      call_id: callId,
-      execution: 'client',
-      arguments: { query },
-    },
-  }
-}
-
 function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
@@ -5724,39 +5711,42 @@ function selectTool(request, name, argumentsValue) {
   return { name, arguments: argumentsValue }
 }
 
-function selectOfficialPluginMcpTool(request, callId, argumentsValue) {
-  const input = Array.isArray(request.input) ? request.input : []
-  const searchOutput = input.find(
-    item => item?.type === 'tool_search_output' && item?.call_id === callId
+function selectOfficialPluginMcpTool(request, argumentsValue) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    !tools.some(tool => tool?.type === 'tool_search'),
+    'Real Codex still advertised the removed tool_search surface'
   )
-  assert.ok(searchOutput, `Real Codex did not return tool_search_output for ${callId}`)
-
-  const namespace = searchOutput.tools?.find(
+  const namespaces = tools.filter(
     candidate => candidate?.type === 'namespace' && candidate.name === OFFICIAL_PLUGIN_MCP_NAMESPACE
   )
-  assert.ok(namespace, 'Real Codex tool_search did not return the official plugin MCP namespace')
-  const tool = namespace.tools?.find(
+  assert.equal(
+    namespaces.length,
+    1,
+    'Real Codex did not directly advertise exactly one official plugin MCP namespace'
+  )
+  const namespace = namespaces[0]
+  const matchingTools = namespace.tools?.filter(
     candidate =>
       candidate?.type === 'function' &&
       candidate.description?.includes(OFFICIAL_PLUGIN_MCP_TOOL_DESCRIPTION)
   )
-  assert.ok(tool, 'Real Codex tool_search did not return the official plugin MCP tool')
+  assert.equal(
+    matchingTools?.length,
+    1,
+    'The official plugin MCP namespace did not expose exactly one destination confirmation tool'
+  )
+  const tool = matchingTools[0]
   assert.ok(
     tool.description.includes(`plugin \`${OFFICIAL_PLUGIN_DISPLAY_NAME}\``),
-    'The searched MCP tool did not retain official plugin provenance'
+    'The direct MCP tool did not retain official plugin provenance'
+  )
+  assert.deepEqual(
+    new Set(tool.parameters?.required),
+    new Set(['workspacePath', 'targetPath']),
+    'The direct MCP tool did not require both workspace confinement inputs'
   )
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
-}
-
-function assertToolSearchAdvertised(request) {
-  const tools = Array.isArray(request.tools) ? request.tools : []
-  assert.ok(
-    tools.some(tool => tool?.type === 'tool_search'),
-    `Real Codex did not advertise tool_search: ${tools
-      .map(tool => tool?.name ?? tool?.type)
-      .filter(Boolean)
-      .join(', ')}`
-  )
 }
 
 function selectShellTool(request, workspacePath) {
@@ -8087,20 +8077,7 @@ class DesktopE2EServer {
       }
 
       if (requestNumber === 3) {
-        assertToolSearchAdvertised(body)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          toolSearchCall(
-            OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID,
-            'confirm OpenAI API key local env destination'
-          ),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 4) {
-        const mcpTool = selectOfficialPluginMcpTool(body, OFFICIAL_PLUGIN_MCP_SEARCH_CALL_ID, {
+        const mcpTool = selectOfficialPluginMcpTool(body, {
           workspacePath: this.workspacePath,
           targetPath: '../outside.env',
           envName: 'OPENAI_API_KEY',
@@ -8118,7 +8095,7 @@ class DesktopE2EServer {
         return
       }
 
-      assert.equal(requestNumber, 5, `Unexpected official plugin request ${requestNumber}`)
+      assert.equal(requestNumber, 4, `Unexpected official plugin request ${requestNumber}`)
       assert.ok(
         requestText.includes('The env file must be inside the selected workspace.'),
         'The official plugin MCP server did not execute and return its validation result'
