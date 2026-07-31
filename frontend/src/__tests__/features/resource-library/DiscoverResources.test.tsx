@@ -75,6 +75,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:teams.go_to_chat': '去聊天',
         'common:teams.go_to_code': '去编码',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'sort.default': '默认',
         'sort.popular': '热门',
         'sort.latest': '最新',
@@ -230,7 +232,10 @@ describe('DiscoverResources', () => {
     const toolbar = await screen.findByTestId('leading-team-filter')
     expect(toolbar).toBeInTheDocument()
     expect(screen.getByTestId('marketplace-toolbar')).toHaveClass('rounded-xl', 'bg-surface')
-    expect(screen.getByTestId('resource-library-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
   })
 
   it('persists an applied search in the URL and reloads the marketplace', async () => {

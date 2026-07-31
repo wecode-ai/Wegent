@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Download, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, Download, Gauge, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -148,18 +148,18 @@ export function DesktopSettingsMenu({
   return (
     <div
       data-testid="settings-menu"
-      className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-[20px] border border-border/70 bg-popover/95 py-2.5 text-text-primary shadow-[0_24px_60px_rgba(0,0,0,0.36)] ring-1 ring-border/40 backdrop-blur-xl"
+      className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl"
     >
       {onLogin ? (
         <>
           <SettingsMenuItem
             testId="login-menu-button"
-            icon={<LogIn className="h-4 w-4 shrink-0 text-primary" />}
+            icon={<LogIn className="h-4 w-4 shrink-0 text-text-secondary" />}
             label={t('workbench.account_cloud_login', '登录 Wegent')}
             description={t('workbench.account_cloud_login_description', '连接云端模型、设备和同步')}
             onClick={onLogin}
           />
-          <div className="mx-4 my-1.5 border-t border-border/70" />
+          <div className="mx-2 my-1 border-t border-border/70" />
         </>
       ) : null}
       <SettingsMenuItem
@@ -188,7 +188,7 @@ export function DesktopSettingsMenu({
       {downloadMessage ? (
         <div
           data-testid="app-update-download-progress"
-          className="space-y-1.5 px-4 pb-2 pl-[44px] pr-5 text-xs font-medium leading-[18px] text-text-secondary"
+          className="space-y-1.5 pb-2 pl-8 pr-3 text-xs font-medium leading-[18px] text-text-secondary"
         >
           <div className="h-1 overflow-hidden rounded-full bg-muted">
             <div
@@ -206,17 +206,17 @@ export function DesktopSettingsMenu({
       {updateMessage || updateError ? (
         <div
           data-testid="app-update-status"
-          className="px-4 pb-2 pl-[44px] pr-5 text-xs font-medium leading-[18px] text-text-secondary"
+          className="pb-2 pl-8 pr-3 text-xs font-medium leading-[18px] text-text-secondary"
         >
           <span className={updateError ? 'text-red-400' : undefined}>
             {updateError ?? updateMessage}
           </span>
         </div>
       ) : null}
-      <div className="mx-4 my-1.5 border-t border-border/70" />
+      <div className="mx-2 my-1 border-t border-border/70" />
       <SettingsMenuItem
         testId="usage-menu-button"
-        icon={<Clock className="h-4 w-4 shrink-0 text-text-secondary" />}
+        icon={<Gauge className="h-4 w-4 shrink-0 text-text-secondary" />}
         label={t('workbench.remaining_usage', 'Codex 剩余额度')}
         onClick={handleUsageClick}
         ariaExpanded={isUsageExpanded}
@@ -233,7 +233,7 @@ export function DesktopSettingsMenu({
         <div
           id="remaining-usage-panel"
           data-testid="usage-detail-panel"
-          className="px-4 pb-3 pl-[44px] pt-1"
+          className="pb-2 pl-8 pr-3 pt-1"
         >
           {isQuotaLoading ? (
             <div className="py-1 text-sm leading-[18px] text-text-secondary">
@@ -243,9 +243,11 @@ export function DesktopSettingsMenu({
           {quotaError ? (
             <div className="py-1 text-sm leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
-          {!quotaError ? (
-            <div className="space-y-2 text-xs leading-5 text-text-secondary">
-              <UsageWindowRow window={codexUsage.fiveHour} />
+          {!isQuotaLoading && !quotaError ? (
+            <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
+              {codexUsage.fiveHour.percent !== null ? (
+                <UsageWindowRow window={codexUsage.fiveHour} />
+              ) : null}
               <UsageWindowRow window={codexUsage.sevenDay} />
             </div>
           ) : null}
@@ -317,8 +319,8 @@ function SettingsMenuItem({
       disabled={disabled}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
-      className={`flex w-full items-center gap-3 px-4 text-left text-sm font-normal leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
-        description ? 'min-h-12 py-2' : 'h-9'
+      className={`flex w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
+        description ? 'min-h-12 py-2' : 'h-8'
       } ${active ? 'bg-hover' : ''}`}
     >
       {icon}

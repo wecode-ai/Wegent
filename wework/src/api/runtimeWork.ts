@@ -13,6 +13,7 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -73,6 +74,10 @@ import type { KeybindingOverride } from '@/lib/keybindings'
 
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
+    prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
+      void data
+      return Promise.resolve(true)
+    },
     listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       return client.get('/runtime-work')
     },

@@ -21,6 +21,13 @@ class MarketplaceResource(Base):
         autoincrement=False,
         comment="Associated Kind resource ID",
     )
+    owner_user_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Owner user ID copied from the associated Kind resource",
+    )
     resource_type = Column(
         String(20),
         nullable=False,
@@ -52,6 +59,13 @@ class MarketplaceResource(Base):
     )
 
     __table_args__ = (
+        Index(
+            "idx_marketplace_resources_owner_type_updated",
+            "owner_user_id",
+            "resource_type",
+            "updated_at",
+            "kind_id",
+        ),
         Index(
             "idx_marketplace_resources_type_updated",
             "resource_type",

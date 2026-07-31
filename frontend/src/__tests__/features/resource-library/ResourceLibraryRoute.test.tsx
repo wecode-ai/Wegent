@@ -103,6 +103,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.skill': '技能',
         'fields.tags': '标签',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'actions.search': '搜索',
         'actions.publish': '发布资源',
         'fields.scope': '范围',

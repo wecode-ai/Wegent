@@ -34,7 +34,7 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 - `https://proxy.example.com/v1` with Anthropic Messages still resolves to `/v1/messages`, never `/v1/v1/messages`.
 - URLs already ending in `/responses`, `/chat/completions`, or `/v1/messages` do not receive a duplicate endpoint.
 
-When a task runs on a cloud or remote device, the model selector hides custom models configured only on the current desktop. Local custom models can only use the local executor; built-in Codex models and cloud Model CRDs can use either local or cloud execution.
+When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
 ### Model Rate-Limit Retries
 

@@ -1287,6 +1287,185 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
   })
 
+  test('tracks the active turn from a mounted assistant row when the user row is virtualized', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+    const messages = [
+      {
+        id: 'virtual-active-user-1',
+        role: 'user' as const,
+        content: 'First request',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:00.000Z',
+        runtimeMessageIndex: 100,
+      },
+      {
+        id: 'virtual-active-assistant-1',
+        role: 'assistant' as const,
+        content: 'First response',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:01.000Z',
+        runtimeMessageIndex: 101,
+      },
+      {
+        id: 'virtual-active-user-2',
+        role: 'user' as const,
+        content: 'Second request',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:02.000Z',
+        runtimeMessageIndex: 102,
+      },
+      {
+        id: 'virtual-active-assistant-2',
+        role: 'assistant' as const,
+        content: 'Long second response',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:03.000Z',
+        runtimeMessageIndex: 103,
+      },
+      {
+        id: 'virtual-active-user-3',
+        role: 'user' as const,
+        content: 'Third request',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:04.000Z',
+        runtimeMessageIndex: 104,
+      },
+      {
+        id: 'virtual-active-unindexed-assistant',
+        role: 'assistant' as const,
+        content: 'Transient response without a transcript index',
+        status: 'done' as const,
+        createdAt: '2026-07-31T00:00:05.000Z',
+      },
+    ]
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          <div data-message-id="virtual-active-assistant-1">First response</div>
+          <div data-message-id="virtual-active-assistant-2">Long second response</div>
+          <div data-message-id="virtual-active-unindexed-assistant">
+            Transient response without a transcript index
+          </div>
+        </div>
+        <MessageTurnNavigation messages={messages} scrollRef={scrollRef} contentRef={contentRef} />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 4_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_800,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('First response'), -200, 120)
+    mockRect(screen.getByText('Long second response'), 40, 1_200)
+    mockRect(screen.getByText('Transient response without a transcript index'), 80, 120)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+
+    scroller.scrollTop = 2_900
+    fireEvent.scroll(scroller)
+
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+  })
+
+  test('tracks a page-leading assistant without a runtime message index', () => {
+    const scrollRef = createRef<HTMLDivElement>()
+    const contentRef = createRef<HTMLDivElement>()
+
+    render(
+      <div ref={scrollRef}>
+        <div ref={contentRef}>
+          <div data-message-id="boundary-assistant">Boundary response</div>
+        </div>
+        <MessageTurnNavigation
+          messages={[
+            {
+              id: 'boundary-assistant',
+              role: 'assistant',
+              content: 'Boundary response',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:11.000Z',
+            },
+            {
+              id: 'next-user',
+              role: 'user',
+              content: 'Next request',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:12.000Z',
+              runtimeMessageIndex: 12,
+            },
+            {
+              id: 'next-assistant',
+              role: 'assistant',
+              content: 'Next response',
+              status: 'done',
+              createdAt: '2026-07-31T00:00:13.000Z',
+              runtimeMessageIndex: 13,
+            },
+          ]}
+          turnNavigation={[
+            {
+              id: 'previous-user',
+              turnIndex: 4,
+              messageIndex: 8,
+              promptPreview: 'Previous request',
+              responsePreview: 'Previous response',
+            },
+            {
+              id: 'boundary-user',
+              turnIndex: 5,
+              messageIndex: 10,
+              promptPreview: 'Boundary request',
+              responsePreview: 'Boundary response',
+            },
+            {
+              id: 'next-user',
+              turnIndex: 6,
+              messageIndex: 12,
+              promptPreview: 'Next request',
+              responsePreview: 'Next response',
+            },
+          ]}
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+        />
+      </div>
+    )
+
+    const scroller = scrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 300, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 4_000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 2_800,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 0, 300)
+    mockRect(screen.getByText('Boundary response'), 40, 1_200)
+
+    fireEvent.resize(window)
+    flushScheduledTimers()
+
+    const markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers).toHaveLength(3)
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(markers[2]).toHaveAttribute('data-active', 'false')
+  })
+
   test('clicks a message navigation marker to jump to that user message', () => {
     render(
       <ScrollableMessageArea

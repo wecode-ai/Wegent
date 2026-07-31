@@ -87,13 +87,13 @@ wework /path/to/project
 
 模型在 UI、任务状态和执行请求中始终使用同一份规范身份：`name`、`type`、`namespace` 和 `resourceUserId`。前端不得为了区分本机与远程执行而添加 `local:`、`cloud:` 前缀，也不得在模型配置中保存额外的 transport source。模型目录合并时，如果 Backend 合成的 runtime Codex 模型与 Executor 实时目录具有相同 `modelId`，保留 Executor 实时模型。
 
-目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`，由于配置只存在本机，投递到远程设备时前端会阻止发送并提示用户切换设备或模型。
+目标设备只决定传输方式：本机设备通过 IPC 调用 Executor，远程设备通过 WebSocket relay 调用 Executor。两条路径都使用相同的 `runtime.tasks.*` 协议和模型选择。公共、个人和组模型的资源身份会随请求传给 Executor，由同一个模型网关解析。用户配置的本地模型使用 `local-model:<config-id>`；选择云端或远程设备时，Wework 会在发送前按需同步该模型的 Codex 能力目录，并把任务所需的模型连接配置直接交给目标 Executor。
 
 本机 Codex 模型目录只跟随当前 Codex 配置中的 active provider。executor 通过 Codex app-server 读取一次 `config/read` 获取当前 `model_provider` 和展示名，再调用一次 `model/list` 获取该 provider 对应的模型列表。即使 `config.toml` 中配置了多个 `[model_providers.*]`，Wework 也不把它们枚举成多个并列模型组，因为 Codex 的 `model/list` 不提供按 provider 查询的稳定协议。需要在 Wework 中展示多个模型接口时，应使用下方的本地模型配置。
 
 ## 本地模型配置
 
-本地模型配置存储在浏览器本机存储中，不写 Backend，也不参与云端同步。配置字段包括：
+本地模型的非敏感元数据存储在浏览器本机存储中，不作为 Model CRD 写入 Backend，也不会成为账号级持久化配置。API Key 不写入浏览器存储，而是通过桌面系统凭据库保存：macOS 使用 Keychain，Windows 使用 Credential Manager，Linux 使用 Secret Service。Wework 启动时会把凭据恢复到当前渲染进程内存；升级后首次读取旧配置时，会先把已有的本地存储 API Key 迁入系统凭据库，再立即清除浏览器存储中的明文副本。配置字段包括：
 
 - 显示名。
 - 模型 ID。
@@ -107,6 +107,10 @@ wework /path/to/project
 API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` bearer token，用于支持无鉴权的本地 OpenAI-compatible 服务。本地模型配置和内置本机 Codex 模型都会以 `UnifiedModel(type: "runtime")` 进入现有模型选择器。
 
 “测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
+
+在云端或远程设备中首次选择本地模型，或者本地模型配置发生变化后再次使用时，Wework 会在真正创建或继续任务之前显示确认框。用户确认后，Wework 将当前本地自定义模型目录写入目标 Executor，使用 `ifIdle` 语义重启该设备维护的 persistent Codex app-server，并通过 `model/list` 校验目标模型已经加载；校验成功后才继续发送当前消息。同一设备和同一配置版本在当前 Wework 会话内只需要确认一次。
+
+如果目标 Codex 存在运行中任务或待处理请求，Wework 不会强制重启，也不会清空当前输入，而是提示用户等待任务结束后重试。用户取消确认时同样不会创建乐观任务或发送消息。模型 API Key 和连接地址只随已确认的执行请求及目录准备操作发送到所选目标 Executor，不会写入 Backend 模型资源。
 
 上下文窗口大小只接受正整数。前端保存后会进入本地模型的 `config.model_context_window`，本地 IPC 创建 Codex 任务时继续写入 `model_config.model_context_window`，executor 再转为 Codex 启动配置中的 `model_context_window` 覆盖项。Wework 的背景信息窗口也必须使用当前任务自己的 `modelSelection` 解析对应模型配置，避免 Codex 对未知模型使用默认模型目录上限时把用户配置的窗口显示成默认值。
 

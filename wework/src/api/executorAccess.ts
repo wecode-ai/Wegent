@@ -17,6 +17,7 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -84,6 +85,7 @@ export interface ExecutorCommandClient {
 }
 
 export interface ExecutorRuntimeClient {
+  prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
   listRuntimeWork: () => Promise<RuntimeWorkListResponse>
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']

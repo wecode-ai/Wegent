@@ -51,6 +51,9 @@ jest.mock('@/features/resource-library/components/DiscoverResources', () => ({
 
 jest.mock('@/features/resource-library/components/GroupInstalledSkills', () => ({
   GroupInstalledSkills: () => <div data-testid="group-installed-skills" />,
+  GroupInstalledSkillsSkeleton: () => (
+    <div data-testid="group-installed-skills-loading">团队技能加载中</div>
+  ),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -101,6 +104,15 @@ describe('TeamCapabilities', () => {
       items: [makeGroup(1, 'platform', 'Platform')],
       total: 1,
     })
+  })
+
+  it('uses the skill card skeleton while teams are loading', () => {
+    mockedListGroups.mockReturnValue(new Promise(() => undefined))
+
+    render(<TeamCapabilities resourceType="skill" />)
+
+    expect(screen.getByTestId('group-installed-skills-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('team-capabilities-loading')).not.toBeInTheDocument()
   })
 
   it('uses the top resource filter without rendering a second type navigation', async () => {

@@ -163,7 +163,7 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
     defaultValue: 'standard',
     placement: 'belowModels',
     scope: 'model',
-    includeInLabel: 'whenNonDefault',
+    includeInLabel: 'never',
     options: [
       {
         value: 'standard',
@@ -175,9 +175,8 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
       },
       {
         value: 'fast',
-        label: '⚡ 快速',
+        label: '快速',
         labelKey: 'workbench.speed_fast',
-        summaryLabel: '⚡',
         description: '1.5 倍速度，消耗增加',
         descriptionKey: 'workbench.speed_fast_description',
         order: 20,
