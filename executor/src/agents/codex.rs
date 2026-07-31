@@ -2034,6 +2034,7 @@ fn spawn_codex_app_server(
         ),
     );
     configure_codex_app_server_process_group(&mut command);
+    configure_codex_windows_no_window(&mut command);
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -2117,6 +2118,14 @@ fn configure_codex_app_server_process_group(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn configure_codex_app_server_process_group(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn configure_codex_windows_no_window(command: &mut Command) {
+    crate::process::hide_windows_console(command);
+}
+
+#[cfg(not(windows))]
+fn configure_codex_windows_no_window(_command: &mut Command) {}
 
 async fn terminate_codex_app_server_child(child: &mut Child) {
     signal_codex_app_server_child(child);

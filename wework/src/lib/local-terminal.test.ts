@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import i18n from '@/i18n'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -45,12 +46,24 @@ describe('local-terminal', () => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
-  test('is available only inside the WeWork macOS Tauri app', () => {
+  test('is available inside the WeWork macOS Tauri app', () => {
     setNavigatorValue(
       'userAgent',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
     )
     setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    expect(isLocalTerminalAvailable()).toBe(true)
+  })
+
+  test('is available inside the WeWork Windows Tauri app', () => {
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    setNavigatorValue('platform', 'Win32')
     setNavigatorValue('maxTouchPoints', 0)
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -221,6 +234,31 @@ describe('local-terminal', () => {
     })
   })
 
+  test('rejects starting a local terminal outside the Tauri desktop app', async () => {
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    setNavigatorValue('platform', 'Win32')
+    setNavigatorValue('maxTouchPoints', 0)
+
+    await expect(startLocalTerminal({ cwd: '/Users/me/project' })).rejects.toThrow(
+      i18n.t('localRuntime:local_terminal_unavailable')
+    )
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  test('rejects starting a local terminal inside the iOS-like Tauri app', async () => {
+    setNavigatorValue('userAgent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')
+    setNavigatorValue('platform', 'iPhone')
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    await expect(startLocalTerminal({ cwd: '/Users/me/project' })).rejects.toThrow(
+      i18n.t('localRuntime:local_terminal_unavailable')
+    )
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
   test('opens a local workspace through the selected native app', async () => {
     setNavigatorValue(
       'userAgent',
@@ -272,7 +310,7 @@ describe('local-terminal', () => {
 
     await expect(
       openLocalWorkspace({ opener: 'vscode', path: '/Users/me/project' })
-    ).rejects.toThrow('Local workspace opening is unavailable outside the macOS Tauri app')
+    ).rejects.toThrow(i18n.t('localRuntime:local_workspace_opening_unavailable'))
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
