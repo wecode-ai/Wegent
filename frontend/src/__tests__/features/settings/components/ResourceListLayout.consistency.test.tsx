@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
 import { modelApis } from '@/apis/models'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { retrieverApis } from '@/apis/retrievers'
 import { shellApis } from '@/apis/shells'
 import ModelList from '@/features/settings/components/ModelList'
@@ -42,6 +43,13 @@ jest.mock('@/apis/retrievers', () => ({
     getRetriever: jest.fn(),
     testConnection: jest.fn(),
     deleteRetriever: jest.fn(),
+  },
+}))
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    uninstallListing: jest.fn(),
+    getReferenceUsage: jest.fn(),
   },
 }))
 
@@ -84,6 +92,27 @@ const translations: Record<string, string> = {
   'retrievers.public': 'Public',
   'common:retrievers.group_retrievers': 'Group Retrievers',
   'retrievers.public_retrievers': 'System Retrievers',
+  'common:actions.unbind': 'Unbind',
+  'common:actions.unbinding': 'Unbinding...',
+  'common:actions.unbind_success': 'Unbound successfully',
+  'common:actions.unbind_failed': 'Failed to unbind',
+  'common:actions.unbind_in_use_title': 'Unable to unbind',
+  'common:actions.unbind_shell_in_use_message': 'This executor is used by: {{names}}.',
+  'common:actions.unbind_shell_in_use_prefix': 'This executor is used by: ',
+  'common:actions.unbind_shell_in_use_suffix': '.',
+  'common:actions.unbind_shell_in_use_summary': 'Used by {{count}} agents:',
+  'common:actions.unbind_shell_in_use_guidance': 'Change their executor first.',
+  'common:actions.unbind_retriever_in_use_message': 'This retriever is used by: {{names}}.',
+  'common:actions.unbind_retriever_in_use_prefix': 'This retriever is used by: ',
+  'common:actions.unbind_retriever_in_use_suffix': '.',
+  'common:actions.unbind_retriever_in_use_summary': 'Used by {{count}} knowledge bases:',
+  'common:actions.unbind_retriever_in_use_guidance': 'Change their retriever first.',
+  'common:actions.go_to_agents': 'Go to agents',
+  'common:actions.go_to_knowledge_bases': 'Go to knowledge bases',
+  'common:actions.unbind_confirm_title': 'Confirm unbind',
+  'common:actions.unbind_confirm_message': 'The original resource will not be affected.',
+  'common:actions.got_it': 'Got it',
+  'common:actions.cancel': 'Cancel',
   'actions.choose_create_target': 'Choose location',
   'actions.choose_create_target_description':
     'The save location controls who can see and manage this resource.',
@@ -97,7 +126,10 @@ const translations: Record<string, string> = {
   'search.groups_empty': 'No matching teams',
 }
 
-const mockT = (key: string) => translations[key] ?? key
+const mockT = (key: string, options?: Record<string, unknown>) =>
+  (translations[key] ?? key)
+    .replace('{{names}}', String(options?.names ?? ''))
+    .replace('{{count}}', String(options?.count ?? ''))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -148,6 +180,10 @@ function sourceControls(): ReactNode {
 describe('resource list layout consistency', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [],
+      referenced_knowledge_bases: [],
+    })
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
       data: [
         {
@@ -450,6 +486,154 @@ describe('resource list layout consistency', () => {
       within(retrieverCard).queryByTestId('retriever-card-actions-public-system-retriever')
     ).toBeNull()
     expect(within(retrieverCard).getByTestId('resource-card-icon')).toHaveClass('h-11', 'w-11')
+  })
+
+  it('offers only unbind for installed foundation resource references', async () => {
+    const user = userEvent.setup()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-model',
+          displayName: 'Installed Model',
+          type: 'user',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+          config: {},
+          isReference: true,
+          listingId: 91,
+        },
+      ],
+    })
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-shell',
+          displayName: 'Installed Executor',
+          type: 'user',
+          shellType: 'Chat',
+          namespace: 'default',
+          isReference: true,
+          listingId: 92,
+        },
+      ],
+    })
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-retriever',
+          displayName: 'Installed Retriever',
+          type: 'user',
+          storageType: 'elasticsearch',
+          namespace: 'default',
+          isReference: true,
+          listingId: 93,
+        },
+      ],
+    })
+
+    const modelView = render(<ModelList scope="personal" compact />)
+    const modelCard = await screen.findByTestId('model-card-user-installed-model')
+    expect(within(modelCard).getByTestId('unbind-model-installed-model-button')).toBeInTheDocument()
+    modelView.unmount()
+
+    const shellView = render(<ShellList scope="personal" compact />)
+    const shellCard = await screen.findByTestId('shell-card-user-installed-shell')
+    await user.click(within(shellCard).getByTestId('unbind-shell-installed-shell-button'))
+    await user.click(screen.getByRole('button', { name: 'Unbind' }))
+    await waitFor(() => {
+      expect(resourceLibraryApi.uninstallListing).toHaveBeenCalledWith(92, 'default')
+    })
+    shellView.unmount()
+
+    render(<RetrieverList scope="personal" compact />)
+    const retrieverCard = await screen.findByTestId('retriever-card-user-installed-retriever')
+    expect(
+      within(retrieverCard).getByTestId('unbind-retriever-installed-retriever-button')
+    ).toBeInTheDocument()
+  })
+
+  it('shows knowledge base usage before unbinding an installed retriever', async () => {
+    const user = userEvent.setup()
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-retriever',
+          displayName: 'Installed Retriever',
+          type: 'user',
+          storageType: 'elasticsearch',
+          namespace: 'default',
+          isReference: true,
+          listingId: 93,
+        },
+      ],
+    })
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [],
+      referenced_knowledge_bases: [
+        {
+          id: 166,
+          name: 'Knowledge Base Using Marketplace Retriever',
+          namespace: 'default',
+        },
+      ],
+    })
+
+    render(<RetrieverList scope="personal" compact />)
+    await user.click(await screen.findByTestId('unbind-retriever-installed-retriever-button'))
+
+    expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(93, 'default')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Knowledge Base Using Marketplace Retriever'
+    )
+    expect(screen.getByText('Used by 1 knowledge bases:')).toBeInTheDocument()
+    expect(screen.getByText('Knowledge Base Using Marketplace Retriever')).toHaveClass(
+      'font-semibold'
+    )
+    expect(screen.getByRole('link', { name: 'Go to knowledge bases' })).toHaveAttribute(
+      'href',
+      '/knowledge?type=document'
+    )
+    expect(screen.queryByRole('button', { name: 'Unbind' })).not.toBeInTheDocument()
+  })
+
+  it('shows agent usage before unbinding an installed executor', async () => {
+    const user = userEvent.setup()
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-shell',
+          displayName: 'Installed Executor',
+          type: 'user',
+          shellType: 'Chat',
+          namespace: 'default',
+          isReference: true,
+          listingId: 92,
+        },
+      ],
+    })
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [
+        {
+          id: 25,
+          name: 'Agent Using Marketplace Executor',
+          namespace: 'default',
+        },
+      ],
+      referenced_knowledge_bases: [],
+    })
+
+    render(<ShellList scope="personal" compact />)
+    await user.click(await screen.findByTestId('unbind-shell-installed-shell-button'))
+
+    expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(92, 'default')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Agent Using Marketplace Executor')
+    expect(screen.getByText('Used by 1 agents:')).toBeInTheDocument()
+    expect(screen.getByText('Agent Using Marketplace Executor')).toHaveClass('font-semibold')
+    expect(screen.getByRole('link', { name: 'Go to agents' })).toHaveAttribute(
+      'href',
+      '/resource-library?type=agent&tab=mine'
+    )
+    expect(screen.queryByRole('button', { name: 'Unbind' })).not.toBeInTheDocument()
   })
 
   it('does not repeat public source or executor type metadata', async () => {

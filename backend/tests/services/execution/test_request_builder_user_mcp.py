@@ -6,6 +6,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.execution.request_builder import TaskRequestBuilder
 from app.services.user_mcp_service import user_mcp_service
 
@@ -687,3 +689,26 @@ class TestUserScopedMcpInjection:
 
         assert shell_info_one == {"shell_type": "ClaudeCode", "base_image": "img-a"}
         assert shell_info_two == {"shell_type": "Agno", "base_image": "img-b"}
+
+    def test_resolve_shell_info_rejects_dangling_reference(self, test_db, mocker):
+        builder = TaskRequestBuilder(test_db)
+        bot = SimpleNamespace(
+            json={
+                "kind": "Bot",
+                "metadata": {"name": "dangling-shell-bot", "namespace": "default"},
+                "spec": {
+                    "ghostRef": {"name": "ghost", "namespace": "default"},
+                    "shellRef": {"name": "missing-shell", "namespace": "default"},
+                },
+            }
+        )
+        mocker.patch(
+            "app.services.adapters.shell_utils.get_shell_by_name",
+            return_value=None,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="Shell reference 'default/missing-shell' is unavailable",
+        ):
+            builder._resolve_shell_info(bot, user_id=1)

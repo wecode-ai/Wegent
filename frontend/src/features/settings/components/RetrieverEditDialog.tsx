@@ -76,6 +76,9 @@ import {
   RetrievalMethodType,
 } from '@/apis/retrievers'
 import { formatRetrieverStorageExt, parseRetrieverStorageExt } from '@/utils/retriever-ext'
+import { CapabilityScopeSelector } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
+import type { Group } from '@/types/group'
 
 interface RetrieverEditDialogProps {
   open: boolean
@@ -84,6 +87,7 @@ interface RetrieverEditDialogProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  publicationGroups?: Group[]
 }
 
 const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
@@ -93,10 +97,23 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   toast,
   scope,
   groupName,
+  publicationGroups,
 }) => {
   const { t } = useTranslation(['common', 'wizard'])
   const isEditing = !!retriever
   const isGroupScope = scope === 'group'
+  const publicationNamespace =
+    retriever?.namespace || (isGroupScope && groupName ? groupName : 'default')
+  const publicationScope = useCapabilityPublicationScope({
+    enabled: publicationGroups !== undefined,
+    open,
+    resourceType: 'retriever',
+    sourceName: retriever?.name,
+    sourceNamespace: publicationNamespace,
+    groups: publicationGroups || [],
+    defaultTarget: publicationNamespace === 'default' ? 'personal' : 'team',
+    defaultGroupNames: publicationNamespace === 'default' ? [] : [publicationNamespace],
+  })
 
   // Form state
   const [retrieverName, setRetrieverName] = useState('')
@@ -397,6 +414,18 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       return
     }
 
+    if (
+      publicationGroups &&
+      publicationScope.target === 'team' &&
+      publicationScope.groupNames.length === 0
+    ) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:new_capability.select_groups'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       // Build retrieval methods config
@@ -443,16 +472,20 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
 
       if (isEditing && retriever) {
         await retrieverApis.updateRetriever(retriever.name, retrieverCRD)
-        toast({
-          title: t('retrievers.update_success'),
-        })
       } else {
         await retrieverApis.createRetriever(retrieverCRD)
-        toast({
-          title: t('retrievers.create_success'),
-        })
       }
 
+      if (publicationGroups) {
+        await publicationScope.savePublicationScope({
+          sourceName: retrieverCRD.metadata.name,
+          sourceNamespace: retrieverCRD.metadata.namespace,
+          displayName: retrieverCRD.metadata.displayName || retrieverCRD.metadata.name,
+        })
+      }
+      toast({
+        title: isEditing ? t('retrievers.update_success') : t('retrievers.create_success'),
+      })
       onClose()
     } catch (error) {
       toast({
@@ -774,6 +807,19 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
             />
             <p className="text-xs text-text-muted">{t('retrievers.extension_json_hint')}</p>
           </div>
+
+          {publicationGroups && (
+            <div data-testid="retriever-publish-scope-section">
+              <CapabilityScopeSelector
+                value={publicationScope.target}
+                groups={publicationScope.writableGroups}
+                groupNames={publicationScope.groupNames}
+                onChange={publicationScope.handleChange}
+                existingResource={isEditing}
+                multipleGroups
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
@@ -788,7 +834,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
             </Button>
             <Button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || publicationScope.loading}
               className="bg-primary hover:bg-primary/90"
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

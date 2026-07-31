@@ -7,6 +7,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { modelApis } from '@/apis/models'
+import { retrieverApis } from '@/apis/retrievers'
+import { shellApis } from '@/apis/shells'
 import { fetchUnifiedSkillsList } from '@/apis/skills'
 import { teamApis } from '@/apis/team'
 import { Button } from '@/components/ui/button'
@@ -35,11 +38,19 @@ interface PublishResourceDialogProps {
   onPublished: () => void
 }
 
-const publishableResourceTypes: VisibleResourceLibraryResourceType[] = ['agent', 'skill']
+const publishableResourceTypes: VisibleResourceLibraryResourceType[] = [
+  'agent',
+  'skill',
+  'model',
+  'shell',
+  'retriever',
+]
 
 interface PublishableResource {
-  id: number
+  key: string
+  id?: number
   name: string
+  namespace: string
   displayName: string
   description: string
   version: string
@@ -55,7 +66,9 @@ function parseTags(value: string): string[] {
 function defaultPublishType(
   resourceType: ResourceLibraryTypeFilter
 ): VisibleResourceLibraryResourceType {
-  return resourceType === 'skill' ? 'skill' : 'agent'
+  return publishableResourceTypes.includes(resourceType as VisibleResourceLibraryResourceType)
+    ? (resourceType as VisibleResourceLibraryResourceType)
+    : 'agent'
 }
 
 export function PublishResourceDialog({
@@ -92,26 +105,74 @@ export function PublishResourceDialog({
     setIsLoadingResources(true)
     setSourceId('')
 
-    const request =
-      selectedType === 'agent'
-        ? teamApis.getTeams({ page: 1, limit: 100 }, 'personal').then(response =>
-            response.items.map(team => ({
-              id: team.id,
-              name: team.name,
-              displayName: team.displayName || team.name,
-              description: team.description || '',
+    const request: Promise<PublishableResource[]> = (() => {
+      if (selectedType === 'agent') {
+        return teamApis.getTeams({ page: 1, limit: 100 }, 'personal').then(response =>
+          response.items.map(team => ({
+            key: String(team.id),
+            id: team.id,
+            name: team.name,
+            namespace: 'default',
+            displayName: team.displayName || team.name,
+            description: team.description || '',
+            version: '1.0.0',
+          }))
+        )
+      }
+      if (selectedType === 'skill') {
+        return fetchUnifiedSkillsList({ skip: 0, limit: 100, scope: 'personal' }).then(skills =>
+          skills.map(skill => ({
+            key: String(skill.id),
+            id: skill.id,
+            name: skill.name,
+            namespace: skill.namespace || 'default',
+            displayName: skill.displayName || skill.name,
+            description: skill.description || '',
+            version: skill.version || '1.0.0',
+          }))
+        )
+      }
+      if (selectedType === 'model') {
+        return modelApis.getUnifiedModels(undefined, false, 'personal').then(response =>
+          response.data
+            .filter(model => model.type === 'user')
+            .map(model => ({
+              key: `${model.namespace || 'default'}:${model.name}`,
+              name: model.name,
+              namespace: model.namespace || 'default',
+              displayName: model.displayName || model.name,
+              description: '',
               version: '1.0.0',
             }))
-          )
-        : fetchUnifiedSkillsList({ skip: 0, limit: 100, scope: 'personal' }).then(skills =>
-            skills.map(skill => ({
-              id: skill.id,
-              name: skill.name,
-              displayName: skill.displayName || skill.name,
-              description: skill.description || '',
-              version: skill.version || '1.0.0',
+        )
+      }
+      if (selectedType === 'shell') {
+        return shellApis.getUnifiedShells('personal').then(response =>
+          response.data
+            .filter(shell => shell.type === 'user')
+            .map(shell => ({
+              key: `${shell.namespace || 'default'}:${shell.name}`,
+              name: shell.name,
+              namespace: shell.namespace || 'default',
+              displayName: shell.displayName || shell.name,
+              description: '',
+              version: '1.0.0',
             }))
-          )
+        )
+      }
+      return retrieverApis.getUnifiedRetrievers('personal').then(response =>
+        response.data
+          .filter(retriever => retriever.type === 'user')
+          .map(retriever => ({
+            key: `${retriever.namespace || 'default'}:${retriever.name}`,
+            name: retriever.name,
+            namespace: retriever.namespace || 'default',
+            displayName: retriever.displayName || retriever.name,
+            description: retriever.description || '',
+            version: '1.0.0',
+          }))
+      )
+    })()
 
     request
       .then(items => {
@@ -119,7 +180,7 @@ export function PublishResourceDialog({
         setResources(items)
         const selected = items.find(resource => resource.id === initialSourceId)
         if (selected) {
-          setSourceId(String(selected.id))
+          setSourceId(selected.key)
           setName(selected.name)
           setDisplayName(selected.displayName)
           setDescription(selected.description)
@@ -139,7 +200,7 @@ export function PublishResourceDialog({
   }, [initialSourceId, open, selectedType])
 
   const canPublish = useMemo(() => {
-    return Boolean(Number(sourceId) > 0 && name.trim() && displayName.trim() && version.trim())
+    return Boolean(sourceId && name.trim() && displayName.trim() && version.trim())
   }, [displayName, name, sourceId, version])
 
   const resetForm = () => {
@@ -153,7 +214,7 @@ export function PublishResourceDialog({
 
   const handleResourceChange = (value: string) => {
     setSourceId(value)
-    const selected = resources.find(resource => resource.id === Number(value))
+    const selected = resources.find(resource => resource.key === value)
     if (!selected) return
     setName(selected.name)
     setDisplayName(selected.displayName)
@@ -169,9 +230,13 @@ export function PublishResourceDialog({
 
     setIsPublishing(true)
     try {
+      const selected = resources.find(resource => resource.key === sourceId)
+      if (!selected) return
       await resourceLibraryApi.createListing({
         resource_type: selectedType,
-        source_id: Number(sourceId),
+        source_id: selected.id,
+        source_name: selected.id ? undefined : selected.name,
+        source_namespace: selected.namespace,
         name: name.trim(),
         display_name: displayName.trim(),
         description: description.trim() || null,
@@ -233,7 +298,7 @@ export function PublishResourceDialog({
               >
                 <option value="">{t('publish.select_resource')}</option>
                 {resources.map(resource => (
-                  <option key={resource.id} value={resource.id}>
+                  <option key={resource.key} value={resource.key}>
                     {resource.displayName}
                   </option>
                 ))}

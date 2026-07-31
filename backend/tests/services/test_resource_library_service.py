@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.api.endpoints.adapter.shells import list_unified_shells
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
@@ -15,12 +16,18 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.schemas.bot import BotCreate
 from app.schemas.resource_library import (
     ResourceLibraryCreateListingRequest,
     ResourceLibraryPublicationUpdateRequest,
 )
 from app.services.adapters.bot_kinds import BotKindsService
+from app.services.adapters.retriever_kinds import retriever_kinds_service
+from app.services.adapters.shell_utils import get_shell_by_name, get_shell_info_by_name
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.capability_reference_service import list_referenced_capabilities
+from app.services.execution.request_builder import TaskRequestBuilder
+from app.services.model_aggregation_service import model_aggregation_service
 from app.services.resource_library_service import resource_library_service
 from app.services.skill_binding_service import (
     SkillBindingContext,
@@ -213,7 +220,11 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
         json={
             "kind": "Team",
             "metadata": {"name": "system-agent", "displayName": "System Agent"},
-            "spec": {"members": [], "collaborationModel": "solo"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "bind_mode": ["code"],
+            },
         },
         is_active=True,
     )
@@ -240,6 +251,10 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
 
     assert {item.id for item in result.items} == {team.id, skill.id}
     assert {item.resource_type for item in result.items} == {"agent", "skill"}
+    assert next(item for item in result.items if item.id == team.id).bind_modes == [
+        "code"
+    ]
+    assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
 def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
@@ -300,6 +315,91 @@ def test_system_agent_cannot_be_installed(test_db, test_user, target_namespace: 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == (
         "System agents are globally available and cannot be installed"
+    )
+
+
+@pytest.mark.parametrize("kind", ["Model", "Shell", "Retriever"])
+@pytest.mark.parametrize("target_namespace", ["default", "capability-team"])
+def test_system_capability_is_directly_available_and_cannot_be_installed(
+    test_db, test_user, kind: str, target_namespace: str
+):
+    name = f"system-{kind.lower()}"
+    source = Kind(
+        user_id=0,
+        kind=kind,
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": kind,
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {},
+        },
+        is_active=True,
+    )
+    test_db.add(source)
+    test_db.commit()
+    test_db.refresh(source)
+    if target_namespace != "default":
+        target_namespace = _create_group_with_member(test_db, test_user)
+
+    listing = resource_library_service.to_listing(test_db, source, user_id=test_user.id)
+    assert listing.is_installed is True
+
+    with pytest.raises(HTTPException) as exc_info:
+        resource_library_service.install(
+            test_db,
+            listing_id=source.id,
+            target_namespace=target_namespace,
+            current_user=test_user,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == (
+        "System capabilities are globally available and cannot be installed"
+    )
+
+
+def test_stale_system_capability_reference_is_ignored(test_db, test_user):
+    source = Kind(
+        user_id=0,
+        kind="Model",
+        name="system-model-with-stale-reference",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": "system-model-with-stale-reference",
+                "namespace": "default",
+            },
+            "spec": {},
+        },
+        is_active=True,
+    )
+    test_db.add(source)
+    test_db.flush()
+    test_db.add(
+        ResourceMember.create(
+            resource_type="Model",
+            resource_id=source.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
+            role=BaseRole.Reporter.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=test_user.id,
+        )
+    )
+    test_db.commit()
+
+    assert (
+        list_referenced_capabilities(
+            test_db,
+            kind="Model",
+            user_id=test_user.id,
+            namespace="default",
+        )
+        == []
     )
 
 
@@ -590,6 +690,466 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
             current_user=_create_user(test_db, "late-consumer"),
         )
     assert exc_info.value.status_code == 404
+
+
+def test_published_model_install_is_a_live_reference(test_db, test_user, monkeypatch):
+    source = Kind(
+        user_id=test_user.id,
+        kind="Model",
+        name="shared-model",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": "shared-model",
+                "namespace": "default",
+                "displayName": "Shared Model",
+            },
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "gpt-test",
+                        "api_key": "publisher-secret",
+                    }
+                }
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(source)
+    test_db.commit()
+    consumer = _create_user(test_db, "model-consumer")
+
+    listing = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="model",
+            source_name=source.name,
+            source_namespace=source.namespace,
+            name=source.name,
+            display_name="Shared Model",
+            version="1.0.0",
+        ),
+        current_user=test_user,
+    )
+    install = resource_library_service.install(
+        test_db,
+        listing_id=listing.id,
+        target_namespace="default",
+        current_user=consumer,
+    )
+
+    reference = test_db.get(ResourceMember, install.id)
+    assert reference is not None
+    assert reference.resource_type == "Model"
+    assert reference.resource_id == source.id
+    assert install.installed_kind_id == source.id
+    assert (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == consumer.id,
+            Kind.kind == "Model",
+            Kind.name == source.name,
+        )
+        .count()
+        == 0
+    )
+    assert resource_library_service.to_listing(
+        test_db, source, user_id=consumer.id
+    ).is_installed
+    source.json["spec"]["modelConfig"]["env"]["model_id"] = "gpt-updated"
+    flag_modified(source, "json")
+    test_db.commit()
+
+    monkeypatch.setattr(
+        "app.services.model_aggregation_service.kind_service.list_resources",
+        lambda user_id, kind, namespace: [],
+    )
+    models = model_aggregation_service.list_available_models(
+        test_db,
+        consumer,
+        scope="personal",
+    )
+    referenced_model = next(item for item in models if item["name"] == source.name)
+    assert referenced_model["modelId"] == "gpt-updated"
+    assert referenced_model["isReference"] is True
+    assert referenced_model["listingId"] == source.id
+
+
+def test_model_publish_request_sets_personal_team_and_marketplace_scope(
+    test_db, test_user
+):
+    source = Kind(
+        user_id=test_user.id,
+        kind="Model",
+        name="scoped-model",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "scoped-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "gpt-test",
+                        "api_key": "publisher-secret",
+                    }
+                }
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(source)
+    test_db.commit()
+    test_db.refresh(source)
+    group_name = _create_group_with_member(test_db, test_user)
+
+    team_scope = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="model",
+            source_name=source.name,
+            source_namespace=source.namespace,
+            name=source.name,
+            display_name="Scoped Model",
+            status="archived",
+            target_groups=[group_name],
+            allow_personal_install=False,
+            allow_group_install=True,
+        ),
+        current_user=test_user,
+    )
+
+    assert team_scope.status == "archived"
+    assert team_scope.target_groups == [group_name]
+    assert test_db.get(MarketplaceResource, source.id) is None
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Model",
+            ResourceMember.resource_id == source.id,
+        )
+        .count()
+        == 1
+    )
+    loaded = resource_library_service.get_manageable_publication_by_source(
+        test_db,
+        resource_type="model",
+        source_name=source.name,
+        source_namespace=source.namespace,
+        current_user=test_user,
+    )
+    assert loaded.target_groups == [group_name]
+
+    personal_scope = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="model",
+            source_name=source.name,
+            source_namespace=source.namespace,
+            name=source.name,
+            display_name="Scoped Model",
+            status="archived",
+            target_groups=[],
+            allow_personal_install=False,
+            allow_group_install=False,
+        ),
+        current_user=test_user,
+    )
+    assert personal_scope.status == "archived"
+    assert personal_scope.target_groups == []
+    assert (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Model",
+            ResourceMember.resource_id == source.id,
+        )
+        .count()
+        == 0
+    )
+
+    marketplace_scope = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="model",
+            source_name=source.name,
+            source_namespace=source.namespace,
+            name=source.name,
+            display_name="Scoped Model",
+            status="published",
+            allow_personal_install=True,
+            allow_group_install=True,
+        ),
+        current_user=test_user,
+    )
+    assert marketplace_scope.status == "published"
+    assert test_db.get(MarketplaceResource, source.id) is not None
+
+
+@pytest.mark.parametrize(
+    ("resource_type", "kind", "name", "spec"),
+    [
+        (
+            "shell",
+            "Shell",
+            "shared-shell",
+            {"shellType": "ClaudeCode", "baseImage": "shell:v1"},
+        ),
+        (
+            "retriever",
+            "Retriever",
+            "shared-retriever",
+            {
+                "storageConfig": {
+                    "type": "elasticsearch",
+                    "url": "http://search-v1",
+                    "indexStrategy": {"mode": "per_user"},
+                }
+            },
+        ),
+    ],
+)
+def test_foundation_resource_references_follow_source_updates(
+    test_db,
+    test_user,
+    resource_type,
+    kind,
+    name,
+    spec,
+):
+    source = Kind(
+        user_id=test_user.id,
+        kind=kind,
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": kind,
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": spec,
+        },
+        is_active=True,
+    )
+    test_db.add(source)
+    test_db.commit()
+    consumer = _create_user(test_db, f"{resource_type}-consumer")
+    listing = resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type=resource_type,
+            source_name=name,
+            name=name,
+            display_name=name,
+            version="1.0.0",
+        ),
+        current_user=test_user,
+    )
+    install = resource_library_service.install(
+        test_db,
+        listing_id=listing.id,
+        target_namespace="default",
+        current_user=consumer,
+    )
+
+    if kind == "Shell":
+        source.json["spec"]["baseImage"] = "shell:v2"
+    else:
+        source.json["spec"]["storageConfig"]["url"] = "http://search-v2"
+    flag_modified(source, "json")
+    test_db.commit()
+
+    if kind == "Shell":
+        resolved = get_shell_by_name(test_db, name, consumer.id)
+        assert resolved is source
+        assert resolved.json["spec"]["baseImage"] == "shell:v2"
+        shell_info = get_shell_info_by_name(test_db, name, consumer.id)
+        assert shell_info["shell_type"] == "ClaudeCode"
+        assert shell_info["base_image"] == "shell:v2"
+        assert shell_info["is_reference"] is True
+        unified = list_unified_shells(
+            scope="personal",
+            group_name=None,
+            db=test_db,
+            current_user=consumer,
+        )
+        referenced = next(item for item in unified["data"] if item["name"] == name)
+        assert referenced["isReference"] is True
+        assert referenced["listingId"] == source.id
+        bot = Kind(
+            user_id=consumer.id,
+            kind="Bot",
+            name="reference-shell-bot",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Bot",
+                "metadata": {
+                    "name": "reference-shell-bot",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "ghostRef": {"name": "unused", "namespace": "default"},
+                    "shellRef": {"name": name, "namespace": "default"},
+                },
+            },
+            is_active=True,
+        )
+        runtime_shell_info = TaskRequestBuilder(test_db)._resolve_shell_info(
+            bot,
+            consumer.id,
+        )
+        assert runtime_shell_info == {
+            "shell_type": "ClaudeCode",
+            "base_image": "shell:v2",
+        }
+        public_model = Kind(
+            user_id=0,
+            kind="Model",
+            name="reference-shell-test-model",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Model",
+                "metadata": {
+                    "name": "reference-shell-test-model",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "modelConfig": {
+                        "env": {
+                            "model": "openai",
+                            "model_id": "reference-shell-test-model",
+                        }
+                    }
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(public_model)
+        test_db.commit()
+        created_bot = BotKindsService(Kind).create_with_user(
+            test_db,
+            obj_in=BotCreate(
+                name="bot-using-referenced-shell",
+                shell_name=name,
+                agent_config={
+                    "bind_model": public_model.name,
+                    "bind_model_type": "public",
+                },
+            ),
+            user_id=consumer.id,
+        )
+        assert created_bot["shell_name"] == name
+        assert created_bot["shell_type"] == "ClaudeCode"
+
+        with pytest.raises(HTTPException) as exc_info:
+            resource_library_service.uninstall_kind_reference(
+                test_db,
+                listing_id=source.id,
+                target_namespace="default",
+                current_user=consumer,
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "CAPABILITY_REFERENCE_IN_USE"
+        assert exc_info.value.detail["referenced_bots"] == [
+            {
+                "id": created_bot["id"],
+                "name": "bot-using-referenced-shell",
+                "namespace": "default",
+            }
+        ]
+        created_bot_kind = test_db.get(Kind, created_bot["id"])
+        created_bot_kind.is_active = False
+        test_db.commit()
+    else:
+        resolved = retriever_kinds_service.get_retriever(
+            test_db,
+            user_id=consumer.id,
+            name=name,
+            namespace="default",
+        )
+        assert resolved.spec.storageConfig.url == "http://search-v2"
+        referenced = next(
+            item
+            for item in retriever_kinds_service.list_retrievers(
+                test_db,
+                user_id=consumer.id,
+                scope="personal",
+            )
+            if item["name"] == name
+        )
+        assert referenced["isReference"] is True
+        assert referenced["listingId"] == source.id
+        knowledge_base = Kind(
+            user_id=consumer.id,
+            kind="KnowledgeBase",
+            name="kb-using-referenced-retriever",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "KnowledgeBase",
+                "metadata": {
+                    "name": "kb-using-referenced-retriever",
+                    "namespace": "default",
+                },
+                "spec": {
+                    "name": "Knowledge Base Using Referenced Retriever",
+                    "retrievalConfig": {
+                        "retriever_name": name,
+                        "retriever_namespace": "default",
+                    },
+                },
+            },
+            is_active=True,
+        )
+        test_db.add(knowledge_base)
+        test_db.commit()
+        test_db.refresh(knowledge_base)
+
+        usage = resource_library_service.get_kind_reference_usage(
+            test_db,
+            listing_id=source.id,
+            target_namespace="default",
+            current_user=consumer,
+        )
+        assert [item.model_dump() for item in usage.referenced_knowledge_bases] == [
+            {
+                "id": knowledge_base.id,
+                "name": "Knowledge Base Using Referenced Retriever",
+                "namespace": "default",
+            }
+        ]
+
+        with pytest.raises(HTTPException) as exc_info:
+            resource_library_service.uninstall_kind_reference(
+                test_db,
+                listing_id=source.id,
+                target_namespace="default",
+                current_user=consumer,
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["code"] == "CAPABILITY_REFERENCE_IN_USE"
+        assert exc_info.value.detail["referenced_knowledge_bases"] == [
+            {
+                "id": knowledge_base.id,
+                "name": "Knowledge Base Using Referenced Retriever",
+                "namespace": "default",
+            }
+        ]
+        knowledge_base.is_active = False
+        test_db.commit()
+
+    resource_library_service.uninstall_kind_reference(
+        test_db,
+        listing_id=source.id,
+        target_namespace="default",
+        current_user=consumer,
+    )
+    assert test_db.get(ResourceMember, install.id) is None
+    assert test_db.get(MarketplaceResource, source.id).install_count == 1
 
 
 def test_leaving_group_revokes_user_default_private_skill_access(

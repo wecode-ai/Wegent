@@ -2,7 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Check, Code2, Loader2, Plus, Server } from 'lucide-react'
+import {
+  Bot,
+  BrainCircuit,
+  Check,
+  Code2,
+  Database,
+  Loader2,
+  Plus,
+  Server,
+  SquareTerminal,
+} from 'lucide-react'
 
 import { ResourceCardFooter } from '@/components/common/ResourceCardFooter'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +34,9 @@ interface ResourceListingCardProps {
 const typeIcons = {
   agent: Bot,
   skill: Code2,
+  model: BrainCircuit,
+  shell: SquareTerminal,
+  retriever: Database,
   mcp: Server,
 } satisfies Record<ResourceLibraryResourceType, typeof Bot>
 
@@ -48,12 +61,17 @@ export function ResourceListingCard({
   const TypeIcon = typeIcons[listing.resource_type]
   const title = getListingTitle(listing)
   const isAgent = listing.resource_type === 'agent'
+  const isDirectlyUsableSystemCapability =
+    ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
+    listing.publisher_user_id === 0
   const isPersonalTarget = targetNamespace === 'default'
+  const isCodeOnlyAgent =
+    isAgent && listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
   const publisher = getPublisher(listing, t('fields.official_publisher'))
   const installDisabled = (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
   const actionLabel = isAgent
     ? isPersonalTarget
-      ? t('actions.use')
+      ? t(isCodeOnlyAgent ? 'common:teams.go_to_code' : 'common:teams.go_to_chat')
       : t('actions.add')
     : listing.is_installed && isPersonalTarget
       ? t('actions.added')
@@ -78,7 +96,7 @@ export function ResourceListingCard({
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/5 text-primary">
             <TypeIcon className="h-5 w-5" aria-hidden="true" />
           </div>
-          <div className={cn('min-w-0', !isAgent && 'pr-10')}>
+          <div className={cn('min-w-0', !isAgent && !isDirectlyUsableSystemCapability && 'pr-10')}>
             <h3
               className={cn(
                 'truncate font-semibold text-text-primary',
@@ -95,31 +113,42 @@ export function ResourceListingCard({
             </div>
           </div>
         </div>
-        <Button
-          type="button"
-          variant={isAgent && !installDisabled ? 'primary' : 'secondary'}
-          size="sm"
-          className={cn(
-            'absolute right-4 top-4 z-20 shrink-0',
-            isAgent
-              ? 'h-8 px-2.5 text-xs opacity-100 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100'
-              : 'h-11 w-11 border-0 bg-muted p-0 text-text-primary hover:bg-muted/80 md:h-9 md:w-9'
-          )}
-          disabled={installDisabled}
-          onClick={() => onInstall(listing)}
-          aria-label={`${actionLabel} ${title}`}
-          data-testid={`install-resource-${listing.id}-button`}
-        >
-          {isAgent ? (
-            actionLabel
-          ) : isInstalling ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : listing.is_installed && isPersonalTarget ? (
+        {isDirectlyUsableSystemCapability ? (
+          <div
+            className="absolute right-4 top-4 z-20 flex h-9 items-center gap-1.5 rounded-lg bg-muted px-2.5 text-xs text-text-secondary"
+            title={t('actions.system_available')}
+            data-testid={`system-resource-${listing.id}-available`}
+          >
             <Check className="h-4 w-4" aria-hidden />
-          ) : (
-            <Plus className="h-4 w-4" aria-hidden />
-          )}
-        </Button>
+            <span>{t('actions.system_available')}</span>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant={isAgent && !installDisabled ? 'primary' : 'secondary'}
+            size="sm"
+            className={cn(
+              'absolute right-4 top-4 z-20 shrink-0',
+              isAgent
+                ? 'h-8 px-2.5 text-xs opacity-100 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100'
+                : 'h-11 w-11 border-0 bg-muted p-0 text-text-primary hover:bg-muted/80 md:h-9 md:w-9'
+            )}
+            disabled={installDisabled}
+            onClick={() => onInstall(listing)}
+            aria-label={`${actionLabel} ${title}`}
+            data-testid={`install-resource-${listing.id}-button`}
+          >
+            {isAgent ? (
+              actionLabel
+            ) : isInstalling ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : listing.is_installed && isPersonalTarget ? (
+              <Check className="h-4 w-4" aria-hidden />
+            ) : (
+              <Plus className="h-4 w-4" aria-hidden />
+            )}
+          </Button>
+        )}
       </div>
 
       <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">

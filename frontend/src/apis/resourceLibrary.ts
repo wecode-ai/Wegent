@@ -15,6 +15,7 @@ import type {
   ResourceLibraryListResponse,
   ResourceLibraryListing,
   ResourceLibraryPublicationUpdateRequest,
+  ResourceLibraryReferenceUsage,
 } from '@/features/resource-library/types'
 
 const RESOURCE_LIBRARY_BASE_PATH = '/resource-library'
@@ -77,6 +78,19 @@ export const resourceLibraryApi = {
     return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/publication`)
   },
 
+  getPublicationBySource(
+    resourceType: string,
+    sourceName: string,
+    sourceNamespace: string = 'default'
+  ): Promise<ResourceLibraryListing> {
+    const query = new URLSearchParams({
+      resource_type: resourceType,
+      source_name: sourceName,
+      source_namespace: sourceNamespace,
+    })
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/publications/source?${query.toString()}`)
+  },
+
   createListing(request: ResourceLibraryCreateListingRequest): Promise<ResourceLibraryListing> {
     return apiClient.post(`${RESOURCE_LIBRARY_BASE_PATH}/listings`, request)
   },
@@ -88,6 +102,23 @@ export const resourceLibraryApi = {
     return apiClient.post(
       `${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/install`,
       toInstallApiRequest(request)
+    )
+  },
+
+  uninstallListing(listingId: number, targetNamespace: string = 'default'): Promise<void> {
+    const query = new URLSearchParams({ target_namespace: targetNamespace })
+    return apiClient.delete(
+      `${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/install?${query.toString()}`
+    )
+  },
+
+  getReferenceUsage(
+    listingId: number,
+    targetNamespace: string = 'default'
+  ): Promise<ResourceLibraryReferenceUsage> {
+    const query = new URLSearchParams({ target_namespace: targetNamespace })
+    return apiClient.get(
+      `${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/install/usage?${query.toString()}`
     )
   },
 

@@ -111,6 +111,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tokio",
+ "windows-sys 0.59.0",
  "wry",
  "zip 2.4.2",
 ]

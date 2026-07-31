@@ -73,11 +73,6 @@ export function PublishedResources({ resourceType }: PublishedResourcesProps) {
 
   const load = useCallback(async () => {
     setLoading(true)
-    if (resourceType !== 'all' && resourceType !== 'agent' && resourceType !== 'skill') {
-      setItems([])
-      setLoading(false)
-      return
-    }
     try {
       const response = await resourceLibraryApi.listMyPublished({
         resourceType,

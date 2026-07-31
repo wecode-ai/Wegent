@@ -4,7 +4,7 @@
 
 """Capability Center marketplace endpoints."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -21,6 +21,7 @@ from app.schemas.resource_library import (
     ResourceLibraryListing,
     ResourceLibraryListingList,
     ResourceLibraryPublicationUpdateRequest,
+    ResourceLibraryReferenceUsage,
 )
 from app.services.resource_library_service import resource_library_service
 
@@ -33,7 +34,9 @@ def _parse_tags(tags: str | None) -> list[str]:
 
 @router.get("/listings", response_model=ResourceLibraryDiscoveryList)
 def list_resource_library(
-    resource_type: str | None = Query(default=None, pattern="^(agent|skill)$"),
+    resource_type: str | None = Query(
+        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+    ),
     keyword: str | None = Query(default=None, max_length=200),
     tags: str | None = Query(default=None),
     target_namespace: str = Query(default="default", min_length=1, max_length=100),
@@ -81,13 +84,31 @@ def get_resource_library_publication(
     )
 
 
+@router.get("/publications/source", response_model=ResourceLibraryListing)
+def get_resource_library_publication_by_source(
+    resource_type: str = Query(..., pattern="^(agent|skill|model|shell|retriever)$"),
+    source_name: str = Query(..., min_length=1, max_length=100),
+    source_namespace: str = Query(default="default", min_length=1, max_length=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get sharing settings for an owned capability by source identity."""
+    return resource_library_service.get_manageable_publication_by_source(
+        db,
+        resource_type=resource_type,
+        source_name=source_name,
+        source_namespace=source_namespace,
+        current_user=current_user,
+    )
+
+
 @router.post("/listings", response_model=ResourceLibraryListing)
 def publish_resource_library_listing(
     request: ResourceLibraryCreateListingRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Publish an existing Team or Skill Kind."""
+    """Set the sharing scope for an existing capability Kind."""
     return resource_library_service.publish(
         db, request=request, current_user=current_user
     )
@@ -140,6 +161,44 @@ def install_resource_library_listing(
     )
 
 
+@router.delete(
+    "/listings/{listing_id}/install",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def uninstall_resource_library_listing(
+    listing_id: int,
+    target_namespace: str = Query(default="default", min_length=1, max_length=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Remove a model, executor, or retriever reference from a scope."""
+    resource_library_service.uninstall_kind_reference(
+        db,
+        listing_id=listing_id,
+        target_namespace=target_namespace,
+        current_user=current_user,
+    )
+
+
+@router.get(
+    "/listings/{listing_id}/install/usage",
+    response_model=ResourceLibraryReferenceUsage,
+)
+def get_resource_library_reference_usage(
+    listing_id: int,
+    target_namespace: str = Query(default="default", min_length=1, max_length=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """List active resources that prevent a capability reference from being unbound."""
+    return resource_library_service.get_kind_reference_usage(
+        db,
+        listing_id=listing_id,
+        target_namespace=target_namespace,
+        current_user=current_user,
+    )
+
+
 @router.post("/agents/{agent_id}/bindings", response_model=ResourceLibraryInstall)
 def bind_agent_to_scope(
     agent_id: int,
@@ -188,7 +247,9 @@ def sync_agent_bindings(
 
 @router.get("/users/me/published", response_model=ResourceLibraryListingList)
 def list_my_resource_library_publications(
-    resource_type: str | None = Query(default=None, pattern="^(agent|skill)$"),
+    resource_type: str | None = Query(
+        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+    ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -206,7 +267,9 @@ def list_my_resource_library_publications(
 
 @router.get("/users/me/installs", response_model=ResourceLibraryInstallList)
 def list_my_resource_library_installs(
-    resource_type: str | None = Query(default=None, pattern="^(agent|skill)$"),
+    resource_type: str | None = Query(
+        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+    ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -227,7 +290,9 @@ def list_my_resource_library_installs(
 )
 def list_group_resource_library_installs(
     group_namespace: str,
-    resource_type: str | None = Query(default=None, pattern="^(agent|skill)$"),
+    resource_type: str | None = Query(
+        default=None, pattern="^(agent|skill|model|shell|retriever)$"
+    ),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
