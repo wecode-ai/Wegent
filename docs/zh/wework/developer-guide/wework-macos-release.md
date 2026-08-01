@@ -33,6 +33,8 @@ cd wework
 WEWORK_CODEX_TARGET=universal-apple-darwin pnpm run prepare:codex
 ```
 
+Codex 的下载包和解压后的二进制默认缓存到用户级目录，多个 worktree 会复用同一份缓存。macOS 默认目录为 `~/Library/Caches/wegent/codex`；如需自定义，可设置 `WEGENT_CODEX_CACHE_DIR`。开发准备阶段只在 `src-tauri/binaries/codex` 下创建指向缓存的链接，发布构建会自动使用 `--materialize` 将文件物化到当前 worktree，以便 Tauri 打包和代码签名。
+
 release 构建会在 `wework/src-tauri/build.rs` 中校验目标平台的 Codex 二进制存在；缺失时构建会失败。运行时 Wework 会把 bundled Codex 路径注入本地 executor sidecar：
 
 - `CODEX_BINARY_PATH`
