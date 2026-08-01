@@ -3192,15 +3192,31 @@ async function verifyWorkspaceDocumentTabs(control) {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const initialBoardTabIds = workspaceTabIds(initialSnapshot, 'board')
 
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="workspace-tab-add-board"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const openedSnapshot = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'board').length === initialBoardTabIds.length + 1,
+    'Adding a project-space document tab did not create a distinct tab'
+  )
+  const addedBoardTabId = workspaceTabIds(openedSnapshot, 'board').find(
+    testId => !initialBoardTabIds.includes(testId)
+  )
+  assert.ok(addedBoardTabId, 'The newly added project-space tab could not be identified')
+  const addedBoardTabSuffix = addedBoardTabId.slice('workspace-tab-board-'.length)
+  await control.command(
+    'waitFor',
+    `[data-testid="workspace-tab-select-board-${addedBoardTabSuffix}"][aria-selected="true"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -3211,11 +3227,17 @@ async function verifyWorkspaceDocumentTabs(control) {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid^="workspace-tab-close-board-"]')
+  await control.command('click', `[data-testid="workspace-tab-close-board-${addedBoardTabSuffix}"]`)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
-    'Closing the project-space document tab did not remove it from the titlebar'
+    snapshot => {
+      const boardTabIds = workspaceTabIds(snapshot, 'board')
+      return (
+        !boardTabIds.includes(addedBoardTabId) &&
+        initialBoardTabIds.every(testId => boardTabIds.includes(testId))
+      )
+    },
+    'Closing the added project-space document tab did not preserve the original tabs'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
 }

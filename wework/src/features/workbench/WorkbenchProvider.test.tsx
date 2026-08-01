@@ -9082,6 +9082,83 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
   })
 
+  test('retries a queued runtime message while the executor is still finishing the previous turn', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi
+      .fn()
+      .mockResolvedValueOnce({
+        accepted: false,
+        taskId: 'runtime-a',
+        error: 'runtime task is already running',
+      })
+      .mockResolvedValue({
+        accepted: true,
+        taskId: 'runtime-a',
+      })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+    })
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(sendRuntimeMessage.mock.calls[1][0].clientUserMessageId).toBe(
+      sendRuntimeMessage.mock.calls[0][0].clientUserMessageId
+    )
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
+    expect(screen.getByTestId('queued-errors')).toHaveTextContent('')
+    expect(screen.getByTestId('runtime-open-messages').textContent?.match(/继续修/g)).toHaveLength(
+      1
+    )
+  })
+
   test('waits for the sent queued runtime message to start before sending the next queued item', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
