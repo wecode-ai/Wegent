@@ -1247,7 +1247,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
-  clientMessageId?: string
+  clientUserMessageId?: string
   ephemeral?: boolean
   user: User
 }
@@ -1357,7 +1357,7 @@ function buildLocalRuntimeExecutionRequest(
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
-    ...(input.clientMessageId ? { client_user_message_id: input.clientMessageId } : {}),
+    ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
     collaboration_model: 'single',
@@ -1502,7 +1502,7 @@ async function createLocalRuntimeTaskPayload(
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
-      clientMessageId: normalizedData.clientMessageId,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: normalizedData.ephemeral,
       user,
     }),
@@ -1565,7 +1565,7 @@ function createLocalRuntimeSendPayload(
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
-        clientMessageId: normalizedData.clientMessageId,
+        clientUserMessageId: normalizedData.clientUserMessageId,
         ephemeral: data.ephemeral,
         user,
       }),
@@ -1606,7 +1606,7 @@ function createLocalRuntimeSendPayload(
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
-      clientMessageId: normalizedData.clientMessageId,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: data.ephemeral,
       user,
     }),

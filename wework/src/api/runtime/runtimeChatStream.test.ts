@@ -44,19 +44,21 @@ describe('createRuntimeChatStream', () => {
     })
   })
 
-  test('forwards task-plan events outside a subscription scope for task-level caching', async () => {
+  test('delivers task-plan events to the global subscription only', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {
       listener = handler
       return vi.fn()
     })
-    const onRuntimePlanUpdated = vi.fn()
+    const onScopedRuntimePlanUpdated = vi.fn()
+    const onGlobalRuntimePlanUpdated = vi.fn()
     const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({
       scope: { deviceId: 'local-device', taskId: 'previous-task' },
-      onRuntimePlanUpdated,
+      onRuntimePlanUpdated: onScopedRuntimePlanUpdated,
     })
+    stream.subscribe({ onRuntimePlanUpdated: onGlobalRuntimePlanUpdated })
     await Promise.resolve()
     listener({
       event: 'runtime.plan.updated',
@@ -70,7 +72,8 @@ describe('createRuntimeChatStream', () => {
       },
     })
 
-    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+    expect(onScopedRuntimePlanUpdated).not.toHaveBeenCalled()
+    expect(onGlobalRuntimePlanUpdated).toHaveBeenCalledWith({
       taskId: 'new-task',
       subtaskId: '1001',
       deviceId: 'local-device',

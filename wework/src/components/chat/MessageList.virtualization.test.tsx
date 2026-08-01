@@ -8,7 +8,8 @@ import {
 import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 
-const { useVirtualizerMock } = vi.hoisted(() => ({
+const { resizeItemMock, useVirtualizerMock } = vi.hoisted(() => ({
+  resizeItemMock: vi.fn(),
   useVirtualizerMock: vi.fn(),
 }))
 
@@ -49,6 +50,7 @@ vi.mock('@tanstack/react-virtual', () => ({
           start: index * 120,
         })),
       measureElement: vi.fn(),
+      resizeItem: resizeItemMock,
       takeSnapshot: () => [
         { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
       ],
@@ -59,6 +61,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 describe('MessageList Tauri virtualization', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
+    resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
     vi.unstubAllGlobals()
   })
@@ -149,6 +152,43 @@ describe('MessageList Tauri virtualization', () => {
     )
 
     expect(screen.getAllByText('streaming-navigation message 80')).toHaveLength(1)
+  })
+
+  test('synchronously remeasures an active streaming row after its content changes', () => {
+    const messages = buildMessages(100, 'streaming-resize')
+    messages[80] = {
+      ...messages[80],
+      role: 'assistant',
+      status: 'streaming',
+    }
+    const props = {
+      messages,
+      scrollElementRef: { current: createScrollElement(200) },
+    }
+    const view = render(<MessageList {...props} />)
+    const row = screen.getByText('streaming-resize message 80').closest('[data-index]')
+    expect(row).not.toBeNull()
+    vi.spyOn(row!, 'getBoundingClientRect').mockReturnValue({
+      bottom: 320,
+      height: 320,
+      left: 0,
+      right: 800,
+      top: 0,
+      width: 800,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    resizeItemMock.mockClear()
+
+    const updatedMessages = [...messages]
+    updatedMessages[80] = {
+      ...updatedMessages[80],
+      content: `${updatedMessages[80].content} appended`,
+    }
+    view.rerender(<MessageList {...props} messages={updatedMessages} />)
+
+    expect(resizeItemMock).toHaveBeenCalledWith(80, 320)
   })
 
   test('restores and persists the TanStack measurement snapshot', () => {

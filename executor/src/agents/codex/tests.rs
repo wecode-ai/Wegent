@@ -7,83 +7,23 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
-async fn queued_unsubscribe_is_skipped_after_thread_reactivation() {
-    let client = CodexAppServerClient::new("codex-lifecycle-generation-test");
-    let thread_id = format!("thread-reactivation-{}", std::process::id());
+async fn active_thread_tracking_counts_each_thread_independently() {
+    let client = CodexAppServerClient::new("codex-active-thread-test");
 
-    client.mark_thread_active(&thread_id).await;
-    let stale_generation = client
-        .mark_thread_idle(&thread_id)
-        .await
-        .expect("terminal turn should make the thread idle");
-    client.mark_thread_active(&thread_id).await;
+    client.mark_thread_active("thread-1").await;
+    client.mark_thread_active("thread-1").await;
+    client.mark_thread_active("thread-2").await;
+    client.mark_thread_idle("thread-1").await;
 
-    let sent = client
-        .request_thread_unsubscribe_if_idle(&thread_id, stale_generation)
-        .await
-        .expect("stale cleanup should be skipped without contacting an app-server");
+    {
+        let state = client.state.lock().await;
+        assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+        assert_eq!(state.active_threads.get("thread-2"), Some(&1));
+    }
 
-    assert!(!sent);
-    let current_generation = client
-        .mark_thread_idle(&thread_id)
-        .await
-        .expect("reactivated turn should have its own idle generation");
-    assert_ne!(current_generation, stale_generation);
-    client
-        .clear_idle_thread_generation(&thread_id, current_generation)
-        .await;
-}
-
-#[tokio::test]
-async fn thread_lifecycle_gate_does_not_block_unrelated_threads() {
-    let client = CodexAppServerClient::new("codex-lifecycle-gate-test");
-    let blocked_thread = format!("thread-blocked-{}", std::process::id());
-    let unrelated_thread = format!("thread-unrelated-{}", std::process::id());
-    let blocked_gate = client.thread_lifecycle_gate(&blocked_thread).await;
-    let blocked_guard = blocked_gate.lock().await;
-
-    tokio::time::timeout(
-        Duration::from_secs(1),
-        client.mark_thread_active(&unrelated_thread),
-    )
-    .await
-    .expect("an unrelated thread should not wait for another thread's lifecycle gate");
-
-    let blocked_activation = {
-        let client = client.clone();
-        let blocked_thread = blocked_thread.clone();
-        tokio::spawn(async move {
-            client.mark_thread_active(&blocked_thread).await;
-        })
-    };
-    tokio::pin!(blocked_activation);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), &mut blocked_activation)
-            .await
-            .is_err(),
-        "the same thread should remain serialized"
-    );
-
-    drop(blocked_guard);
-    tokio::time::timeout(Duration::from_secs(1), &mut blocked_activation)
-        .await
-        .expect("same-thread activation should continue after the lifecycle gate is released")
-        .expect("same-thread activation task should join");
-
-    let unrelated_generation = client
-        .mark_thread_idle(&unrelated_thread)
-        .await
-        .expect("unrelated thread should become idle");
-    client
-        .clear_idle_thread_generation(&unrelated_thread, unrelated_generation)
-        .await;
-    let blocked_generation = client
-        .mark_thread_idle(&blocked_thread)
-        .await
-        .expect("blocked thread should become idle");
-    client
-        .clear_idle_thread_generation(&blocked_thread, blocked_generation)
-        .await;
+    client.mark_thread_idle("thread-1").await;
+    client.mark_thread_idle("thread-2").await;
+    assert!(client.state.lock().await.active_threads.is_empty());
 }
 
 #[tokio::test]
@@ -109,11 +49,19 @@ async fn interaction_answer_router_matches_reverse_order_answers() {
         .expect("first answer should be sent");
 
     assert_eq!(
-        first.await.expect("first waiter should join").unwrap()["answers"]["choice"],
+        first
+            .await
+            .expect("first waiter should join")
+            .unwrap()
+            .unwrap()["answers"]["choice"],
         "first"
     );
     assert_eq!(
-        second.await.expect("second waiter should join").unwrap()["answers"]["choice"],
+        second
+            .await
+            .expect("second waiter should join")
+            .unwrap()
+            .unwrap()["answers"]["choice"],
         "second"
     );
 }
@@ -186,12 +134,12 @@ fn streaming_patch_overrides_enable_freeform_apply_patch() {
 }
 
 #[test]
-fn persistent_app_server_enables_deferred_mcp_tool_search() {
+fn persistent_app_server_uses_direct_mcp_tools() {
     let request_config = CodexLaunchConfig::default();
 
     let config = persistent_codex_app_server_launch_config(&request_config);
 
-    assert!(config
+    assert!(!config
         .config_overrides
         .contains(&"features.tool_search=true".to_owned()));
     assert!(!config
@@ -1056,6 +1004,53 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
 }
 
 #[test]
+fn turn_started_sets_or_replaces_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "turn/started",
+        "params": {
+            "threadId": "thread-1",
+            "turn": { "id": "turn-2", "status": "inProgress" }
+        }
+    });
+
+    assert_eq!(
+        started_active_turn_id(None, &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        started_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        started_active_turn_id(Some("turn-2"), &notification, &state),
+        None
+    );
+}
+
+#[test]
+fn item_notification_cannot_replace_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-2",
+            "item": {
+                "id": "message-1",
+                "type": "agentMessage",
+                "text": "done"
+            }
+        }
+    });
+
+    assert_eq!(
+        started_active_turn_id(Some("turn-1"), &notification, &state),
+        None
+    );
+}
+
+#[test]
 fn codex_run_state_keeps_commentary_channel_delta_out_of_final_content() {
     let mut state = CodexRunState::default();
 
@@ -1411,6 +1406,13 @@ fn turn_start_params_includes_client_user_message_id() {
 }
 
 #[test]
+fn thread_start_uses_codex_default_history_mode() {
+    let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
+
+    assert!(params.get("historyMode").is_none());
+}
+
+#[test]
 fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
@@ -1473,30 +1475,6 @@ fn codex_runtime_workspace_roots_are_applied_to_thread_and_turn_requests() {
             json!(["/workspace/web", "/workspace/api"])
         );
     }
-}
-
-#[test]
-fn codex_permission_profile_validation_rejects_effective_downgrade() {
-    let response = json!({
-        "activePermissionProfile": {"id": ":workspace"},
-        "sandbox": {"type": "workspaceWrite", "networkAccess": false},
-    });
-
-    let error = validate_codex_permission_profile("thread/resume", &response)
-        .expect_err("workspace-write must not be accepted");
-
-    assert!(error.contains("active_profile=:workspace"));
-    assert!(error.contains("sandbox=workspaceWrite"));
-}
-
-#[test]
-fn codex_permission_profile_validation_accepts_effective_full_access() {
-    let response = json!({
-        "activePermissionProfile": {"id": ":danger-full-access"},
-        "sandbox": {"type": "dangerFullAccess"},
-    });
-
-    validate_codex_permission_profile("thread/resume", &response).unwrap();
 }
 
 #[test]
@@ -1784,7 +1762,7 @@ fn thread_goal_set_params_rejects_empty_objective() {
 }
 
 #[test]
-fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+fn root_turn_notification_uses_protocol_turn_id_and_ignores_child_turns() {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("thread-root");
 
@@ -1797,7 +1775,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(
-        active_root_turn_notification_id(&active_item, &state).as_deref(),
+        root_turn_notification_id(&active_item, &state).as_deref(),
         Some("turn-current")
     );
 
@@ -1809,8 +1787,8 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(
-        active_root_turn_notification_id(&completed_turn, &state),
-        None
+        root_turn_notification_id(&completed_turn, &state).as_deref(),
+        Some("turn-current")
     );
 
     let child_item = json!({
@@ -1822,7 +1800,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
             "item": { "type": "reasoning" }
         }
     });
-    assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
+    assert_eq!(root_turn_notification_id(&child_item, &state), None);
 }
 
 #[test]

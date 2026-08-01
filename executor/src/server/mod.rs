@@ -92,6 +92,10 @@ where
         .route("/v1/responses", post(openai_responses::<R>))
         .route(codex_model_catalog::ROUTE, get(codex_model_catalog::handle))
         .route(local_model_proxy::ROUTE, local_model_proxy::route())
+        .route(
+            local_model_proxy::TOKEN_ROUTE,
+            local_model_proxy::token_route(),
+        )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
