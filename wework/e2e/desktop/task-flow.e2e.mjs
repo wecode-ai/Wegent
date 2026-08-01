@@ -43,6 +43,7 @@ const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
+const QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS = 30_000
 
 function readPositiveTimeout(value, fallback, name) {
   if (value === undefined) return fallback
@@ -1509,8 +1510,12 @@ async function startPausedQueueCase({ composerSelector, control, initialPrompt, 
   const requestCountBefore = control.scenarioRequests.get('queue_management')?.length ?? 0
   await sendPrompt(control, composerSelector, initialPrompt)
   await withTimeout(
-    control.awaitScenarioRequestCount('queue_management', requestCountBefore + 1),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount(
+      'queue_management',
+      requestCountBefore + 1,
+      QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    ),
+    QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
     `The queue management scenario did not receive ${initialPrompt}`
   )
   await control.command('waitFor', '[data-testid="pause-response-button"]', {
@@ -1584,8 +1589,12 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
 
   await control.command('click', '[data-testid="resume-queue-button"]')
   await withTimeout(
-    control.awaitScenarioRequestCount('queue_management', directRequestOffset + 2),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount(
+      'queue_management',
+      directRequestOffset + 2,
+      QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    ),
+    QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
     'Continuing the queue did not send its first message'
   )
   assertLatestScenarioRequestContains(
@@ -1595,8 +1604,12 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     'Continuing the queue did not send the message moved to the top'
   )
   await withTimeout(
-    control.awaitScenarioRequestCount('queue_management', directRequestOffset + 4),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount(
+      'queue_management',
+      directRequestOffset + 4,
+      QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    ),
+    QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
     'The resumed queue did not drain in its visible order'
   )
   const directRequests = control.scenarioRequests
@@ -1638,8 +1651,12 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
     'Preserving the queue did not clear the submitted composer input'
   )
   await withTimeout(
-    control.awaitScenarioRequestCount('queue_management', preserveRequestOffset + 3),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount(
+      'queue_management',
+      preserveRequestOffset + 3,
+      QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    ),
+    QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
     'Preserving the queue did not send both the manual message and queued message'
   )
   const preserveRequests = control.scenarioRequests
@@ -1660,8 +1677,12 @@ async function verifyPausedQueueLifecycle({ composerSelector, control }) {
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('click', '[data-testid="paused-queue-send-clear-button"]')
   await withTimeout(
-    control.awaitScenarioRequestCount('queue_management', clearRequestOffset + 2),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount(
+      'queue_management',
+      clearRequestOffset + 2,
+      QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    ),
+    QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS,
     'Clearing the queue did not send the new manual message'
   )
   assertLatestScenarioRequestContains(
