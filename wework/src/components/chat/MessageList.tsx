@@ -320,7 +320,13 @@ export const MessageList = memo(function MessageList({
   })
 
   useLayoutEffect(() => {
-    if (!virtualMessages || streamingVirtualMessageIndex < 0) return
+    if (
+      !virtualMessages ||
+      streamingVirtualMessageIndex < 0 ||
+      streamingVirtualMessageIndex === visibleMessages.length - 1
+    ) {
+      return
+    }
     const row = listRef.current?.querySelector<HTMLElement>(
       `[data-index="${streamingVirtualMessageIndex}"]`
     )

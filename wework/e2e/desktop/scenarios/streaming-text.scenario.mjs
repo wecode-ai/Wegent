@@ -21,6 +21,9 @@ const ATTACHMENT_BASE64 =
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
+const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
@@ -295,6 +298,13 @@ function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
 
+function assertElementFullyVisible(elementMetrics, scrollerMetrics, description) {
+  assert.ok(
+    elementMetrics.top >= scrollerMetrics.top && elementMetrics.bottom <= scrollerMetrics.bottom,
+    `${description} was not fully visible (element=${elementMetrics.top}-${elementMetrics.bottom}, scroller=${scrollerMetrics.top}-${scrollerMetrics.bottom})`
+  )
+}
+
 function processingDurationSeconds(text) {
   const hours = Number(text.match(/(\d+)\s*(?:小时|h)/)?.[1] ?? 0)
   const minutes = Number(text.match(/(\d+)\s*(?:分钟|分|m)/)?.[1] ?? 0)
@@ -357,6 +367,17 @@ async function waitForFolderPath(control, expectedPath, timeoutMs) {
   throw new Error(`The streaming-text project picker did not load ${expectedPath}`)
 }
 
+async function waitForProjectWorkButton(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', '[data-testid="project-work-button"]'))) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The streaming-text project selector did not become available')
+}
+
 async function waitForProjectBranch(control, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -368,6 +389,7 @@ async function waitForProjectBranch(control, timeoutMs) {
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
+  await waitForProjectWorkButton(control, timeoutMs)
   await control.command('click', '[data-testid="project-work-button"]')
   await control.command('click', '[data-testid="add-local-project-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
@@ -677,11 +699,31 @@ export function createDesktopScenario({
         JSON.stringify(targetRequest).includes(ATTACHMENT_FILENAME),
         'The real Codex request omitted the streaming attachment'
       )
-      await control.command(
-        'waitFor',
-        ASSISTANT_CONTENT_SELECTOR,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      await control.command('markElementWithText', USER_MESSAGE_SELECTOR, {
+        text: PROMPT,
+        value: USER_MESSAGE_E2E_ID,
+        timeoutMs: uiTimeoutMs,
+      })
+      const latestUserMessageMetrics = await getSingleElementMetrics(
+        control,
+        USER_MESSAGE_SELECTOR_MARKED,
+        'The latest user message after sending'
       )
+      const scrollerAfterSend = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The conversation scroller after sending'
+      )
+      assertElementFullyVisible(
+        latestUserMessageMetrics,
+        scrollerAfterSend,
+        'The latest user message after sending'
+      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -800,11 +842,11 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'waitFor',
-        ASSISTANT_CONTENT_SELECTOR,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const pinnedAfterSwitch = await waitForBottom(
         control,
         'The bottom-pinned streaming conversation after switching back',
@@ -823,11 +865,11 @@ export function createDesktopScenario({
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'waitFor',
-        ASSISTANT_CONTENT_SELECTOR,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
@@ -874,11 +916,11 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
         { stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      await control.command(
-        'waitFor',
-        ASSISTANT_CONTENT_SELECTOR,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const completedSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

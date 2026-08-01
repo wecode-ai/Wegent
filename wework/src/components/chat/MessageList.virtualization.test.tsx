@@ -135,6 +135,22 @@ describe('MessageList Tauri virtualization', () => {
     expect(screen.getByText('streaming message 99')).toBeInTheDocument()
   })
 
+  test('lets the last streaming message use its normal measurement path', () => {
+    const messages = buildMessages(100, 'last-streaming')
+    messages[99] = {
+      ...messages[99],
+      role: 'assistant',
+      status: 'streaming',
+    }
+
+    render(
+      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
+    )
+
+    expect(screen.getByText('last-streaming message 99')).toBeInTheDocument()
+    expect(resizeItemMock).not.toHaveBeenCalled()
+  })
+
   test('deduplicates a streaming message that is also a forced navigation target', () => {
     const messages = buildMessages(100, 'streaming-navigation')
     messages[80] = {
