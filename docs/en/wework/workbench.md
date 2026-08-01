@@ -4,6 +4,14 @@ sidebar_position: 5
 
 # Coding workbench
 
+## Use top-level tabs
+
+The Wework desktop app uses top-level tabs for tasks, project spaces, agents, and other product pages. Sidebar links navigate within the active tab. A new tab is created only when you select the top-bar **+** or another explicit new-tab action from a tab menu.
+
+When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A project-space tab can also be opened in a separate window from its context menu.
+
+## Files and terminals
+
 The right workspace displays project files, previews, and change reviews. Multi-root projects show a folder selector in the Files tab. Switching folders changes only the file-tree and preview root; it does not change the execution directory used by the task, terminal, or conversation.
 
 Local file and directory links in an AI response open in the Files tab. File links can jump to referenced lines, while directory links make that directory the file-tree root. In the macOS desktop app, the Files tab's **Open** and **Open location** actions support both files and directories.
