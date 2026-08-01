@@ -2588,6 +2588,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           : t('workbench.input_placeholder', '随心输入')
                       }
                       variant="desktop"
+                      appearance="launcher"
                       projectChat={projectChatWithModelSelectorSignal}
                       projectWork={emptyProjectWork}
                       showWorkspaceMenu={showComposerProjectMenuAction}

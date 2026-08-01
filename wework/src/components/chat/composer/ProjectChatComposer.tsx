@@ -37,6 +37,7 @@ interface ProjectChatComposerProps {
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
+  appearance?: 'default' | 'launcher'
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   activeModel?: UnifiedModel | null
@@ -93,6 +94,7 @@ export function ProjectChatComposer({
   submitDisabled = false,
   disabledReason,
   placeholder,
+  appearance = 'default',
   models,
   selectedModel,
   activeModel,
@@ -189,50 +191,71 @@ export function ProjectChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  const launcherAppearance = appearance === 'launcher'
+  const projectWorkBar = showProjectWorkBar ? (
+    <ProjectWorkBar
+      projects={projectWork.projects}
+      devices={projectWork.devices}
+      runtimeWork={projectWork.runtimeWork}
+      currentProject={projectWork.currentProject}
+      currentProjectId={projectWork.currentProjectId}
+      currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+      selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
+      pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
+      executionMode={projectWork.executionMode}
+      executionModeLocked={projectWork.executionModeLocked}
+      isGitProject={projectWork.isGitProject}
+      onSelectProject={projectWork.onSelectProject}
+      onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+      onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
+      onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
+      onExecutionModeChange={projectWork.onExecutionModeChange}
+      onCreateProjectMode={projectWork.onCreateProjectMode}
+      branchName={projectWork.branchName}
+      branchLoading={projectWork.branchLoading}
+      onRefreshBranch={projectWork.onRefreshBranch}
+      onListBranches={projectWork.onListBranches}
+      onCheckoutBranch={projectWork.onCheckoutBranch}
+      onCreateBranch={projectWork.onCreateBranch}
+      worktreeBranch={projectWork.worktreeBranch}
+      onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+      projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
+      projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+      className={cn(
+        'min-h-10 px-4',
+        launcherAppearance ? 'rounded-t-[22px] bg-transparent' : 'rounded-t-[26px] bg-surface'
+      )}
+      buttonClassName={cn(
+        'text-sm leading-[18px] text-text-secondary',
+        launcherAppearance
+          ? 'hover:bg-muted/70 hover:text-text-primary'
+          : 'hover:bg-background/70 hover:text-text-primary'
+      )}
+    />
+  ) : null
 
   return (
     <div
       data-testid="project-chat-composer"
-      className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
-    >
-      {showProjectWorkBar && (
-        <ProjectWorkBar
-          projects={projectWork.projects}
-          devices={projectWork.devices}
-          runtimeWork={projectWork.runtimeWork}
-          currentProject={projectWork.currentProject}
-          currentProjectId={projectWork.currentProjectId}
-          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
-          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
-          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
-          executionMode={projectWork.executionMode}
-          executionModeLocked={projectWork.executionModeLocked}
-          isGitProject={projectWork.isGitProject}
-          onSelectProject={projectWork.onSelectProject}
-          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
-          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
-          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
-          onExecutionModeChange={projectWork.onExecutionModeChange}
-          onCreateProjectMode={projectWork.onCreateProjectMode}
-          branchName={projectWork.branchName}
-          branchLoading={projectWork.branchLoading}
-          onRefreshBranch={projectWork.onRefreshBranch}
-          onListBranches={projectWork.onListBranches}
-          onCheckoutBranch={projectWork.onCheckoutBranch}
-          onCreateBranch={projectWork.onCreateBranch}
-          worktreeBranch={projectWork.worktreeBranch}
-          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
-          projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
-          projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
-          className="min-h-10 rounded-t-[26px] bg-surface px-4"
-          buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
-        />
+      data-appearance={appearance}
+      className={cn(
+        'relative w-full transition-[box-shadow]',
+        launcherAppearance
+          ? 'rounded-[22px]'
+          : 'rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
       )}
+    >
+      {!launcherAppearance && projectWorkBar}
       <form
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
-          isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
+          'relative z-10 flex w-full flex-col bg-background px-4 pb-1.5 pt-2 transition-colors',
+          launcherAppearance
+            ? 'min-h-[112px] rounded-[22px] border border-border/85 bg-background shadow-[0_8px_28px_rgba(15,23,42,0.055)] focus-within:border-focus focus-within:ring-2 focus-within:ring-focus/10'
+            : 'min-h-[76px] rounded-[26px] border',
+          !launcherAppearance &&
+            (isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'),
+          launcherAppearance && isDraggingFiles && 'border-focus bg-background ring-2 ring-focus/20'
         )}
         onDragEnter={handleDragOver}
         onDragLeave={event => {
@@ -256,6 +279,7 @@ export function ProjectChatComposer({
           if (canSend) onSubmit(value)
         }}
       >
+        {launcherAppearance && projectWorkBar}
         <AttachmentBadges
           attachments={attachments}
           uploadingFiles={uploadingFiles}
