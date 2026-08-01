@@ -257,6 +257,11 @@ describe('App center route', () => {
 
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-content-bridge')).toHaveClass(
+      'inset-x-2',
+      'h-2',
+      'bg-background'
+    )
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
   })
 

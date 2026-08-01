@@ -75,8 +75,8 @@ describe('ChromeTitlebar', () => {
     expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('任务')
     expect(screen.getByTestId('chrome-titlebar-before-tabs')).toHaveTextContent('Toggle sidebar')
     expect(screen.getByTestId('chrome-titlebar-after-tabs')).toHaveTextContent('Update')
-    expect(screen.getByTestId('titlebar-center')).toHaveClass('h-full', 'flex-1')
-    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'pr-3')
+    expect(screen.getByTestId('workspace-tab-strip-container')).toHaveClass('flex-1')
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'w-[5rem]')
   })
 
   test('shows the macOS traffic-light spacer and starts native dragging', async () => {
@@ -88,11 +88,18 @@ describe('ChromeTitlebar', () => {
     expect(spacer).toHaveClass('w-[92px]', 'self-stretch')
     expect(spacer.parentElement?.firstChild).toBe(spacer)
 
-    const nativeDragRegion = within(screen.getByTestId('titlebar-center')).getByTestId(
-      'macos-titlebar-drag-region'
-    )
+    const nativeDragRegion = within(spacer).getByTestId('macos-titlebar-drag-region')
     fireEvent.mouseDown(nativeDragRegion, { button: 0 })
     await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
+
+    const fixedActions = screen.getByTestId('titlebar-fixed-actions')
+    expect(fixedActions).toHaveStyle({ width: '6.75rem' })
+    expect(screen.getByTestId('titlebar-actions').nextElementSibling).toBe(
+      screen.getByTestId('titlebar-feedback')
+    )
+    expect(screen.getByTestId('titlebar-feedback')).toContainElement(
+      screen.getByTestId('topnav-feedback-button')
+    )
   })
 
   test('shows custom window controls on Windows', () => {
@@ -106,10 +113,14 @@ describe('ChromeTitlebar', () => {
   })
 
   test('can hide workbench portals without removing the document tabs', () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
     renderTitlebar({ showWorkspacePortals: false, showFeedback: false })
 
     expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()
     expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
     expect(screen.queryByTestId('titlebar-right-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({ width: '1.75rem' })
+    expect(screen.getByTestId('titlebar-feedback')).toBeEmptyDOMElement()
   })
 })

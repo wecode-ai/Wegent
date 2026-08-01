@@ -2,7 +2,7 @@ import { useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 export const TITLEBAR_ACTIONS_PORTAL_ID = 'titlebar-actions-portal'
-export const TITLEBAR_CENTER_PORTAL_ID = 'titlebar-center-portal'
+export const TITLEBAR_FEEDBACK_PORTAL_ID = 'titlebar-feedback-portal'
 export const TITLEBAR_RIGHT_PANEL_PORTAL_ID = 'titlebar-right-panel-portal'
 export const WORKBENCH_MAIN_HEADER_PORTAL_ID = 'workbench-main-header-portal'
 
@@ -16,10 +16,10 @@ export function TitlebarActionsPortal({ children }: TitlebarActionsPortalProps) 
   return portalTarget ? createPortal(children, portalTarget) : null
 }
 
-export function TitlebarCenterPortal({ children }: TitlebarActionsPortalProps) {
+export function TitlebarFeedbackPortal({ children }: TitlebarActionsPortalProps) {
   const portalTarget = useSyncExternalStore(
     subscribeToPortalTarget,
-    () => document.getElementById(TITLEBAR_CENTER_PORTAL_ID),
+    () => document.getElementById(TITLEBAR_FEEDBACK_PORTAL_ID),
     () => null
   )
 

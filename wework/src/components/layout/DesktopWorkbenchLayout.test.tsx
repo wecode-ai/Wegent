@@ -34,7 +34,7 @@ import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
-  TITLEBAR_CENTER_PORTAL_ID,
+  TITLEBAR_FEEDBACK_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
@@ -578,9 +578,8 @@ describe('DesktopWorkbenchLayout', () => {
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
     tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
-    document.getElementById(TITLEBAR_CENTER_PORTAL_ID)?.remove()
+    document.getElementById(TITLEBAR_FEEDBACK_PORTAL_ID)?.remove()
     document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID)?.remove()
-    screen.queryByTestId('titlebar-center')?.remove()
     screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
@@ -2033,6 +2032,9 @@ describe('DesktopWorkbenchLayout', () => {
   test('keeps continue-in-im action with titlebar actions in Tauri', () => {
     const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
       .__TAURI_INTERNALS__
+    const feedbackPortal = document.createElement('div')
+    feedbackPortal.id = TITLEBAR_FEEDBACK_PORTAL_ID
+    document.body.append(feedbackPortal)
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2066,6 +2068,8 @@ describe('DesktopWorkbenchLayout', () => {
       const titlebarActions = screen.getByTestId('titlebar-actions')
       expect(titlebarMainActions).toContainElement(screen.getByTestId('continue-in-im-button'))
       expect(titlebarMainActions).toContainElement(screen.getByTestId('fork-runtime-task-button'))
+      expect(titlebarMainActions).not.toContainElement(screen.getByTestId('task-feedback-button'))
+      expect(feedbackPortal).toContainElement(screen.getByTestId('task-feedback-button'))
       expect(titlebarActions).not.toContainElement(screen.getByTestId('continue-in-im-button'))
       expect(titlebarActions).not.toContainElement(screen.getByTestId('fork-runtime-task-button'))
       expect(titlebarActions).toContainElement(
@@ -2073,6 +2077,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
       expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     } finally {
+      feedbackPortal.remove()
       if (previousTauriInternals === undefined) {
         delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
       } else {

@@ -88,4 +88,60 @@ describe('localModelSettings secure credentials', () => {
     )
     expect(settings.listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
   })
+
+  test('does not access the native credential store when no model has a saved API key', async () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'keyless-model',
+          displayName: 'Keyless model',
+          modelId: 'keyless-model',
+          baseUrl: 'http://localhost:11434/v1',
+          apiKeyConfigured: false,
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+    const settings = await import('./localModelSettings')
+
+    await settings.hydrateLocalModelApiKeys()
+
+    expect(runtimeMocks.invoke).not.toHaveBeenCalled()
+  })
+
+  test('reads only credentials marked as configured', async () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'saved-key',
+          displayName: 'Saved key',
+          modelId: 'saved-key',
+          baseUrl: 'https://models.example/v1',
+          apiKeyConfigured: true,
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'keyless-model',
+          displayName: 'Keyless model',
+          modelId: 'keyless-model',
+          baseUrl: 'http://localhost:11434/v1',
+          apiKeyConfigured: false,
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+    runtimeMocks.invoke.mockResolvedValue({ 'saved-key': 'restart-secret' })
+    const settings = await import('./localModelSettings')
+
+    await settings.hydrateLocalModelApiKeys()
+
+    expect(runtimeMocks.invoke).toHaveBeenCalledWith('read_local_model_api_keys', {
+      configIds: ['saved-key'],
+    })
+  })
 })

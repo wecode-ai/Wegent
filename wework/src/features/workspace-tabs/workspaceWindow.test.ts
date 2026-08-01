@@ -18,6 +18,9 @@ vi.mock('@tauri-apps/api/dpi', () => ({
     ) {}
   },
 }))
+vi.mock('@tauri-apps/api/window', () => ({
+  Effect: { Sidebar: 'sidebar' },
+}))
 
 const tab: WorkspaceTab = {
   id: 'board-project-1',
@@ -67,6 +70,7 @@ describe('openWorkspaceTabWindow', () => {
         title: '产品规划',
         visible: false,
         transparent: true,
+        windowEffects: { effects: ['sidebar'] },
         titleBarStyle: 'overlay',
         tabbingIdentifier: 'io.wecode.wework.workspace',
       })

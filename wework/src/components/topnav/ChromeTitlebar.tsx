@@ -3,7 +3,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
-  TITLEBAR_CENTER_PORTAL_ID,
+  TITLEBAR_FEEDBACK_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
@@ -33,6 +33,14 @@ export function ChromeTitlebar({
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
+  const feedbackSlotVisible = isTauri && platform === 'mac'
+  const fixedActionsWidth = showWorkspacePortals
+    ? feedbackSlotVisible
+      ? '6.75rem'
+      : '5rem'
+    : feedbackSlotVisible
+      ? '1.75rem'
+      : '0px'
 
   return (
     <div
@@ -66,55 +74,57 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      <div
-        id={TITLEBAR_CENTER_PORTAL_ID}
-        data-testid="titlebar-center"
-        className="pointer-events-none relative z-chrome flex h-full min-w-6 flex-1 items-center overflow-hidden"
-        {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
-      >
-        {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
-      </div>
-      {showFeedback && isTauri && platform === 'mac' && <TopnavFeedbackButton />}
       {showWorkspacePortals && isTauri && <TitlebarExtensionSlot />}
       {showWorkspacePortals && (
-        <>
+        <div
+          data-testid="titlebar-right-workspace-zone"
+          className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
+          style={{
+            right:
+              isTauri && platform === 'win'
+                ? `calc(138px + ${fixedActionsWidth})`
+                : isTauri && platform === 'linux'
+                  ? `calc(138px + ${fixedActionsWidth})`
+                  : fixedActionsWidth,
+            width: 'var(--right-workspace-titlebar-width, auto)',
+          }}
+        >
           <div
-            data-testid="titlebar-right-workspace-zone"
-            className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
-            style={{
-              right:
-                isTauri && platform === 'win'
-                  ? 'calc(138px + 5rem)'
-                  : isTauri && platform === 'linux'
-                    ? 'calc(138px + 5rem)'
-                    : '5rem',
-              width: 'var(--right-workspace-titlebar-width, auto)',
-            }}
+            id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
+            data-testid="titlebar-right-panel"
+            className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
           >
-            <div
-              id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
-              data-testid="titlebar-right-panel"
-              className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
-            >
-              {isTauri ? (
-                <div
-                  data-testid="titlebar-right-panel-drag-region"
-                  className="absolute inset-0 z-0"
-                >
-                  <MacOSTitleBarDragRegion className="h-full w-full" />
-                </div>
-              ) : null}
-            </div>
+            {isTauri ? (
+              <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
+                <MacOSTitleBarDragRegion className="h-full w-full" />
+              </div>
+            ) : null}
           </div>
-          <div
-            id={TITLEBAR_ACTIONS_PORTAL_ID}
-            data-testid="titlebar-actions"
-            className="pointer-events-auto absolute right-0 top-0 z-chrome flex h-full w-[5rem] shrink-0 items-center justify-end gap-1 pr-3"
-            style={{
-              right: isTauri && (platform === 'linux' || platform === 'win') ? '138px' : undefined,
-            }}
-          />
-        </>
+        </div>
+      )}
+      {(showWorkspacePortals || feedbackSlotVisible) && (
+        <div
+          data-testid="titlebar-fixed-actions"
+          className="relative z-chrome flex h-full shrink-0 items-center"
+          style={{ width: fixedActionsWidth }}
+        >
+          {showWorkspacePortals && (
+            <div
+              id={TITLEBAR_ACTIONS_PORTAL_ID}
+              data-testid="titlebar-actions"
+              className="pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+            />
+          )}
+          {feedbackSlotVisible && (
+            <div
+              id={TITLEBAR_FEEDBACK_PORTAL_ID}
+              data-testid="titlebar-feedback"
+              className="pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+            >
+              {showFeedback && <TopnavFeedbackButton />}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Linux: right spacer for native window controls */}

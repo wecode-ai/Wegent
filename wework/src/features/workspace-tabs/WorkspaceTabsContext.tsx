@@ -109,11 +109,36 @@ function workspaceTabsReducer(
       const location = parseWorkspaceLocation(action.pathname, action.search)
       const requested = location.tabId
         ? state.tabs.find(tab => tab.id === location.tabId)
-        : state.tabs.find(tab => tab.contentRoute === location.contentRoute)
-      if (requested) {
-        return requested.id === state.activeTabId ? state : { ...state, activeTabId: requested.id }
-      }
+        : undefined
       const kind = inferWorkspaceTabKind(action.pathname)
+      if (requested) {
+        const updated = {
+          ...requested,
+          kind,
+          title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),
+          contentRoute: location.contentRoute,
+        }
+        return {
+          ...state,
+          activeTabId: requested.id,
+          tabs: state.tabs.map(tab => (tab.id === requested.id ? updated : tab)),
+        }
+      }
+      if (!location.tabId) {
+        const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
+        if (activeTab) {
+          const updated = {
+            ...activeTab,
+            kind,
+            title: workspaceTabTitle(kind, location.contentRoute, action.labels),
+            contentRoute: location.contentRoute,
+          }
+          return {
+            ...state,
+            tabs: state.tabs.map(tab => (tab.id === activeTab.id ? updated : tab)),
+          }
+        }
+      }
       const next = createWorkspaceTab(kind, action.labels, {
         id: location.tabId ?? undefined,
         title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, action.labels),

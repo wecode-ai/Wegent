@@ -64,6 +64,7 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
+  TitlebarFeedbackPortal,
   WORKBENCH_MAIN_HEADER_PORTAL_ID,
   WorkbenchMainHeaderPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
@@ -71,6 +72,7 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import { getLocalPathKind } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import {
@@ -2111,11 +2113,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageSquareWarning />
     </button>
   ) : undefined
+  const feedbackInChromeTitlebar = isTauri && getPlatform() === 'mac'
   const mainHeaderActions = (
     <>
       {forkTaskButton}
       {continueInImButton}
-      {feedbackButton}
+      {!feedbackInChromeTitlebar && feedbackButton}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
     </>
@@ -2255,6 +2258,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {/* Portals escape the hidden cached pane, so only the visible active pane may own the header. */}
       {tauriMainHeaderContent && paneActive && workbenchVisible ? (
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
+      ) : null}
+      {feedbackInChromeTitlebar && paneActive && workbenchVisible ? (
+        <TitlebarFeedbackPortal>{feedbackButton}</TitlebarFeedbackPortal>
       ) : null}
       <>
         {!isTauri && (

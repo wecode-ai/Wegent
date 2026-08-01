@@ -104,7 +104,7 @@ function WorkspaceTabButton({
       className={cn(
         'group relative flex h-9 w-44 min-w-28 max-w-[220px] flex-none items-center overflow-visible text-sm transition-[background-color,color,opacity] duration-150',
         active
-          ? 'workspace-document-tab-active z-10 rounded-t-[10px] bg-surface text-text-primary'
+          ? 'workspace-document-tab-active z-10 rounded-t-[10px] bg-background text-text-primary'
           : 'rounded-lg text-text-secondary hover:bg-black/[0.05] hover:text-text-primary',
         draggedTabId === tab.id && 'opacity-55'
       )}
@@ -213,28 +213,33 @@ export function WorkspaceTabStrip() {
   return (
     <>
       <div
-        role="tablist"
-        data-testid="workspace-tab-strip"
-        aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-        className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[760px] flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden px-3"
+        data-testid="workspace-tab-strip-container"
+        className="flex h-full min-w-0 flex-1 items-end px-3"
       >
-        {tabs.map(tab => (
-          <WorkspaceTabButton
-            key={tab.id}
-            tab={tab}
-            active={tab.id === activeTabId}
-            draggedTabId={draggedTabId}
-            onDragStartTab={setDraggedTabId}
-            onDragEndTab={() => setDraggedTabId(null)}
-            onDragOverTab={targetId => {
-              if (draggedTabId) moveTab(draggedTabId, targetId)
-            }}
-            onContextMenu={(position, tabId) => {
-              setAddMenuPosition(null)
-              setContextMenu({ tabId, ...position })
-            }}
-          />
-        ))}
+        <div
+          role="tablist"
+          data-testid="workspace-tab-strip"
+          aria-label={t('workbench.workspace_tabs', '工作区标签页')}
+          className="workspace-tab-strip-scrollbar flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden"
+        >
+          {tabs.map(tab => (
+            <WorkspaceTabButton
+              key={tab.id}
+              tab={tab}
+              active={tab.id === activeTabId}
+              draggedTabId={draggedTabId}
+              onDragStartTab={setDraggedTabId}
+              onDragEndTab={() => setDraggedTabId(null)}
+              onDragOverTab={targetId => {
+                if (draggedTabId) moveTab(draggedTabId, targetId)
+              }}
+              onContextMenu={(position, tabId) => {
+                setAddMenuPosition(null)
+                setContextMenu({ tabId, ...position })
+              }}
+            />
+          ))}
+        </div>
         <button
           ref={addButtonRef}
           type="button"
@@ -245,7 +250,7 @@ export function WorkspaceTabStrip() {
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 184)))
           }}
-          className="mb-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="mb-1 ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary focus-visible:ring-2 focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >

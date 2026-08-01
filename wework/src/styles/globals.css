@@ -64,7 +64,7 @@
   --z-critical: 100;
   --z-system: 1000;
   --z-system-popover: 1010;
-  --workspace-tab-surface: rgb(var(--color-bg-surface));
+  --workspace-tab-surface: rgb(var(--color-bg-base));
 }
 
 .app-view-surface {

@@ -323,6 +323,7 @@ function AppShell() {
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
+  const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
   const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
   const titlebarOverlaysContent = false
   const showChromeTitlebar = isTauri && !isPopoutWindow
@@ -550,9 +551,11 @@ function AppShell() {
           'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
-            : usesDesktopVibrancy
-              ? 'overflow-hidden bg-transparent'
-              : 'overflow-hidden bg-surface',
+            : isWorkspaceWindow
+              ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+              : usesDesktopVibrancy
+                ? 'overflow-hidden bg-transparent'
+                : 'overflow-hidden bg-surface',
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >
@@ -564,11 +567,18 @@ function AppShell() {
         )}
         <div
           className={cn(
-            'min-h-0',
+            'relative min-h-0',
             isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
             titlebarOverlaysContent ? 'h-full' : 'flex-1'
           )}
         >
+          {showChromeTitlebar && (
+            <div
+              aria-hidden="true"
+              data-testid="workspace-tab-content-bridge"
+              className="pointer-events-none absolute inset-x-2 top-0 z-chrome h-2 rounded-t-xl bg-background"
+            />
+          )}
           <AppRoutes
             onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
             onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}

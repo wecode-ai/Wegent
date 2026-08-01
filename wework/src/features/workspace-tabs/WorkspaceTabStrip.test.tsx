@@ -43,15 +43,23 @@ describe('WorkspaceTabStrip', () => {
     const user = userEvent.setup()
     renderStrip()
 
+    const tablist = screen.getByTestId('workspace-tab-strip')
+    const addButton = screen.getByTestId('workspace-tab-add')
+    expect(screen.getByTestId('workspace-tab-strip-container')).toContainElement(addButton)
+    expect(tablist).not.toContainElement(addButton)
+    expect(tablist).not.toHaveClass('max-w-[760px]')
+
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
 
-    const tablist = screen.getByTestId('workspace-tab-strip')
     expect(within(tablist).getAllByRole('tab')).toHaveLength(2)
     expect(within(tablist).getByText('项目空间').closest('[role="tab"]')).toHaveAttribute(
       'aria-selected',
       'true'
     )
+    expect(
+      within(tablist).getByText('项目空间').closest('[data-testid^="workspace-tab-board-"]')
+    ).toHaveClass('bg-background')
 
     await user.click(within(tablist).getByText('任务'))
     expect(within(tablist).getByText('任务').closest('[role="tab"]')).toHaveAttribute(
