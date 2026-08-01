@@ -211,6 +211,8 @@ interface CloudTodoWorkspaceProps {
   user: UserProfile
   localProjects: ProjectWithTasks[]
   services: WorkbenchServices
+  activeProjectId?: string | null
+  onActiveProjectChange?: (project: LocatedCloudProject | null) => void
 }
 
 const columnEmptyHints: Record<CloudLoopItem['status'], string> = {
@@ -654,7 +656,13 @@ function ProjectDialog({
   )
 }
 
-export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoWorkspaceProps) {
+export function CloudTodoWorkspace({
+  user,
+  localProjects,
+  services,
+  activeProjectId,
+  onActiveProjectChange,
+}: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -677,7 +685,9 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   // Every project's loop items, cached for the projects-home overview
   // (stats, recent activity). Keyed by project id.
   const [projectItems, setProjectItems] = useState<Record<string, CloudLoopItem[]>>({})
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [internalSelectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const selectedProjectId =
+    activeProjectId === undefined ? internalSelectedProjectId : activeProjectId
   const [items, setItems] = useState<CloudLoopItem[]>([])
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
@@ -715,6 +725,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
   const [projectSearchQuery, setProjectSearchQuery] = useState('')
   const [projectSearchFilters, setProjectSearchFilters] =
     useState<TaskSearchFilters>(emptyTaskSearchFilters)
+  const locallyRequestedProjectIdRef = useRef<string | null | undefined>(undefined)
   const projectHeaderRef = useRef<HTMLElement>(null)
   const projectHeaderContentRef = useRef<HTMLDivElement>(null)
   const projectHeaderTabsRef = useRef<HTMLElement>(null)
@@ -730,6 +741,25 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     add: 0,
   })
   const [projectHeaderLevel, setProjectHeaderLevel] = useState(0)
+
+  const resetProjectViewState = useCallback(() => {
+    setProjectView('board')
+    setBoardParentId(null)
+    setNativeGroupFilter('')
+    setNativeBoardQuery('')
+    setProjectSearchOpen(false)
+    setProjectSearchQuery('')
+    setProjectSearchFilters(emptyTaskSearchFilters)
+  }, [])
+
+  useEffect(() => {
+    if (activeProjectId === undefined) return
+    if (locallyRequestedProjectIdRef.current === activeProjectId) {
+      locallyRequestedProjectIdRef.current = undefined
+      return
+    }
+    resetProjectViewState()
+  }, [activeProjectId, resetProjectViewState])
 
   useLayoutEffect(() => {
     const header = projectHeaderRef.current
@@ -1060,15 +1090,17 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
     breadcrumbItem = items.find(candidate => candidate.id === breadcrumbItem?.parent_id) ?? null
   }
 
-  function selectProject(projectId: string | null) {
+  function applyProjectSelection(projectId: string | null) {
+    locallyRequestedProjectIdRef.current = projectId
     setSelectedProjectId(projectId)
-    setProjectView('board')
-    setBoardParentId(null)
-    setNativeGroupFilter('')
-    setNativeBoardQuery('')
-    setProjectSearchOpen(false)
-    setProjectSearchQuery('')
-    setProjectSearchFilters(emptyTaskSearchFilters)
+    resetProjectViewState()
+  }
+
+  function selectProject(projectId: string | null) {
+    applyProjectSelection(projectId)
+    onActiveProjectChange?.(
+      projectId === null ? null : (projects.find(project => project.id === projectId) ?? null)
+    )
   }
 
   async function renameSelectedProject() {
@@ -1439,6 +1471,7 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
         'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
       )}
       data-testid="cloud-todo-workspace"
+      data-sidebar-collapsed={sidebarCollapsed}
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <aside
@@ -2275,7 +2308,8 @@ export function CloudTodoWorkspace({ user, localProjects, services }: CloudTodoW
                   setProjectMembers(current => ({ ...current, [project.id]: members }))
                 )
             }
-            selectProject(project.id)
+            applyProjectSelection(project.id)
+            onActiveProjectChange?.(locatedProject)
             setCreateProjectOpen(false)
           }}
         />

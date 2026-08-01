@@ -1,8 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { ChromeTitlebar } from './ChromeTitlebar'
-import type { AppTab } from '@/config/apps'
 
 const startDragging = vi.fn().mockResolvedValue(undefined)
 
@@ -18,21 +17,27 @@ vi.mock('@/features/feedback/TaskFeedbackDialog', () => ({
   TaskFeedbackDialog: () => <div data-testid="task-feedback-dialog">FeedbackDialog</div>,
 }))
 
-const mockTabs: AppTab[] = [
-  { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
-  {
-    key: 'wegent',
-    label: 'Wegent',
-    mode: 'iframe',
-    url: 'http://localhost:3000',
-    requiresAuth: true,
+const labels = {
+  task: '任务',
+  board: '项目空间',
+  agent: '智能体',
+  auxiliary: '工作区',
+  auxiliaryRoutes: {
+    plugins: '插件',
+    sites: '站点',
+    automations: '自动化',
+    cloud: '云端工作',
+    apps: '应用',
   },
-]
+}
 
-const appTabs: AppTab[] = [
-  { key: 'wework', label: 'WeWork', mode: 'native', requiresAuth: true },
-  { key: 'apps', label: '应用', mode: 'native', requiresAuth: true },
-]
+function renderTitlebar(props: React.ComponentProps<typeof ChromeTitlebar> = {}) {
+  return render(
+    <WorkspaceTabsProvider pathname="/" search="" storageScope="titlebar-test" labels={labels}>
+      <ChromeTitlebar {...props} />
+    </WorkspaceTabsProvider>
+  )
+}
 
 function mockUserAgent(ua: string) {
   Object.defineProperty(navigator, 'userAgent', {
@@ -54,180 +59,68 @@ function disableTauri() {
 describe('ChromeTitlebar', () => {
   beforeEach(() => {
     startDragging.mockClear()
+    localStorage.clear()
+    disableTauri()
+    mockUserAgent('Mozilla/5.0')
+    window.history.replaceState({}, '', '/')
   })
 
-  test('renders all tab buttons', () => {
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    expect(screen.getByTestId('chrome-tab-wework')).toBeInTheDocument()
-    expect(screen.getByTestId('chrome-tab-wegent')).toBeInTheDocument()
+  test('renders the document tab strip and titlebar slots', () => {
+    renderTitlebar({
+      beforeTabs: <button type="button">Toggle sidebar</button>,
+      afterTabs: <button type="button">Update</button>,
+    })
+
+    expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]')
+    expect(screen.getByTestId('workspace-tab-strip')).toHaveTextContent('任务')
+    expect(screen.getByTestId('chrome-titlebar-before-tabs')).toHaveTextContent('Toggle sidebar')
+    expect(screen.getByTestId('chrome-titlebar-after-tabs')).toHaveTextContent('Update')
+    expect(screen.getByTestId('workspace-tab-strip-container')).toHaveClass('flex-1')
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'w-[5rem]')
   })
 
-  test('active tab connects to the window canvas', () => {
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wegent" onNavigate={vi.fn()} />)
-    expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass('bg-black/[0.045]')
-    expect(screen.getByTestId('chrome-tab-wework')).not.toHaveClass('bg-black/[0.045]')
-    expect(screen.getByTestId('chrome-tab-wegent')).toHaveClass(
-      'h-8',
-      'min-w-24',
-      'justify-center',
-      'rounded-lg',
-      'px-3',
-      'text-center',
-      'leading-none',
-      'bg-black/[0.045]'
-    )
-    expect(screen.getByTestId('chrome-tab-wegent')).not.toHaveClass(
-      'border',
-      'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
-    )
-    expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
-    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
-      'top-0',
-      'h-full',
-      'items-center'
-    )
-    expect(screen.getByTestId('titlebar-center')).toHaveClass('h-full', 'flex-1')
-    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'pr-3')
-  })
-
-  test('renders app views as always-visible top navigation tabs', () => {
-    render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
-
-    const weworkTab = screen.getByTestId('chrome-tab-wework')
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
-    expect(weworkTab).toHaveAttribute('aria-current', 'page')
-    expect(weworkTab).not.toHaveAttribute('aria-haspopup')
-    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-  })
-
-  test('renders after-tabs content between tabs and titlebar actions', () => {
-    render(
-      <ChromeTitlebar
-        tabs={mockTabs}
-        activeKey="wework"
-        onNavigate={vi.fn()}
-        afterTabs={<button type="button">Update</button>}
-      />
-    )
-
-    const afterTabs = screen.getByTestId('chrome-titlebar-after-tabs')
-    const activeTab = screen.getByTestId('chrome-tab-wework')
-    const titlebarActions = screen.getByTestId('titlebar-actions')
-    expect(afterTabs).toHaveTextContent('Update')
-    expect(
-      activeTab.compareDocumentPosition(afterTabs) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(
-      afterTabs.compareDocumentPosition(titlebarActions) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-  })
-
-  test('renders before-tabs content between traffic lights and tabs', () => {
+  test('shows the macOS traffic-light spacer and starts native dragging', async () => {
     mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
     enableTauri()
-    render(
-      <ChromeTitlebar
-        tabs={mockTabs}
-        activeKey="wework"
-        onNavigate={vi.fn()}
-        beforeTabs={<button type="button">Toggle sidebar</button>}
-      />
-    )
+    renderTitlebar()
 
     const spacer = screen.getByTestId('macos-traffic-light-spacer')
-    const beforeTabs = screen.getByTestId('chrome-titlebar-before-tabs')
-    const activeTab = screen.getByTestId('chrome-tab-wework')
-    const toggleButton = screen.getByRole('button', { name: 'Toggle sidebar' })
-    expect(beforeTabs).toHaveTextContent('Toggle sidebar')
-    expect(screen.getByTestId('chrome-titlebar')).not.toHaveAttribute('data-tauri-drag-region')
-    expect(toggleButton.closest('[data-tauri-drag-region]')).toBeNull()
-    expect(activeTab.closest('[data-tauri-drag-region]')).toBeNull()
-    expect(
-      spacer.compareDocumentPosition(beforeTabs) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    expect(
-      beforeTabs.compareDocumentPosition(activeTab) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-    disableTauri()
-  })
+    expect(spacer).toHaveClass('w-[92px]', 'self-stretch')
+    expect(spacer.parentElement?.firstChild).toBe(spacer)
 
-  test('calls onNavigate on tab click', async () => {
-    const fn = vi.fn()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={fn} />)
-    await userEvent.click(screen.getByTestId('chrome-tab-wegent'))
-    expect(fn).toHaveBeenCalledWith('wegent')
-  })
+    const nativeDragRegion = within(spacer).getByTestId('macos-titlebar-drag-region')
+    fireEvent.mouseDown(nativeDragRegion, { button: 0 })
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
 
-  test('shows macOS traffic light spacer in Tauri runtime on Mac', () => {
-    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
-    enableTauri()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    const dragRegion = screen.getByTestId('macos-traffic-light-spacer')
-    expect(dragRegion.className).toContain('w-[92px]')
-    expect(dragRegion).toHaveClass('self-stretch')
-    expect(within(dragRegion).getByTestId('macos-titlebar-drag-region')).toHaveAttribute(
-      'data-tauri-drag-region'
+    const fixedActions = screen.getByTestId('titlebar-fixed-actions')
+    expect(fixedActions).toHaveStyle({ width: '6.75rem' })
+    expect(screen.getByTestId('titlebar-actions').nextElementSibling).toBe(
+      screen.getByTestId('titlebar-feedback')
     )
-    // macOS spacer is first child (left side)
-    expect(dragRegion?.parentElement?.firstChild).toBe(dragRegion)
-    disableTauri()
+    expect(screen.getByTestId('titlebar-feedback')).toContainElement(
+      screen.getByTestId('topnav-feedback-button')
+    )
   })
 
-  test('starts native dragging from the Wegent titlebar window drag region', async () => {
-    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
-    enableTauri()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wegent" onNavigate={vi.fn()} />)
-
-    const dragRegion = screen.getByTestId('titlebar-center')
-    expect(dragRegion).toHaveClass('h-full', 'flex-1')
-    const nativeDragRegion = within(dragRegion).getByTestId('macos-titlebar-drag-region')
-    expect(nativeDragRegion).toHaveClass('pointer-events-auto')
-    fireEvent.mouseDown(nativeDragRegion, {
-      button: 0,
-    })
-
-    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
-    disableTauri()
-  })
-
-  test('starts native dragging from the empty right workspace titlebar area', async () => {
-    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
-    enableTauri()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-
-    const rightPanelDragRegion = screen.getByTestId('titlebar-right-panel-drag-region')
-    expect(screen.getByTestId('titlebar-right-panel')).toContainElement(rightPanelDragRegion)
-    fireEvent.mouseDown(within(rightPanelDragRegion).getByTestId('macos-titlebar-drag-region'), {
-      button: 0,
-    })
-
-    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
-    disableTauri()
-  })
-
-  test('shows custom window frame controls in Tauri runtime on Windows', () => {
+  test('shows custom window controls on Windows', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     enableTauri()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
+    renderTitlebar()
+
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
-    expect(screen.queryByTestId('desktop-window-controls')).not.toBeInTheDocument()
     expect(screen.queryByTestId('macos-traffic-light-spacer')).not.toBeInTheDocument()
     expect(screen.queryByTestId('topnav-feedback-button')).not.toBeInTheDocument()
-    disableTauri()
   })
 
-  test('shows feedback button in Tauri runtime on macOS', () => {
+  test('can hide workbench portals without removing the document tabs', () => {
     mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
     enableTauri()
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    expect(screen.getByTestId('topnav-feedback-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('window-frame-controls')).not.toBeInTheDocument()
-    disableTauri()
-  })
+    renderTitlebar({ showWorkspacePortals: false, showFeedback: false })
 
-  test('no spacer when not in Tauri runtime', () => {
-    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
-    expect(document.querySelector('[data-tauri-drag-region]')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tab-strip')).toBeInTheDocument()
+    expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('titlebar-right-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('titlebar-fixed-actions')).toHaveStyle({ width: '1.75rem' })
+    expect(screen.getByTestId('titlebar-feedback')).toBeEmptyDOMElement()
   })
 })

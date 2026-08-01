@@ -98,6 +98,7 @@ interface RuntimePaneSendOptions {
 
 interface SendRuntimeMessageOptions {
   appendLocalMessage?: boolean
+  onError?: (error: string) => void
 }
 
 interface LoadedTranscriptRange {
@@ -118,6 +119,12 @@ interface PendingRuntimeGoalState {
 }
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
+const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
+const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
+
+function isRuntimeTaskBusyError(error: string | null): boolean {
+  return error?.toLowerCase().includes('runtime task is already running') === true
+}
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
   import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
@@ -911,21 +918,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const attachments = localRuntimeAttachments(messageAttachments)
       const terminalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const additionalContext = { ...message.additionalContext, ...terminalContext }
-      const sent = await sendRuntimePaneMessage({
-        address: currentRuntimeTask,
-        message: message.content,
-        clientUserMessageId: message.id,
-        ...(message.modelId
-          ? {
-              modelId: message.modelId,
-              modelType: message.modelType,
-            }
-          : {}),
-        ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-        ...(attachments.length > 0 ? { attachments } : {}),
-        ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
-      })
+      const sent = await sendRuntimePaneMessage(
+        {
+          address: currentRuntimeTask,
+          message: message.content,
+          clientUserMessageId: message.id,
+          ...(message.modelId
+            ? {
+                modelId: message.modelId,
+                modelType: message.modelType,
+              }
+            : {}),
+          ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
+        },
+        { onError: options.onError }
+      )
       if (sent) {
         markRuntimeTerminalAdditionalContextDelivered(terminalContext)
       }
@@ -1271,16 +1281,31 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
 
       try {
-        const sent = await sendRuntimeMessage(queuedMessage)
-        setQueuedMessages(messages =>
-          sent
-            ? messages.filter(message => message.id !== queuedMessage.id)
-            : messages.map(message =>
+        for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
+          let sendError: string | null = null
+          const sent = await sendRuntimeMessage(queuedMessage, {
+            onError: error => {
+              sendError = error
+            },
+          })
+          if (sent) {
+            setQueuedMessages(messages =>
+              messages.filter(message => message.id !== queuedMessage.id)
+            )
+            return
+          }
+          if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
+            setQueuedMessages(messages =>
+              messages.map(message =>
                 message.id === queuedMessage.id
                   ? { ...message, status: 'failed', error: '发送失败' }
                   : message
               )
-        )
+            )
+            return
+          }
+          await new Promise(resolve => window.setTimeout(resolve, QUEUED_MESSAGE_RETRY_DELAY_MS))
+        }
       } catch (error) {
         console.error('[Wework] Queued runtime message send failed', {
           id: queuedMessage.id,

@@ -109,9 +109,13 @@ export async function hydrateLocalModelApiKeys(): Promise<void> {
   const parsed: unknown = JSON.parse(raw)
   if (!Array.isArray(parsed)) return
   const configs = parsed.filter(isLocalModelConfig)
-  const storedApiKeys = await invoke<Record<string, string>>('read_local_model_api_keys', {
-    configIds: configs.map(config => config.id),
-  })
+  const configIds = configs
+    .filter(config => config.apiKeyConfigured !== false && !config.apiKey)
+    .map(config => config.id)
+  const storedApiKeys =
+    configIds.length > 0
+      ? await invoke<Record<string, string>>('read_local_model_api_keys', { configIds })
+      : {}
   localModelApiKeys.clear()
   for (const [configId, apiKey] of Object.entries(storedApiKeys)) {
     if (apiKey) localModelApiKeys.set(configId, apiKey)

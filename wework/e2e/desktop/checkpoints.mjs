@@ -1,4 +1,5 @@
 export const DESKTOP_CHECKPOINTS = [
+  'workspace-tabs',
   'core-task-flow',
   'window-lifecycle',
   'goal-lifecycle',

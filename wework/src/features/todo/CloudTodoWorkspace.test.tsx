@@ -201,6 +201,60 @@ describe('CloudTodoWorkspace', () => {
     localStorage.clear()
   })
 
+  it('reports the concrete project name for the active document tab', async () => {
+    const onActiveProjectChange = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+        activeProjectId={null}
+        onActiveProjectChange={onActiveProjectChange}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 11, name: 'Wegent V4' })
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: '项目空间' }))
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(null)
+  })
+
+  it('resets project-specific view state when a controlled project changes externally', async () => {
+    const user = { id: 1, user_name: 'local', email: 'local@example.com' } as User
+    const workbenchServices = services()
+    const controlledProject = { ...project, id: String(project.id) }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [controlledProject],
+    })
+    const view = render(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectId={controlledProject.id}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    expect(screen.getByText('管理项目')).toBeInTheDocument()
+
+    view.rerender(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectId={null}
+      />
+    )
+
+    await waitFor(() => expect(screen.queryByText('管理项目')).not.toBeInTheDocument())
+    expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
+  })
+
   it('renames and archives a project from the sidebar menu', async () => {
     const workbenchServices = services()
 
@@ -810,11 +864,14 @@ describe('CloudTodoWorkspace', () => {
 
   it('creates a project space without requesting a project key', async () => {
     const workbenchServices = services()
+    const onActiveProjectChange = vi.fn()
     render(
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[]}
         services={workbenchServices}
+        activeProjectId={null}
+        onActiveProjectChange={onActiveProjectChange}
       />
     )
 
@@ -830,6 +887,9 @@ describe('CloudTodoWorkspace', () => {
         provider_config: {},
         visibility: 'private',
       })
+    )
+    expect(onActiveProjectChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 12, name: 'Wegent Test', location: 'cloud' })
     )
     expect(screen.queryByTestId('cloud-project-name')).not.toBeInTheDocument()
   })

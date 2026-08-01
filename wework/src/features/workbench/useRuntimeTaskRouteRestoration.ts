@@ -13,16 +13,19 @@ function getNavigationSnapshot() {
   return `${window.location.pathname}${window.location.search}`
 }
 
-export function useRuntimeTaskRouteRestoration() {
+const subscribeToNothing = () => () => undefined
+const getInactiveNavigationSnapshot = () => ''
+
+export function useRuntimeTaskRouteRestoration(enabled = true) {
   const { state, openRuntimeTask } = useWorkbench()
   const runtimeTaskLocation = useSyncExternalStore(
-    subscribeToNavigation,
-    getNavigationSnapshot,
-    getNavigationSnapshot
+    enabled ? subscribeToNavigation : subscribeToNothing,
+    enabled ? getNavigationSnapshot : getInactiveNavigationSnapshot,
+    enabled ? getNavigationSnapshot : getInactiveNavigationSnapshot
   )
 
   const routeRuntimeTask = useMemo(() => {
-    if (state.isBootstrapping) return null
+    if (!enabled || state.isBootstrapping) return null
 
     const location = new URL(runtimeTaskLocation, window.location.origin)
     const route = parseRuntimeTaskRoute(stripAppBasePath(location.pathname), location.search)
@@ -33,7 +36,13 @@ export function useRuntimeTaskRouteRestoration() {
       ...route,
       ...(runtimeTask?.workspacePath ? { workspacePath: runtimeTask.workspacePath } : {}),
     }
-  }, [runtimeTaskLocation, state.currentRuntimeTask, state.isBootstrapping, state.runtimeWork])
+  }, [
+    enabled,
+    runtimeTaskLocation,
+    state.currentRuntimeTask,
+    state.isBootstrapping,
+    state.runtimeWork,
+  ])
 
   useEffect(() => {
     if (!routeRuntimeTask) return
