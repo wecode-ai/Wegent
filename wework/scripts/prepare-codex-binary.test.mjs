@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { downloadWithRetry } from './prepare-codex-binary.mjs'
+import { codexTarballName, downloadWithRetry } from './prepare-codex-binary.mjs'
 
 const temporaryDirectories = []
 
@@ -53,5 +53,27 @@ describe('downloadWithRetry', () => {
       })
     ).rejects.toThrow('network unavailable')
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('codexTarballName', () => {
+  const entry = {
+    version: '0.144.5',
+    integrity: 'sha512-test-integrity',
+  }
+
+  test('keeps platform archives separate in the shared cache', () => {
+    expect(codexTarballName(entry, 'aarch64-apple-darwin')).not.toBe(
+      codexTarballName(entry, 'x86_64-apple-darwin')
+    )
+  })
+
+  test('invalidates a cached archive when its integrity changes', () => {
+    expect(codexTarballName(entry, 'aarch64-apple-darwin')).not.toBe(
+      codexTarballName(
+        { ...entry, integrity: 'sha512-different-integrity' },
+        'aarch64-apple-darwin'
+      )
+    )
   })
 })
