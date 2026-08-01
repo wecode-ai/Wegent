@@ -206,7 +206,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
   TAURI_ARGS+=(--bundles "$TAURI_BUNDLES")
 fi
 
-WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
 WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 
