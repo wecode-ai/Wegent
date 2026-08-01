@@ -108,7 +108,6 @@ export interface ChatInputProps {
   disabledReason?: string
   placeholder?: string
   variant?: 'compact' | 'desktop'
-  appearance?: 'default' | 'launcher'
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
@@ -231,7 +230,6 @@ export function ChatInput({
   disabledReason,
   placeholder,
   variant = 'compact',
-  appearance = 'default',
   projectChat,
   projectWork,
   showProjectWorkBar = true,
@@ -470,7 +468,6 @@ export function ChatInput({
         )}
         <ProjectChatComposer
           {...composerProps}
-          appearance={appearance}
           models={controls.models}
           selectedModel={controls.selectedModel}
           activeModel={controls.activeModel}

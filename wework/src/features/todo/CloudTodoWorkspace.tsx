@@ -1471,6 +1471,7 @@ export function CloudTodoWorkspace({
         'absolute inset-0 z-content flex min-h-0 w-full overflow-hidden bg-background text-text-primary'
       )}
       data-testid="cloud-todo-workspace"
+      data-sidebar-collapsed={sidebarCollapsed}
     >
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <aside

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { subscribeToAppshots } from '@/tauri/appshots'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 
 interface AppshotBridgeProps {
   onOpenWework: () => void
@@ -22,7 +23,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
         if (active) {
           unlisten = dispose
         } else {
-          dispose()
+          disposeTauriListener(dispose, 'Appshot')
         }
       })
       .catch(error => {
@@ -31,7 +32,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
 
     return () => {
       active = false
-      unlisten?.()
+      if (unlisten) disposeTauriListener(unlisten, 'Appshot')
     }
   }, [addExistingAttachment, onOpenWework])
 

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
 import { WorkspaceTabStrip } from './WorkspaceTabStrip'
 
-const openWorkspaceTabWindow = vi.fn().mockResolvedValue(undefined)
+const openWorkspaceTabWindow = vi.fn().mockResolvedValue(true)
 
 vi.mock('./workspaceWindow', () => ({
   openWorkspaceTabWindow: (tab: unknown) => openWorkspaceTabWindow(tab),
@@ -47,19 +47,27 @@ describe('WorkspaceTabStrip', () => {
     const addButton = screen.getByTestId('workspace-tab-add')
     expect(screen.getByTestId('workspace-tab-strip-container')).toContainElement(addButton)
     expect(tablist).not.toContainElement(addButton)
+    expect(tablist.nextElementSibling).toBe(addButton)
     expect(tablist).not.toHaveClass('max-w-[760px]')
+    expect(
+      within(tablist)
+        .getAllByRole('tab')
+        .map(tab => tab.textContent)
+    ).toEqual([
+      expect.stringContaining('任务'),
+      expect.stringContaining('项目空间'),
+      expect.stringContaining('智能体'),
+    ])
 
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
 
-    expect(within(tablist).getAllByRole('tab')).toHaveLength(2)
-    expect(within(tablist).getByText('项目空间').closest('[role="tab"]')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(
-      within(tablist).getByText('项目空间').closest('[data-testid^="workspace-tab-board-"]')
-    ).toHaveClass('bg-background')
+    expect(within(tablist).getAllByRole('tab')).toHaveLength(4)
+    const activeBoardTab = within(tablist)
+      .getAllByRole('tab', { name: '项目空间' })
+      .find(tab => tab.getAttribute('aria-selected') === 'true')
+    expect(activeBoardTab).toBeDefined()
+    expect(activeBoardTab?.parentElement).toHaveClass('bg-white/55', 'rounded-md')
 
     await user.click(within(tablist).getByText('任务'))
     expect(within(tablist).getByText('任务').closest('[role="tab"]')).toHaveAttribute(
@@ -74,11 +82,15 @@ describe('WorkspaceTabStrip', () => {
 
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
+    const openedTab = screen
+      .getAllByRole('tab', { name: '项目空间' })
+      .find(tab => tab.getAttribute('aria-selected') === 'true')?.parentElement
+    expect(openedTab).toBeDefined()
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
-    expect(screen.queryByText('项目空间')).not.toBeInTheDocument()
+    expect(screen.queryByTestId(openedTab!.dataset.testid!)).not.toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 't', metaKey: true, shiftKey: true })
-    await waitFor(() => expect(screen.getByText('项目空间')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId(openedTab!.dataset.testid!)).toBeInTheDocument())
   })
 
   test('opens a tab in a new window from its context menu', async () => {
@@ -91,6 +103,20 @@ describe('WorkspaceTabStrip', () => {
     expect(openWorkspaceTabWindow).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'task', title: '任务' })
     )
+    await waitFor(() => expect(screen.queryByRole('tab', { name: '任务' })).not.toBeInTheDocument())
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  test('keeps the source tab when opening its new window fails', async () => {
+    openWorkspaceTabWindow.mockRejectedValueOnce(new Error('window failed'))
+    const user = userEvent.setup()
+    renderStrip()
+
+    fireEvent.contextMenu(screen.getByText('任务').closest('[role="tab"]')!)
+    await user.click(screen.getByTestId('workspace-tab-open-new-window'))
+
+    await waitFor(() => expect(openWorkspaceTabWindow).toHaveBeenCalledOnce())
+    expect(screen.getByRole('tab', { name: '任务' })).toBeInTheDocument()
   })
 
   test('opens the tab context menu from the keyboard', () => {
@@ -104,6 +130,17 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getByTestId('workspace-tab-context-menu')).toBeVisible()
   })
 
+  test('opens cloud connection when the default agent tab is unavailable', async () => {
+    const user = userEvent.setup()
+    renderStrip()
+
+    await user.click(screen.getByRole('tab', { name: '智能体' }))
+
+    expect(screen.getByTestId('cloud-connection-dialog')).toBeVisible()
+    expect(screen.getByRole('tab', { name: '任务' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '智能体' })).toHaveAttribute('aria-selected', 'false')
+  })
+
   test('reorders tabs during dragover without reading drag payload data', async () => {
     const user = userEvent.setup()
     renderStrip()
@@ -111,7 +148,7 @@ describe('WorkspaceTabStrip', () => {
     await user.click(screen.getByTestId('workspace-tab-add-board'))
 
     const taskTab = screen.getByRole('tab', { name: '任务' })
-    const boardTab = screen.getByRole('tab', { name: '项目空间' })
+    const boardTab = screen.getAllByRole('tab', { name: '项目空间' })[0]
     const dataTransfer = {
       effectAllowed: 'none',
       setData: vi.fn(),
@@ -124,6 +161,8 @@ describe('WorkspaceTabStrip', () => {
     expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
       expect.stringContaining('项目空间'),
       expect.stringContaining('任务'),
+      expect.stringContaining('智能体'),
+      expect.stringContaining('项目空间'),
     ])
   })
 
@@ -133,8 +172,10 @@ describe('WorkspaceTabStrip', () => {
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000003')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002')
       .mockReturnValueOnce('00000000-0000-4000-8000-000000000004')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000005')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000004')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000006')
     const user = userEvent.setup()
     renderStrip()
 
@@ -143,17 +184,24 @@ describe('WorkspaceTabStrip', () => {
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
     await user.click(screen.getByTestId('workspace-tab-add'))
     await user.click(screen.getByTestId('workspace-tab-add-board'))
+    await waitFor(() =>
+      expect(window.location.search).toContain(
+        'workspaceTab=board-00000000-0000-4000-8000-000000000004'
+      )
+    )
     fireEvent.keyDown(window, { key: 't', metaKey: true, shiftKey: true })
 
     await waitFor(() =>
       expect(
-        screen.getByTestId('workspace-tab-board-00000000-0000-4000-8000-000000000004')
+        screen.getByTestId('workspace-tab-board-00000000-0000-4000-8000-000000000006')
       ).toBeInTheDocument()
     )
-    expect(screen.getAllByRole('tab')).toHaveLength(3)
-    expect(new Set(screen.getAllByRole('tab').map(tab => tab.dataset.testid)).size).toBe(3)
-    expect(window.location.search).toContain(
-      'workspaceTab=board-00000000-0000-4000-8000-000000000004'
+    expect(screen.getAllByRole('tab')).toHaveLength(5)
+    expect(new Set(screen.getAllByRole('tab').map(tab => tab.dataset.testid)).size).toBe(5)
+    await waitFor(() =>
+      expect(window.location.search).toContain(
+        'workspaceTab=board-00000000-0000-4000-8000-000000000006'
+      )
     )
     uuid.mockRestore()
   })

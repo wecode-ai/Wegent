@@ -65,12 +65,17 @@ describe('DesktopEmptyTaskLauncher', () => {
       'button'
     )
     expect(categoryButtons[0]).toHaveClass(
-      'min-h-9',
-      'rounded-xl',
-      'bg-muted/65',
-      'text-text-secondary'
+      'min-h-[104px]',
+      'rounded-2xl',
+      'bg-background',
+      'ring-[0.5px]'
     )
-    expect(categoryButtons.every(button => button.querySelector('svg') === null)).toBe(true)
+    expect(categoryButtons.map(button => button.querySelector('svg')?.classList.value)).toEqual([
+      'h-4 w-4 text-[#0285FF]',
+      'h-4 w-4 text-[#924FF7]',
+      'h-4 w-4 text-[#04B84C]',
+      'h-4 w-4 text-[#FB6A22]',
+    ])
   })
 
   test('replaces the draft from a secondary suggestion without submitting and keeps focus local', async () => {

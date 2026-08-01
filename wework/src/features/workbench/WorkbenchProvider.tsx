@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from 'react'
-import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { stripAppBasePath } from '@/config/runtime'
@@ -27,6 +26,7 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
@@ -56,7 +56,6 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
-import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import {
@@ -112,6 +111,10 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
+import {
+  consumeWorkspaceTabTransfer,
+  publishWorkspaceTabTransferState,
+} from '@/features/workspace-tabs/workspaceTabTransfer'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -184,6 +187,7 @@ export function WorkbenchProvider({
   user,
   services,
   onStartupReadyChange,
+  workspaceTabId,
 }: WorkbenchProviderProps) {
   const cloudConnection = useOptionalCloudConnection()
   const resolvedServices = useMemo(
@@ -253,7 +257,13 @@ export function WorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
+    workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
+  )
+  useEffect(() => {
+    if (!workspaceTabId) return
+    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope })
+  }, [draftInputByScope, workspaceTabId])
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
   >({})
@@ -1167,7 +1177,11 @@ export function WorkbenchProvider({
     )
 
     return () => {
-      void listener?.then(unlisten => unlisten())
+      void listener
+        ?.then(unlisten => disposeTauriListener(unlisten, 'local workspace open'))
+        .catch(error => {
+          console.debug('[Wework] Local workspace listener was unavailable during cleanup', error)
+        })
     }
   }, [stableOpenStandaloneWorkspace, stableSetWorkbenchError])
   const stableSubscribeRuntimeTaskStream = useStableEvent(
@@ -1274,7 +1288,11 @@ export function WorkbenchProvider({
     const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
 
     return () => {
-      void listener?.then(unlisten => unlisten())
+      void listener
+        ?.then(unlisten => disposeTauriListener(unlisten, 'runtime work changed'))
+        .catch(error => {
+          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
+        })
     }
   }, [stableRefreshWorkLists])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
@@ -1854,13 +1872,6 @@ export function WorkbenchProvider({
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
         <WorkbenchPaneContext.Provider value={paneValue}>
-          <RuntimeTaskCloseGuard />
-          <LocalExecutorCloudBridge
-            apiBaseUrl={cloudConnection.apiBaseUrl}
-            backendUrl={cloudConnection.backendUrl}
-            isConnected={cloudConnection.isConnected}
-            token={cloudConnection.token}
-          />
           <CloudModelCatalogSyncDialogHost />
           {children}
         </WorkbenchPaneContext.Provider>

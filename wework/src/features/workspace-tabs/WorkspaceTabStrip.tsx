@@ -1,7 +1,10 @@
-import { Bot, CheckSquare2, Columns3, Plus, X } from 'lucide-react'
+import { Bot, CheckSquare2, CloudOff, Columns3, Plus, X } from 'lucide-react'
 import { useEffect, useRef, useState, type DragEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
@@ -16,11 +19,14 @@ interface TabContextMenuState extends MenuPosition {
   tabId: string
 }
 
-function tabKindIcon(kind: WorkspaceTabKind) {
+function tabKindIcon(kind: WorkspaceTabKind, unavailable = false) {
   if (kind === 'board') {
     return <Columns3 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   if (kind === 'agent') {
+    if (unavailable) {
+      return <CloudOff aria-hidden="true" className="h-4 w-4 shrink-0 opacity-60" />
+    }
     return <Bot aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   return <CheckSquare2 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
@@ -68,6 +74,8 @@ function WorkspaceTabButton({
   onDragEndTab,
   onDragOverTab,
   onContextMenu,
+  agentAvailable,
+  onUnavailableAgent,
 }: {
   tab: WorkspaceTab
   active: boolean
@@ -76,10 +84,16 @@ function WorkspaceTabButton({
   onDragEndTab: () => void
   onDragOverTab: (tabId: string) => void
   onContextMenu: (position: MenuPosition, tabId: string) => void
+  agentAvailable: boolean
+  onUnavailableAgent: () => void
 }) {
   const { t } = useTranslation('common')
   const { selectTab, closeTab } = useWorkspaceTabs()
   const closeLabel = t('workbench.workspace_tab_close', '关闭 {{title}}', { title: tab.title })
+  const unavailable = tab.kind === 'agent' && !agentAvailable
+  const tabTitle = unavailable
+    ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
+    : tab.title
 
   const handleDragStart = (event: DragEvent<HTMLDivElement>) => {
     onDragStartTab(tab.id)
@@ -102,10 +116,10 @@ function WorkspaceTabButton({
         if (event.button === 1) closeTab(tab.id)
       }}
       className={cn(
-        'group relative flex h-9 w-44 min-w-28 max-w-[220px] flex-none items-center overflow-visible text-sm transition-[background-color,color,opacity] duration-150',
+        'group relative flex h-8 w-36 min-w-28 max-w-[188px] flex-none items-center rounded-md text-sm transition-[background-color,color,opacity] duration-150',
         active
-          ? 'workspace-document-tab-active z-10 rounded-t-[10px] bg-background text-text-primary'
-          : 'rounded-lg text-text-secondary hover:bg-black/[0.05] hover:text-text-primary',
+          ? 'bg-white/55 text-text-primary dark:bg-white/[0.09]'
+          : 'text-text-secondary hover:bg-black/[0.045] hover:text-text-primary dark:hover:bg-white/[0.06]',
         draggedTabId === tab.id && 'opacity-55'
       )}
     >
@@ -115,7 +129,14 @@ function WorkspaceTabButton({
         aria-selected={active}
         data-testid={`workspace-tab-select-${tab.id}`}
         data-tab-kind={tab.kind}
-        onClick={() => selectTab(tab.id)}
+        data-unavailable={unavailable || undefined}
+        onClick={() => {
+          if (unavailable) {
+            onUnavailableAgent()
+            return
+          }
+          selectTab(tab.id)
+        }}
         onContextMenu={event => {
           event.preventDefault()
           onContextMenu(
@@ -132,10 +153,10 @@ function WorkspaceTabButton({
             tab.id
           )
         }}
-        className="flex h-full min-w-0 flex-1 items-center gap-2 px-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-        title={tab.title}
+        className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+        title={tabTitle}
       >
-        {tabKindIcon(tab.kind)}
+        {tabKindIcon(tab.kind, unavailable)}
         <span className={cn('truncate', active && 'font-medium')}>{tab.title}</span>
       </button>
       <button
@@ -146,13 +167,15 @@ function WorkspaceTabButton({
           closeTab(tab.id)
         }}
         className={cn(
-          'mr-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-blue-500',
-          active ? 'text-text-secondary' : 'text-text-muted group-hover:text-text-secondary'
+          'mr-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded outline-none transition-[background-color,color,opacity] hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-white/[0.08]',
+          active
+            ? 'text-text-secondary'
+            : 'opacity-0 text-text-muted group-hover:opacity-100 group-hover:text-text-secondary group-focus-within:opacity-100'
         )}
         aria-label={closeLabel}
         title={closeLabel}
       >
-        <X aria-hidden="true" className="h-3.5 w-3.5" />
+        <X aria-hidden="true" className="h-3 w-3" />
       </button>
     </div>
   )
@@ -160,6 +183,7 @@ function WorkspaceTabButton({
 
 export function WorkspaceTabStrip() {
   const { t } = useTranslation('common')
+  const cloud = useOptionalCloudConnection()
   const {
     tabs,
     activeTabId,
@@ -176,6 +200,8 @@ export function WorkspaceTabStrip() {
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
+  const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
+  const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
   useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
   useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
@@ -214,13 +240,13 @@ export function WorkspaceTabStrip() {
     <>
       <div
         data-testid="workspace-tab-strip-container"
-        className="flex h-full min-w-0 flex-1 items-end px-3"
+        className="flex h-full min-w-0 flex-1 items-center px-2"
       >
         <div
           role="tablist"
           data-testid="workspace-tab-strip"
           aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-          className="workspace-tab-strip-scrollbar flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto overflow-y-hidden"
+          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-2rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden"
         >
           {tabs.map(tab => (
             <WorkspaceTabButton
@@ -237,6 +263,8 @@ export function WorkspaceTabStrip() {
                 setAddMenuPosition(null)
                 setContextMenu({ tabId, ...position })
               }}
+              agentAvailable={agentAvailable}
+              onUnavailableAgent={() => setCloudConnectionOpen(true)}
             />
           ))}
         </div>
@@ -250,12 +278,13 @@ export function WorkspaceTabStrip() {
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 184)))
           }}
-          className="mb-1 ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary outline-none transition-colors hover:bg-black/[0.04] hover:text-text-primary focus-visible:ring-2 focus-visible:ring-blue-500"
           aria-label={t('workbench.workspace_tab_new', '新建标签页')}
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >
           <Plus aria-hidden="true" className="h-4 w-4" />
         </button>
+        <div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
       </div>
       {addMenuPosition
         ? createPortal(
@@ -278,10 +307,21 @@ export function WorkspaceTabStrip() {
                   type="button"
                   role="menuitem"
                   data-testid={`workspace-tab-add-${kind}`}
-                  onClick={() => openNewTab(kind)}
+                  onClick={() => {
+                    if (kind === 'agent' && !agentAvailable) {
+                      setAddMenuPosition(null)
+                      setCloudConnectionOpen(true)
+                      return
+                    }
+                    openNewTab(kind)
+                  }}
                   className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04]"
                 >
-                  <Icon aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  {kind === 'agent' && !agentAvailable ? (
+                    <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
+                  ) : (
+                    <Icon aria-hidden="true" className="h-4 w-4 text-text-secondary" />
+                  )}
                   {label}
                 </button>
               ))}
@@ -304,9 +344,13 @@ export function WorkspaceTabStrip() {
                 data-testid="workspace-tab-open-new-window"
                 onClick={() => {
                   setContextMenu(null)
-                  void openWorkspaceTabWindow(contextTab).catch(error => {
-                    console.error('Failed to open workspace tab in a new window', error)
-                  })
+                  void openWorkspaceTabWindow(contextTab)
+                    .then(opened => {
+                      if (opened) closeTab(contextTab.id)
+                    })
+                    .catch(error => {
+                      console.error('Failed to open workspace tab in a new window', error)
+                    })
                 }}
                 className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm hover:bg-black/[0.04]"
               >
@@ -328,6 +372,15 @@ export function WorkspaceTabStrip() {
             document.body
           )
         : null}
+      <CloudConnectionDialog
+        open={cloudConnectionOpen}
+        onlineCloudDeviceCount={0}
+        onClose={() => setCloudConnectionOpen(false)}
+        onOpenSettings={() => {
+          setCloudConnectionOpen(false)
+          navigateTo('/settings/connections')
+        }}
+      />
     </>
   )
 }

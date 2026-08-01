@@ -4,7 +4,14 @@ import { Effect } from '@tauri-apps/api/window'
 import { getPlatform } from '@/lib/platform'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { toBrowserPath } from '@/lib/navigation'
-import { workspaceTabRoute, type WorkspaceTab } from './workspaceTabs'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
+import {
+  persistWorkspaceTabs,
+  workspaceTabRoute,
+  workspaceTabsStorageKey,
+  type WorkspaceTab,
+} from './workspaceTabs'
+import { clearStagedWorkspaceTabTransfer, stageWorkspaceTabTransfer } from './workspaceTabTransfer'
 
 const WINDOW_CREATION_TIMEOUT_MS = 10_000
 
@@ -13,15 +20,16 @@ function errorMessage(payload: unknown): string {
   return typeof payload === 'string' ? payload : 'Unknown Tauri window error'
 }
 
-export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
+export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<boolean> {
   const route = toBrowserPath(workspaceTabRoute(tab))
   if (!isTauriRuntime()) {
-    window.open(route, '_blank', 'noopener,noreferrer')
-    return
+    return Boolean(window.open(route, '_blank', 'noopener,noreferrer'))
   }
 
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
   const label = `workspace-${tab.id}-${Date.now()}`
+  persistWorkspaceTabs(label, [tab], tab.id)
+  stageWorkspaceTabTransfer(tab.id)
   const platform = getPlatform()
   const workspaceWindow = new WebviewWindow(label, {
     url: route,
@@ -44,6 +52,11 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
     dragDropEnabled: false,
     tabbingIdentifier: platform === 'mac' ? 'io.wecode.wework.workspace' : undefined,
   })
+  const cleanupFailedWindow = async () => {
+    localStorage.removeItem(workspaceTabsStorageKey(label))
+    clearStagedWorkspaceTabTransfer(tab.id)
+    await workspaceWindow.destroy().catch(() => undefined)
+  }
 
   let settled = false
   const unlisten: UnlistenFn[] = []
@@ -52,12 +65,12 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
       if (settled) return
       settled = true
       window.clearTimeout(timeout)
-      unlisten.forEach(dispose => dispose())
+      unlisten.forEach(dispose => disposeTauriListener(dispose, 'workspace window creation'))
       callback()
     }
     const fail = (error: unknown) => {
       finish(() => {
-        void workspaceWindow.destroy().catch(() => undefined)
+        void cleanupFailedWindow()
         reject(error instanceof Error ? error : new Error(errorMessage(error)))
       })
     }
@@ -65,7 +78,7 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
       void listener
         .then(dispose => {
           if (settled) {
-            dispose()
+            disposeTauriListener(dispose, 'workspace window creation')
             return
           }
           unlisten.push(dispose)
@@ -76,12 +89,18 @@ export async function openWorkspaceTabWindow(tab: WorkspaceTab): Promise<void> {
       fail(new Error('Timed out creating workspace window'))
     }, WINDOW_CREATION_TIMEOUT_MS)
 
-    rememberUnlisten(workspaceWindow.once('tauri://created', () => finish(resolve)))
+    rememberUnlisten(workspaceWindow.listen('tauri://created', () => finish(resolve)))
     rememberUnlisten(
-      workspaceWindow.once('tauri://error', event => fail(new Error(errorMessage(event.payload))))
+      workspaceWindow.listen('tauri://error', event => fail(new Error(errorMessage(event.payload))))
     )
   })
 
-  await workspaceWindow.show()
-  await workspaceWindow.setFocus()
+  try {
+    await workspaceWindow.show()
+    await workspaceWindow.setFocus()
+  } catch (error) {
+    await cleanupFailedWindow()
+    throw error
+  }
+  return true
 }

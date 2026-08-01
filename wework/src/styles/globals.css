@@ -64,34 +64,11 @@
   --z-critical: 100;
   --z-system: 1000;
   --z-system-popover: 1010;
-  --workspace-tab-surface: rgb(var(--color-bg-base));
 }
 
 .app-view-surface {
   height: calc(100% - var(--app-view-block-end-inset));
   margin: 0 var(--app-view-inline-inset) var(--app-view-block-end-inset);
-}
-
-.workspace-document-tab-active::before,
-.workspace-document-tab-active::after {
-  position: absolute;
-  bottom: 0;
-  width: 10px;
-  height: 10px;
-  content: '';
-  pointer-events: none;
-}
-
-.workspace-document-tab-active::before {
-  left: -10px;
-  border-bottom-right-radius: 10px;
-  box-shadow: 5px 5px 0 5px var(--workspace-tab-surface);
-}
-
-.workspace-document-tab-active::after {
-  right: -10px;
-  border-bottom-left-radius: 10px;
-  box-shadow: -5px 5px 0 5px var(--workspace-tab-surface);
 }
 
 .workspace-tab-strip-scrollbar {

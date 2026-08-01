@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceTab } from './workspaceTabs'
 
-const once = vi.fn()
+const listen = vi.fn()
 const show = vi.fn().mockResolvedValue(undefined)
 const setFocus = vi.fn().mockResolvedValue(undefined)
 const destroy = vi.fn().mockResolvedValue(undefined)
 const WebviewWindow = vi.fn(function MockWebviewWindow() {
-  return { once, show, setFocus, destroy }
+  return { listen, show, setFocus, destroy }
 })
 
 vi.mock('@tauri-apps/api/webviewWindow', () => ({ WebviewWindow }))
@@ -33,18 +33,22 @@ describe('openWorkspaceTabWindow', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    localStorage.clear()
     delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
-    once.mockImplementation((eventName: string, callback: () => void) => {
+    show.mockResolvedValue(undefined)
+    setFocus.mockResolvedValue(undefined)
+    destroy.mockResolvedValue(undefined)
+    listen.mockImplementation((eventName: string, callback: () => void) => {
       if (eventName === 'tauri://created') callback()
       return Promise.resolve(vi.fn())
     })
   })
 
   test('uses a browser window outside Tauri', async () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const open = vi.spyOn(window, 'open').mockImplementation(() => window)
     const { openWorkspaceTabWindow } = await import('./workspaceWindow')
 
-    await openWorkspaceTabWindow(tab)
+    await expect(openWorkspaceTabWindow(tab)).resolves.toBe(true)
 
     expect(open).toHaveBeenCalledWith(
       expect.stringContaining('/todo?projectId=project-1&workspaceTab=board-project-1'),
@@ -62,7 +66,7 @@ describe('openWorkspaceTabWindow', () => {
     })
     const { openWorkspaceTabWindow } = await import('./workspaceWindow')
 
-    await openWorkspaceTabWindow(tab)
+    await expect(openWorkspaceTabWindow(tab)).resolves.toBe(true)
 
     expect(WebviewWindow).toHaveBeenCalledWith(
       expect.stringMatching(/^workspace-board-project-1-\d+$/),
@@ -78,11 +82,16 @@ describe('openWorkspaceTabWindow', () => {
     expect(show).toHaveBeenCalledOnce()
     expect(setFocus).toHaveBeenCalledOnce()
     expect(destroy).not.toHaveBeenCalled()
+    const [label] = WebviewWindow.mock.calls[0]
+    expect(JSON.parse(localStorage.getItem(`wework.workspaceTabs.v2:${label}`) ?? 'null')).toEqual({
+      activeTabId: tab.id,
+      tabs: [tab],
+    })
   })
 
   test('destroys a hidden Tauri window when creation reports an error', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
-    once.mockImplementation(
+    listen.mockImplementation(
       (eventName: string, callback: (event: { payload: unknown }) => void) => {
         if (eventName === 'tauri://error') callback({ payload: 'window failed' })
         return Promise.resolve(vi.fn())
@@ -94,12 +103,27 @@ describe('openWorkspaceTabWindow', () => {
 
     expect(destroy).toHaveBeenCalledOnce()
     expect(show).not.toHaveBeenCalled()
+    const [label] = WebviewWindow.mock.calls[0]
+    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
+  })
+
+  test('destroys a created Tauri window when revealing it fails', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
+    show.mockRejectedValueOnce(new Error('show failed'))
+    const { openWorkspaceTabWindow } = await import('./workspaceWindow')
+
+    await expect(openWorkspaceTabWindow(tab)).rejects.toThrow('show failed')
+
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(setFocus).not.toHaveBeenCalled()
+    const [label] = WebviewWindow.mock.calls[0]
+    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
   })
 
   test('destroys a hidden Tauri window when creation times out', async () => {
     vi.useFakeTimers()
     Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} })
-    once.mockResolvedValue(vi.fn())
+    listen.mockResolvedValue(vi.fn())
     const { openWorkspaceTabWindow } = await import('./workspaceWindow')
 
     const opening = openWorkspaceTabWindow(tab)
@@ -109,6 +133,8 @@ describe('openWorkspaceTabWindow', () => {
     await rejection
     expect(destroy).toHaveBeenCalledOnce()
     expect(show).not.toHaveBeenCalled()
+    const [label] = WebviewWindow.mock.calls[0]
+    expect(localStorage.getItem(`wework.workspaceTabs.v2:${label}`)).toBeNull()
     vi.useRealTimers()
   })
 })

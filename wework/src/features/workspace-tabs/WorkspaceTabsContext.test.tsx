@@ -76,7 +76,7 @@ describe('WorkspaceTabsProvider routing', () => {
 
     act(() => navigateTo('/plugins'))
 
-    expect(screen.getByTestId('tab-count')).toHaveTextContent('1')
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
     expect(screen.getByTestId('active-tab-id')).toHaveTextContent(originalTabId!)
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('auxiliary')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('插件')
@@ -88,7 +88,7 @@ describe('WorkspaceTabsProvider routing', () => {
 
     act(() => screen.getByRole('button', { name: '新建项目空间标签' }).click())
 
-    expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('4')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(window.location.search).toContain('workspaceTab=board-')
   })

@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 interface AppIframeProps {
   src: string
   title: string
+  workspaceTabId?: string
 }
 
 const APP_IFRAME_SANDBOX = [
@@ -14,7 +15,7 @@ const APP_IFRAME_SANDBOX = [
   'allow-popups-to-escape-sandbox',
 ].join(' ')
 
-export function AppIframe({ src, title }: AppIframeProps) {
+export function AppIframe({ src, title, workspaceTabId }: AppIframeProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -49,6 +50,7 @@ export function AppIframe({ src, title }: AppIframeProps) {
         onError={() => setError(true)}
         sandbox={APP_IFRAME_SANDBOX}
         data-testid={`app-iframe-${title.toLowerCase()}`}
+        data-workspace-tab-id={workspaceTabId}
       />
     </div>
   )

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
@@ -85,7 +86,19 @@ vi.mock('@/api/local/codexPlugins', () => ({
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
-  WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
+  WorkbenchPage: () => {
+    const [value, setValue] = useState('')
+    return (
+      <div data-testid="workbench-page">
+        WeWork 工作台
+        <input
+          data-testid="workbench-state-input"
+          value={value}
+          onChange={event => setValue(event.target.value)}
+        />
+      </div>
+    )
+  },
 }))
 
 vi.mock('@/pages/SitesPage', () => ({
@@ -112,7 +125,15 @@ describe('App center route', () => {
       'fetch',
       vi.fn((url: string) => {
         let payload: unknown = {}
-        if (url.includes('/devices')) {
+        if (url.includes('/auth/wework/config')) {
+          payload = {
+            web_url: 'https://app.example.com',
+          }
+        } else if (url.includes('/plugins/installed')) {
+          payload = {
+            items: [],
+          }
+        } else if (url.includes('/devices')) {
           payload = {
             items: [
               {
@@ -257,12 +278,79 @@ describe('App center route', () => {
 
     await waitForStartupScreenToClose()
     expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
-    expect(screen.getByTestId('workspace-tab-content-bridge')).toHaveClass(
-      'inset-x-2',
-      'h-2',
-      'bg-background'
-    )
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
+  })
+
+  test('keeps duplicate task tabs as independent persistent workbench instances', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    const firstInput = screen.getByTestId('workbench-state-input')
+    fireEvent.change(firstInput, {
+      target: { value: 'first task draft' },
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-tab-add'))
+    fireEvent.click(screen.getByTestId('workspace-tab-add-task'))
+
+    const taskTabs = screen.getAllByRole('tab', { name: '任务' })
+    expect(taskTabs).toHaveLength(2)
+    const inputs = screen.getAllByTestId('workbench-state-input')
+    expect(inputs).toHaveLength(2)
+    expect(inputs.filter(input => input.getAttribute('value') === '')).toHaveLength(1)
+    expect(inputs.filter(input => input.getAttribute('value') === 'first task draft')).toHaveLength(
+      1
+    )
+    const secondInput = inputs.find(input => input !== firstInput)
+    expect(secondInput).toBeDefined()
+    fireEvent.change(secondInput!, {
+      target: { value: 'second task draft' },
+    })
+
+    fireEvent.click(taskTabs[0])
+    await waitFor(() => expect(firstInput).toHaveValue('first task draft'))
+    fireEvent.click(taskTabs[1])
+    await waitFor(() => expect(secondInput).toHaveValue('second task draft'))
+    expect(firstInput).toHaveValue('first task draft')
+  })
+
+  test('keeps duplicate Agent tabs mounted as distinct iframe instances', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://app.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-21T00:00:00.000Z',
+    })
+    window.history.pushState({}, '', '/app/wegent')
+
+    render(<App />)
+
+    const firstIframe = await screen.findByTestId('app-iframe-wegent')
+    const firstTabId = firstIframe.getAttribute('data-workspace-tab-id')
+    expect(firstTabId).toMatch(/^agent-/)
+
+    fireEvent.click(screen.getByTestId('workspace-tab-add'))
+    fireEvent.click(screen.getByTestId('workspace-tab-add-agent'))
+
+    const agentTabs = screen.getAllByRole('tab', { name: '智能体' })
+    const iframes = screen.getAllByTestId('app-iframe-wegent')
+    expect(agentTabs).toHaveLength(2)
+    expect(iframes).toHaveLength(2)
+    expect(new Set(iframes.map(iframe => iframe.getAttribute('data-workspace-tab-id'))).size).toBe(
+      2
+    )
+
+    fireEvent.click(agentTabs[0])
+    await waitFor(() => expect(agentTabs[0]).toHaveAttribute('aria-selected', 'true'))
+    expect(document.body.contains(firstIframe)).toBe(true)
+    expect(screen.getAllByTestId('app-iframe-wegent')).toHaveLength(2)
   })
 
   test('renders copyable debug instance rows', async () => {

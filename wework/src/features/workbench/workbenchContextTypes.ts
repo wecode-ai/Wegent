@@ -370,4 +370,5 @@ export interface WorkbenchProviderProps {
   user: User
   services?: WorkbenchServices
   onStartupReadyChange?: (ready: boolean) => void
+  workspaceTabId?: string
 }

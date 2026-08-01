@@ -207,34 +207,6 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
-  test('renders the launcher composer as one quiet surface', () => {
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        appearance="launcher"
-      />
-    )
-
-    const composer = screen.getByTestId('project-chat-composer')
-    const form = screen.getByTestId('project-chat-composer-form')
-    expect(composer).toHaveAttribute('data-appearance', 'launcher')
-    expect(composer).toHaveClass('rounded-[22px]')
-    expect(form).toHaveClass(
-      'min-h-[112px]',
-      'rounded-[22px]',
-      'border',
-      'border-border/85',
-      'bg-background',
-      'focus-within:border-focus',
-      'focus-within:ring-focus/10'
-    )
-    expect(form).toContainElement(screen.getByTestId('project-work-button'))
-  })
-
   test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
     const props = {
       value: 'next draft',

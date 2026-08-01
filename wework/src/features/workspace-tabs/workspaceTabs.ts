@@ -23,6 +23,7 @@ export interface WorkspaceTabLabels {
 
 const WORKSPACE_TAB_PARAM = 'workspaceTab'
 const WORKSPACE_TAB_TITLE_PARAM = 'workspaceTabTitle'
+const WORKSPACE_TABS_STORAGE_PREFIX = 'wework.workspaceTabs.v2:'
 
 function newTabId(kind: WorkspaceTabKind): string {
   return `${kind}-${crypto.randomUUID()}`
@@ -105,6 +106,24 @@ export function workspaceTabRoute(tab: WorkspaceTab): string {
   params.set(WORKSPACE_TAB_PARAM, tab.id)
   params.set(WORKSPACE_TAB_TITLE_PARAM, tab.title)
   return `${tab.contentRoute}${separator}${params.toString()}`
+}
+
+export function workspaceTabsStorageKey(scope: string): string {
+  return `${WORKSPACE_TABS_STORAGE_PREFIX}${scope}`
+}
+
+export function persistWorkspaceTabs(
+  scope: string,
+  tabs: WorkspaceTab[],
+  activeTabId: string
+): void {
+  localStorage.setItem(
+    workspaceTabsStorageKey(scope),
+    JSON.stringify({
+      activeTabId,
+      tabs,
+    })
+  )
 }
 
 export function moveWorkspaceTab(

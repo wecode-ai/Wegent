@@ -3206,24 +3206,348 @@ async function verifyWorkspaceDocumentTabs(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-tabs-01-project-spaces-active.png')
 
-  await control.command(
-    'click',
-    '[data-testid^="workspace-tab-select-task-"]'
-  )
+  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'click',
-    '[data-testid^="workspace-tab-close-board-"]'
-  )
+  await control.command('click', '[data-testid^="workspace-tab-close-board-"]')
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
     'Closing the project-space document tab did not remove it from the titlebar'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
+}
+
+function workspaceTabIds(snapshot, kind) {
+  return snapshot.testIds.filter(testId => testId.startsWith(`workspace-tab-${kind}-`))
+}
+
+function allWorkspaceTabIds(snapshot) {
+  return ['task', 'board', 'agent', 'auxiliary'].flatMap(kind => workspaceTabIds(snapshot, kind))
+}
+
+async function waitForAttribute(control, selector, name, expected, message) {
+  const startedAt = Date.now()
+  let actual = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    actual = await control.command('getAttribute', selector, { value: name })
+    if (actual === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: expected ${name}=${expected}, received ${actual}`)
+}
+
+async function verifyWorkspaceTabIsolation(control) {
+  await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const initial = JSON.parse(await control.command('snapshot', 'body'))
+  const initialTaskIds = workspaceTabIds(initial, 'task')
+  const initialBoardIds = workspaceTabIds(initial, 'board')
+  const initialAgentIds = workspaceTabIds(initial, 'agent')
+  assert.equal(initialTaskIds.length, 1, 'The titlebar did not start with one task tab')
+  assert.equal(initialBoardIds.length, 1, 'The titlebar did not start with one project-space tab')
+  assert.equal(initialAgentIds.length, 1, 'The titlebar did not start with one Agent tab')
+  assert.equal(
+    initialTaskIds.length + initialBoardIds.length + initialAgentIds.length,
+    3,
+    'The titlebar did not start with exactly three product tabs'
+  )
+
+  const firstTaskId = initialTaskIds[0].slice('workspace-tab-'.length)
+  const firstTaskContent = `[data-testid="workspace-tab-content-${firstTaskId}"]`
+  const firstTaskComposer = `${firstTaskContent} [data-testid="chat-message-input"]`
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', firstTaskComposer, { value: '第一个任务标签草稿' })
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  const withSecondTask = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'task').length === 2,
+    'The explicit new-task action did not create a second task tab'
+  )
+  const secondTaskTestId = workspaceTabIds(withSecondTask, 'task').find(
+    testId => !initialTaskIds.includes(testId)
+  )
+  assert.ok(secondTaskTestId, 'The second task tab identity was not observable')
+  const secondTaskId = secondTaskTestId.slice('workspace-tab-'.length)
+  const secondTaskContent = `[data-testid="workspace-tab-content-${secondTaskId}"]`
+  const secondTaskComposer = `${secondTaskContent} [data-testid="chat-message-input"]`
+  await control.command('waitFor', secondTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', secondTaskComposer),
+    '',
+    'A new task tab inherited the first tab draft'
+  )
+  await control.command('fill', secondTaskComposer, { value: '第二个任务标签草稿' })
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', firstTaskComposer),
+    '第一个任务标签草稿',
+    'Editing the second task tab mutated or discarded the first task tab draft'
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${secondTaskId}"]`)
+  await control.command('waitFor', secondTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', secondTaskComposer),
+    '第二个任务标签草稿',
+    'Switching away from the second task tab lost its draft'
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-01-task-drafts.png')
+
+  const firstBoardId = initialBoardIds[0].slice('workspace-tab-'.length)
+  const firstBoardContent = `[data-testid="workspace-tab-content-${firstBoardId}"]`
+  const firstBoardWorkspace = `${firstBoardContent} [data-testid="cloud-todo-workspace"]`
+  await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)
+  await control.command('waitFor', firstBoardWorkspace, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForAttribute(
+    control,
+    firstBoardWorkspace,
+    'data-sidebar-collapsed',
+    'false',
+    'The first project-space tab did not start expanded'
+  )
+  await control.command('click', `${firstBoardContent} [data-testid="cloud-todo-collapse-sidebar"]`)
+  await waitForAttribute(
+    control,
+    firstBoardWorkspace,
+    'data-sidebar-collapsed',
+    'true',
+    'The first project-space tab did not preserve its local sidebar state'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-board"]')
+  const withSecondBoard = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'board').length === 2,
+    'The explicit new-project-space action did not create a second tab'
+  )
+  const secondBoardTestId = workspaceTabIds(withSecondBoard, 'board').find(
+    testId => !initialBoardIds.includes(testId)
+  )
+  assert.ok(secondBoardTestId, 'The second project-space tab identity was not observable')
+  const secondBoardId = secondBoardTestId.slice('workspace-tab-'.length)
+  const secondBoardContent = `[data-testid="workspace-tab-content-${secondBoardId}"]`
+  const secondBoardWorkspace = `${secondBoardContent} [data-testid="cloud-todo-workspace"]`
+  await control.command('waitFor', secondBoardWorkspace, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForAttribute(
+    control,
+    secondBoardWorkspace,
+    'data-sidebar-collapsed',
+    'false',
+    'A new project-space tab inherited the first tab sidebar state'
+  )
+  assert.equal(
+    await control.command('getAttribute', firstBoardWorkspace, {
+      value: 'data-sidebar-collapsed',
+    }),
+    'true',
+    'Opening a second project-space tab reset the first tab state'
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${firstBoardId}"]`)
+  await control.command('waitFor', firstBoardWorkspace, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForAttribute(
+    control,
+    firstBoardWorkspace,
+    'data-sidebar-collapsed',
+    'true',
+    'Switching back did not restore the first project-space tab state'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-02-project-spaces.png')
+
+  const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
+  const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`
+  const firstAgentIframe = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
+  await control.command('waitFor', firstAgentIframe, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', firstAgentIframe, {
+      value: 'data-workspace-tab-id',
+    }),
+    firstAgentId,
+    'The first Agent iframe was not bound to its tab identity'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-agent"]')
+  const withSecondAgent = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    'The explicit new-Agent action did not create a second tab'
+  )
+  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent').find(
+    testId => !initialAgentIds.includes(testId)
+  )
+  assert.ok(secondAgentTestId, 'The second Agent tab identity was not observable')
+  const secondAgentId = secondAgentTestId.slice('workspace-tab-'.length)
+  const secondAgentContent = `[data-testid="workspace-tab-content-${secondAgentId}"]`
+  const secondAgentIframe = `${secondAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('waitFor', secondAgentIframe, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', secondAgentIframe, {
+      value: 'data-workspace-tab-id',
+    }),
+    secondAgentId,
+    'The second Agent tab reused the first iframe identity'
+  )
+  const agentSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    agentSnapshot.testIds.includes(`workspace-tab-content-${firstAgentId}`) &&
+      agentSnapshot.testIds.includes(`workspace-tab-content-${secondAgentId}`),
+    'Switching Agent tabs unmounted one of the iframe instances'
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
+  await control.command('waitFor', firstAgentIframe, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', secondAgentIframe, {
+      value: 'data-workspace-tab-id',
+    }),
+    secondAgentId,
+    'The hidden Agent iframe was recreated or detached after switching tabs'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-03-agent-iframes.png')
+
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', `${firstTaskContent} [data-testid="plugins-button"]`, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const tabCountBeforeOrdinaryNavigation = allWorkspaceTabIds(
+    JSON.parse(await control.command('snapshot', 'body'))
+  ).length
+  await control.command('click', `${firstTaskContent} [data-testid="plugins-button"]`)
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const afterOrdinaryNavigation = JSON.parse(await control.command('snapshot', 'body'))
+  assert.equal(
+    allWorkspaceTabIds(afterOrdinaryNavigation).length,
+    tabCountBeforeOrdinaryNavigation,
+    'Ordinary in-task navigation opened an extra document tab'
+  )
+  assert.ok(
+    afterOrdinaryNavigation.testIds.includes(`workspace-tab-${firstTaskId}`),
+    'Ordinary navigation replaced the active tab identity instead of its content'
+  )
+  assert.equal(
+    await control.command('getAttribute', `[data-testid="workspace-tab-select-${firstTaskId}"]`, {
+      value: 'data-tab-kind',
+    }),
+    'auxiliary',
+    'Ordinary navigation did not replace the active tab kind in place'
+  )
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-04-route-replacement.png')
+
+  await control.command('press', `[data-testid="workspace-tab-select-${secondTaskId}"]`, {
+    key: 'Shift+F10',
+  })
+  await control.command('waitFor', '[data-testid="workspace-tab-context-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const readyCountBeforeDetach = control.readyCount
+  try {
+    await control.command('click', '[data-testid="workspace-tab-open-new-window"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  } catch (error) {
+    if (!String(error).includes('replaced by a newer app session')) throw error
+  }
+  const detachedReady = await withTimeout(
+    control.awaitReadyAfter(readyCountBeforeDetach),
+    WORKBENCH_READY_TIMEOUT_MS,
+    'The detached workspace window did not register its WebView'
+  )
+  assert.ok(
+    detachedReady.windowLabel?.startsWith('workspace-'),
+    `The detached tab registered an unexpected window: ${detachedReady.windowLabel}`
+  )
+  const detachedControl = {
+    command: (...args) => control.commandForClient(detachedReady.clientId, ...args),
+  }
+  await detachedControl.command('waitFor', '[data-testid="workspace-tab-strip"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const detachedWindowSnapshot = JSON.parse(await detachedControl.command('snapshot', 'body'))
+  assert.deepEqual(
+    allWorkspaceTabIds(detachedWindowSnapshot),
+    [`workspace-tab-${secondTaskId}`],
+    'The detached window did not contain exactly the transferred task tab'
+  )
+  const detachedTaskComposer =
+    `[data-testid="workspace-tab-content-${secondTaskId}"] ` + '[data-testid="chat-message-input"]'
+  await detachedControl.command('waitFor', detachedTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await detachedControl.command('getValue', detachedTaskComposer),
+    '第二个任务标签草稿',
+    'Detaching the task tab lost its unsent draft'
+  )
+  await captureVerificationScreenshot(
+    detachedControl,
+    'workspace-tabs-isolation-05-detached-window.png'
+  )
+
+  const sourceStorageKey = 'wework.workspaceTabs.v2:main'
+  const sourceTabRemovalStartedAt = Date.now()
+  let sourceTabs = []
+  while (Date.now() - sourceTabRemovalStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const raw = await control.commandForWindow('main', 'getLocalStorageItem', 'body', {
+      value: sourceStorageKey,
+    })
+    sourceTabs = raw ? (JSON.parse(raw).tabs ?? []) : []
+    if (!sourceTabs.some(tab => tab.id === secondTaskId)) break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.equal(
+    sourceTabs.some(tab => tab.id === secondTaskId),
+    false,
+    'The transferred task tab remained open in the source window'
+  )
 }
 
 async function verifyCloudWorkPage(control) {
@@ -6505,6 +6829,8 @@ class DesktopE2EServer {
     this.readyResolver = null
     this.readyCount = 0
     this.activeControlClientId = null
+    this.controlClientsByWindow = new Map()
+    this.controlWindowsByClient = new Map()
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
@@ -6954,9 +7280,22 @@ class DesktopE2EServer {
 
   async command(action, selector, options = {}) {
     assert.ok(this.activeControlClientId, 'No active desktop control client is registered')
+    return this.commandForClient(this.activeControlClientId, action, selector, options)
+  }
+
+  async commandForWindow(windowLabel, action, selector, options = {}) {
+    const clientId = this.controlClientsByWindow.get(windowLabel)
+    assert.ok(clientId, `No desktop control client is registered for window ${windowLabel}`)
+    return this.commandForClient(clientId, action, selector, options)
+  }
+
+  async commandForClient(clientId, action, selector, options = {}) {
+    assert.ok(
+      this.controlWindowsByClient.has(clientId),
+      `Desktop control client ${clientId} is not registered`
+    )
     const id = randomUUID()
     const command = { id, action, selector, ...options }
-    const clientId = this.activeControlClientId
     let resolveDelivery
     let rejectDelivery
     const delivery = new Promise((resolvePromise, reject) => {
@@ -7168,6 +7507,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (request.method === 'GET' && url.pathname === '/') {
+      response.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store',
+      })
+      response.end(
+        '<!doctype html><html><body style="margin:0;font:16px system-ui;background:#fff;color:#222">' +
+          '<main style="display:grid;min-height:100vh;place-items:center">' +
+          '<section style="text-align:center"><h1>智能体工作台</h1>' +
+          '<p style="color:#6b7280">Desktop E2E Agent fixture</p></section>' +
+          '</main></body></html>'
+      )
+      return
+    }
+
     const modelProtocol =
       url.pathname === '/v1/responses' || url.pathname === '/responses'
         ? 'responses'
@@ -7189,11 +7543,16 @@ class DesktopE2EServer {
       const ready = await readRequestBody(request)
       assert.equal(typeof ready.clientId, 'string', 'Desktop control client ID is required')
       assert.ok(ready.clientId.length > 0, 'Desktop control client ID cannot be empty')
-      const previousClientId = this.activeControlClientId
+      assert.equal(typeof ready.windowLabel, 'string', 'Desktop control window label is required')
+      assert.ok(ready.windowLabel.length > 0, 'Desktop control window label cannot be empty')
+      const previousClientId = this.controlClientsByWindow.get(ready.windowLabel)
       this.activeControlClientId = ready.clientId
+      this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
+      this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
+        this.controlWindowsByClient.delete(previousClientId)
         const replacementError = new Error(
-          `Desktop control client ${previousClientId} was replaced by ${ready.clientId}`
+          `Desktop control client ${previousClientId} for ${ready.windowLabel} was replaced by ${ready.clientId}`
         )
         this.commandQueue = this.commandQueue.filter(item => {
           if (item.clientId !== previousClientId) return true
@@ -7225,7 +7584,7 @@ class DesktopE2EServer {
 
     if (request.method === 'GET' && url.pathname === '/commands') {
       const clientId = url.searchParams.get('clientId')
-      if (!clientId || clientId !== this.activeControlClientId) {
+      if (!clientId || !this.controlWindowsByClient.has(clientId)) {
         response.writeHead(204)
         response.end()
         return true
@@ -7262,7 +7621,12 @@ class DesktopE2EServer {
         json(response, 404, { error: `Unknown command ${result.id}` })
         return true
       }
-      if (result.clientId !== pending.clientId || result.clientId !== this.activeControlClientId) {
+      const resultWindowLabel = this.controlWindowsByClient.get(result.clientId)
+      if (
+        result.clientId !== pending.clientId ||
+        !resultWindowLabel ||
+        this.controlClientsByWindow.get(resultWindowLabel) !== result.clientId
+      ) {
         json(response, 409, {
           error: `Command ${result.id} belongs to a different desktop control client`,
         })
@@ -9748,6 +10112,7 @@ async function buildDesktopApp(
           security: {
             capabilities: [
               'default',
+              'workspace-window',
               {
                 identifier: 'desktop-e2e-window',
                 description: 'Allows the desktop E2E runner to manage test window visibility',
@@ -11017,6 +11382,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
       return
+    }
+
+    if (shouldRunDesktopCheckpoint('workspace-tabs')) {
+      phase = 'workspace-tab-isolation'
+      await verifyWorkspaceTabIsolation(control)
+      if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
+        console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
     }
 
     if (shouldRunDesktopCheckpoint('core-task-flow')) {

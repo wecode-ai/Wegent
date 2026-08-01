@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { navigateTo, toBrowserPath } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
@@ -6,7 +7,9 @@ import {
   inferWorkspaceTabKind,
   moveWorkspaceTab,
   parseWorkspaceLocation,
+  persistWorkspaceTabs,
   workspaceTabRoute,
+  workspaceTabsStorageKey,
   workspaceTabTitle,
   type WorkspaceTab,
   type WorkspaceTabKind,
@@ -41,10 +44,6 @@ interface WorkspaceTabsProviderProps {
   children: ReactNode
 }
 
-function storageKey(scope: string): string {
-  return `wework.workspaceTabs.v1:${scope}`
-}
-
 function validTab(value: unknown): value is WorkspaceTab {
   if (!value || typeof value !== 'object') return false
   const candidate = value as WorkspaceTab
@@ -65,7 +64,7 @@ function loadPersistedTabs(
   const location = parseWorkspaceLocation(pathname, search)
   try {
     const parsed = JSON.parse(
-      localStorage.getItem(storageKey(scope)) ?? 'null'
+      localStorage.getItem(workspaceTabsStorageKey(scope)) ?? 'null'
     ) as PersistedWorkspaceTabs | null
     if (parsed && Array.isArray(parsed.tabs)) {
       const tabs = parsed.tabs.filter(validTab)
@@ -86,12 +85,19 @@ function loadPersistedTabs(
   }
 
   const kind = inferWorkspaceTabKind(pathname)
-  const tab = createWorkspaceTab(kind, labels, {
-    id: location.tabId ?? undefined,
+  const defaultTabs = (['task', 'board', 'agent'] as const).map(defaultKind =>
+    createWorkspaceTab(defaultKind, labels)
+  )
+  const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
+  const routeTab = createWorkspaceTab(kind, labels, {
+    id: location.tabId ?? matchingDefault?.id,
     title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),
     contentRoute: location.contentRoute,
   })
-  return { tabs: [tab], activeTabId: tab.id, closedTabs: [] }
+  const tabs = matchingDefault
+    ? defaultTabs.map(tab => (tab.id === matchingDefault.id ? routeTab : tab))
+    : [...defaultTabs, routeTab]
+  return { tabs, activeTabId: routeTab.id, closedTabs: [] }
 }
 
 function replaceTabRoute(tab: WorkspaceTab) {
@@ -218,7 +224,7 @@ export function WorkspaceTabsProvider({
         activeTabId: state.activeTabId,
         tabs: state.tabs,
       }
-      localStorage.setItem(storageKey(storageScope), JSON.stringify(persisted))
+      persistWorkspaceTabs(storageScope, persisted.tabs, persisted.activeTabId)
     } catch {
       // Tabs remain usable in memory when persistence is unavailable.
     }
@@ -228,7 +234,7 @@ export function WorkspaceTabsProvider({
     (tabId: string) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
-      dispatch({ type: 'select', tabId })
+      flushSync(() => dispatch({ type: 'select', tabId }))
       navigateTo(workspaceTabRoute(tab))
     },
     [state.tabs]
@@ -237,7 +243,7 @@ export function WorkspaceTabsProvider({
   const openTab = useCallback(
     (kind: WorkspaceTabKind, overrides: Partial<WorkspaceTab> = {}) => {
       const tab = createWorkspaceTab(kind, labels, overrides)
-      dispatch({ type: 'open', tab })
+      flushSync(() => dispatch({ type: 'open', tab }))
       navigateTo(workspaceTabRoute(tab))
       return tab
     },
@@ -248,7 +254,7 @@ export function WorkspaceTabsProvider({
     (tabId: string) => {
       const fallback = createWorkspaceTab('task', labels)
       const next = closeWorkspaceTab(state.tabs, state.activeTabId, tabId, fallback)
-      dispatch({ type: 'close', tabId, fallback })
+      flushSync(() => dispatch({ type: 'close', tabId, fallback }))
       const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
       navigateTo(workspaceTabRoute(nextActive))
     },
@@ -259,7 +265,7 @@ export function WorkspaceTabsProvider({
     (tabId: string) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
-      dispatch({ type: 'closeOthers', tabId })
+      flushSync(() => dispatch({ type: 'closeOthers', tabId }))
       navigateTo(workspaceTabRoute(tab))
     },
     [state.tabs]
@@ -275,7 +281,7 @@ export function WorkspaceTabsProvider({
     const restored = state.tabs.some(candidate => candidate.id === tab.id)
       ? { ...tab, id: `${tab.kind}-${crypto.randomUUID()}` }
       : tab
-    dispatch({ type: 'restoreClosed', restored })
+    flushSync(() => dispatch({ type: 'restoreClosed', restored }))
     navigateTo(workspaceTabRoute(restored))
   }, [state.closedTabs, state.tabs])
 
