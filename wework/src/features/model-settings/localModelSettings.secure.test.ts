@@ -56,6 +56,64 @@ describe('localModelSettings secure credentials', () => {
     window.removeEventListener(restartedSession.LOCAL_MODEL_SETTINGS_CHANGED_EVENT, changed)
   })
 
+  test('hydrates a persisted API key before the first workbench request', async () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'cold-start-model',
+          displayName: 'Cold start model',
+          modelId: 'cold-start-model',
+          baseUrl: 'https://models.example/v1',
+          apiKeyConfigured: true,
+          catalogReady: true,
+          enabled: true,
+          updatedAt: '2026-08-01T00:00:00.000Z',
+        },
+      ])
+    )
+    runtimeMocks.invoke.mockResolvedValue({ 'cold-start-model': 'cold-start-secret' })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const { createLocalAppServices } = await import('@/api/local/localServices')
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'local-model:cold-start-model',
+    })
+
+    expect(runtimeMocks.invoke).toHaveBeenCalledWith('read_local_model_api_keys', {
+      configIds: ['cold-start-model'],
+    })
+    const createCall = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')
+    expect(createCall?.[1]).toEqual(
+      expect.objectContaining({
+        executionRequest: expect.objectContaining({
+          model_config: expect.objectContaining({
+            api_key: 'cold-start-secret',
+          }),
+        }),
+      })
+    )
+    expect(runtimeMocks.invoke.mock.invocationCallOrder[0]).toBeLessThan(
+      request.mock.invocationCallOrder[0]
+    )
+  })
+
   test('migrates a legacy persisted API key into the native credential store', async () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',
