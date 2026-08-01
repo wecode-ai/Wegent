@@ -246,7 +246,7 @@ describe('App center route', () => {
 
     expect(await screen.findByTestId('app-iframe-wegent')).toHaveAttribute(
       'src',
-      'https://app.example.com'
+      'https://app.example.com/login/oidc?access_token=cloud-token&token_type=bearer&login_success=true'
     )
   })
 

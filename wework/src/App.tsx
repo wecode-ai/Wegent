@@ -96,6 +96,18 @@ function hasTauriIpc() {
   )
 }
 
+function buildCloudAppUrl(url: string, token: string | null): string {
+  if (!token) return url
+
+  const authenticatedUrl = new URL(url)
+  const basePath = authenticatedUrl.pathname.replace(/\/+$/, '')
+  authenticatedUrl.pathname = `${basePath}/login/oidc`
+  authenticatedUrl.searchParams.set('access_token', token)
+  authenticatedUrl.searchParams.set('token_type', 'bearer')
+  authenticatedUrl.searchParams.set('login_success', 'true')
+  return authenticatedUrl.toString()
+}
+
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
 
@@ -122,7 +134,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const { activeTab, isNativeApp } = useChromeTabs(path)
   const resolvedActiveTab =
     activeTab?.key === 'wegent' && cloudConnection.webUrl
-      ? { ...activeTab, url: cloudConnection.webUrl }
+      ? {
+          ...activeTab,
+          url: buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token),
+        }
       : activeTab
   const activeIframeTab =
     !isNativeApp && resolvedActiveTab?.mode === 'iframe' && resolvedActiveTab.url
