@@ -1768,6 +1768,17 @@ async fn read_shared_turn_notifications(
         if let Some(turn_id) =
             started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
         {
+            if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
+                log_executor_event(
+                    "codex shared active turn corrected",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("previous_turn_id", previous_turn_id.to_owned()),
+                        ("turn_id", turn_id.clone()),
+                        ("source", "turn_started_notification".to_owned()),
+                    ],
+                );
+            }
             if let Some(callback) = options.active_turn_started.as_ref() {
                 callback(thread_id.to_owned(), turn_id.clone());
             }

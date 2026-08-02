@@ -299,7 +299,11 @@ function updateStartedTurn(
   }
   const optimisticIndex = action.clientUserMessageId
     ? turns.findIndex(
-        turn => turn.id === null && turn.clientUserMessageId === action.clientUserMessageId
+        turn =>
+          turn.clientUserMessageId === action.clientUserMessageId ||
+          turn.items.some(
+            item => item.type === 'user_message' && item.id === action.clientUserMessageId
+          )
       )
     : turns.findLastIndex(
         turn => turn.id === null && (turn.status === 'pending' || turn.status === 'streaming')
