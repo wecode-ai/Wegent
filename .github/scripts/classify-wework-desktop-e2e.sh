@@ -4,6 +4,7 @@ set -euo pipefail
 
 core_segments=(
   workspace-tabs
+  priority-filter
   core-task-flow
   window-lifecycle
   goal-lifecycle
@@ -89,6 +90,13 @@ classify_wework_path() {
       wework/src/components/chat/composer/Goal* | \
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
+      return
+      ;;
+
+    # Sidebar priority filtering has a dedicated runtime-task fixture.
+    wework/src/components/layout/DesktopSidebar.tsx | \
+      wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
+      select_target "core:priority-filter"
       return
       ;;
 
