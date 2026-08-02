@@ -114,13 +114,20 @@ node e2e/utils/mock-connector-upstream-server.mjs
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、`resilience`、
-`conversation-state`、`workspace-attachments` 和 `rendering-extensions`。
+`workspace-tabs`、`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、
+`resilience`、`conversation-state`、`workspace-attachments` 和
+`rendering-extensions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
 矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
+完整 Core 套件会把每个 checkpoint 展开为独立的 GitHub Actions matrix job 并行
+执行，而不是在单个 `Wework Desktop E2E (Core)` job 中串行运行。CI 会先构建一次
+带固定测试端口的 Core Tauri 应用、Executor 和 Codex artifact；各 checkpoint
+只安装桌面运行时依赖并下载复用该 artifact，不再重复安装 pnpm、Rust、Python 或
+uv，也不重复执行 Vite、Tauri 和 Executor 构建。插件与云端套件需要不同的构建时
+配置，仍作为独立 job 与 Core 构建并行。
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
