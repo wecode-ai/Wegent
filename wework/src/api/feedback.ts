@@ -4,7 +4,6 @@ export interface FeedbackSubmitResult {
   report_id: string
   project_id: string
   item_id: string
-  created_by_user_id: number
   duplicate: boolean
 }
 

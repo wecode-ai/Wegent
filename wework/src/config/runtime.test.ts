@@ -28,6 +28,7 @@ describe('getRuntimeConfig', () => {
   })
 
   test('leaves the feedback URL empty by default', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
     expect(getRuntimeConfig().feedbackUrl).toBe('')
   })
 

@@ -19,5 +19,4 @@ class FeedbackResponse(BaseModel):
     report_id: str
     project_id: str
     item_id: str
-    created_by_user_id: int
     duplicate: bool

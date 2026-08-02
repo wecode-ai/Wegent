@@ -76,7 +76,6 @@ pub struct FeedbackSubmitResult {
     report_id: String,
     project_id: String,
     item_id: String,
-    created_by_user_id: i64,
     duplicate: bool,
 }
 

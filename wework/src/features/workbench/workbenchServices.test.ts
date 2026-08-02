@@ -57,6 +57,14 @@ const mocks = vi.hoisted(() => {
       deliveryApi: localDeliveryApi,
       externalIssueApi,
     },
+    hybridServices: {
+      deliveryApi: backendDeliveryApi,
+      projectSpaceApis: {
+        local: localDeliveryApi,
+        cloud: backendDeliveryApi,
+        defaultLocation: 'cloud' as const,
+      },
+    },
   }
 })
 
@@ -66,6 +74,10 @@ vi.mock('@/api/backend/backendServices', () => ({
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(() => mocks.localServices),
+}))
+
+vi.mock('@/api/hybrid/hybridServices', () => ({
+  createHybridWorkbenchServices: vi.fn(() => mocks.hybridServices),
 }))
 
 vi.mock('@/lib/runtime-mode', () => ({
@@ -115,6 +127,22 @@ describe('default workbench project-space services', () => {
     vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
 
     const services = createDefaultWorkbenchServices()
+
+    expect(services.feedbackApi).toBeDefined()
+  })
+
+  test('adds build-time feedback submission to a connected local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
+
+    const services = createDefaultWorkbenchServices({
+      isConnected: true,
+      backendUrl: 'https://backend.example.com',
+      apiBaseUrl: 'https://backend.example.com/api',
+      socketBaseUrl: 'https://backend.example.com',
+      socketPath: '/socket.io',
+      token: 'token',
+    })
 
     expect(services.feedbackApi).toBeDefined()
   })

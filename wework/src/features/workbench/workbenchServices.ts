@@ -181,14 +181,16 @@ export function createDefaultWorkbenchServices(
       cloudConnection.socketPath &&
       cloudConnection.token
     ) {
-      return createHybridWorkbenchServices({
-        backendUrl: cloudConnection.backendUrl,
-        apiBaseUrl: cloudConnection.apiBaseUrl,
-        socketBaseUrl: cloudConnection.socketBaseUrl,
-        socketPath: cloudConnection.socketPath,
-        token: cloudConnection.token,
-        user: cloudConnection.user,
-      })
+      return withConfiguredFeedbackApi(
+        createHybridWorkbenchServices({
+          backendUrl: cloudConnection.backendUrl,
+          apiBaseUrl: cloudConnection.apiBaseUrl,
+          socketBaseUrl: cloudConnection.socketBaseUrl,
+          socketPath: cloudConnection.socketPath,
+          token: cloudConnection.token,
+          user: cloudConnection.user,
+        })
+      )
     }
     return withConfiguredFeedbackApi(createLocalAppServices({ user: cloudConnection?.user }))
   }

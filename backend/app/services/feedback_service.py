@@ -5,11 +5,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem, loop_datetime_is_unset
+from app.models.feedback_submission import FeedbackSubmission
 from app.models.user import User
 from app.schemas.delivery import LoopItemCreate
 from app.schemas.feedback import FeedbackCreate, FeedbackResponse
@@ -18,7 +24,15 @@ from app.services.loop_items.external_provider import external_loop_item_provide
 from app.services.loop_items.provider_router import loop_item_provider_router
 
 CHANNEL_ERROR = "反馈通道异常，请联系开发者"
+SUBMISSION_IN_PROGRESS = "反馈正在提交，请稍后重试"
 EXTERNAL_PROVIDERS = {"github", "gitlab"}
+CLAIM_TIMEOUT = timedelta(minutes=15)
+
+
+@dataclass(frozen=True)
+class FeedbackClaim:
+    token: str | None
+    item_id: str | None
 
 
 class FeedbackService:
@@ -29,28 +43,22 @@ class FeedbackService:
         bundle: UploadFile,
     ) -> FeedbackResponse:
         project, user = self._configured_project_and_user(db)
-        existing = self._find_existing(db, project, user.id, values.report_id)
-        if existing is None:
-            created = loop_item_provider_router.create(
-                db,
-                project,
-                user,
-                LoopItemCreate(
-                    title=values.title,
-                    description=self._description(values),
-                    tags=["feedback", "wework"],
-                ),
+        claim = self._claim_submission(db, project.id, values.report_id)
+        try:
+            existing = self._claimed_or_existing_item(
+                db, project, user.id, values.report_id, claim
             )
-            item_id = str(created.values["id"])
-            internal_item = created.internal_item
-            if internal_item is not None:
-                internal_item.metadata_json = {
-                    **internal_item.metadata_json,
-                    "feedback_report_id": values.report_id,
-                }
-                db.commit()
-        else:
-            item_id, internal_item = existing
+            duplicate = existing is not None
+            if existing is not None:
+                item_id, internal_item = existing
+            else:
+                item_id, internal_item = self._create_item(db, project, user, values)
+                self._complete_claim(
+                    db, project.id, values.report_id, claim.token, item_id
+                )
+        except Exception:
+            self._release_claim(db, project.id, values.report_id, claim.token)
+            raise
 
         self._ensure_bundle(
             db, project, item_id, internal_item, user.id, values.report_id, bundle
@@ -59,9 +67,35 @@ class FeedbackService:
             report_id=values.report_id,
             project_id=str(project.id),
             item_id=item_id,
-            created_by_user_id=user.id,
-            duplicate=existing is not None,
+            duplicate=duplicate,
         )
+
+    @staticmethod
+    def _create_item(
+        db: Session,
+        project: CloudProject,
+        user: User,
+        values: FeedbackCreate,
+    ) -> tuple[str, LoopItem | None]:
+        created = loop_item_provider_router.create(
+            db,
+            project,
+            user,
+            LoopItemCreate(
+                title=values.title,
+                description=FeedbackService._description(values),
+                tags=["feedback", "wework"],
+            ),
+        )
+        item_id = str(created.values["id"])
+        internal_item = created.internal_item
+        if internal_item is not None:
+            internal_item.metadata_json = {
+                **internal_item.metadata_json,
+                "feedback_report_id": values.report_id,
+            }
+            db.commit()
+        return item_id, internal_item
 
     @staticmethod
     def _configured_project_and_user(db: Session) -> tuple[CloudProject, User]:
@@ -84,6 +118,108 @@ class FeedbackService:
         if user is None:
             raise FeedbackService._channel_error()
         return project, user
+
+    @staticmethod
+    def _claim_submission(
+        db: Session, project_id: str, report_id: str
+    ) -> FeedbackClaim:
+        token = str(uuid4())
+        now = datetime.now(UTC).replace(tzinfo=None)
+        submission = FeedbackSubmission(
+            project_id=project_id,
+            report_id=report_id,
+            claim_token=token,
+            claimed_at=now,
+        )
+        db.add(submission)
+        try:
+            db.commit()
+            return FeedbackClaim(token=token, item_id=None)
+        except IntegrityError:
+            db.rollback()
+
+        existing = (
+            db.query(FeedbackSubmission)
+            .filter_by(project_id=project_id, report_id=report_id)
+            .with_for_update()
+            .one()
+        )
+        if existing.item_id is not None:
+            item_id = existing.item_id
+            db.commit()
+            return FeedbackClaim(token=None, item_id=item_id)
+        if existing.claimed_at > now - CLAIM_TIMEOUT:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, SUBMISSION_IN_PROGRESS)
+        existing.claim_token = token
+        existing.claimed_at = now
+        db.commit()
+        return FeedbackClaim(token=token, item_id=None)
+
+    @staticmethod
+    def _complete_claim(
+        db: Session,
+        project_id: str,
+        report_id: str,
+        token: str | None,
+        item_id: str,
+    ) -> None:
+        submission = (
+            db.query(FeedbackSubmission)
+            .filter_by(project_id=project_id, report_id=report_id)
+            .with_for_update()
+            .one()
+        )
+        if token is None or submission.claim_token != token:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, SUBMISSION_IN_PROGRESS)
+        submission.item_id = item_id
+        db.commit()
+
+    @staticmethod
+    def _release_claim(
+        db: Session, project_id: str, report_id: str, token: str | None
+    ) -> None:
+        db.rollback()
+        if token is None:
+            return
+        submission = (
+            db.query(FeedbackSubmission)
+            .filter_by(project_id=project_id, report_id=report_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if (
+            submission is not None
+            and submission.item_id is None
+            and submission.claim_token == token
+        ):
+            db.delete(submission)
+            db.commit()
+        else:
+            db.rollback()
+
+    @staticmethod
+    def _claimed_or_existing_item(
+        db: Session,
+        project: CloudProject,
+        user_id: int,
+        report_id: str,
+        claim: FeedbackClaim,
+    ) -> tuple[str, LoopItem | None] | None:
+        if claim.item_id is not None:
+            internal_item = (
+                None
+                if project.task_provider in EXTERNAL_PROVIDERS
+                else db.get(LoopItem, claim.item_id)
+            )
+            return claim.item_id, internal_item
+        existing = FeedbackService._find_existing(db, project, user_id, report_id)
+        if existing is not None:
+            FeedbackService._complete_claim(
+                db, project.id, report_id, claim.token, existing[0]
+            )
+        return existing
 
     @staticmethod
     def _ensure_bundle(

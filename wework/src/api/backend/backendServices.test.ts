@@ -14,6 +14,7 @@ describe('createBackendWorkbenchServices', () => {
   })
 
   test('does not submit feedback to the connected Backend by default', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
     const services = createBackendWorkbenchServices(baseOptions)
 
     expect(services.feedbackApi).toBeUndefined()

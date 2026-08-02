@@ -6,14 +6,20 @@
 import io
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import BinaryIO
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from limits.storage import MemoryStorage
+from limits.strategies import FixedWindowRateLimiter
 from sqlalchemy.orm import Session
 
+from app.api.endpoints import feedback as feedback_endpoint
 from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem
+from app.models.feedback_submission import FeedbackSubmission
 from app.models.user import User
 from app.services.loop_items.external_provider import external_loop_item_provider
 
@@ -96,7 +102,6 @@ def test_submit_feedback_creates_board_item_for_feedback_project_owner(
         "report_id": "WF-100",
         "project_id": str(feedback_project.id),
         "item_id": "FEEDBACK-1",
-        "created_by_user_id": test_user.id,
         "duplicate": False,
     }
     item = test_db.get(LoopItem, "FEEDBACK-1")
@@ -165,6 +170,72 @@ def test_submit_feedback_is_idempotent_per_project_owner_and_report(
     assert second.json()["duplicate"] is True
     assert test_db.query(LoopItem).filter(LoopItem.id == "FEEDBACK-1").count() == 1
     assert len(feedback_storage.objects) == 1
+    submission = test_db.get(FeedbackSubmission, (str(feedback_project.id), "WF-RETRY"))
+    assert submission is not None
+    assert submission.item_id == "FEEDBACK-1"
+
+
+def test_submit_feedback_rejects_an_active_duplicate_claim(
+    test_client: TestClient,
+    test_db: Session,
+    feedback_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        settings, "WEWORK_FEEDBACK_PROJECT_ID", str(feedback_project.id)
+    )
+    test_db.add(
+        FeedbackSubmission(
+            project_id=str(feedback_project.id),
+            report_id="WF-IN-PROGRESS",
+            claim_token=str(uuid.uuid4()),
+            claimed_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+    )
+    test_db.commit()
+
+    response = test_client.post(
+        "/api/v1/feedback",
+        data=_feedback_form("WF-IN-PROGRESS", "Concurrent feedback"),
+        files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "反馈正在提交，请稍后重试"
+    assert (
+        test_db.query(LoopItem).filter(LoopItem.title == "Concurrent feedback").count()
+        == 0
+    )
+
+
+def test_submit_feedback_rate_limits_anonymous_callers_by_ip(
+    test_client: TestClient,
+    feedback_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        settings, "WEWORK_FEEDBACK_PROJECT_ID", str(feedback_project.id)
+    )
+    storage = MemoryStorage()
+    monkeypatch.setattr(feedback_endpoint.limiter, "_storage", storage)
+    monkeypatch.setattr(
+        feedback_endpoint.limiter,
+        "_limiter",
+        FixedWindowRateLimiter(storage),
+    )
+    monkeypatch.setattr(feedback_endpoint.limiter, "enabled", True)
+
+    responses = [
+        test_client.post(
+            "/api/v1/feedback",
+            data=_feedback_form(f"WF-RATE-{index}", f"Rate limit {index}"),
+            files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
+        )
+        for index in range(6)
+    ]
+
+    assert [response.status_code for response in responses[:5]] == [201] * 5
+    assert responses[5].status_code == 429
 
 
 def test_submit_feedback_reports_unavailable_channel_when_not_configured(
@@ -255,7 +326,7 @@ def test_submit_feedback_uses_gitlab_issue_provider_and_uploads_bundle(
 
     assert response.status_code == 201
     assert response.json()["item_id"] == "GLFEEDBACK-7"
-    assert response.json()["created_by_user_id"] == test_user.id
+    assert "created_by_user_id" not in response.json()
     assert uploaded == {
         "item_id": "GLFEEDBACK-7",
         "user_id": test_user.id,
@@ -311,9 +382,61 @@ def test_submit_feedback_uses_github_issue_without_persisting_bundle(
 
     assert response.status_code == 201
     assert response.json()["item_id"] == "GHFEEDBACK-9"
-    assert response.json()["created_by_user_id"] == test_user.id
+    assert "created_by_user_id" not in response.json()
     assert feedback_storage.objects == {}
     assert test_db.query(LoopItem).filter(LoopItem.id == "GHFEEDBACK-9").count() == 0
+
+
+def test_submit_feedback_releases_claim_after_provider_failure(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_id = str(uuid.uuid4())
+    project = CloudProject(
+        public_id=public_id,
+        project_key="RETRYFB",
+        name="Retry feedback",
+        description="",
+        created_by_user_id=test_user.id,
+        storage_prefix=f"projects/{public_id}",
+        metadata_json={"task_provider": "github", "provider_config": {}},
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    monkeypatch.setattr(settings, "WEWORK_FEEDBACK_PROJECT_ID", str(project.id))
+    monkeypatch.setattr(external_loop_item_provider, "list", lambda *_args: [])
+
+    def fail_create(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise HTTPException(502, "provider failed")
+
+    monkeypatch.setattr(external_loop_item_provider, "create", fail_create)
+    first = test_client.post(
+        "/api/v1/feedback",
+        data=_feedback_form("WF-PROVIDER-RETRY", "Retry provider"),
+        files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
+    )
+
+    assert first.status_code == 502
+    assert (
+        test_db.get(FeedbackSubmission, (str(project.id), "WF-PROVIDER-RETRY")) is None
+    )
+
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "create",
+        lambda *_args, **_kwargs: {"id": "RETRYFB-3"},
+    )
+    second = test_client.post(
+        "/api/v1/feedback",
+        data=_feedback_form("WF-PROVIDER-RETRY", "Retry provider"),
+        files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
+    )
+
+    assert second.status_code == 201
+    assert second.json()["item_id"] == "RETRYFB-3"
 
 
 def test_gitlab_feedback_bundle_uses_project_upload_and_updates_issue(
