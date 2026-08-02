@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from limits.storage import MemoryStorage
 from limits.strategies import FixedWindowRateLimiter
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.endpoints import feedback as feedback_endpoint
@@ -21,6 +22,7 @@ from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItem
 from app.models.feedback_submission import FeedbackSubmission
 from app.models.user import User
+from app.services.feedback_service import SUBMISSION_IN_PROGRESS, FeedbackService
 from app.services.loop_items.external_provider import external_loop_item_provider
 
 
@@ -201,10 +203,43 @@ def test_submit_feedback_rejects_an_active_duplicate_claim(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "反馈正在提交，请稍后重试"
+    assert response.json()["detail"] == SUBMISSION_IN_PROGRESS
     assert (
         test_db.query(LoopItem).filter(LoopItem.title == "Concurrent feedback").count()
         == 0
+    )
+
+
+def test_feedback_claim_retries_when_conflicting_row_was_deleted(
+    test_db: Session,
+    feedback_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_commit = test_db.commit
+    commit_calls = 0
+
+    def commit_with_deleted_conflict() -> None:
+        nonlocal commit_calls
+        commit_calls += 1
+        if commit_calls == 1:
+            raise IntegrityError("insert feedback claim", {}, Exception("conflict"))
+        original_commit()
+
+    monkeypatch.setattr(test_db, "commit", commit_with_deleted_conflict)
+
+    claim = FeedbackService._claim_submission(
+        test_db, str(feedback_project.id), "WF-DELETED-CLAIM"
+    )
+
+    assert claim.item_id is None
+    assert claim.token is not None
+    assert commit_calls == 2
+    assert (
+        test_db.get(
+            FeedbackSubmission,
+            (str(feedback_project.id), "WF-DELETED-CLAIM"),
+        )
+        is not None
     )
 
 

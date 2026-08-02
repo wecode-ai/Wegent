@@ -15,6 +15,7 @@ class FeedbackSubmission(Base):
 
     project_id = Column(
         String(64),
+        # CloudProject uses single-table inheritance in loop_items.
         ForeignKey("loop_items.id", ondelete="CASCADE"),
         primary_key=True,
     )

@@ -27,6 +27,7 @@ CHANNEL_ERROR = "反馈通道异常，请联系开发者"
 SUBMISSION_IN_PROGRESS = "反馈正在提交，请稍后重试"
 EXTERNAL_PROVIDERS = {"github", "gitlab"}
 CLAIM_TIMEOUT = timedelta(minutes=15)
+CLAIM_INSERT_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -125,36 +126,44 @@ class FeedbackService:
     ) -> FeedbackClaim:
         token = str(uuid4())
         now = datetime.now(UTC).replace(tzinfo=None)
-        submission = FeedbackSubmission(
-            project_id=project_id,
-            report_id=report_id,
-            claim_token=token,
-            claimed_at=now,
-        )
-        db.add(submission)
-        try:
+        for attempt in range(CLAIM_INSERT_ATTEMPTS):
+            db.add(
+                FeedbackSubmission(
+                    project_id=project_id,
+                    report_id=report_id,
+                    claim_token=token,
+                    claimed_at=now,
+                )
+            )
+            try:
+                db.commit()
+                return FeedbackClaim(token=token, item_id=None)
+            except IntegrityError as error:
+                db.rollback()
+
+            existing = (
+                db.query(FeedbackSubmission)
+                .filter_by(project_id=project_id, report_id=report_id)
+                .with_for_update()
+                .one_or_none()
+            )
+            if existing is None:
+                db.rollback()
+                if attempt == CLAIM_INSERT_ATTEMPTS - 1:
+                    raise error
+                continue
+            if existing.item_id is not None:
+                item_id = existing.item_id
+                db.commit()
+                return FeedbackClaim(token=None, item_id=item_id)
+            if existing.claimed_at > now - CLAIM_TIMEOUT:
+                db.rollback()
+                raise HTTPException(status.HTTP_409_CONFLICT, SUBMISSION_IN_PROGRESS)
+            existing.claim_token = token
+            existing.claimed_at = now
             db.commit()
             return FeedbackClaim(token=token, item_id=None)
-        except IntegrityError:
-            db.rollback()
-
-        existing = (
-            db.query(FeedbackSubmission)
-            .filter_by(project_id=project_id, report_id=report_id)
-            .with_for_update()
-            .one()
-        )
-        if existing.item_id is not None:
-            item_id = existing.item_id
-            db.commit()
-            return FeedbackClaim(token=None, item_id=item_id)
-        if existing.claimed_at > now - CLAIM_TIMEOUT:
-            db.rollback()
-            raise HTTPException(status.HTTP_409_CONFLICT, SUBMISSION_IN_PROGRESS)
-        existing.claim_token = token
-        existing.claimed_at = now
-        db.commit()
-        return FeedbackClaim(token=token, item_id=None)
+        raise RuntimeError("feedback claim attempts exhausted")
 
     @staticmethod
     def _complete_claim(

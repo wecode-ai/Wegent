@@ -146,4 +146,20 @@ describe('default workbench project-space services', () => {
 
     expect(services.feedbackApi).toBeDefined()
   })
+
+  test('hides feedback submission in an unconfigured connected local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
+
+    const services = createDefaultWorkbenchServices({
+      isConnected: true,
+      backendUrl: 'https://backend.example.com',
+      apiBaseUrl: 'https://backend.example.com/api',
+      socketBaseUrl: 'https://backend.example.com',
+      socketPath: '/socket.io',
+      token: 'token',
+    })
+
+    expect(services.feedbackApi).toBeUndefined()
+  })
 })
