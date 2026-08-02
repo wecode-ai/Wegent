@@ -2042,6 +2042,7 @@ describe('ScrollableMessageArea', () => {
       top: 1000,
       behavior: 'auto',
     })
+    flushScheduledTimers()
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
     scrollHeight = 1600
@@ -2051,6 +2052,87 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  test('keeps scrolling through layout measurement when the waiting indicator appears after send', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    const previousMessage = {
+      id: 'previous-assistant',
+      role: 'assistant' as const,
+      content: '之前的回答',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const latestUserMessage = {
+      id: 'latest-user',
+      role: 'user' as const,
+      content: '请继续处理',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="waiting-after-send" messages={[previousMessage]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    let scrollHeight = 600
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 400,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="waiting-after-send"
+        messages={[previousMessage, latestUserMessage]}
+      />
+    )
+
+    scrollHeight = 900
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="waiting-after-send"
+        messages={[previousMessage, latestUserMessage]}
+        isWaitingForAssistant
+      />
+    )
+    scrollHeight = 1000
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(screen.getByTestId('thinking-indicator')).toBeInTheDocument()
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1000,
+      behavior: 'auto',
+    })
     vi.unstubAllGlobals()
   })
 
