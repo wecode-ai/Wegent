@@ -21,6 +21,7 @@ const ATTACHMENT_BASE64 =
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
 const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
 const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
@@ -443,6 +444,7 @@ export function createDesktopScenario({
   let timerStage = 'initial'
   let releaseAppend
   let releaseResponse
+  let releaseStart
   let resolveRequest
   let targetRequest
   const appendRelease = new Promise(resolve => {
@@ -450,6 +452,9 @@ export function createDesktopScenario({
   })
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
+  })
+  const startRelease = new Promise(resolve => {
+    releaseStart = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -509,6 +514,7 @@ export function createDesktopScenario({
       if (requestContainsPrompt(body)) {
         targetRequest = body
         resolveRequest()
+        await startRelease
         const stream = streamingEvents(responseId)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -699,6 +705,24 @@ export function createDesktopScenario({
         JSON.stringify(targetRequest).includes(ATTACHMENT_FILENAME),
         'The real Codex request omitted the streaming attachment'
       )
+      await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const waitingScrollerMetrics = await waitForBottom(
+        control,
+        'The conversation scroller while waiting for the assistant',
+        uiTimeoutMs
+      )
+      const thinkingIndicatorMetrics = await getSingleElementMetrics(
+        control,
+        THINKING_INDICATOR_SELECTOR,
+        'The thinking indicator after sending'
+      )
+      assertElementFullyVisible(
+        thinkingIndicatorMetrics,
+        waitingScrollerMetrics,
+        'The thinking indicator after sending'
+      )
       await control.command('markElementWithText', USER_MESSAGE_SELECTOR, {
         text: PROMPT,
         value: USER_MESSAGE_E2E_ID,
@@ -719,11 +743,17 @@ export function createDesktopScenario({
         scrollerAfterSend,
         'The latest user message after sending'
       )
+      releaseStart()
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+      await waitForBottom(
+        control,
+        'The conversation scroller while the assistant response starts',
+        uiTimeoutMs
+      )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

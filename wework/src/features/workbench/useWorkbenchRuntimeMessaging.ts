@@ -281,12 +281,23 @@ export function useWorkbenchRuntimeMessaging({
       try {
         const response = await executorClient.runtime.guideRuntimeTask(request)
         if (response.accepted === false || response.success === false) {
+          console.warn('[Wework] Runtime guidance rejected', {
+            taskId: response.taskId ?? response.task_id ?? request.address.taskId,
+            deviceId: request.address.deviceId,
+            code: response.code ?? null,
+            error: response.error ?? null,
+          })
           return {
             sent: false,
             code: response.code,
             error: response.error || '引导发送失败',
           }
         }
+        console.info('[Wework] Runtime guidance accepted', {
+          taskId: response.taskId ?? response.task_id ?? request.address.taskId,
+          deviceId: request.address.deviceId,
+          turnId: response.turnId ?? response.turn_id ?? null,
+        })
         void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime guidance accepted but work list refresh failed', {
             taskId: response.taskId ?? response.task_id ?? request.address.taskId,

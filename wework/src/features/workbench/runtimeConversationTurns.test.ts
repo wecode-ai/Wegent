@@ -80,6 +80,38 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('corrects a provisional turn id by exact client user message id', () => {
+    let turns = reduceRuntimeConversationTurns([], {
+      type: 'user_added',
+      message: userMessage('client-user-1', 'Prompt'),
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-from-start-response',
+      clientUserMessageId: 'client-user-1',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-from-started-notification',
+      clientUserMessageId: 'client-user-1',
+    })
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      id: 'turn-from-started-notification',
+      clientUserMessageId: 'client-user-1',
+      status: 'streaming',
+    })
+    expect(turns[0].items[0]).toMatchObject({
+      id: 'client-user-1',
+      message: {
+        subtaskId: 'turn-from-started-notification',
+        turnId: 'turn-from-started-notification',
+      },
+    })
+  })
+
   test('does not synthesize a Codex turn from a terminal event', () => {
     const turns = reduceRuntimeConversationTurns(
       [

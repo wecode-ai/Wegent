@@ -9,6 +9,24 @@ export interface AppliedRuntimeGuidanceMessage extends WorkbenchMessage {
   runtimeGuidance: true
 }
 
+export function createOptimisticRuntimeGuidanceMessage(
+  guidanceMessage: RuntimePaneQueuedMessage
+): WorkbenchMessage & { role: 'user'; runtimeGuidance: true } {
+  return {
+    id: guidanceMessage.id,
+    role: 'user',
+    content: guidanceMessage.content,
+    ...(guidanceMessage.attachments && {
+      attachments: persistAttachmentReferences(guidanceMessage.attachments),
+    }),
+    status: 'pending',
+    createdAt: guidanceMessage.createdAt,
+    runtimeGuidance: true,
+    ...(guidanceMessage.runtimeGoalRequest && { runtimeGoalRequest: true }),
+    ...(guidanceMessage.codeComments?.length && { codeComments: guidanceMessage.codeComments }),
+  }
+}
+
 export function createAppliedRuntimeGuidanceMessage(
   guidanceMessage: RuntimePaneQueuedMessage,
   payload: RuntimeGuidanceAppliedPayload

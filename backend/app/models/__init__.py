@@ -26,6 +26,7 @@ from app.models.delivery import (
     LoopItemCollaborator,
 )
 from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.feedback_submission import FeedbackSubmission
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
@@ -73,6 +74,7 @@ __all__ = [
     "LoopItemCollaborator",
     "Delivery",
     "DeliveryAsset",
+    "FeedbackSubmission",
     "User",
     "Kind",
     "IMPrivateSession",

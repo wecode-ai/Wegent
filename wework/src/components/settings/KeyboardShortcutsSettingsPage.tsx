@@ -17,6 +17,7 @@ import {
   TOGGLE_SIDEBAR_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
   TOGGLE_MODEL_SELECTOR_COMMAND,
+  TOGGLE_PRIORITY_FILTER_COMMAND,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
   normalizeKeybinding,
@@ -57,6 +58,10 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
     label: 'keyboard_shortcuts_toggle_model_selector',
     description: 'keyboard_shortcuts_toggle_model_selector_description',
   },
+  [TOGGLE_PRIORITY_FILTER_COMMAND]: {
+    label: 'keyboard_shortcuts_toggle_priority_filter',
+    description: 'keyboard_shortcuts_toggle_priority_filter_description',
+  },
   [INCREASE_FONT_SIZE_COMMAND]: {
     label: 'keyboard_shortcuts_increase_font_size',
     description: 'keyboard_shortcuts_increase_font_size_description',
@@ -79,6 +84,7 @@ function commandFallback(command: string): string {
   if (command === TOGGLE_SIDEBAR_COMMAND) return '切换边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '切换侧边面板'
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '选择模型'
+  if (command === TOGGLE_PRIORITY_FILTER_COMMAND) return '切换优先级筛选'
   if (command === INCREASE_FONT_SIZE_COMMAND) return '增大字号'
   if (command === DECREASE_FONT_SIZE_COMMAND) return '减小字号'
   if (command === RESET_FONT_SIZE_COMMAND) return '重置字号'
@@ -93,6 +99,7 @@ function commandDescriptionFallback(command: string): string {
   if (command === TOGGLE_SIDEBAR_COMMAND) return '显示或隐藏边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '显示或隐藏侧边面板'
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '打开或关闭当前输入区的模型选择器'
+  if (command === TOGGLE_PRIORITY_FILTER_COMMAND) return '显示或隐藏需要关注的任务'
   if (command === INCREASE_FONT_SIZE_COMMAND) return '同时增大 UI 和代码字号'
   if (command === DECREASE_FONT_SIZE_COMMAND) return '同时减小 UI 和代码字号'
   if (command === RESET_FONT_SIZE_COMMAND) return '将 UI 和代码字号恢复为默认值'
