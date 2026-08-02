@@ -250,6 +250,7 @@ function ScrollableMessagePaneContent({
   const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
   const previousLoadingRef = useRef(loading)
+  const previousWaitingForAssistantRef = useRef(isWaitingForAssistant)
   const hasRenderedRef = useRef(false)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
@@ -571,7 +572,10 @@ function ScrollableMessagePaneContent({
   )
 
   const scheduleStableScrollToBottom = useCallback(
-    (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
+    (
+      behavior: ScrollBehavior = 'auto',
+      options: { saveSnapshot?: boolean; releaseAfterStable?: boolean } = {}
+    ) => {
       clearScheduledScrolls()
       followingBottomKeyRef.current = currentScrollKey
       STABLE_SCROLL_DELAYS.forEach(delay => {
@@ -579,6 +583,26 @@ function ScrollableMessagePaneContent({
           scrollToBottom(behavior, options)
         }, delay)
       })
+      if (options.releaseAfterStable) {
+        scheduleScrollTimer(
+          () => {
+            if (followingBottomKeyRef.current === currentScrollKey) {
+              followingBottomKeyRef.current = null
+              const element = activeScrollRefRef.current.current
+              const distanceToBottom = element
+                ? element.scrollHeight - element.clientHeight - element.scrollTop
+                : Number.POSITIVE_INFINITY
+              if (
+                distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD &&
+                !userScrollPausedAutoFollowRef.current
+              ) {
+                preserveLatestUserTurnRef.current = false
+              }
+            }
+          },
+          Math.max(...STABLE_SCROLL_DELAYS) + 50
+        )
+      }
     },
     [clearScheduledScrolls, currentScrollKey, scheduleScrollTimer, scrollToBottom]
   )
@@ -610,6 +634,8 @@ function ScrollableMessagePaneContent({
       lastMessageChanged &&
       latestGuidanceMessageId !== null &&
       previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
+    const waitingForAssistantStarted =
+      !conversationChanged && !previousWaitingForAssistantRef.current && isWaitingForAssistant
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -621,6 +647,7 @@ function ScrollableMessagePaneContent({
       (conversationChanged ||
         messagesLoaded ||
         guidanceMessageApplied ||
+        waitingForAssistantStarted ||
         latestUserMessageChanged ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
@@ -630,6 +657,7 @@ function ScrollableMessagePaneContent({
     previousLatestGuidanceMessageIdRef.current = latestGuidanceMessageId
     previousMessageCountRef.current = messages.length
     previousLoadingRef.current = loading
+    previousWaitingForAssistantRef.current = isWaitingForAssistant
     hasRenderedRef.current = true
 
     if (conversationChanged) {
@@ -656,7 +684,10 @@ function ScrollableMessagePaneContent({
     if (shouldForceBottom) {
       setScrollToBottom('auto', { saveSnapshot: false })
       if (preserveLatestUserTurnRef.current) {
-        clearScheduledScrolls()
+        scheduleStableScrollToBottom('auto', {
+          saveSnapshot: false,
+          releaseAfterStable: true,
+        })
         return
       }
       scheduleStableScrollToBottom('auto', { saveSnapshot: false })
@@ -664,7 +695,9 @@ function ScrollableMessagePaneContent({
     }
 
     if (preserveLatestUserTurnRef.current) {
-      clearScheduledScrolls()
+      if (followingBottomKeyRef.current !== currentScrollKey) {
+        clearScheduledScrolls()
+      }
       return
     }
 
@@ -677,6 +710,7 @@ function ScrollableMessagePaneContent({
     currentScrollKey,
     clearScheduledScrolls,
     isTurnNavigationAutoScrollSuspended,
+    isWaitingForAssistant,
     lastMessage,
     latestGuidanceMessageId,
     loading,
