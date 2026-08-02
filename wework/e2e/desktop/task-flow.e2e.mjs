@@ -358,6 +358,7 @@ const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
+const BUILD_ONLY = process.argv.includes('--build-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
@@ -438,6 +439,7 @@ function validateDesktopSegmentOptions() {
     ['--message-restoration-only', MESSAGE_RESTORATION_ONLY],
     ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
     ['--task-plan-only', TASK_PLAN_ONLY],
+    ['--build-only', BUILD_ONLY],
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
     ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
   ].filter(([, enabled]) => enabled)
@@ -456,6 +458,9 @@ function validateDesktopSegmentOptions() {
   }
   if (PLUGINS_ONLY && DESKTOP_CHECKPOINTS.includes(SELECTED_DESKTOP_SEGMENT)) {
     throw new Error('--plugins-only accepts only plugin E2E segments')
+  }
+  if (BUILD_ONLY && !process.env.WEWORK_E2E_BUILD_MANIFEST) {
+    throw new Error('--build-only requires WEWORK_E2E_BUILD_MANIFEST')
   }
 }
 
@@ -2292,6 +2297,112 @@ async function createCheckpointTaskFixture(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   return waitForNewTaskRow(control, knownTaskRows, 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK')
+}
+
+async function verifyPriorityFilter({ composerSelector, control }) {
+  control.setScenario('request_user_input')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-plan-mode-button"]')
+  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    REQUEST_USER_INPUT_PROMPT,
+    'request_user_input'
+  )
+
+  const requestInputDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const requestInputTaskId = requestInputDebugSnapshot.workbench?.currentRuntimeTask?.taskId
+  assert.ok(requestInputTaskId, 'The priority-filter fixture did not expose its runtime task ID')
+  const requestInputTaskRowTestId = `runtime-local-task-row-${requestInputTaskId}`
+  await control.command('waitFor', `[data-testid="${requestInputTaskRowTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  try {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('press', 'body', { key: 'Escape' })
+    await captureVerificationScreenshot(control, 'priority-filter-01-background-task.png')
+
+    await control.command('click', '[data-testid="runtime-priority-filter-button"]')
+    await control.command('waitFor', '[data-testid="runtime-priority-section"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      `[data-testid="runtime-priority-section"] [data-testid="${requestInputTaskRowTestId}"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+    const filteredSidebarSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="desktop-sidebar"]')
+    )
+    assert.equal(
+      filteredSidebarSnapshot.testIds.includes('new-chat-button'),
+      true,
+      'Priority filtering removed the primary new-task navigation'
+    )
+    assert.equal(
+      filteredSidebarSnapshot.testIds.includes('plugins-button'),
+      true,
+      'Priority filtering removed the plugins navigation'
+    )
+    assert.equal(
+      filteredSidebarSnapshot.testIds.includes('projects-section-toggle'),
+      false,
+      'Priority filtering kept the regular project list visible'
+    )
+    await captureVerificationScreenshot(control, 'priority-filter-02-filtered-sidebar.png')
+
+    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const restoredSidebarSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="desktop-sidebar"]')
+    )
+    assert.equal(
+      restoredSidebarSnapshot.testIds.includes('runtime-priority-section'),
+      false,
+      'The priority shortcut did not restore the regular sidebar'
+    )
+    await captureVerificationScreenshot(control, 'priority-filter-03-shortcut-restored-sidebar.png')
+  } finally {
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Timed out releasing the priority-filter request-user-input response'
+    )
+  }
+
+  await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+    text: REQUEST_USER_INPUT_QUESTION,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 }
 
 async function verifyBackgroundCompletionRestore({
@@ -4156,6 +4267,9 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     )
 
     await control.command('click', '[data-testid="automation-button"]')
+    await control.command('waitFor', `[data-testid="${automationRow}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
     await control.command('click', `[data-testid="${automationRow}"]`)
     await waitForSnapshot(
       control,
@@ -9999,7 +10113,7 @@ function hostCodexTarget() {
 }
 
 async function resolveDesktopCodexBinary() {
-  const configured = process.env.WEWORK_E2E_CODEX_BIN
+  const configured = process.env.WEWORK_E2E_CODEX_BIN || process.env.CODEX_BIN
   if (configured) {
     return resolveExecutable(configured, 'codex', 'Configured Wework E2E Codex')
   }
@@ -10968,6 +11082,10 @@ async function main() {
         'utf8'
       )
     }
+    if (BUILD_ONLY) {
+      console.log(`Wework desktop E2E build passed. Manifest: ${buildManifestPath}`)
+      return
+    }
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
     }
@@ -11432,6 +11550,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyWorkspaceTabIsolation(control)
       if (shouldStopAfterDesktopCheckpoint('workspace-tabs')) {
         console.log(`Wework desktop workspace-tabs checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('priority-filter')) {
+      phase = 'priority-filter'
+      await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
+        console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

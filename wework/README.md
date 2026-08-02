@@ -127,6 +127,7 @@ On first launch, trust the developer certificate in iOS Settings. The phone must
 
 - [Local-First Cloud Connection](../docs/en/developer-guide/wework-cloud-connection.md)
 - [Runtime Local Work](../docs/en/developer-guide/runtime-local-work.md)
+- [Priority Task Filtering](../docs/en/wegent/user-guide/coding/priority-activity-filter.md)
 - [Wework macOS Release](../docs/en/developer-guide/wework-macos-release.md)
 - [Wework Performance Diagnostics](../docs/en/developer-guide/wework-performance-diagnostics.md)
 - [Wework E2E Automation](../docs/en/developer-guide/wework-e2e-automation.md)
