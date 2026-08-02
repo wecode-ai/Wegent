@@ -69,7 +69,7 @@ export function createBackendWorkbenchServices(
     taskApi,
     deviceApi,
     deliveryApi,
-    feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
+    feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl, resolveToken) : undefined,
     projectSpaceApis: {
       cloud: deliveryApi,
       defaultLocation: 'cloud',

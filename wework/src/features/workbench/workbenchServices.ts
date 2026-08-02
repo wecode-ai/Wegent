@@ -144,9 +144,14 @@ interface CloudConnectionServicesSnapshot {
   user?: User
 }
 
-function withConfiguredFeedbackApi(services: WorkbenchServices): WorkbenchServices {
+function withConfiguredFeedbackApi(
+  services: WorkbenchServices,
+  getToken: () => string | null
+): WorkbenchServices {
   const feedbackUrl = getRuntimeConfig().feedbackUrl
-  return feedbackUrl ? { ...services, feedbackApi: createFeedbackApi(feedbackUrl) } : services
+  return feedbackUrl
+    ? { ...services, feedbackApi: createFeedbackApi(feedbackUrl, getToken) }
+    : services
 }
 
 export function createExecutorClientForWorkbenchServices(
@@ -189,10 +194,14 @@ export function createDefaultWorkbenchServices(
           socketPath: cloudConnection.socketPath,
           token: cloudConnection.token,
           user: cloudConnection.user,
-        })
+        }),
+        () => cloudConnection.token
       )
     }
-    return withConfiguredFeedbackApi(createLocalAppServices({ user: cloudConnection?.user }))
+    return withConfiguredFeedbackApi(
+      createLocalAppServices({ user: cloudConnection?.user }),
+      () => cloudConnection?.token ?? null
+    )
   }
 
   const cloudServices = createBackendWorkbenchServices()

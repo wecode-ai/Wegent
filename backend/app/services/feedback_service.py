@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -40,10 +40,11 @@ class FeedbackService:
     def submit(
         self,
         db: Session,
+        user: User,
         values: FeedbackCreate,
         bundle: UploadFile,
     ) -> FeedbackResponse:
-        project, user = self._configured_project_and_user(db)
+        project = self._configured_project(db)
         claim = self._claim_submission(db, project.id, values.report_id)
         try:
             existing = self._claimed_or_existing_item(
@@ -68,6 +69,7 @@ class FeedbackService:
             report_id=values.report_id,
             project_id=str(project.id),
             item_id=item_id,
+            created_by_user_id=user.id,
             duplicate=duplicate,
         )
 
@@ -99,7 +101,7 @@ class FeedbackService:
         return item_id, internal_item
 
     @staticmethod
-    def _configured_project_and_user(db: Session) -> tuple[CloudProject, User]:
+    def _configured_project(db: Session) -> CloudProject:
         project_id = settings.WEWORK_FEEDBACK_PROJECT_ID.strip()
         if not project_id:
             raise FeedbackService._channel_error()
@@ -113,19 +115,14 @@ class FeedbackService:
         )
         if project is None:
             raise FeedbackService._channel_error()
-        if project.created_by_user_id is None:
-            raise FeedbackService._channel_error()
-        user = db.get(User, project.created_by_user_id)
-        if user is None:
-            raise FeedbackService._channel_error()
-        return project, user
+        return project
 
     @staticmethod
     def _claim_submission(
         db: Session, project_id: str, report_id: str
     ) -> FeedbackClaim:
         token = str(uuid4())
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         for attempt in range(CLAIM_INSERT_ATTEMPTS):
             db.add(
                 FeedbackSubmission(

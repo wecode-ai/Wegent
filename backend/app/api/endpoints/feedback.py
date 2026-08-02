@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.rate_limit import get_limiter
+from app.core.security import get_current_user
+from app.models.user import User
 from app.schemas.feedback import FeedbackCreate, FeedbackResponse
 from app.services.feedback_service import feedback_service
 
@@ -38,6 +40,7 @@ def submit_feedback(
     context: str = Form("{}"),
     bundle: UploadFile = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     try:
         parsed_context = json.loads(context)
@@ -53,4 +56,4 @@ def submit_feedback(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "context must be an object"
         )
-    return feedback_service.submit(db, values, bundle)
+    return feedback_service.submit(db, current_user, values, bundle)
