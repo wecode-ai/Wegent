@@ -358,6 +358,7 @@ const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
 const MESSAGE_RESTORATION_ONLY = process.argv.includes('--message-restoration-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
+const BUILD_ONLY = process.argv.includes('--build-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
@@ -438,6 +439,7 @@ function validateDesktopSegmentOptions() {
     ['--message-restoration-only', MESSAGE_RESTORATION_ONLY],
     ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
     ['--task-plan-only', TASK_PLAN_ONLY],
+    ['--build-only', BUILD_ONLY],
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
     ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
   ].filter(([, enabled]) => enabled)
@@ -456,6 +458,9 @@ function validateDesktopSegmentOptions() {
   }
   if (PLUGINS_ONLY && DESKTOP_CHECKPOINTS.includes(SELECTED_DESKTOP_SEGMENT)) {
     throw new Error('--plugins-only accepts only plugin E2E segments')
+  }
+  if (BUILD_ONLY && !process.env.WEWORK_E2E_BUILD_MANIFEST) {
+    throw new Error('--build-only requires WEWORK_E2E_BUILD_MANIFEST')
   }
 }
 
@@ -9999,7 +10004,7 @@ function hostCodexTarget() {
 }
 
 async function resolveDesktopCodexBinary() {
-  const configured = process.env.WEWORK_E2E_CODEX_BIN
+  const configured = process.env.WEWORK_E2E_CODEX_BIN || process.env.CODEX_BIN
   if (configured) {
     return resolveExecutable(configured, 'codex', 'Configured Wework E2E Codex')
   }
@@ -10967,6 +10972,10 @@ async function main() {
         )}\n`,
         'utf8'
       )
+    }
+    if (BUILD_ONLY) {
+      console.log(`Wework desktop E2E build passed. Manifest: ${buildManifestPath}`)
+      return
     }
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)

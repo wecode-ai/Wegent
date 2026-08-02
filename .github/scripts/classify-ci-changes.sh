@@ -41,7 +41,10 @@ classify_path() {
       .github/scripts/start-frontend-e2e-server.sh)
       changed[platform_e2e]=true
       ;;
-    .github/workflows/wework-e2e.yml)
+    .github/workflows/wework-e2e.yml | \
+      .github/scripts/archive-wework-core-e2e-build.sh | \
+      .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;
     package.json | pnpm-lock.yaml | pnpm-workspace.yaml)

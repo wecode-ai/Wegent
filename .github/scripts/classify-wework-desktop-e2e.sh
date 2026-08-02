@@ -168,8 +168,10 @@ classify_path() {
       select_all_desktop_suites
       ;;
     .github/workflows/wework-e2e.yml | \
+      .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-ci-changes.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
+      .github/scripts/restore-wework-core-e2e-build.sh | \
       .github/scripts/test-classify-ci-changes.sh)
       select_all_desktop_suites
       ;;
@@ -189,31 +191,32 @@ append_matrix_entry() {
   printf -v entry \
     '{"id":"%s","name":"%s","command":"%s","segment":"%s"}' \
     "$id" "$name" "$command" "$segment"
-  matrix_entries+=("$entry")
+  if [[ "$command" == "e2e:desktop" ]]; then
+    core_matrix_entries+=("$entry")
+  else
+    other_matrix_entries+=("$entry")
+  fi
 }
 
 build_matrix() {
-  matrix_entries=()
+  core_matrix_entries=()
+  other_matrix_entries=()
 
-  if [[ "${selected[core:all]:-false}" == "true" ]]; then
-    append_matrix_entry core Core e2e:desktop
-  else
-    local segment
-    for segment in "${core_segments[@]}"; do
-      if [[ "${selected[core:$segment]:-false}" == "true" ]]; then
-        append_matrix_entry \
-          "core-$segment" \
-          "Core / $segment" \
-          e2e:desktop \
-          "$segment"
-      fi
-    done
-  fi
+  local segment
+  for segment in "${core_segments[@]}"; do
+    if [[ "${selected[core:all]:-false}" == "true" || \
+      "${selected[core:$segment]:-false}" == "true" ]]; then
+      append_matrix_entry \
+        "core-$segment" \
+        "Core / $segment" \
+        e2e:desktop \
+        "$segment"
+    fi
+  done
 
   if [[ "${selected[plugins:all]:-false}" == "true" ]]; then
     append_matrix_entry plugins Plugins e2e:desktop:plugins
   else
-    local segment
     for segment in "${plugin_segments[@]}"; do
       if [[ "${selected[plugins:$segment]:-false}" == "true" ]]; then
         append_matrix_entry \
@@ -248,14 +251,30 @@ fi
 
 build_matrix
 
-matrix_json='{"include":[]}'
+core_matrix_json='{"include":[]}'
+other_matrix_json='{"include":[]}'
+run_core=false
+run_other=false
 run_desktop=false
-if ((${#matrix_entries[@]} > 0)); then
-  joined_entries="$(IFS=,; printf '%s' "${matrix_entries[*]}")"
-  matrix_json="{\"include\":[$joined_entries]}"
+
+if ((${#core_matrix_entries[@]} > 0)); then
+  joined_core_entries="$(IFS=,; printf '%s' "${core_matrix_entries[*]}")"
+  core_matrix_json="{\"include\":[$joined_core_entries]}"
+  run_core=true
+  run_desktop=true
+fi
+if ((${#other_matrix_entries[@]} > 0)); then
+  joined_other_entries="$(IFS=,; printf '%s' "${other_matrix_entries[*]}")"
+  other_matrix_json="{\"include\":[$joined_other_entries]}"
+  run_other=true
   run_desktop=true
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-printf 'wework_desktop_e2e=%s\n' "$run_desktop" >> "$output_file"
-printf 'wework_desktop_e2e_matrix=%s\n' "$matrix_json" >> "$output_file"
+{
+  printf 'wework_desktop_e2e=%s\n' "$run_desktop"
+  printf 'wework_desktop_core_e2e=%s\n' "$run_core"
+  printf 'wework_desktop_core_e2e_matrix=%s\n' "$core_matrix_json"
+  printf 'wework_desktop_other_e2e=%s\n' "$run_other"
+  printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
+} >> "$output_file"
