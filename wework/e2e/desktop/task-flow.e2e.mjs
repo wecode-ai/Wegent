@@ -4267,6 +4267,9 @@ async function verifyAutomationLifecycle(control, workspacePath) {
     )
 
     await control.command('click', '[data-testid="automation-button"]')
+    await control.command('waitFor', `[data-testid="${automationRow}"]`, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
     await control.command('click', `[data-testid="${automationRow}"]`)
     await waitForSnapshot(
       control,
