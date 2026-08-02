@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
-    codex_phase::{codex_item_id, codex_phase_is_final, codex_phase_name, normalize_codex_phase},
+    codex_phase::{codex_item_id, codex_phase_is_process, codex_phase_name, normalize_codex_phase},
     logging::log_executor_event,
 };
 
@@ -75,7 +75,7 @@ pub(crate) fn map_text_chunk(
             let delta = raw_string_field(params, "delta")
                 .filter(|delta| !delta.is_empty())
                 .ok_or("missing_agent_message_delta")?;
-            if !codex_phase_is_final(resolved_phase) {
+            if codex_phase_is_process(resolved_phase) {
                 Ok(Some(TextChunkMapping::ProcessDelta {
                     process_kind: "assistant_message",
                     block_type: "text",
@@ -324,10 +324,10 @@ fn completed_assistant_text_kind(
     let text = extract_text(item).filter(|content| !content.is_empty())?;
     let phase =
         assistant_message_phase_name(item).or_else(|| resolved_phase.map(normalize_codex_phase));
-    if codex_phase_is_final(phase.as_deref()) {
-        Some(CompletedAssistantTextKind::Final(text))
-    } else {
+    if codex_phase_is_process(phase.as_deref()) {
         Some(CompletedAssistantTextKind::Process(text))
+    } else {
+        Some(CompletedAssistantTextKind::Final(text))
     }
 }
 

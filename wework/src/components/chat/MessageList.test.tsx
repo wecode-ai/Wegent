@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock } from '@/types/workbench'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
@@ -1812,6 +1812,41 @@ describe('MessageList', () => {
     expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
+  test('anchors a remounted running tool timer to the assistant turn start', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
+
+      const restoredMessages: WorkbenchMessage[] = [
+        {
+          id: 'assistant-remounted-with-process',
+          role: 'assistant',
+          content: '',
+          status: 'streaming',
+          blocks: [
+            {
+              id: 'tool-remounted',
+              type: 'tool',
+              toolName: 'Bash',
+              toolInput: { command: 'long-running-command' },
+              status: 'streaming',
+              createdAt: Date.parse('2026-06-24T08:09:59.000Z'),
+            },
+          ],
+          createdAt: '2026-06-24T08:00:00.000Z',
+        },
+      ]
+      const { unmount } = render(<MessageList messages={restoredMessages} />)
+      unmount()
+      render(<MessageList messages={restoredMessages} />)
+
+      expect(screen.getByText('10 分 0 秒')).toBeInTheDocument()
+      expect(screen.queryByText('1 秒')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('keeps narrative visible but collapses tools before runtime guidance', () => {
     const blocks: ProcessingBlock[] = [
       {
@@ -1860,6 +1895,42 @@ describe('MessageList', () => {
       'aria-expanded',
       'false'
     )
+  })
+
+  test('keeps the final processing shell for a processing-only segment before guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-processing-before-guidance',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeGuidanceSplitBefore: true,
+            blocks: [
+              {
+                id: 'tool-1',
+                subtaskId: 11,
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                toolOutput: '/workspace/project\n',
+                status: 'done',
+                createdAt: 1770000001000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const finalProcessingToggle = screen.getByTestId('final-processing-toggle')
+    expect(finalProcessingToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(finalProcessingToggle)
+    expect(screen.getByTestId('processing-summary-toggle')).toBeInTheDocument()
   })
 
   test('keeps processing expanded for the assistant continuation after runtime guidance', () => {

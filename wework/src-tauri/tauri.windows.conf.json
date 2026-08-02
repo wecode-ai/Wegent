@@ -17,6 +17,7 @@
         "height": 540,
         "visible": false,
         "decorations": false,
+        "shadow": true,
         "dragDropEnabled": true,
         "resizable": true,
         "fullscreen": false

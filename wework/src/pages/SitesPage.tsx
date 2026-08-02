@@ -4,6 +4,7 @@ import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
@@ -20,11 +21,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { WEGENT_SITES_PLUGIN_NAME } from '@/features/plugins/builtinPlugins'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { buildRuntimeTaskRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 class SitesDeviceSyncConfirmationError extends Error {}
 
@@ -245,14 +245,14 @@ export function SitesPage() {
     ) : undefined
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed && !isMobile}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="wework"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
+    <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <div className="flex flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {!isMobile && (
           <DesktopSidebar
             user={state.user}
@@ -268,6 +268,7 @@ export function SitesPage() {
             }
             activeItem="sites"
             collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}

@@ -31,6 +31,10 @@ describe('localModelProviders', () => {
       {
         baseUrl: 'https://api.moonshot.cn/v1',
         group: 'Kimi',
+        apiFormat: 'openai-chat-completions',
+        requestPath: '/chat/completions',
+        toolProfile: 'function',
+        webSearchMode: 'disabled',
         contextWindow: 1_000_000,
         modelDefaults: {
           'kimi-k3': { contextWindow: 1_000_000 },
@@ -46,10 +50,17 @@ describe('localModelProviders', () => {
       {
         baseUrl: 'https://api.deepseek.com',
         group: 'DeepSeek',
-        contextWindow: 1_000_000,
+        apiFormat: 'openai-responses',
+        requestPath: '/responses',
+        toolProfile: 'custom',
+        allowedModelIds: ['deepseek-v4-flash'],
+        contextWindow: 1_048_576,
+        webSearchMode: 'live',
         modelDefaults: {
-          'deepseek-v4-flash': { contextWindow: 1_000_000 },
-          'deepseek-v4-pro': { contextWindow: 1_000_000 },
+          'deepseek-v4-flash': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-deepseek-v4-flash',
+          },
         },
       },
     ],
@@ -58,6 +69,10 @@ describe('localModelProviders', () => {
       {
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         group: 'GLM',
+        apiFormat: 'openai-chat-completions',
+        requestPath: '/chat/completions',
+        toolProfile: 'function',
+        webSearchMode: 'disabled',
         contextWindow: 200_000,
         modelDefaults: { 'glm-5.2': { contextWindow: 1_000_000 } },
       },
@@ -65,13 +80,24 @@ describe('localModelProviders', () => {
   ] as const)('defines the %s official provider profile', (profileId, expected) => {
     expect(findLocalModelProviderProfile(profileId)).toMatchObject({
       ...expected,
-      apiFormat: 'openai-chat-completions',
-      requestPath: '/chat/completions',
       modelsPath: '/models',
-      toolProfile: 'function',
-      webSearchMode: 'disabled',
       imageGenerationEnabled: false,
     })
+  })
+
+  it('only exposes models supported by the DeepSeek Codex integration', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+
+    await expect(
+      discoverProviderModels(findLocalModelProviderProfile('deepseek'), 'secret-key', { fetcher })
+    ).resolves.toEqual([{ id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' }])
   })
 
   it('loads, validates, sorts, and deduplicates provider model entries', async () => {

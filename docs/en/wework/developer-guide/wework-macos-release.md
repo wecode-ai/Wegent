@@ -33,6 +33,8 @@ cd wework
 WEWORK_CODEX_TARGET=universal-apple-darwin pnpm run prepare:codex
 ```
 
+The Codex tarball and extracted binaries are cached in a user-level directory so multiple worktrees reuse the same copy. On macOS, the default directory is `~/Library/Caches/wegent/codex`; set `WEGENT_CODEX_CACHE_DIR` to customize it. Development preparation creates links under `src-tauri/binaries/codex`, while release builds automatically use `--materialize` to place real files in the worktree for Tauri packaging and code signing.
+
 Release builds verify the target Codex binary in `wework/src-tauri/build.rs`; the build fails if it is missing. At runtime, Wework injects the bundled Codex path into the local executor sidecar:
 
 - `CODEX_BINARY_PATH`

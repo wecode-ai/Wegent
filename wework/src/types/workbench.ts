@@ -118,6 +118,7 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  turns: RuntimeConversationTurn[]
   running?: boolean
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -129,6 +130,39 @@ export interface RuntimePaneTranscript {
   hasMoreAfter?: boolean
   afterCursor?: string | null
 }
+
+export interface RuntimeConversationTurn {
+  id: string | null
+  clientUserMessageId?: string
+  items: RuntimeConversationItem[]
+  status: RuntimeWorkbenchMessageStatus
+  completedAt?: string | number | null
+  error?: string
+  errorType?: string
+  stoppedNotice?: boolean | null
+  fileChanges?: TurnFileChangesSummary
+  references?: CodexReference[]
+  memoryCitations?: CodexMemoryCitation[]
+}
+
+export type RuntimeConversationItem =
+  | {
+      id: string
+      type: 'user_message'
+      message: WorkbenchMessage & { role: 'user' }
+    }
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+      streamTextOffset?: number
+      createdAt: string
+    }
+  | {
+      id: string
+      type: 'block'
+      block: ProcessingBlock
+    }
 
 export interface RuntimePaneTranscriptLoadOptions {
   limit?: number

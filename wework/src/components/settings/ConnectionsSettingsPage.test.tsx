@@ -718,7 +718,14 @@ describe('ConnectionsSettingsPage', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [
+            {
+              type: 'custom_tool_call',
+              name: 'apply_patch',
+              input:
+                '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n',
+            },
+          ],
         }),
         {
           status: 200,

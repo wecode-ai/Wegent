@@ -5,6 +5,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { updateAppPreferences } from '@/tauri/appPreferences'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
 
 export function RuntimeTaskCloseGuard() {
@@ -24,7 +25,7 @@ export function RuntimeTaskCloseGuard() {
     })
       .then(nextUnlisten => {
         if (cancelled) {
-          nextUnlisten()
+          disposeTauriListener(nextUnlisten, 'runtime task close guard')
           return
         }
         unlisten = nextUnlisten
@@ -35,7 +36,7 @@ export function RuntimeTaskCloseGuard() {
 
     return () => {
       cancelled = true
-      unlisten?.()
+      if (unlisten) disposeTauriListener(unlisten, 'runtime task close guard')
     }
   }, [])
 

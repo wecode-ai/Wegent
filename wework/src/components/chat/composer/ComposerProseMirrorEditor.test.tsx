@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { createRef } from 'react'
+import { Activity, createRef, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerProseMirrorEditor, type ComposerEditorHandle } from './ComposerProseMirrorEditor'
@@ -49,6 +49,55 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('restores the controlled value after an Activity tab is hidden and shown', () => {
+    function ActivityEditorHarness() {
+      const [visible, setVisible] = useState(true)
+      const [value, setValue] = useState('')
+
+      return (
+        <>
+          <button type="button" onClick={() => setVisible(current => !current)}>
+            Toggle tab
+          </button>
+          <Activity mode={visible ? 'visible' : 'hidden'}>
+            <ComposerProseMirrorEditor
+              value={value}
+              onChange={setValue}
+              onSnapshotChange={vi.fn()}
+              onKeyDown={() => false}
+              onBeforeInput={() => false}
+              onKeyUp={vi.fn()}
+              onCompositionStart={vi.fn()}
+              onCompositionEnd={vi.fn()}
+              onPaste={() => false}
+              onDrop={() => false}
+              onClick={vi.fn()}
+              onFocus={vi.fn()}
+              placeholder="Message"
+              testId="composer-editor"
+              rows={2}
+              textareaRef={createRef<HTMLElement>()}
+              className="min-h-12"
+            />
+          </Activity>
+        </>
+      )
+    }
+
+    render(<ActivityEditorHarness />)
+
+    const editor = screen.getByTestId('composer-editor') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = '每个标签自己的草稿'
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle tab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle tab' }))
+
+    expect((screen.getByTestId('composer-editor') as HTMLElement & { value: string }).value).toBe(
+      '每个标签自己的草稿'
+    )
+  })
+
   test('models skill references as non-selectable atomic inline nodes', () => {
     const doc = createComposerDocument(GMAIL_REFERENCE)
     const mention = doc.firstChild?.firstChild

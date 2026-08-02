@@ -23,6 +23,7 @@ interface DesktopAppSwitcherProps {
   onNavigate: (app: DesktopAppKey) => void
   className?: string
   testIds?: Partial<Record<DesktopAppKey, string>>
+  variant?: 'menu' | 'tabs'
 }
 
 interface AppOption {
@@ -107,6 +108,7 @@ export function DesktopAppSwitcher({
   onNavigate,
   className,
   testIds,
+  variant = 'menu',
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
@@ -134,7 +136,7 @@ export function DesktopAppSwitcher({
     if (experimentalFeaturesEnabled || activeApp === 'todo') {
       appOptions.push({
         key: 'todo',
-        label: t('workbench.app_weloop_label', '看板'),
+        label: t('workbench.app_weloop_label', '项目空间'),
         description: t('workbench.app_weloop_description', '用 AI 管理项目的规划、执行与反馈'),
       })
     }
@@ -270,6 +272,43 @@ export function DesktopAppSwitcher({
       setMenuPosition(null)
       onNavigate(option.key)
     }, SUFFIX_TRANSITION_MS)
+  }
+
+  if (variant === 'tabs') {
+    return (
+      <nav
+        data-testid="desktop-app-switcher"
+        aria-label={t('workbench.app_navigation', '应用导航')}
+        className={cn('flex shrink-0 items-center gap-1', className)}
+      >
+        {options.map(option => {
+          const active = option.key === activeApp
+          const optionTestId = testIds?.[option.key] ?? `chrome-tab-${option.key}`
+
+          return (
+            <button
+              key={option.key}
+              type="button"
+              data-testid={optionTestId}
+              onClick={() => !option.disabled && onNavigate(option.key)}
+              disabled={option.disabled}
+              title={option.availabilityLabel ?? option.description}
+              aria-label={option.label}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex h-8 items-center rounded-lg px-2 text-sm font-medium leading-none transition-colors',
+                active
+                  ? 'bg-black/[0.045] text-text-primary'
+                  : 'text-text-secondary hover:bg-black/[0.04] hover:text-text-primary',
+                option.disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent'
+              )}
+            >
+              {option.label}
+            </button>
+          )
+        })}
+      </nav>
+    )
   }
 
   return (

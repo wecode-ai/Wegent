@@ -9,6 +9,12 @@ const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
   import.meta.env.VITE_WEWORK_E2E === 'true' &&
   import.meta.env.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION !== 'true'
 
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  return fallback
+}
+
 function CodexHomeInitializationDialog({
   isInitializing,
   error,
@@ -74,6 +80,7 @@ function CodexHomeInitializationDialog({
 }
 
 export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
+  const { t } = useTranslation('localRuntime')
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const [status, setStatus] = useState<LocalCodexHomeMigrationStatus | null>(null)
   const [checked, setChecked] = useState(SHOULD_SKIP_CODEX_HOME_INITIALIZATION)
@@ -100,16 +107,18 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
         setStatus(nextStatus.shouldPromptMigration ? nextStatus : null)
         setChecked(true)
       })
-      .catch(() => {
+      .catch((statusError: unknown) => {
         if (!isCurrent) return
+        console.warn('[Wework Codex init] status check failed', statusError)
         setStatus(null)
+        setError(errorMessage(statusError, t('fallback_error')))
         setChecked(true)
       })
 
     return () => {
       isCurrent = false
     }
-  }, [localPluginApi])
+  }, [localPluginApi, t])
 
   const initialize = (migrateNativeHome: boolean) => {
     console.warn('[Wework Codex init] initialization requested', {
@@ -139,7 +148,7 @@ export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
 
   if (!checked) return null
 
-  if (!status) return <>{children}</>
+  if (!status && error === null) return <>{children}</>
 
   return (
     <CodexHomeInitializationDialog

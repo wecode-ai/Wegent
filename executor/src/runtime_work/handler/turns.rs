@@ -97,15 +97,6 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
-            emit_response_event(
-                &handler.event_tx,
-                &handler.device_id,
-                "response.created",
-                &turn_local_task_id,
-                &request,
-                json!({"response": {"status": "in_progress"}}),
-            );
-
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
@@ -122,12 +113,14 @@ impl RuntimeWorkRpcHandler {
                         .lock()
                         .expect("hook turn context lock should not be poisoned")
                         .clone();
-                    if let (Some(active_turn), Some(cwd)) = (active_turn, mapper_request.cwd()) {
+                    if let (Some(active_turn), Some(cwd)) =
+                        (active_turn.as_ref(), mapper_request.cwd())
+                    {
                         let resolved_hook_user = hook_user(&mapper_request);
                         let context = CodexHookContext {
                             user: resolved_hook_user.clone(),
-                            session_id: active_turn.thread_id,
-                            turn_id: active_turn.turn_id,
+                            session_id: active_turn.thread_id.clone(),
+                            turn_id: active_turn.turn_id.clone(),
                             cwd: PathBuf::from(cwd),
                             model: string_field(&mapper_request.model_config, "model_id"),
                             permission_mode: "workspace-write".to_owned(),
@@ -156,11 +149,15 @@ impl RuntimeWorkRpcHandler {
                             ),
                         }
                     }
+                    let mut event_request = mapper_request.clone();
+                    if let Some(active_turn) = active_turn {
+                        event_request.subtask_id = active_turn.turn_id;
+                    }
                     event_mapper.map(
                         &mapper_handler.event_tx,
                         &mapper_handler.device_id,
                         &mapper_local_task_id,
-                        &mapper_request,
+                        &event_request,
                         message,
                     );
                 }
@@ -173,6 +170,7 @@ impl RuntimeWorkRpcHandler {
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
             let active_turn_subtask_id = request.subtask_id.to_string();
+            let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
@@ -192,6 +190,21 @@ impl RuntimeWorkRpcHandler {
                         &active_turn_local_task_id,
                         &active_turn_subtask_id,
                         &turn_id,
+                    );
+                    let mut event_request = active_turn_request.clone();
+                    event_request.subtask_id = turn_id.clone();
+                    emit_response_event(
+                        &active_turn_handler.event_tx,
+                        &active_turn_handler.device_id,
+                        "response.created",
+                        &active_turn_local_task_id,
+                        &event_request,
+                        json!({
+                            "response": {
+                                "status": "in_progress",
+                                "turnId": turn_id,
+                            }
+                        }),
                     );
                 });
             let finished_turn_handler = handler.clone();
@@ -221,12 +234,20 @@ impl RuntimeWorkRpcHandler {
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                let mut event_request = request.clone();
+                if let Some(active_turn) = hook_turn
+                    .lock()
+                    .expect("hook turn context lock should not be poisoned")
+                    .as_ref()
+                {
+                    event_request.subtask_id = active_turn.turn_id.clone();
+                }
                 emit_response_event(
                     &handler.event_tx,
                     &handler.device_id,
                     "response.incomplete",
                     &turn_local_task_id,
-                    &request,
+                    &event_request,
                     json!({
                         "type": "cancelled",
                         "error": {"message": "cancelled"},
@@ -245,7 +266,11 @@ impl RuntimeWorkRpcHandler {
             }
 
             let _ = mapper_handle.await;
-            handler.handle_turn_result(&turn_local_task_id, &request, result);
+            let active_turn = hook_turn
+                .lock()
+                .expect("hook turn context lock should not be poisoned")
+                .clone();
+            handler.handle_turn_result(&turn_local_task_id, &request, active_turn.as_ref(), result);
             handler.clear_active_codex_turn(&turn_local_task_id);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
@@ -259,8 +284,13 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
         request: &ExecutionRequest,
+        active_turn: Option<&ActiveCodexTurn>,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
+        let mut event_request = request.clone();
+        if let Some(active_turn) = active_turn {
+            event_request.subtask_id = active_turn.turn_id.clone();
+        }
         let automation_result = match &result {
             Ok(turn) => match &turn.outcome {
                 ExecutionOutcome::Completed { .. } => Some((AutomationRunStatus::Succeeded, None)),
@@ -294,33 +324,33 @@ impl RuntimeWorkRpcHandler {
                 self.register_thread_event_route(
                     &thread_id,
                     local_task_id.to_owned(),
-                    request.clone(),
+                    event_request.clone(),
                     false,
                 );
                 self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
                 self.mark_thread_event_route_idle(&thread_id);
-                self.register_codex_thread_workspace_root(&thread_id, request);
-                let turn_id = self.local_task_link(local_task_id).and_then(|link| {
-                    tasks::runtime_turn_id_from_link(&link, &request.subtask_id.to_string())
-                });
+                self.register_codex_thread_workspace_root(&thread_id, &event_request);
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
                         &self.device_id,
                         "response.completed",
                         local_task_id,
-                        request,
-                        json!({"value": content, "turnId": turn_id}),
+                        &event_request,
+                        json!({
+                            "value": content,
+                            "turnId": active_turn.map(|turn| &turn.turn_id),
+                        }),
                     ),
                     ExecutionOutcome::WaitingForUserInput { stop_reason } => emit_response_event(
                         &self.event_tx,
                         &self.device_id,
                         "response.completed",
                         local_task_id,
-                        request,
+                        &event_request,
                         json!({
                             "value": "",
-                            "turnId": turn_id,
+                            "turnId": active_turn.map(|turn| &turn.turn_id),
                             "stop_reason": stop_reason,
                             "silent_exit": true,
                             "silent_exit_reason": "waiting_for_user_input"
@@ -331,12 +361,17 @@ impl RuntimeWorkRpcHandler {
                         &self.device_id,
                         "response.incomplete",
                         local_task_id,
-                        request,
+                        &event_request,
                         json!({"error": {"message": message}}),
                     ),
                     ExecutionOutcome::Failed { message } => {
-                        self.persist_failed_assistant_message(local_task_id, request, &message);
-                        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                        self.persist_failed_assistant_message(
+                            local_task_id,
+                            &event_request,
+                            &message,
+                        );
+                        let mut fields =
+                            task_fields(&event_request.task_id, &event_request.subtask_id);
                         fields.push(("local_task_id", local_task_id.to_owned()));
                         fields.push(("error", message.clone()));
                         fields.push(("error_len", message.len().to_string()));
@@ -346,7 +381,7 @@ impl RuntimeWorkRpcHandler {
                             &self.device_id,
                             "response.failed",
                             local_task_id,
-                            request,
+                            &event_request,
                             json!({"error": {"message": message}}),
                         );
                     }
@@ -356,8 +391,8 @@ impl RuntimeWorkRpcHandler {
             Err(error) => {
                 self.mark_thread_event_routes_idle_for_local_task(local_task_id);
                 self.finish_local_task(local_task_id, None, "failed");
-                self.persist_failed_assistant_message(local_task_id, request, &error);
-                let mut fields = task_fields(&request.task_id, &request.subtask_id);
+                self.persist_failed_assistant_message(local_task_id, &event_request, &error);
+                let mut fields = task_fields(&event_request.task_id, &event_request.subtask_id);
                 fields.push(("local_task_id", local_task_id.to_owned()));
                 fields.push(("error", error.clone()));
                 fields.push(("error_len", error.len().to_string()));
@@ -367,7 +402,7 @@ impl RuntimeWorkRpcHandler {
                     &self.device_id,
                     "response.failed",
                     local_task_id,
-                    request,
+                    &event_request,
                     json!({"error": {"message": error}}),
                 );
             }
