@@ -8,7 +8,8 @@ import {
 import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 
-const { resizeItemMock, useVirtualizerMock } = vi.hoisted(() => ({
+const { measureElementMock, resizeItemMock, useVirtualizerMock } = vi.hoisted(() => ({
+  measureElementMock: vi.fn(),
   resizeItemMock: vi.fn(),
   useVirtualizerMock: vi.fn(),
 }))
@@ -49,7 +50,7 @@ vi.mock('@tanstack/react-virtual', () => ({
           key: options.getItemKey(index),
           start: index * 120,
         })),
-      measureElement: vi.fn(),
+      measureElement: measureElementMock,
       resizeItem: resizeItemMock,
       takeSnapshot: () => [
         { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
@@ -61,6 +62,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 describe('MessageList Tauri virtualization', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
+    measureElementMock.mockClear()
     resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
     vi.unstubAllGlobals()
@@ -133,6 +135,58 @@ describe('MessageList Tauri virtualization', () => {
 
     expect(screen.getByText('streaming message 80')).toBeInTheDocument()
     expect(screen.getByText('streaming message 99')).toBeInTheDocument()
+  })
+
+  test('lets the last streaming message use its normal measurement path', () => {
+    const messages = buildMessages(100, 'last-streaming')
+    messages[99] = {
+      ...messages[99],
+      role: 'assistant',
+      status: 'streaming',
+    }
+
+    render(
+      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
+    )
+
+    expect(screen.getByText('last-streaming message 99')).toBeInTheDocument()
+    expect(resizeItemMock).not.toHaveBeenCalled()
+    expect(
+      measureElementMock.mock.calls.some(
+        ([element]) => element instanceof HTMLElement && element.dataset.index === '99'
+      )
+    ).toBe(true)
+  })
+
+  test('follows the end when a user and streaming assistant are appended', () => {
+    const messages = buildMessages(100, 'appended-user')
+    const latestUserMessage = {
+      ...buildMessages(1, 'latest-user')[0],
+      id: 'user-100',
+    }
+    const streamingAssistantMessage = {
+      ...buildMessages(1, 'streaming-assistant')[0],
+      id: 'assistant-101',
+      role: 'assistant' as const,
+      status: 'streaming' as const,
+    }
+    const { rerender } = render(
+      <MessageList messages={messages} scrollElementRef={{ current: createScrollElement(200) }} />
+    )
+
+    rerender(
+      <MessageList
+        messages={[...messages, latestUserMessage, streamingAssistantMessage]}
+        scrollElementRef={{ current: createScrollElement(200) }}
+      />
+    )
+
+    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        anchorTo: 'end',
+        followOnAppend: 'auto',
+      })
+    )
   })
 
   test('deduplicates a streaming message that is also a forced navigation target', () => {
