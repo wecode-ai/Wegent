@@ -15,6 +15,7 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import { setActiveKeybindings, TOGGLE_PRIORITY_FILTER_COMMAND } from '@/lib/keybindings'
 import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
@@ -158,6 +159,7 @@ describe('DesktopSidebar', () => {
     experimentalFeatures.enabled = true
     localStorage.clear()
     enableTauri()
+    setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
   })
@@ -749,6 +751,16 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-row-waiting-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-waiting-waiting-task')).toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-row-idle-task')).not.toBeInTheDocument()
+    const priorityRows = Array.from(
+      screen
+        .getByTestId('runtime-priority-list')
+        .querySelectorAll<HTMLElement>('[data-testid^="runtime-local-task-row-"]')
+    )
+    expect(priorityRows.map(row => row.dataset.testid)).toEqual([
+      'runtime-local-task-row-unread-task',
+      'runtime-local-task-row-waiting-task',
+      'runtime-local-task-row-running-task',
+    ])
     expect(screen.queryByTestId('projects-section-toggle')).not.toBeInTheDocument()
     expect(screen.getByTestId('new-chat-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
@@ -760,7 +772,7 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
   })
 
-  test('toggles the priority filter with Command or Control plus Option and U', () => {
+  test('toggles the priority filter with the configured macOS shortcut', () => {
     renderSidebar()
 
     fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
@@ -773,7 +785,33 @@ describe('DesktopSidebar', () => {
 
     fireEvent.keyDown(window, { key: 'u', ctrlKey: true, altKey: true })
 
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
+
     expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+  })
+
+  test('uses the configured priority shortcut and ignores editable targets', () => {
+    setActiveKeybindings([
+      {
+        command: TOGGLE_PRIORITY_FILTER_COMMAND,
+        key: 'Command+Shift+P',
+      },
+    ])
+    renderSidebar()
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    fireEvent.keyDown(input, { key: 'p', metaKey: true, shiftKey: true })
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'p', metaKey: true, shiftKey: true })
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    input.remove()
   })
 
   test('shows the priority filter tooltip and shortcut on hover', async () => {
@@ -832,6 +870,38 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-priority-filter-toggle-pinned'))
 
     expect(screen.getByTestId('runtime-local-task-row-pinned-waiting')).toBeInTheDocument()
+  })
+
+  test('does not show an attention dot for hidden pinned priority tasks', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/pinned-priority',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'pinned-waiting',
+                workspacePath: '/workspace/chats/pinned-priority',
+                workspaceKind: 'chat',
+                title: 'Pinned waiting task',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+                pinned: true,
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(screen.queryByTestId('runtime-priority-filter-attention-dot')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('runtime-priority-empty')).toBeInTheDocument()
   })
 
   test('keeps search in the product header and orders primary sidebar actions', () => {

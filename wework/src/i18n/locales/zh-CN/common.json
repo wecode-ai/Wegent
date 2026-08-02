@@ -1085,6 +1085,8 @@
     "keyboard_shortcuts_toggle_side_panel_description": "显示或隐藏侧边面板",
     "keyboard_shortcuts_toggle_model_selector": "选择模型",
     "keyboard_shortcuts_toggle_model_selector_description": "打开或关闭当前输入区的模型选择器",
+    "keyboard_shortcuts_toggle_priority_filter": "切换优先级筛选",
+    "keyboard_shortcuts_toggle_priority_filter_description": "显示或隐藏需要关注的任务",
     "keyboard_shortcuts_increase_font_size": "增大字号",
     "keyboard_shortcuts_increase_font_size_description": "同时增大 UI 和代码字号",
     "keyboard_shortcuts_decrease_font_size": "减小字号",

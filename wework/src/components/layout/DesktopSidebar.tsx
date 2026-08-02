@@ -56,6 +56,7 @@ import {
   type StandaloneWorkspaceDialogMode,
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -69,6 +70,11 @@ import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
+import {
+  isEditableShortcutTarget,
+  keybindingFromKeyboardEvent,
+  TOGGLE_PRIORITY_FILTER_COMMAND,
+} from '@/lib/keybindings'
 import {
   runtimeProjectToProject,
   runtimeProjectUiId,
@@ -118,6 +124,7 @@ import {
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
+import { DesktopSidebarPrioritySection } from './DesktopSidebarPrioritySection'
 import {
   ProjectSidebarHoverCardContent,
   type ProjectHoverSource,
@@ -724,11 +731,9 @@ function getRuntimeTaskPriorityReason(
   unreadTaskKeys: ReadonlySet<string>,
   runningTaskKeys: ReadonlySet<string>
 ): RuntimeTaskPriorityReason | null {
-  const address = getRuntimeTaskAddress(workspace, task)
-  const active = runningTaskKeys.has(getRuntimeTaskLifecycleKey(address))
-
-  if (active) return 'active'
   if (unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))) return 'unread'
+  const address = getRuntimeTaskAddress(workspace, task)
+  if (runningTaskKeys.has(getRuntimeTaskLifecycleKey(address))) return 'active'
   return isRuntimeTaskWaiting(task) ? 'waiting' : null
 }
 
@@ -2603,6 +2608,7 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [priorityFilterActive, setPriorityFilterActive] = useState(false)
+  const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
     readStoredBoolean(priorityPinnedStorageKey, false)
   )
@@ -2769,7 +2775,7 @@ export function DesktopSidebar({
         : allPriorityTaskItems.filter(({ task }) => !task.pinned),
     [allPriorityTaskItems, priorityShowPinned]
   )
-  const priorityNeedsAttention = allPriorityTaskItems.length > 0
+  const priorityNeedsAttention = priorityTaskItems.length > 0
   const setChatTaskPinned = async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
     const chatTask = chatTaskItems.find(
@@ -3011,20 +3017,19 @@ export function DesktopSidebar({
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (
-        event.key.toLowerCase() !== 'u' ||
-        !event.altKey ||
-        (!event.metaKey && !event.ctrlKey) ||
-        event.shiftKey
-      ) {
+        event.defaultPrevented ||
+        isEditableShortcutTarget(event.target) ||
+        !priorityFilterShortcut ||
+        keybindingFromKeyboardEvent(event) !== priorityFilterShortcut
+      )
         return
-      }
       event.preventDefault()
       setPriorityFilterActive(active => !active)
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [priorityFilterShortcut])
 
   useEffect(() => {
     if (!settingsMenuOpen && !imNotificationMenuOpen) {
@@ -3141,11 +3146,7 @@ export function DesktopSidebar({
                       : t('workbench.priority_filter', '按优先级筛选')
                   }
                   shortcut={
-                    priorityFilterActive
-                      ? undefined
-                      : platform === 'mac'
-                        ? 'Alt+Command+U'
-                        : 'Control+Alt+U'
+                    priorityFilterActive ? undefined : (priorityFilterShortcut ?? undefined)
                   }
                   align="end"
                   testId="runtime-priority-filter-tooltip"
@@ -3247,76 +3248,40 @@ export function DesktopSidebar({
               )}
             </nav>
             {priorityFilterActive ? (
-              <section data-testid="runtime-priority-section" className="mt-1">
-                <div className="group/priority flex h-[30px] items-center px-2.5">
-                  <span className="text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
-                    {t('workbench.priority_filter_title', '优先级')}
-                  </span>
-                  <div className="ml-auto opacity-0 transition-opacity group-hover/priority:opacity-100 focus-within:opacity-100">
-                    <ActionMenu
-                      ariaLabel={t('workbench.priority_filter_options', '优先级筛选选项')}
-                      testId="runtime-priority-filter-options"
-                      placement="bottom-end"
-                      items={[
-                        {
-                          label: priorityShowPinned
-                            ? t('workbench.priority_filter_hide_pinned', '隐藏置顶会话')
-                            : t('workbench.priority_filter_show_pinned', '显示置顶会话'),
-                          icon: Pin,
-                          testId: 'runtime-priority-filter-toggle-pinned',
-                          onSelect: () => setPriorityShowPinned(showPinned => !showPinned),
-                        },
-                      ]}
-                      triggerClassName="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
-                    />
-                  </div>
-                </div>
-                {priorityTaskItems.length === 0 ? (
-                  <div
-                    data-testid="runtime-priority-empty"
-                    className="px-3 py-2 text-sm text-[rgb(var(--color-sidebar-text-muted))]"
-                  >
-                    {t('workbench.priority_filter_empty', '没有需要关注的任务')}
-                  </div>
-                ) : (
-                  <div data-testid="runtime-priority-list" role="list" className="space-y-0.5">
-                    {priorityTaskItems.map(item => (
-                      <div key={`${item.workspace.deviceId}:${item.task.taskId}`} role="listitem">
-                        <RuntimeTaskRow
-                          workspace={item.workspace}
-                          task={item.task}
-                          projectName={item.projectName}
-                          selected={isRuntimeTaskSelected(
-                            currentRuntimeTask,
-                            item.workspace,
-                            item.task
-                          )}
-                          unread={visibleUnreadRuntimeTaskKeys.has(
-                            getRuntimeTaskReminderItemKey(item.workspace, item.task)
-                          )}
-                          priorityReason={item.reason}
-                          indentClassName="pl-2.5"
-                          imNotificationSettings={imNotificationSettings}
-                          showDeviceMarker={false}
-                          stateDeviceId={item.projectStateDeviceId}
-                          onOpenRuntimeTask={onOpenRuntimeTask}
-                          onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
-                          onRenameRuntimeTask={onRenameRuntimeTask}
-                          onArchiveRuntimeTask={onArchiveRuntimeTask}
-                          onSetRuntimeTaskPinned={
-                            onSetRuntimeTaskPinned
-                              ? item.isStandaloneChat
-                                ? setChatTaskPinned
-                                : onSetRuntimeTaskPinned
-                              : undefined
-                          }
-                          onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
-                        />
-                      </div>
-                    ))}
-                  </div>
+              <DesktopSidebarPrioritySection
+                taskItems={priorityTaskItems}
+                getTaskKey={item => `${item.workspace.deviceId}:${item.task.taskId}`}
+                showPinned={priorityShowPinned}
+                onTogglePinned={() => setPriorityShowPinned(showPinned => !showPinned)}
+                renderTaskItem={item => (
+                  <RuntimeTaskRow
+                    workspace={item.workspace}
+                    task={item.task}
+                    projectName={item.projectName}
+                    selected={isRuntimeTaskSelected(currentRuntimeTask, item.workspace, item.task)}
+                    unread={visibleUnreadRuntimeTaskKeys.has(
+                      getRuntimeTaskReminderItemKey(item.workspace, item.task)
+                    )}
+                    priorityReason={item.reason}
+                    indentClassName="pl-2.5"
+                    imNotificationSettings={imNotificationSettings}
+                    showDeviceMarker={false}
+                    stateDeviceId={item.projectStateDeviceId}
+                    onOpenRuntimeTask={onOpenRuntimeTask}
+                    onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
+                    onRenameRuntimeTask={onRenameRuntimeTask}
+                    onArchiveRuntimeTask={onArchiveRuntimeTask}
+                    onSetRuntimeTaskPinned={
+                      onSetRuntimeTaskPinned
+                        ? item.isStandaloneChat
+                          ? setChatTaskPinned
+                          : onSetRuntimeTaskPinned
+                        : undefined
+                    }
+                    onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
+                  />
                 )}
-              </section>
+              />
             ) : (
               <>
                 {(pinnedTaskItems.length > 0 || pinnedProjects.length > 0) && (

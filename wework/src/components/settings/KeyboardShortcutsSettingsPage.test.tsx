@@ -23,6 +23,15 @@ describe('KeyboardShortcutsSettingsPage', () => {
     expect(row).toHaveTextContent('⌃ ⇧ M')
   })
 
+  test('shows the configurable priority filter shortcut', () => {
+    render(<KeyboardShortcutsSettingsPage />)
+
+    const row = screen.getByTestId('keyboard-shortcut-row-togglePriorityFilter')
+    expect(row).toHaveTextContent('切换优先级筛选')
+    expect(row).toHaveTextContent('显示或隐藏需要关注的任务')
+    expect(row).toHaveTextContent('⌥ ⌘ U')
+  })
+
   test('shows Codex-style font size shortcuts', () => {
     render(<KeyboardShortcutsSettingsPage />)
 
