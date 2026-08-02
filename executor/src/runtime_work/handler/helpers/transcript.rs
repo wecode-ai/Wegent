@@ -593,6 +593,21 @@ fn codex_guidance_failure_code(error: &str) -> &'static str {
     }
 }
 
+fn active_turn_id_from_steer_mismatch(error: &str) -> Option<String> {
+    // Codex app-server 0.146.0 reports this mismatch only in the JSON-RPC
+    // message. Prefer structured error data when the protocol exposes it.
+    const PREFIX: &str = "expected active turn id `";
+    const SEPARATOR: &str = "` but found `";
+
+    error
+        .strip_prefix(PREFIX)?
+        .split_once(SEPARATOR)?
+        .1
+        .strip_suffix('`')
+        .map(str::to_owned)
+        .filter(|turn_id| !turn_id.trim().is_empty())
+}
+
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);

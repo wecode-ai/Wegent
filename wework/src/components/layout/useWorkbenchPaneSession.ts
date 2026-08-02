@@ -57,6 +57,7 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import {
   abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
+  appendOptimisticRuntimeConversationGuidance,
   beginRuntimeConversationHydration,
   cacheRuntimeConversationQueuedMessagesByKey,
   cacheRuntimeConversationQueuePausedByKey,
@@ -67,11 +68,14 @@ import {
   getRuntimeConversationQueuedMessagesByKey,
   getRuntimeConversationQueuePausedByKey,
   markRuntimeConversationGuidanceInterrupted,
+  optimisticallyInterruptRuntimeConversation,
+  removeOptimisticRuntimeConversationGuidance,
   removeRuntimeConversationTurn,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationFromUserMessage,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
+  restoreOptimisticallyInterruptedRuntimeConversation,
   setRuntimeConversationGoal,
   subscribeRuntimeConversation,
   subscribeRuntimeTransportReplaced,
@@ -225,7 +229,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
   const displayedTranscriptIdentityRef = useRef<string | null>(null)
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
-  const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const interruptAndSendInFlightRef = useRef(false)
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
@@ -950,10 +953,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (interruptAndSendInFlightRef.current) return false
       interruptAndSendInFlightRef.current = true
       const interruptedGuidanceIds = new Set<string>()
-      pendingAppliedGuidancesRef.current.forEach((_, id) => {
-        interruptedGuidanceIds.add(id)
+      const interruptedGuidances = queuedMessages.filter(isInterruptedGuidance)
+      interruptedGuidances.forEach(guidance => {
+        interruptedGuidanceIds.add(guidance.id)
+        const id = guidance.id
+        removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
       })
       markRuntimeConversationGuidanceInterrupted(currentRuntimeTask, interruptedGuidanceIds)
+      const interruptedTurn = optimisticallyInterruptRuntimeConversation(currentRuntimeTask)
       setQueuedMessages(messages => [
         ...messages.filter(item => item.id !== message.id),
         { ...message, status: 'sending', notice: '正在打断并发送' },
@@ -984,13 +991,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       interruptAndSendInFlightRef.current = false
       if (!sent) {
+        if (interruptedTurn) {
+          restoreOptimisticallyInterruptedRuntimeConversation(currentRuntimeTask, interruptedTurn)
+          if (interruptedTurn.turnId) {
+            interruptedGuidances.forEach(guidance => {
+              appendOptimisticRuntimeConversationGuidance(
+                currentRuntimeTask,
+                interruptedTurn.turnId!,
+                guidance
+              )
+            })
+          }
+        }
         clearInterruptedRuntimeConversationGuidanceExcept(currentRuntimeTask, message.id)
         setQueuedMessages(messages =>
           messages
             .filter(item => item.id !== message.id)
             .map(item =>
-              interruptedGuidanceIds.has(item.id) &&
-              !pendingAppliedGuidancesRef.current.has(item.id)
+              interruptedGuidanceIds.has(item.id) && !isInterruptedGuidance(item)
                 ? { ...item, status: 'queued', notice: undefined }
                 : item
             )
@@ -1013,6 +1031,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       appendLocalUserMessage,
       currentRuntimeTask,
       interruptAndSendRuntimePaneMessage,
+      queuedMessages,
       setQueuedMessages,
     ]
   )
@@ -1419,7 +1438,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       )
 
-      pendingAppliedGuidancesRef.current.set(id, queuedMessage)
+      const optimisticTurnId = activeAssistantMessage?.subtaskId
+      if (optimisticTurnId) {
+        appendOptimisticRuntimeConversationGuidance(
+          currentRuntimeTask,
+          optimisticTurnId,
+          queuedMessage
+        )
+      }
 
       try {
         const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
@@ -1436,9 +1462,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         })
         if (result.sent) {
           markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+          if (result.turnId && result.turnId !== optimisticTurnId) {
+            appendOptimisticRuntimeConversationGuidance(
+              currentRuntimeTask,
+              result.turnId,
+              queuedMessage
+            )
+          }
         }
         if (!result.sent) {
-          pendingAppliedGuidancesRef.current.delete(id)
+          removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
           if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
             setQueuedMessages(messages => messages.filter(message => message.id !== id))
             return
@@ -1452,7 +1485,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
         }
       } catch (error) {
-        pendingAppliedGuidancesRef.current.delete(id)
+        removeOptimisticRuntimeConversationGuidance(currentRuntimeTask, id)
         if (takeInterruptedRuntimeConversationGuidance(currentRuntimeTask, id)) {
           setQueuedMessages(messages => messages.filter(message => message.id !== id))
           return
@@ -1472,6 +1505,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [
       currentRuntimeTask,
+      activeAssistantMessage?.subtaskId,
       paneStatus.isBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,

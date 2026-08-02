@@ -22,7 +22,10 @@ import {
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
-import { createAppliedRuntimeGuidanceMessage } from './runtimeGuidanceMessages'
+import {
+  createAppliedRuntimeGuidanceMessage,
+  createOptimisticRuntimeGuidanceMessage,
+} from './runtimeGuidanceMessages'
 import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 
 const MAX_CONVERSATION_CACHE_ENTRIES = 50
@@ -410,6 +413,103 @@ export function settleRuntimeConversationGuidance(
   cacheBoundedEntry(turnsByConversation, key, nextTurns)
   notifyRuntimeConversation(key)
   return guidanceMessage
+}
+
+export function appendOptimisticRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  turnId: string,
+  guidanceMessage: RuntimePaneQueuedMessage
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    appendRuntimeConversationGuidance(
+      turns,
+      turnId,
+      createOptimisticRuntimeGuidanceMessage(guidanceMessage)
+    )
+  )
+}
+
+export function removeOptimisticRuntimeConversationGuidance(
+  address: RuntimeTaskAddress,
+  clientGuidanceId: string
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn => ({
+      ...turn,
+      items: turn.items.filter(
+        item => item.type !== 'user_message' || item.id !== clientGuidanceId
+      ),
+    }))
+  )
+}
+
+export interface OptimisticRuntimeTurnInterruption {
+  turnId: string | null
+  clientUserMessageId?: string
+  status: RuntimeConversationTurn['status']
+  completedAt?: RuntimeConversationTurn['completedAt']
+  stoppedNotice?: RuntimeConversationTurn['stoppedNotice']
+}
+
+export function optimisticallyInterruptRuntimeConversation(
+  address: RuntimeTaskAddress
+): OptimisticRuntimeTurnInterruption | null {
+  let interrupted: OptimisticRuntimeTurnInterruption | null = null
+  updateRuntimeConversationTurns(address, turns => {
+    const index = turns.findLastIndex(
+      turn => turn.status === 'pending' || turn.status === 'streaming'
+    )
+    if (index < 0) return turns
+    const turn = turns[index]
+    interrupted = {
+      turnId: turn.id,
+      clientUserMessageId: turn.clientUserMessageId,
+      status: turn.status,
+      completedAt: turn.completedAt,
+      stoppedNotice: turn.stoppedNotice,
+    }
+    return turns.map((current, currentIndex) =>
+      currentIndex === index
+        ? {
+            ...current,
+            status: 'cancelled',
+            completedAt: new Date().toISOString(),
+            stoppedNotice: true,
+          }
+        : current
+    )
+  })
+  return interrupted
+}
+
+export function restoreOptimisticallyInterruptedRuntimeConversation(
+  address: RuntimeTaskAddress,
+  interruption: OptimisticRuntimeTurnInterruption
+): WorkbenchMessage[] {
+  return updateRuntimeConversationTurns(address, turns =>
+    turns.map(turn =>
+      runtimeTurnMatchesInterruption(turn, interruption)
+        ? {
+            ...turn,
+            status: interruption.status,
+            completedAt: interruption.completedAt,
+            stoppedNotice: interruption.stoppedNotice,
+          }
+        : turn
+    )
+  )
+}
+
+function runtimeTurnMatchesInterruption(
+  turn: RuntimeConversationTurn,
+  interruption: OptimisticRuntimeTurnInterruption
+): boolean {
+  if (interruption.turnId !== null) return turn.id === interruption.turnId
+  return (
+    turn.id === null &&
+    Boolean(interruption.clientUserMessageId) &&
+    turn.clientUserMessageId === interruption.clientUserMessageId
+  )
 }
 
 export function markRuntimeConversationGuidanceInterrupted(

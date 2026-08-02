@@ -1329,6 +1329,20 @@ fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
 }
 
 #[test]
+fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
+    assert_eq!(
+        active_turn_id_from_steer_mismatch(
+            "expected active turn id `turn-expected` but found `turn-actual`"
+        ),
+        Some("turn-actual".to_owned())
+    );
+    assert_eq!(
+        active_turn_id_from_steer_mismatch("no active turn to steer"),
+        None
+    );
+}
+
+#[test]
 fn persisted_terminal_status_reconciles_only_the_exact_last_turn_id() {
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
