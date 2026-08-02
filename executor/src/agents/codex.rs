@@ -1320,7 +1320,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        match timeout_at(
+        let turn_start_response = match timeout_at(
             startup_deadline,
             client.request(
                 "turn/start",
@@ -1329,7 +1329,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         )
         .await
         {
-            Ok(Ok(_)) => {}
+            Ok(Ok(response)) => response,
             Ok(Err(error)) => return Err(error),
             Err(_) => {
                 return Err(recover_stalled_shared_turn(
@@ -1339,6 +1339,20 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await);
             }
+        };
+        let active_turn_id = turn_start_response_id(&turn_start_response);
+        if let Some(turn_id) = active_turn_id.as_ref() {
+            if let Some(callback) = active_turn_started.as_ref() {
+                callback(thread_id.clone(), turn_id.clone());
+            }
+            log_executor_event(
+                "codex shared active turn resolved",
+                &[
+                    ("thread_id", thread_id.clone()),
+                    ("turn_id", turn_id.clone()),
+                    ("source", "turn_start_response".to_owned()),
+                ],
+            );
         }
         let outcome_result = read_shared_turn_notifications(
             client,
@@ -1348,7 +1362,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             startup_timeout_seconds,
             startup_deadline,
             SharedTurnNotificationOptions {
-                active_turn_id: None,
+                active_turn_id,
                 notifications,
                 cancellation,
                 request_user_input_answers,
@@ -2014,6 +2028,14 @@ fn started_active_turn_id(
     }
     root_turn_notification_id(message, state)
         .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+}
+
+fn turn_start_response_id(response: &Value) -> Option<String> {
+    response
+        .get("turn")
+        .and_then(|turn| string_value(turn, "id"))
+        .or_else(|| string_value(response, "turnId"))
+        .or_else(|| string_value(response, "turn_id"))
 }
 
 fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {

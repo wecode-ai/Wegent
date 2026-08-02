@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
@@ -17,6 +18,8 @@ import {
   getRuntimeConversationQueuedMessages,
   getRuntimeConversationQueuePaused,
   markRuntimeConversationGuidanceInterrupted,
+  optimisticallyInterruptRuntimeConversation,
+  removeOptimisticRuntimeConversationGuidance,
   markRuntimeConversationAssistantStarted,
   runtimeConversationSnapshotSettlesLatestTurn,
   settleRuntimeConversationGuidance,
@@ -25,6 +28,7 @@ import {
   setRuntimeConversationTaskPlan,
   takeAppliedRuntimeConversationGuidance,
   takeInterruptedRuntimeConversationGuidance,
+  restoreOptimisticallyInterruptedRuntimeConversation,
 } from './runtimeConversationCache'
 
 const address = {
@@ -344,6 +348,91 @@ describe('runtimeConversationCache', () => {
       runtimeGuidance: true,
       subtaskId: 'subtask-1',
       turnId: 'subtask-1',
+    })
+  })
+
+  test('inserts guidance optimistically and rebinds it to the accepted turn', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-stale',
+    })
+    const guidance = {
+      id: 'client-guidance-rebound',
+      content: 'Use the safer approach',
+      status: 'sending' as const,
+      deliveryMode: 'guidance' as const,
+      createdAt: '2026-08-02T12:00:00.000Z',
+    }
+
+    appendOptimisticRuntimeConversationGuidance(address, 'turn-stale', guidance)
+    expect(
+      getRuntimeConversationMessages(address).find(
+        message => message.id === 'client-guidance-rebound'
+      )
+    ).toMatchObject({
+      status: 'pending',
+      runtimeGuidance: true,
+      turnId: 'turn-stale',
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-actual',
+    })
+    appendOptimisticRuntimeConversationGuidance(address, 'turn-actual', guidance)
+
+    const rebound = getRuntimeConversationMessages(address).filter(
+      message => message.id === 'client-guidance-rebound'
+    )
+    expect(rebound).toHaveLength(1)
+    expect(rebound[0]).toMatchObject({
+      status: 'pending',
+      runtimeGuidance: true,
+      turnId: 'turn-actual',
+    })
+    expect(
+      getRuntimeConversationMessages(address)
+        .flatMap(message => message.blocks ?? [])
+        .find(block => block.toolName === 'conversation_guidance')
+    ).toMatchObject({
+      status: 'streaming',
+    })
+
+    removeOptimisticRuntimeConversationGuidance(address, guidance.id)
+    expect(
+      getRuntimeConversationMessages(address).some(message => message.id === guidance.id)
+    ).toBe(false)
+  })
+
+  test('optimistically interrupts the active turn and can restore it after rejection', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'turn-running',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      taskId: address.taskId,
+      subtaskId: 'turn-running',
+      itemId: 'assistant-1',
+      content: 'Working',
+    })
+
+    const interruption = optimisticallyInterruptRuntimeConversation(address)
+    expect(interruption).toMatchObject({
+      turnId: 'turn-running',
+      status: 'streaming',
+    })
+    expect(getRuntimeConversationMessages(address).at(-1)).toMatchObject({
+      runtimeStatus: 'cancelled',
+      stoppedNotice: true,
+    })
+
+    restoreOptimisticallyInterruptedRuntimeConversation(address, interruption!)
+    expect(getRuntimeConversationMessages(address).at(-1)).toMatchObject({
+      runtimeStatus: 'streaming',
     })
   })
 

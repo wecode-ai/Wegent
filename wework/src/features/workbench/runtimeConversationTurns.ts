@@ -1,5 +1,4 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
-import type { AppliedRuntimeGuidanceMessage } from './runtimeGuidanceMessages'
 import type {
   ProcessingBlock,
   RuntimeConversationItem,
@@ -152,27 +151,41 @@ export function projectRuntimeConversationTurns(
 export function appendRuntimeConversationGuidance(
   turns: RuntimeConversationTurn[],
   turnId: string | undefined,
-  guidance: AppliedRuntimeGuidanceMessage
+  guidance: WorkbenchMessage & { role: 'user'; runtimeGuidance: true }
 ): RuntimeConversationTurn[] {
   if (!turnId) return turns
-  const withoutOptimisticDuplicate = turns.filter(
-    turn =>
-      !(
-        turn.id === null &&
-        turn.clientUserMessageId === guidance.id &&
-        turn.items.every(item => item.type === 'user_message' && item.id === guidance.id)
-      )
-  )
-  if (
-    withoutOptimisticDuplicate.some(turn =>
-      turn.items.some(item => item.type === 'user_message' && item.id === guidance.id)
+  const withoutOptimisticDuplicate = turns
+    .filter(
+      turn =>
+        !(
+          turn.id === null &&
+          turn.clientUserMessageId === guidance.id &&
+          turn.items.every(item => item.type === 'user_message' && item.id === guidance.id)
+        )
     )
-  ) {
-    return withoutOptimisticDuplicate
-  }
+    .map(turn =>
+      turn.id !== turnId
+        ? {
+            ...turn,
+            items: turn.items.filter(
+              item => item.type !== 'user_message' || item.id !== guidance.id
+            ),
+          }
+        : turn
+    )
   return updateTurn(withoutOptimisticDuplicate, turnId, turn => {
-    if (turn.items.some(item => item.type === 'user_message' && item.id === guidance.id)) {
-      return turn
+    const existingIndex = turn.items.findIndex(
+      item => item.type === 'user_message' && item.id === guidance.id
+    )
+    if (existingIndex >= 0) {
+      return {
+        ...turn,
+        items: replaceAt(turn.items, existingIndex, {
+          id: guidance.id,
+          type: 'user_message',
+          message: { ...guidance, subtaskId: turnId, turnId },
+        }),
+      }
     }
     const userItem: RuntimeConversationItem = {
       id: guidance.id,
@@ -504,7 +517,7 @@ function projectedGuidanceBlock(
     type: 'tool',
     toolName: 'conversation_guidance',
     toolInput: { message: message.content },
-    status: 'done',
+    status: message.status === 'pending' ? 'streaming' : 'done',
     createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
   }
 }

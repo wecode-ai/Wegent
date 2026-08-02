@@ -223,7 +223,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
 
-        let Some(thread_id) = session_id else {
+        let Some(mut thread_id) = session_id else {
             let workspace_path = workspace_path(&payload).unwrap_or_default();
             let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "runtime".to_owned());
             log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -253,6 +253,22 @@ impl RuntimeWorkRpcHandler {
                 turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
         };
+
+        if refresh {
+            if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
+                thread_id = self
+                    .resume_codex_thread_for_action(link, &thread_id)
+                    .await
+                    .map_err(|error| AppIpcError::new("codex_error", error))?;
+                log_executor_event(
+                    "runtime work transcript resumed before refresh",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                    ],
+                );
+            }
+        }
 
         let mut thread = self
             .read_codex_thread_with_turns(&thread_id)

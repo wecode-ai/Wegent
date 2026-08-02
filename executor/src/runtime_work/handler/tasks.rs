@@ -473,7 +473,22 @@ impl RuntimeWorkRpcHandler {
                 "message or image attachment is required",
             ));
         }
-        let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+        log_executor_event(
+            "runtime guidance requested",
+            &[("local_task_id", local_task_id.clone())],
+        );
+        let Some(mut active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+            log_executor_event(
+                "runtime guidance rejected",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("code", "no_active_turn".to_owned()),
+                    (
+                        "active_local_task",
+                        self.is_active_local_task(&local_task_id).to_string(),
+                    ),
+                ],
+            );
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -492,37 +507,89 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| payload.get("additional_context"))
             .filter(|value| value.is_object())
             .cloned();
-        match self
+        let steer_result = self
             .codex_app_server
             .steer_turn(
                 &active_turn.thread_id,
                 &active_turn.turn_id,
                 Some(guidance_id.clone()),
-                Value::Array(steer_input),
-                additional_context,
+                Value::Array(steer_input.clone()),
+                additional_context.clone(),
             )
-            .await
-        {
-            Ok(turn_id) => Ok(json!({
-                "success": true,
-                "accepted": true,
-                "guidance_id": guidance_id,
-                "guidanceId": guidance_id,
-                "taskId": local_task_id,
-                "turnId": turn_id,
-                "runtime": "codex",
-            })),
+            .await;
+        let steer_result = match steer_result {
             Err(error) => {
-                let code = codex_guidance_failure_code(&error);
+                let Some(actual_turn_id) = active_turn_id_from_steer_mismatch(&error) else {
+                    return Ok(runtime_guidance_failure(
+                        &local_task_id,
+                        &active_turn,
+                        error,
+                    ));
+                };
+                if actual_turn_id == active_turn.turn_id {
+                    return Ok(runtime_guidance_failure(
+                        &local_task_id,
+                        &active_turn,
+                        error,
+                    ));
+                }
+                log_executor_event(
+                    "runtime guidance active turn corrected",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", active_turn.thread_id.clone()),
+                        ("previous_turn_id", active_turn.turn_id.clone()),
+                        ("turn_id", actual_turn_id.clone()),
+                    ],
+                );
+                self.record_active_codex_turn(
+                    &local_task_id,
+                    active_turn.thread_id.clone(),
+                    actual_turn_id.clone(),
+                );
+                active_turn.turn_id = actual_turn_id.clone();
+                self.codex_app_server
+                    .steer_turn(
+                        &active_turn.thread_id,
+                        &actual_turn_id,
+                        Some(guidance_id.clone()),
+                        Value::Array(steer_input),
+                        additional_context,
+                    )
+                    .await
+            }
+            result => result,
+        };
+        match steer_result {
+            Ok(turn_id) => {
+                self.record_active_codex_turn(
+                    &local_task_id,
+                    active_turn.thread_id.clone(),
+                    turn_id.clone(),
+                );
+                log_executor_event(
+                    "runtime guidance accepted",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", active_turn.thread_id.clone()),
+                        ("turn_id", turn_id.clone()),
+                    ],
+                );
                 Ok(json!({
-                    "success": false,
-                    "accepted": false,
-                    "error": error,
-                    "code": code,
+                    "success": true,
+                    "accepted": true,
+                    "guidance_id": guidance_id,
+                    "guidanceId": guidance_id,
                     "taskId": local_task_id,
+                    "turnId": turn_id,
                     "runtime": "codex",
                 }))
             }
+            Err(error) => Ok(runtime_guidance_failure(
+                &local_task_id,
+                &active_turn,
+                error,
+            )),
         }
     }
 
@@ -728,6 +795,31 @@ impl RuntimeWorkRpcHandler {
         }
         self.upsert_local_task(link);
     }
+}
+
+fn runtime_guidance_failure(
+    local_task_id: &str,
+    active_turn: &ActiveCodexTurn,
+    error: String,
+) -> Value {
+    let code = codex_guidance_failure_code(&error);
+    log_executor_event(
+        "runtime guidance rejected",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("code", code.to_owned()),
+            ("thread_id", active_turn.thread_id.clone()),
+            ("turn_id", active_turn.turn_id.clone()),
+        ],
+    );
+    json!({
+        "success": false,
+        "accepted": false,
+        "error": error,
+        "code": code,
+        "taskId": local_task_id,
+        "runtime": "codex",
+    })
 }
 
 pub(super) fn resolve_codex_turn_id(
