@@ -246,6 +246,7 @@ def test_feedback_claim_retries_when_conflicting_row_was_deleted(
 def test_submit_feedback_rate_limits_anonymous_callers_by_ip(
     test_client: TestClient,
     feedback_project: CloudProject,
+    feedback_storage: FeedbackStorage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
