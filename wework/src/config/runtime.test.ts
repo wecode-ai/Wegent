@@ -27,6 +27,17 @@ describe('getRuntimeConfig', () => {
     expect(getRuntimeConfig().socketBaseUrl).toBe('https://cloud.example.com')
   })
 
+  test('leaves the feedback URL empty by default', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
+    expect(getRuntimeConfig().feedbackUrl).toBe('')
+  })
+
+  test('reads and normalizes the feedback URL from build-time config', () => {
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports/')
+
+    expect(getRuntimeConfig().feedbackUrl).toBe('https://feedback.example.com/v1/reports')
+  })
+
   test('uses the optional Wegent Socket URL from build-time config', () => {
     delete window.__WEWORK_RUNTIME_CONFIG__
     vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com/api')
