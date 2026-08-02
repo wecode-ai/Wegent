@@ -594,6 +594,8 @@ fn codex_guidance_failure_code(error: &str) -> &'static str {
 }
 
 fn active_turn_id_from_steer_mismatch(error: &str) -> Option<String> {
+    // Codex app-server 0.146.0 reports this mismatch only in the JSON-RPC
+    // message. Prefer structured error data when the protocol exposes it.
     const PREFIX: &str = "expected active turn id `";
     const SEPARATOR: &str = "` but found `";
 

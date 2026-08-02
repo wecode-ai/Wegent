@@ -254,7 +254,7 @@ impl RuntimeWorkRpcHandler {
             }));
         };
 
-        if refresh {
+        if refresh && !local_execution_running {
             if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)
