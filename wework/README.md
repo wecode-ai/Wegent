@@ -85,8 +85,13 @@ iOS native builds have no Vite dev proxy, so backend URLs must be absolute. Each
 ```dotenv
 VITE_WEGENT_BACKEND_URL=https://wework.example.com
 VITE_WEGENT_SOCKET_URL=wss://wss-wework.example.com # optional
+VITE_WEWORK_FEEDBACK_URL=https://feedback.example.com/api/v1/feedback # optional
 APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX
 ```
+
+`VITE_WEWORK_FEEDBACK_URL` is the complete feedback submission endpoint baked into the
+app. Leave it empty to disable remote feedback submission while keeping local
+diagnostic export available.
 
 ### Run and Package
 

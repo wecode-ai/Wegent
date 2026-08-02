@@ -660,6 +660,7 @@ class Settings(BaseSettings):
     # An empty value disables the feedback channel.
     WEWORK_FEEDBACK_PROJECT_ID: str = ""
     WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB: int = 250
+    WEWORK_FEEDBACK_RATE_LIMIT: str = "5/hour"
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
