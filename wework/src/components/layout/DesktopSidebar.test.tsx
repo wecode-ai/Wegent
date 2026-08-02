@@ -675,16 +675,179 @@ describe('DesktopSidebar', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1)
   })
 
+  test('filters the sidebar to unread, active, and waiting conversations', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project-7', name: 'Wegent' },
+            totalTasks: 3,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                available: true,
+                workspacePath: '/repo/Wegent',
+                tasks: [
+                  {
+                    taskId: 'running-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Running task',
+                    runtime: 'codex',
+                    running: true,
+                  },
+                  {
+                    taskId: 'waiting-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Waiting task',
+                    runtime: 'codex',
+                    status: 'waiting_for_user_input',
+                  },
+                  {
+                    taskId: 'idle-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Idle task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/unread',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'unread-task',
+                workspacePath: '/workspace/chats/unread',
+                workspaceKind: 'chat',
+                title: 'Unread task',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 4,
+      },
+      unreadRuntimeTaskKeys: new Set(['local-device\0unread-task']),
+    })
+
+    expect(screen.getByTestId('runtime-priority-filter-attention-dot')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-filter-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('runtime-local-task-row-unread-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-running-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-waiting-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-waiting-waiting-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-idle-task')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('projects-section-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('new-chat-button')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-cloud-connection-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+    expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
+  })
+
+  test('toggles the priority filter with Command or Control plus Option and U', () => {
+    renderSidebar()
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true, altKey: true })
+
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'u', metaKey: true })
+
+    expect(screen.getByTestId('runtime-priority-section')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'u', ctrlKey: true, altKey: true })
+
+    expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
+  })
+
+  test('shows the priority filter tooltip and shortcut on hover', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar()
+
+    await user.hover(screen.getByTestId('runtime-priority-filter-button'))
+
+    const tooltip = screen.getByTestId('runtime-priority-filter-tooltip')
+    expect(tooltip).toHaveTextContent('按优先级筛选')
+    expect(tooltip).toHaveTextContent('U')
+  })
+
+  test('keeps pinned conversations out of the priority list until requested', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/priority',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'pinned-waiting',
+                workspacePath: '/workspace/chats/priority',
+                workspaceKind: 'chat',
+                title: 'Pinned waiting task',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+                pinned: true,
+              },
+              {
+                taskId: 'regular-waiting',
+                workspacePath: '/workspace/chats/priority',
+                workspaceKind: 'chat',
+                title: 'Regular waiting task',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(screen.getByTestId('runtime-local-task-row-regular-waiting')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-pinned-waiting')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-toggle-pinned'))
+
+    expect(screen.getByTestId('runtime-local-task-row-pinned-waiting')).toBeInTheDocument()
+  })
+
   test('keeps search in the product header and orders primary sidebar actions', () => {
     renderSidebar()
 
     const newChatButton = screen.getByTestId('new-chat-button')
     const searchButton = screen.getByTestId('runtime-search-button')
+    const priorityFilterButton = screen.getByTestId('runtime-priority-filter-button')
     const pluginsButton = screen.getByTestId('plugins-button')
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
     expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(searchButton.compareDocumentPosition(priorityFilterButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
     expect(newChatButton.compareDocumentPosition(pluginsButton)).toBe(
@@ -2708,7 +2871,7 @@ describe('DesktopSidebar', () => {
     expect(openLocalWorkspace).not.toHaveBeenCalled()
   })
 
-  test('opens away reminder controls from the account notification bell', async () => {
+  test('opens away reminder controls from the account IM message button', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
 
@@ -2735,7 +2898,9 @@ describe('DesktopSidebar', () => {
     const toggle = screen.getByTestId('sidebar-global-im-notification-button')
 
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-global-im-notification-muted-icon')).toHaveClass(
+      'lucide-message-circle-off'
+    )
     expect(toggle).toHaveAttribute('title', expect.stringContaining('Telegram'))
 
     await user.click(toggle)
@@ -3119,7 +3284,10 @@ describe('DesktopSidebar', () => {
 
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
     expect(hoverActions).not.toContainElement(toggle)
-    expect(screen.getByTestId('runtime-local-task-notify-icon-codex-1')).toHaveClass('fill-current')
+    expect(screen.getByTestId('runtime-local-task-notify-icon-codex-1')).toHaveClass(
+      'lucide-message-circle',
+      'fill-current'
+    )
 
     await user.click(toggle)
 
