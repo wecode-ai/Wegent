@@ -588,6 +588,16 @@ function ScrollableMessagePaneContent({
           () => {
             if (followingBottomKeyRef.current === currentScrollKey) {
               followingBottomKeyRef.current = null
+              const element = activeScrollRefRef.current.current
+              const distanceToBottom = element
+                ? element.scrollHeight - element.clientHeight - element.scrollTop
+                : Number.POSITIVE_INFINITY
+              if (
+                distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD &&
+                !userScrollPausedAutoFollowRef.current
+              ) {
+                preserveLatestUserTurnRef.current = false
+              }
             }
           },
           Math.max(...STABLE_SCROLL_DELAYS) + 50
@@ -685,7 +695,9 @@ function ScrollableMessagePaneContent({
     }
 
     if (preserveLatestUserTurnRef.current) {
-      clearScheduledScrolls()
+      if (followingBottomKeyRef.current !== currentScrollKey) {
+        clearScheduledScrolls()
+      }
       return
     }
 

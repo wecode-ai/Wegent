@@ -723,7 +723,6 @@ export function createDesktopScenario({
         waitingScrollerMetrics,
         'The thinking indicator after sending'
       )
-      releaseStart()
       await control.command('markElementWithText', USER_MESSAGE_SELECTOR, {
         text: PROMPT,
         value: USER_MESSAGE_E2E_ID,
@@ -744,11 +743,17 @@ export function createDesktopScenario({
         scrollerAfterSend,
         'The latest user message after sending'
       )
+      releaseStart()
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+      await waitForBottom(
+        control,
+        'The conversation scroller while the assistant response starts',
+        uiTimeoutMs
+      )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )

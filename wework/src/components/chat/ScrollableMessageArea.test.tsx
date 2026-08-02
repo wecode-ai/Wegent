@@ -68,6 +68,7 @@ describe('ScrollableMessageArea', () => {
   afterEach(() => {
     requestAnimationFrameSpy.mockRestore()
     cancelAnimationFrameSpy.mockRestore()
+    vi.unstubAllGlobals()
     vi.useRealTimers()
   })
 
@@ -1789,7 +1790,6 @@ describe('ScrollableMessageArea', () => {
 
     fireEvent.click(screen.getByTestId('runtime-transcript-gap-marker').querySelector('button')!)
     expect(onLoadTranscriptGap).toHaveBeenCalledTimes(2)
-    vi.unstubAllGlobals()
   })
 
   test('does not render a gap for transcript indexes already covered by a loaded page', () => {
@@ -1957,10 +1957,9 @@ describe('ScrollableMessageArea', () => {
       top: 900,
       behavior: 'auto',
     })
-    vi.unstubAllGlobals()
   })
 
-  test('keeps the latest user turn visible while the assistant response grows', () => {
+  test('follows the assistant response after latest-user placement stabilizes', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -2051,8 +2050,10 @@ describe('ScrollableMessageArea', () => {
       vi.runOnlyPendingTimers()
     })
 
-    expect(scroller.scrollTo).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1600,
+      behavior: 'auto',
+    })
   })
 
   test('keeps scrolling through layout measurement when the waiting indicator appears after send', () => {
@@ -2133,10 +2134,9 @@ describe('ScrollableMessageArea', () => {
       top: 1000,
       behavior: 'auto',
     })
-    vi.unstubAllGlobals()
   })
 
-  test('keeps the first user turn visible after starting from an empty conversation', () => {
+  test('follows the first assistant response after starting from an empty conversation', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
       'ResizeObserver',
@@ -2217,8 +2217,10 @@ describe('ScrollableMessageArea', () => {
       vi.runOnlyPendingTimers()
     })
 
-    expect(scroller.scrollTo).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 1000,
+      behavior: 'auto',
+    })
   })
 
   test('restores the previous scroll position when reopening a conversation', () => {
