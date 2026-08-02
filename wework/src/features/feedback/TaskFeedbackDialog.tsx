@@ -7,6 +7,7 @@ import {
   FileText,
   Image as ImageIcon,
   ListChecks,
+  Paperclip,
   Monitor,
   ScrollText,
   Send,
@@ -15,12 +16,22 @@ import {
   X,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
+import type { ClipboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
-type FeedbackCategory = 'report' | 'logs' | 'task' | 'system' | 'screenshot' | 'other'
+type FeedbackCategory =
+  | 'report'
+  | 'attachments'
+  | 'logs'
+  | 'task'
+  | 'system'
+  | 'screenshot'
+  | 'other'
+
+type FeedbackPreviewSection = 'standard' | 'user' | 'full'
 
 interface FeedbackSelection {
   runtimeLogs: boolean
@@ -50,6 +61,12 @@ interface FeedbackPreviewResult {
   skipped: string[]
   warnings: string[]
   finalFileName: string
+}
+
+interface FeedbackAttachment {
+  name: string
+  mimeType: string
+  dataBase64: string
 }
 
 interface FeedbackSubmitResult {
@@ -114,6 +131,9 @@ const noSelection: FeedbackSelection = {
   systemInfo: false,
 }
 
+const MAX_ATTACHMENT_COUNT = 20
+const MAX_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
+
 export function TaskFeedbackDialog({
   open,
   hasActiveTask,
@@ -141,6 +161,7 @@ function TaskFeedbackDialogContent({
   const { t, i18n } = useTranslation('common')
   const [selection, setSelection] = useState<FeedbackSelection>(standardSelection)
   const [note, setNote] = useState('')
+  const [attachments, setAttachments] = useState<File[]>([])
   const [exporting, setExporting] = useState(false)
   const [capturingScreenshot, setCapturingScreenshot] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -152,7 +173,40 @@ function TaskFeedbackDialogContent({
   const [expandedCategory, setExpandedCategory] = useState<FeedbackCategory | null>(null)
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
-  const hasSelection = Object.values(selection).some(Boolean)
+  const hasFeedback =
+    Object.values(selection).some(Boolean) || note.trim() !== '' || attachments.length > 0
+
+  const addAttachments = (incoming: File[]) => {
+    setError(null)
+    const existing = new Set(
+      attachments.map(file => `${file.name}:${file.size}:${file.lastModified}`)
+    )
+    const unique = incoming.filter(
+      file => !existing.has(`${file.name}:${file.size}:${file.lastModified}`)
+    )
+    const next = [...attachments, ...unique]
+    if (next.length > MAX_ATTACHMENT_COUNT) {
+      setError(
+        t('workbench.feedback_attachment_count_limit', {
+          count: MAX_ATTACHMENT_COUNT,
+        })
+      )
+      return
+    }
+    const totalBytes = next.reduce((sum, file) => sum + file.size, 0)
+    if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
+      setError(t('workbench.feedback_attachment_size_limit'))
+      return
+    }
+    setAttachments(next)
+  }
+
+  const handleNotePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files)
+    if (files.length === 0) return
+    event.preventDefault()
+    addAttachments(files)
+  }
 
   const discardPreview = async () => {
     if (!preview) return
@@ -210,6 +264,19 @@ function TaskFeedbackDialogContent({
           note,
           taskContext,
           screenshotDataUrl,
+          attachments: await Promise.all(
+            attachments.map(async attachment => {
+              try {
+                return await serializeAttachment(attachment)
+              } catch {
+                throw new Error(
+                  t('workbench.feedback_attachment_read_failed', {
+                    name: attachment.name,
+                  })
+                )
+              }
+            })
+          ),
         },
       })
       setPreview(prepared)
@@ -332,42 +399,49 @@ function TaskFeedbackDialogContent({
     key: FeedbackCategory
     label: string
     description: string
-    sensitive: boolean
+    section: FeedbackPreviewSection
     icon: typeof FileText
   }[] = [
     {
       key: 'report',
       label: t('workbench.feedback_category_report'),
       description: t('workbench.feedback_category_report_description'),
-      sensitive: false,
+      section: 'user',
       icon: ListChecks,
+    },
+    {
+      key: 'attachments',
+      label: t('workbench.feedback_attachments'),
+      description: t('workbench.feedback_attachments_preview_description'),
+      section: 'user',
+      icon: Paperclip,
     },
     {
       key: 'logs',
       label: t('workbench.feedback_runtime_logs'),
       description: t('workbench.feedback_runtime_logs_description'),
-      sensitive: false,
+      section: 'standard',
       icon: ScrollText,
     },
     {
       key: 'system',
       label: t('workbench.feedback_system_info'),
       description: t('workbench.feedback_system_info_description'),
-      sensitive: false,
+      section: 'standard',
       icon: Monitor,
     },
     {
       key: 'task',
       label: t('workbench.feedback_task_info'),
       description: t('workbench.feedback_task_info_preview_description'),
-      sensitive: true,
+      section: 'full',
       icon: FileText,
     },
     {
       key: 'screenshot',
       label: t('workbench.feedback_screenshot'),
       description: t('workbench.feedback_screenshot_preview_description'),
-      sensitive: true,
+      section: 'full',
       icon: ImageIcon,
     },
   ]
@@ -476,6 +550,52 @@ function TaskFeedbackDialogContent({
         ) : (
           <>
             <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto">
+              <label className="block text-sm font-medium">
+                {t('workbench.feedback_note')}
+                <textarea
+                  data-testid="task-feedback-note"
+                  value={note}
+                  onChange={event => setNote(event.target.value)}
+                  onPaste={handleNotePaste}
+                  placeholder={t('workbench.feedback_note_placeholder')}
+                  rows={5}
+                  className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </label>
+              <div>
+                <p className="text-xs text-text-secondary">
+                  {t('workbench.feedback_paste_attachments_hint')}
+                </p>
+                {attachments.length > 0 ? (
+                  <ul
+                    data-testid="task-feedback-attachment-list"
+                    className="mt-2 flex flex-wrap gap-2"
+                  >
+                    {attachments.map((file, index) => (
+                      <li key={`${file.name}:${file.size}:${file.lastModified}`}>
+                        <button
+                          type="button"
+                          data-testid={`task-feedback-remove-attachment-${index}`}
+                          onClick={() =>
+                            setAttachments(current => current.filter(item => item !== file))
+                          }
+                          className="flex h-7 max-w-56 items-center gap-1.5 rounded-lg bg-muted px-2 text-xs text-text-secondary hover:text-text-primary"
+                          aria-label={t('workbench.feedback_remove_attachment', {
+                            name: file.name,
+                          })}
+                          title={t('workbench.feedback_remove_attachment', {
+                            name: file.name,
+                          })}
+                        >
+                          <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{file.name}</span>
+                          <X className="h-3 w-3 shrink-0" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
               {optionGroups.map(group => {
                 const disabled = group.sensitive && !hasActiveTask
                 const target = group.sensitive ? fullTaskSelection : standardSelection
@@ -535,17 +655,6 @@ function TaskFeedbackDialogContent({
                 )
               })}
             </div>
-            <label className="mt-4 block shrink-0 text-sm font-medium">
-              {t('workbench.feedback_note')}
-              <textarea
-                data-testid="task-feedback-note"
-                value={note}
-                onChange={event => setNote(event.target.value)}
-                placeholder={t('workbench.feedback_note_placeholder')}
-                rows={3}
-                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-              />
-            </label>
           </>
         )}
 
@@ -576,7 +685,7 @@ function TaskFeedbackDialogContent({
             <button
               type="button"
               data-testid="task-feedback-export-button"
-              disabled={!hasSelection || exporting}
+              disabled={!hasFeedback || exporting}
               onClick={() => void buildPreview()}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
             >
@@ -628,11 +737,32 @@ function waitForScreenshotPaint(): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, 500))
 }
 
+function serializeAttachment(file: File): Promise<FeedbackAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read attachment'))
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read attachment'))
+        return
+      }
+      const separator = result.indexOf(',')
+      resolve({
+        name: file.name,
+        mimeType: file.type,
+        dataBase64: separator >= 0 ? result.slice(separator + 1) : result,
+      })
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 type PreviewGroup = {
   key: FeedbackCategory
   label: string
   description: string
-  sensitive: boolean
+  section: FeedbackPreviewSection
   icon: typeof FileText
   entries: FeedbackEntryPreview[]
 }
@@ -667,13 +797,19 @@ function FeedbackPreviewList({
       key: 'standard',
       sensitive: false,
       label: t('workbench.feedback_group_standard'),
-      groups: groupedPreview.filter(group => !group.sensitive),
+      groups: groupedPreview.filter(group => group.section === 'standard'),
+    },
+    {
+      key: 'user',
+      sensitive: true,
+      label: t('workbench.feedback_group_user_content'),
+      groups: groupedPreview.filter(group => group.section === 'user'),
     },
     {
       key: 'full',
       sensitive: true,
       label: t('workbench.feedback_group_full_task'),
-      groups: groupedPreview.filter(group => group.sensitive),
+      groups: groupedPreview.filter(group => group.section === 'full'),
     },
   ].filter(section => section.groups.length > 0)
 
@@ -753,14 +889,10 @@ function PreviewGroupItem({
   onToggleEntry,
 }: PreviewGroupItemProps) {
   const Icon = group.icon
+  const sensitive = group.section !== 'standard'
   const totalBytes = group.entries.reduce((sum, entry) => sum + entry.sizeBytes, 0)
   return (
-    <li
-      className={cn(
-        'rounded-lg border',
-        group.sensitive ? 'border-red-500/40' : 'border-border/60'
-      )}
-    >
+    <li className={cn('rounded-lg border', sensitive ? 'border-red-500/40' : 'border-border/60')}>
       <button
         type="button"
         data-testid={`task-feedback-preview-category-${group.key}`}
@@ -768,17 +900,14 @@ function PreviewGroupItem({
         className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted"
       >
         <Icon
-          className={cn(
-            'h-4 w-4 shrink-0',
-            group.sensitive ? 'text-red-500' : 'text-text-secondary'
-          )}
+          className={cn('h-4 w-4 shrink-0', sensitive ? 'text-red-500' : 'text-text-secondary')}
         />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">{group.label}</span>
           <span
             className={cn(
               'block truncate text-xs',
-              group.sensitive ? 'text-red-500/80' : 'text-text-secondary'
+              sensitive ? 'text-red-500/80' : 'text-text-secondary'
             )}
           >
             {group.description}
@@ -792,7 +921,7 @@ function PreviewGroupItem({
         )}
       </button>
       {expanded ? (
-        <ul className={cn('border-t', group.sensitive ? 'border-red-500/40' : 'border-border/60')}>
+        <ul className={cn('border-t', sensitive ? 'border-red-500/40' : 'border-border/60')}>
           {group.entries.map(entry => {
             const entryExpanded = expandedEntry === entry.archivePath
             return (
