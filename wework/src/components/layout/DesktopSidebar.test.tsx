@@ -705,6 +705,14 @@ describe('DesktopSidebar', () => {
                     status: 'waiting_for_user_input',
                   },
                   {
+                    taskId: 'running-waiting-task',
+                    workspacePath: '/repo/Wegent',
+                    title: 'Running waiting task',
+                    runtime: 'codex',
+                    running: true,
+                    status: 'waiting_for_user_input',
+                  },
+                  {
                     taskId: 'idle-task',
                     workspacePath: '/repo/Wegent',
                     title: 'Idle task',
@@ -732,7 +740,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        totalTasks: 4,
+        totalTasks: 5,
       },
       unreadRuntimeTaskKeys: new Set(['local-device\0unread-task']),
     })
@@ -749,6 +757,7 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-row-unread-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-running-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-row-waiting-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-running-waiting-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-waiting-waiting-task')).toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-row-idle-task')).not.toBeInTheDocument()
     const priorityRows = Array.from(
@@ -759,6 +768,7 @@ describe('DesktopSidebar', () => {
     expect(priorityRows.map(row => row.dataset.testid)).toEqual([
       'runtime-local-task-row-unread-task',
       'runtime-local-task-row-waiting-task',
+      'runtime-local-task-row-running-waiting-task',
       'runtime-local-task-row-running-task',
     ])
     expect(screen.queryByTestId('projects-section-toggle')).not.toBeInTheDocument()
@@ -770,6 +780,55 @@ describe('DesktopSidebar', () => {
 
     expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
     expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
+  })
+
+  test('sorts priority tasks with numeric-string timestamps', async () => {
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/priority-timestamps',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'older-waiting-task',
+                workspacePath: '/workspace/chats/priority-timestamps',
+                workspaceKind: 'chat',
+                title: 'Older waiting task',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+                updatedAt: '2024-01-01T00:00:00.000Z',
+              },
+              {
+                taskId: 'recent-waiting-task',
+                workspacePath: '/workspace/chats/priority-timestamps',
+                workspaceKind: 'chat',
+                title: 'Recent waiting task',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+                updatedAt: '1750000000000',
+              },
+            ],
+          },
+        ],
+        totalTasks: 2,
+      },
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    const priorityRows = Array.from(
+      screen
+        .getByTestId('runtime-priority-list')
+        .querySelectorAll<HTMLElement>('[data-testid^="runtime-local-task-row-"]')
+    )
+    expect(priorityRows.map(row => row.dataset.testid)).toEqual([
+      'runtime-local-task-row-recent-waiting-task',
+      'runtime-local-task-row-older-waiting-task',
+    ])
   })
 
   test('toggles the priority filter with the configured macOS shortcut', () => {

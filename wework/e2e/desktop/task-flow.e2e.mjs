@@ -2328,7 +2328,6 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
-  let requestReleased = false
   try {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
@@ -2382,14 +2381,11 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await captureVerificationScreenshot(control, 'priority-filter-03-shortcut-restored-sidebar.png')
   } finally {
-    if (!requestReleased) {
-      await withTimeout(
-        control.releaseRequestUserInputResponse(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'Timed out releasing the priority-filter request-user-input response'
-      )
-      requestReleased = true
-    }
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Timed out releasing the priority-filter request-user-input response'
+    )
   }
 
   await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)

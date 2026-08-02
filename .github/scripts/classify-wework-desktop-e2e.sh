@@ -93,10 +93,16 @@ classify_wework_path() {
       return
       ;;
 
-    # Sidebar priority filtering has a dedicated runtime-task fixture.
-    wework/src/components/layout/DesktopSidebar.tsx | \
-      wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
+    # The extracted priority section has its own runtime-task fixture.
+    wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
       select_target "core:priority-filter"
+      return
+      ;;
+    # The main sidebar also owns project creation, chats, and attachments.
+    wework/src/components/layout/DesktopSidebar.tsx)
+      select_target "core:priority-filter"
+      select_target "core:core-task-flow"
+      select_target "core:workspace-attachments"
       return
       ;;
 

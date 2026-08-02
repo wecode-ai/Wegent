@@ -732,9 +732,10 @@ function getRuntimeTaskPriorityReason(
   runningTaskKeys: ReadonlySet<string>
 ): RuntimeTaskPriorityReason | null {
   if (unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))) return 'unread'
+  if (isRuntimeTaskWaiting(task)) return 'waiting'
   const address = getRuntimeTaskAddress(workspace, task)
   if (runningTaskKeys.has(getRuntimeTaskLifecycleKey(address))) return 'active'
-  return isRuntimeTaskWaiting(task) ? 'waiting' : null
+  return null
 }
 
 function getRuntimeTaskPriorityRank(reason: RuntimeTaskPriorityReason): number {
@@ -751,7 +752,8 @@ function getRuntimeTaskPriorityRank(reason: RuntimeTaskPriorityReason): number {
 function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
   const value = getRuntimeTaskTime(task)
   if (value === undefined) return 0
-  const timestamp = new Date(value).getTime()
+  const numeric = typeof value === 'number' ? value : Number(value)
+  const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 

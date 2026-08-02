@@ -41,6 +41,7 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[TOGGLE_SIDE_PANEL_COMMAND]).toBe('Alt+Command+B')
     expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
     expect(mergeKeybindings([])[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Alt+Command+U')
+    expect(mergeKeybindings([], 'win')[TOGGLE_PRIORITY_FILTER_COMMAND]).toBe('Control+Alt+U')
     expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
     expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
     expect(mergeKeybindings([])[RESET_FONT_SIZE_COMMAND]).toBe('Command+0')
