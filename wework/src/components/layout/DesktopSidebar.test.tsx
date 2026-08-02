@@ -196,7 +196,7 @@ describe('DesktopSidebar', () => {
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
   })
 
-  test('removes right border on Windows', () => {
+  test('keeps the shared right border on Windows', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -208,7 +208,7 @@ describe('DesktopSidebar', () => {
     })
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
-    expect(sidebar).not.toHaveClass('border-r')
+    expect(sidebar).toHaveClass('border-r')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {
@@ -700,7 +700,7 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(searchButton.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(searchButton.parentElement?.parentElement).toHaveClass('h-9', 'justify-between')
     expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
     expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })

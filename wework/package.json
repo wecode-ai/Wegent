@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,7 +18,7 @@
     "ios:init": "tauri ios init",
     "dev:ios": "bash scripts/dev-ios-app.sh",
     "build:ios": "bash scripts/build-ios-app.sh",
-    "tauri:build": "pnpm run prepare:codex && pnpm run prepare:dws && tauri build",
+    "tauri:build": "pnpm run prepare:codex -- --materialize && pnpm run prepare:dws && tauri build",
     "lint": "eslint . && pnpm run lint:typography && pnpm run lint:task-lifecycle",
     "lint:typography": "node scripts/check-typography.mjs",
     "lint:task-lifecycle": "node scripts/check-runtime-task-lifecycle.mjs",
@@ -28,7 +28,7 @@
     "test:watch": "vitest",
     "test:kimi-k3-profile": "node scripts/verify-kimi-k3-profile.mjs",
     "e2e": "playwright test",
-    "e2e:desktop": "WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
+    "e2e:desktop": "WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/run-checkpoints.mjs",
     "e2e:desktop:wecode": "node wecode/e2e/desktop/task-flow.e2e.mjs",
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
     "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",

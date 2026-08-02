@@ -3,6 +3,7 @@
 set -euo pipefail
 
 core_segments=(
+  workspace-tabs
   core-task-flow
   window-lifecycle
   goal-lifecycle

@@ -256,7 +256,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
 fi
 
 wework_build_windows_code_statistics_hook "$WEWORK_DIR" "$WINDOWS_BUILD_TARGET"
-WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
 WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 

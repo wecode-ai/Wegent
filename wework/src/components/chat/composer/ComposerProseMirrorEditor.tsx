@@ -61,7 +61,6 @@ export const ComposerProseMirrorEditor = forwardRef<
   const mountRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const textareaRefRef = useRef(props.textareaRef)
-  const initialPropsRef = useRef(props)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
   callbacksRef.current = props
@@ -95,7 +94,8 @@ export const ComposerProseMirrorEditor = forwardRef<
   useEffect(() => {
     const mount = mountRef.current
     if (!mount) return
-    const initialProps = initialPropsRef.current
+    const initialProps = callbacksRef.current
+    internalValueRef.current = initialProps.value
 
     const view: EditorView = new EditorView(mount, {
       state: EditorState.create({

@@ -8,6 +8,9 @@ import {
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
+export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
+export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
+export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
   id: string
@@ -106,9 +109,13 @@ export async function hydrateLocalModelApiKeys(): Promise<void> {
   const parsed: unknown = JSON.parse(raw)
   if (!Array.isArray(parsed)) return
   const configs = parsed.filter(isLocalModelConfig)
-  const storedApiKeys = await invoke<Record<string, string>>('read_local_model_api_keys', {
-    configIds: configs.map(config => config.id),
-  })
+  const configIds = configs
+    .filter(config => config.apiKeyConfigured !== false && !config.apiKey)
+    .map(config => config.id)
+  const storedApiKeys =
+    configIds.length > 0
+      ? await invoke<Record<string, string>>('read_local_model_api_keys', { configIds })
+      : {}
   localModelApiKeys.clear()
   for (const [configId, apiKey] of Object.entries(storedApiKeys)) {
     if (apiKey) localModelApiKeys.set(configId, apiKey)
@@ -264,13 +271,24 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
-  const apiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const migrateDeepSeekResponses =
+    legacyConfig.providerProfileId === 'deepseek' &&
+    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
+    storedApiFormat === 'openai-chat-completions' &&
+    normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
+      DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
+  const apiFormat = migrateDeepSeekResponses ? 'openai-responses' : storedApiFormat
+  const preferredRequestPath = migrateDeepSeekResponses
+    ? DEFAULT_LOCAL_MODEL_REQUEST_PATH
+    : legacyConfig.requestPath
   const splitUrl =
     legacyConfig.requestUrlMode === 'custom_url'
-      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, legacyConfig.requestPath)
+      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, preferredRequestPath, apiFormat)
       : {
           baseUrl: legacyConfig.baseUrl,
-          requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath, apiFormat),
+          requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
   const isCustomProvider = (legacyConfig.providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
@@ -293,6 +311,12 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           ? KIMI_K27_CATALOG_MODEL_ID
           : undefined
       : undefined
+  const deepSeekCatalogModelId =
+    legacyConfig.providerProfileId === 'deepseek' &&
+    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID
+      ? DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+      : undefined
+  const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
     ...(legacyConfig.providerProfileId
@@ -303,24 +327,32 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
     apiFormat,
-    toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+    toolProfile: migrateDeepSeekResponses
+      ? 'custom'
+      : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
-    ...(kimiCatalogModelId
-      ? { contextWindow: KIMI_CODING_CONTEXT_WINDOW }
+    ...(providerCatalogModelId
+      ? {
+          contextWindow: kimiCatalogModelId
+            ? KIMI_CODING_CONTEXT_WINDOW
+            : DEEPSEEK_V4_CONTEXT_WINDOW,
+        }
       : legacyConfig.contextWindow
         ? { contextWindow: legacyConfig.contextWindow }
         : {}),
-    webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
+    webSearchMode: migrateDeepSeekResponses
+      ? 'live'
+      : normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
     imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
       legacyConfig.imageGenerationEnabled
     ),
-    ...(kimiCatalogModelId ||
+    ...(providerCatalogModelId ||
     legacyConfig.codexCatalogModelId ||
     typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId:
-            kimiCatalogModelId ||
+            providerCatalogModelId ||
             legacyConfig.codexCatalogModelId ||
             (catalogEntry?.slug as string),
         }

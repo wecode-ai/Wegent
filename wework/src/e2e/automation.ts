@@ -324,28 +324,32 @@ function desktopControlSnapshot(selector = 'body'): string {
 }
 
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
-  const restoreMainWindow = async () => {
-    const mainWindow = getCurrentWindow()
-    await mainWindow.show()
-    await mainWindow.unminimize()
-    await mainWindow.setFocus()
+  const currentWindow = getCurrentWindow()
+  const restoreCurrentWindow = async () => {
+    await currentWindow.show()
+    await currentWindow.unminimize()
+    await currentWindow.setFocus()
     await new Promise<void>(resolve => window.setTimeout(resolve, 50))
   }
-  const captureMainWebview = async () => {
+  const captureCurrentWebview = async () => {
     try {
-      return await invoke<string>('capture_main_webview')
+      return await invoke<string>(
+        currentWindow.label.startsWith('workspace-')
+          ? 'capture_workspace_webview'
+          : 'capture_main_webview'
+      )
     } finally {
-      await restoreMainWindow()
+      await restoreCurrentWindow()
     }
   }
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   if (element === document.body) {
-    return captureMainWebview()
+    return captureCurrentWebview()
   }
   const rect = element.getBoundingClientRect()
   if (selector !== '[data-testid="model-selector-menu"]') {
-    const snapshot = await captureMainWebview()
+    const snapshot = await captureCurrentWebview()
     return cropDesktopControlScreenshot(snapshot, rect)
   }
   // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
@@ -365,7 +369,7 @@ async function captureDesktopControlScreenshot(selector: string): Promise<string
   document.body.appendChild(captureClone)
   try {
     await new Promise<void>(resolve => window.setTimeout(resolve, 50))
-    const snapshot = await captureMainWebview()
+    const snapshot = await captureCurrentWebview()
     return cropDesktopControlScreenshot(snapshot, rect)
   } finally {
     captureClone.remove()
@@ -717,11 +721,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   const getWindowFocusSnapshot = async () => {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const popoutWindow = await WebviewWindow.getByLabel('popout-window')
+    const workspaceWindows = (await WebviewWindow.getAll()).filter(window =>
+      window.label.startsWith('workspace-')
+    )
     return JSON.stringify({
       mainFocused: await getCurrentWindow().isFocused(),
       popoutExists: Boolean(popoutWindow),
       popoutFocused: popoutWindow ? await popoutWindow.isFocused() : false,
       popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
+      workspaceWindows: await Promise.all(
+        workspaceWindows.map(async window => ({
+          label: window.label,
+          focused: await window.isFocused(),
+          visible: await window.isVisible(),
+        }))
+      ),
     })
   }
 
@@ -735,15 +749,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return captureDesktopControlScreenshot(command.selector)
     case 'capturePopoutWindow':
       return invoke<string>('capture_popout_webview')
+    case 'captureWorkspaceWindow':
+      return invoke<string>('capture_workspace_webview')
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
+      return ''
+    case 'reloadMainWindow':
       return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'getLocalStorageItem':
+      return localStorage.getItem(command.value ?? '') ?? ''
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)
@@ -1100,7 +1120,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
-async function runDesktopControlClient(url: string): Promise<void> {
+async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
@@ -1114,7 +1134,7 @@ async function runDesktopControlClient(url: string): Promise<void> {
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ clientId, location: window.location.href }),
+    body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
@@ -1140,6 +1160,9 @@ async function runDesktopControlClient(url: string): Promise<void> {
           await closeMainWindowToTray()
         } else if (command.action === 'requestMainWindowClose') {
           await getCurrentWindow().close()
+        } else if (command.action === 'reloadMainWindow') {
+          window.location.reload()
+          return
         }
       } catch (error) {
         await postDesktopControlResult(url, {
@@ -1159,12 +1182,13 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
+  const windowLabel = getCurrentWindow().label
   if (
     !url ||
-    getCurrentWindow().label !== 'main' ||
+    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return
   }
-  void runDesktopControlClient(url)
+  void runDesktopControlClient(url, windowLabel)
 }

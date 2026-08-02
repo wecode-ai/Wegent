@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
@@ -13,10 +14,9 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
-import { DesktopWindowsTitlebar } from '@/components/layout/DesktopWindowsTitlebar'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -162,14 +162,14 @@ export function PluginsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background text-text-primary">
-      <DesktopWindowsTitlebar
-        sidebarCollapsed={sidebarCollapsed && !isMobile}
-        onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
-        activeApp="wework"
-        onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-      />
+    <div className="relative flex h-full flex-col overflow-hidden bg-background text-text-primary">
       <div className="flex flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {!isMobile && (
           <DesktopSidebar
             user={state.user}
@@ -185,6 +185,7 @@ export function PluginsPage() {
             }
             activeItem="plugins"
             collapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
             onNewChat={handleNewChat}
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSearch={() => setSearchOpen(true)}

@@ -510,18 +510,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
-        match self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": true}),
-            )
-            .await
-        {
-            Ok(response) => {
-                let thread = response.get("thread").unwrap_or(&response);
-                transcript_messages(thread, &self.device_id)
-            }
+        match self.read_codex_thread_with_turns(thread_id).await {
+            Ok(thread) => transcript_messages(&thread, &self.device_id),
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");
                 Vec::new()

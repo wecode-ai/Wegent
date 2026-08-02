@@ -106,6 +106,7 @@ import {
 } from '@/features/model-settings/codexOfficialModels'
 import {
   buildLocalModelRequestUrl,
+  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
   ensureLocalModelApiKeysHydrated,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
@@ -149,6 +150,8 @@ const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 const DEFAULT_GPT_56_CATALOG_MODEL_ID = 'wework-gpt-5.6-sol'
 const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
 const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
+const DEEPSEEK_V4_REASONING_EFFORTS = ['low', 'high', 'max']
+const DEEPSEEK_V4_DEFAULT_REASONING_EFFORT = 'high'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -273,6 +276,9 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
   if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
     return KIMI_K3_REASONING_EFFORTS
   }
+  if (config.codexCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_REASONING_EFFORTS
+  }
   const values = config.catalogEntry?.supported_reasoning_levels
   if (!Array.isArray(values)) return []
   return values.flatMap(value => {
@@ -286,6 +292,9 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
 function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
   if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
     return KIMI_K3_DEFAULT_REASONING_EFFORT
+  }
+  if (config.codexCatalogModelId === DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID) {
+    return DEEPSEEK_V4_DEFAULT_REASONING_EFFORT
   }
   const value = config.catalogEntry?.default_reasoning_level
   return typeof value === 'string' ? value : null
@@ -1239,7 +1248,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
-  clientMessageId?: string
+  clientUserMessageId?: string
   ephemeral?: boolean
   user: User
 }
@@ -1349,7 +1358,7 @@ function buildLocalRuntimeExecutionRequest(
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
-    ...(input.clientMessageId ? { client_user_message_id: input.clientMessageId } : {}),
+    ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
     collaboration_model: 'single',
@@ -1494,7 +1503,7 @@ async function createLocalRuntimeTaskPayload(
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
-      clientMessageId: normalizedData.clientMessageId,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: normalizedData.ephemeral,
       user,
     }),
@@ -1557,7 +1566,7 @@ function createLocalRuntimeSendPayload(
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
-        clientMessageId: normalizedData.clientMessageId,
+        clientUserMessageId: normalizedData.clientUserMessageId,
         ephemeral: data.ephemeral,
         user,
       }),
@@ -1598,7 +1607,7 @@ function createLocalRuntimeSendPayload(
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
-      clientMessageId: normalizedData.clientMessageId,
+      clientUserMessageId: normalizedData.clientUserMessageId,
       ephemeral: data.ephemeral,
       user,
     }),

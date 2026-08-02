@@ -760,7 +760,7 @@ wework_build_macos_executor_sidecar \
   release
 wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
 wework_sign_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET" "$app_sign_identity"
-WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \

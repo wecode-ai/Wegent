@@ -1,11 +1,32 @@
 import { describe, expect, test, vi } from 'vitest'
-import {
-  createResponseApiStreamState,
-  emitResponseApiEvent,
-  getCachedRuntimeTaskPlan,
-} from './responseApiStream'
+import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('preserves a snake-case client user message id when a Codex turn starts', () => {
+    const onChatStart = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatStart },
+      'response.created',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          client_user_message_id: 'client-user-1',
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatStart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        clientUserMessageId: 'client-user-1',
+      })
+    )
+  })
+
   test('preserves the Codex turn identifier on runtime goal updates', () => {
     const onRuntimeGoalUpdated = vi.fn()
 
@@ -108,9 +129,6 @@ describe('emitResponseApiEvent', () => {
         { step: 'Run tests', status: 'pending' },
       ],
     })
-    expect(getCachedRuntimeTaskPlan({ deviceId: 'device-1', taskId: 'task-1' })).toEqual(
-      onRuntimePlanUpdated.mock.calls[0]?.[0]
-    )
   })
 
   test('reads text delta offsets from response data', () => {
@@ -159,6 +177,36 @@ describe('emitResponseApiEvent', () => {
     )
 
     expect(onChatChunk.mock.calls[0]?.[0]).not.toHaveProperty('offset')
+  })
+
+  test('maps completed Codex text to an item snapshot', () => {
+    const onChatChunk = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatChunk },
+      'response.output_text.done',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        data: {
+          itemId: 'message-1',
+          text: 'Complete answer',
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatChunk).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'Complete answer',
+      contentMode: 'snapshot',
+      result: {
+        itemId: 'message-1',
+        text: 'Complete answer',
+      },
+    })
   })
 
   test('maps Codex token usage notifications to context usage chunks', () => {

@@ -246,12 +246,16 @@ function ScrollableMessagePaneContent({
   const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
+  const previousLatestUserMessageIdRef = useRef<string | null>(null)
   const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
+  const previousLoadingRef = useRef(loading)
+  const hasRenderedRef = useRef(false)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
   const restoringScrollKeyRef = useRef<string | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
+  const preserveLatestUserTurnRef = useRef(false)
   const userScrollPausedAutoFollowRef = useRef(false)
   const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
@@ -344,6 +348,7 @@ function ScrollableMessagePaneContent({
       })
       if (scrolling) {
         clearScheduledScrolls()
+        preserveLatestUserTurnRef.current = false
       }
     },
     [clearScheduledScrolls, currentScrollKey]
@@ -355,6 +360,7 @@ function ScrollableMessagePaneContent({
       setTurnNavigationLoading(loading)
       if (loading) {
         clearScheduledScrolls()
+        preserveLatestUserTurnRef.current = false
       }
     },
     [clearScheduledScrolls]
@@ -452,8 +458,11 @@ function ScrollableMessagePaneContent({
       } else if (options.forceSave) {
         userScrollPausedAutoFollowRef.current = true
       }
-      if (!isScrolledToBottom && options.forceSave && scrolledUp) {
-        clearScheduledScrolls()
+      if (!isScrolledToBottom && options.forceSave) {
+        if (scrolledUp) {
+          clearScheduledScrolls()
+        }
+        preserveLatestUserTurnRef.current = false
       }
       if (
         !options.skipSave &&
@@ -575,9 +584,26 @@ function ScrollableMessagePaneContent({
   )
 
   useLayoutEffect(() => {
+    const isInitialRender = !hasRenderedRef.current
     const conversationChanged = previousConversationKeyRef.current !== conversationKey
     const messagesLoaded = previousMessageCountRef.current === 0 && messages.length > 0
     const lastMessageChanged = previousLastMessageIdRef.current !== (lastMessage?.id ?? null)
+    const latestUserMessageId = messages.findLast(message => message.role === 'user')?.id ?? null
+    const firstUserMessageAppended =
+      !isInitialRender &&
+      !conversationChanged &&
+      !loading &&
+      !previousLoadingRef.current &&
+      previousMessageCountRef.current === 0 &&
+      lastMessage?.role === 'user' &&
+      latestUserMessageId !== null
+    const latestUserMessageChanged =
+      !conversationChanged &&
+      ((previousMessageCountRef.current > 0 &&
+        previousLatestUserMessageIdRef.current !== null &&
+        latestUserMessageId !== null &&
+        previousLatestUserMessageIdRef.current !== latestUserMessageId) ||
+        firstUserMessageAppended)
     const guidanceMessageApplied =
       !conversationChanged &&
       previousMessageCountRef.current > 0 &&
@@ -595,15 +621,22 @@ function ScrollableMessagePaneContent({
       (conversationChanged ||
         messagesLoaded ||
         guidanceMessageApplied ||
+        latestUserMessageChanged ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
     previousLastMessageIdRef.current = lastMessage?.id ?? null
+    previousLatestUserMessageIdRef.current = latestUserMessageId
     previousLatestGuidanceMessageIdRef.current = latestGuidanceMessageId
     previousMessageCountRef.current = messages.length
+    previousLoadingRef.current = loading
+    hasRenderedRef.current = true
 
     if (conversationChanged) {
       userViewportAnchorRef.current = null
+      preserveLatestUserTurnRef.current = false
+    } else if (latestUserMessageChanged) {
+      preserveLatestUserTurnRef.current = true
     }
 
     if (messages.length === 0) {
@@ -622,7 +655,16 @@ function ScrollableMessagePaneContent({
 
     if (shouldForceBottom) {
       setScrollToBottom('auto', { saveSnapshot: false })
+      if (preserveLatestUserTurnRef.current) {
+        clearScheduledScrolls()
+        return
+      }
       scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+      return
+    }
+
+    if (preserveLatestUserTurnRef.current) {
+      clearScheduledScrolls()
       return
     }
 
@@ -637,7 +679,9 @@ function ScrollableMessagePaneContent({
     isTurnNavigationAutoScrollSuspended,
     lastMessage,
     latestGuidanceMessageId,
+    loading,
     messageScrollSignature,
+    messages,
     messages.length,
     scheduleStableRestoreSavedScrollPosition,
     scheduleStableScrollToBottom,
@@ -715,6 +759,10 @@ function ScrollableMessagePaneContent({
         return
       }
 
+      if (preserveLatestUserTurnRef.current) {
+        return
+      }
+
       if (followingBottomKeyRef.current === currentScrollKey) {
         setScrollToBottom('auto', { saveSnapshot: false })
         return
@@ -751,6 +799,7 @@ function ScrollableMessagePaneContent({
   const handleScrollToBottom = () => {
     userScrollPausedAutoFollowRef.current = false
     userViewportAnchorRef.current = null
+    preserveLatestUserTurnRef.current = false
     scrollToBottom('smooth', { saveSnapshot: true })
   }
 
@@ -761,6 +810,9 @@ function ScrollableMessagePaneContent({
   const handleScroll = useCallback(() => {
     const userInitiated = userScrollIntentRef.current
     userScrollIntentRef.current = false
+    if (userInitiated) {
+      preserveLatestUserTurnRef.current = false
+    }
     if (restoringScrollKeyRef.current === currentScrollKey) {
       if (!userInitiated) {
         updateScrollState({ skipSave: true })

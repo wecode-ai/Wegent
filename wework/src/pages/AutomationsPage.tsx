@@ -12,6 +12,7 @@ import {
   Search,
 } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
@@ -30,6 +31,7 @@ import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSideba
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice } from '@/lib/device-capabilities'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
@@ -48,7 +50,8 @@ export function AutomationsPage() {
   const { t, i18n } = useTranslation('common')
   const { logout } = useAuth()
   const isMobile = useIsMobile()
-  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
+  const isTauri = isTauriRuntime()
+  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
     services,
@@ -432,7 +435,7 @@ export function AutomationsPage() {
   const hasWorkspace = automations.length > 0 || Boolean(draft)
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-full overflow-hidden bg-background text-text-primary">
       {!isMobile ? (
         <DesktopSidebar
           user={state.user}
@@ -448,6 +451,7 @@ export function AutomationsPage() {
           }
           activeItem="automation"
           collapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
           onNewChat={handleNewChat}
           onStartStandaloneChat={handleStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
@@ -520,6 +524,12 @@ export function AutomationsPage() {
       )}
 
       <main className="relative flex min-w-0 flex-1 overflow-hidden">
+        {!isMobile && isTauri && (
+          <DesktopCollapsedSidebarToggle
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(false)}
+          />
+        )}
         {hasWorkspace ? (
           <>
             <AutomationListPane
@@ -732,7 +742,7 @@ function AutomationEmptyState({
         type="button"
         data-testid="create-automation-button"
         onClick={() => onCreate()}
-        className="fixed right-4 top-[max(8px,env(safe-area-inset-top))] z-chrome inline-flex h-11 items-center gap-1.5 rounded-full bg-text-primary px-4 text-sm font-medium text-background hover:opacity-85 md:top-4 md:h-8 md:px-3.5"
+        className="absolute right-4 top-[max(8px,env(safe-area-inset-top))] z-chrome inline-flex h-11 items-center gap-1.5 rounded-full bg-text-primary px-4 text-sm font-medium text-background hover:opacity-85 md:top-4 md:h-8 md:px-3.5"
       >
         {t('workbench.automation_create', '创建')}
         <ChevronDown className="h-3.5 w-3.5" />

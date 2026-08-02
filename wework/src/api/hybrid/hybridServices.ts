@@ -4,6 +4,7 @@ import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
@@ -878,8 +879,27 @@ export function createHybridWorkbenchServices(
   })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
-      const cleanupLocal = localServices.chatStream.subscribe(handlers)
-      const cleanupCloudRuntime = cloudRuntimeChatStream.subscribe(handlers)
+      const scopedDeviceId = handlers.scope?.deviceId
+      const cleanupLocal =
+        !scopedDeviceId || isLocalDeviceId(scopedDeviceId)
+          ? localServices.chatStream.subscribe(
+              scopedDeviceId
+                ? handlers
+                : filterRuntimeChatStreamHandlers(handlers, isLocalDeviceId, true)
+            )
+          : () => undefined
+      const cleanupCloudRuntime =
+        !scopedDeviceId || !isLocalDeviceId(scopedDeviceId)
+          ? cloudRuntimeChatStream.subscribe(
+              scopedDeviceId
+                ? handlers
+                : filterRuntimeChatStreamHandlers(
+                    handlers,
+                    deviceId => !isLocalDeviceId(deviceId),
+                    false
+                  )
+            )
+          : () => undefined
       const cleanupCloudDeviceEvents = cloudServices.chatStream.subscribe({
         onDeviceOnline: handlers.onDeviceOnline,
         onDeviceOffline: handlers.onDeviceOffline,
@@ -941,5 +961,36 @@ export function createHybridWorkbenchServices(
       resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
+  }
+}
+
+function filterRuntimeChatStreamHandlers(
+  handlers: ChatStreamHandlers,
+  acceptsDevice: (deviceId?: string | null) => boolean,
+  includeTransportReplacement: boolean
+): ChatStreamHandlers {
+  const route = <Payload extends { deviceId?: string }>(handler?: (payload: Payload) => void) =>
+    handler
+      ? (payload: Payload) => {
+          if (acceptsDevice(payload.deviceId)) handler(payload)
+        }
+      : undefined
+
+  return {
+    onChatStart: route(handlers.onChatStart),
+    onChatChunk: route(handlers.onChatChunk),
+    onChatDone: route(handlers.onChatDone),
+    onChatError: route(handlers.onChatError),
+    onBlockCreated: route(handlers.onBlockCreated),
+    onBlockUpdated: route(handlers.onBlockUpdated),
+    onSubagentActivity: route(handlers.onSubagentActivity),
+    onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
+    onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
+    onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
+    onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
+    onGuidanceApplied: route(handlers.onGuidanceApplied),
+    onRuntimeTransportReplaced: includeTransportReplacement
+      ? handlers.onRuntimeTransportReplaced
+      : undefined,
   }
 }

@@ -84,20 +84,9 @@ fn transcript_messages_with_options(
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
         let mut seen_user_messages = HashMap::new();
-        let prefer_user_message_events = turn_has_user_message_event(turn);
-        for (item_index, raw_item) in turn
-            .get("items")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
-            let item = transcript_item_with_stable_id(raw_item, &turn_id, item_index);
-            if !is_root_transcript_item(raw_item)
-                || !is_root_thread_transcript_item(raw_item, root_thread_id.as_deref())
-            {
-                continue;
-            }
+        for item in canonical_turn_items(turn, &turn_id, root_thread_id.as_deref()) {
+            let previous_block_count = assistant.blocks.len();
+            let previous_assistant_part_count = assistant.assistant_parts.len();
             match item_type(&item).as_str() {
                 "usermessage" => {
                     if is_internal_turn_abort_message(&item) {
@@ -125,6 +114,7 @@ fn transcript_messages_with_options(
                         &item,
                         created_at,
                         &subtask_id,
+                        assistant_status,
                         &mut seen_user_messages,
                     );
                     if is_guidance && pushed_user {
@@ -239,9 +229,6 @@ fn transcript_messages_with_options(
                     .as_str()
                 {
                     "user" => {
-                        if prefer_user_message_events {
-                            continue;
-                        }
                         if is_internal_turn_abort_message(&item) {
                             continue;
                         }
@@ -267,6 +254,7 @@ fn transcript_messages_with_options(
                             &item,
                             created_at,
                             &subtask_id,
+                            assistant_status,
                             &mut seen_user_messages,
                         );
                         if is_guidance && pushed_user {
@@ -323,6 +311,7 @@ fn transcript_messages_with_options(
                     }
                 }
             }
+            assistant.record_new_items(previous_block_count, previous_assistant_part_count);
         }
         push_accumulated_assistant(
             &mut messages,
@@ -661,17 +650,35 @@ fn transcript_item_with_stable_id(item: &Value, turn_id: &str, item_index: usize
     normalized
 }
 
-fn stable_indexed_id(item: &Value, prefix: &str, index: usize) -> String {
-    string_field(item, "id").unwrap_or_else(|| format!("{prefix}-{}", index + 1))
-}
-
-fn turn_has_user_message_event(turn: &Value) -> bool {
-    turn.get("items")
+fn canonical_turn_items(turn: &Value, turn_id: &str, root_thread_id: Option<&str>) -> Vec<Value> {
+    let mut items = Vec::new();
+    let mut item_positions = HashMap::new();
+    for (item_index, raw_item) in turn
+        .get("items")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(transcript_item)
-        .any(|item| item_type(&item) == "usermessage" && !is_internal_turn_abort_message(&item))
+        .enumerate()
+    {
+        if !is_root_transcript_item(raw_item)
+            || !is_root_thread_transcript_item(raw_item, root_thread_id)
+        {
+            continue;
+        }
+        let item = transcript_item_with_stable_id(raw_item, turn_id, item_index);
+        let id = item_id(&item, "item");
+        if let Some(position) = item_positions.get(&id).copied() {
+            items[position] = item;
+        } else {
+            item_positions.insert(id, items.len());
+            items.push(item);
+        }
+    }
+    items
+}
+
+fn stable_indexed_id(item: &Value, prefix: &str, index: usize) -> String {
+    string_field(item, "id").unwrap_or_else(|| format!("{prefix}-{}", index + 1))
 }
 
 fn turn_started_at(turn: &Value) -> i64 {
@@ -874,8 +881,20 @@ fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
 struct AssistantTurnAccumulation {
     blocks: Vec<Value>,
     file_changes: Option<Value>,
-    assistant_parts: Vec<String>,
+    assistant_parts: Vec<AssistantTextPart>,
+    item_order: Vec<AssistantItemIdentity>,
     memory_citations: Vec<Value>,
+}
+
+struct AssistantTextPart {
+    id: String,
+    content: String,
+    created_at: i64,
+}
+
+enum AssistantItemIdentity {
+    Block(usize),
+    Text(usize),
 }
 
 impl AssistantTurnAccumulation {
@@ -884,6 +903,7 @@ impl AssistantTurnAccumulation {
             blocks: Vec::new(),
             file_changes,
             assistant_parts: Vec::new(),
+            item_order: Vec::new(),
             memory_citations: Vec::new(),
         }
     }
@@ -902,8 +922,67 @@ impl AssistantTurnAccumulation {
         self.blocks.clear();
         self.file_changes = None;
         self.assistant_parts.clear();
+        self.item_order.clear();
         self.memory_citations.clear();
     }
+
+    fn record_new_items(&mut self, previous_block_count: usize, previous_part_count: usize) {
+        let started_new_segment =
+            self.item_order.is_empty() && (previous_block_count > 0 || previous_part_count > 0);
+        let block_start = if started_new_segment {
+            0
+        } else {
+            previous_block_count.min(self.blocks.len())
+        };
+        self.item_order.extend(
+            self.blocks[block_start..]
+                .iter()
+                .enumerate()
+                .filter(|(_, block)| !is_projected_guidance_block(block))
+                .map(|(index, _)| AssistantItemIdentity::Block(block_start + index)),
+        );
+
+        let part_start = if started_new_segment {
+            0
+        } else {
+            previous_part_count.min(self.assistant_parts.len())
+        };
+        self.item_order
+            .extend((part_start..self.assistant_parts.len()).map(AssistantItemIdentity::Text));
+    }
+
+    fn runtime_items(&self) -> Vec<Value> {
+        self.item_order
+            .iter()
+            .filter_map(|identity| match identity {
+                AssistantItemIdentity::Block(index) => {
+                    let block = self.blocks.get(*index)?;
+                    let id = string_field(block, "id")?;
+                    Some(json!({
+                        "id": id,
+                        "type": "block",
+                        "block": block,
+                    }))
+                }
+                AssistantItemIdentity::Text(index) => {
+                    self.assistant_parts.get(*index).map(|part| {
+                        json!({
+                            "id": part.id,
+                            "type": "assistant_text",
+                            "content": part.content,
+                            "createdAt": part.created_at,
+                        })
+                    })
+                }
+            })
+            .collect()
+    }
+}
+
+fn is_projected_guidance_block(block: &Value) -> bool {
+    string_field(block, "tool_name")
+        .or_else(|| string_field(block, "toolName"))
+        .is_some_and(|name| name == "conversation_guidance")
 }
 
 struct AssistantEmitContext<'a> {
@@ -939,6 +1018,7 @@ fn push_accumulated_assistant(
     } else {
         format!("{}-{}", context.turn_id, *segment_index)
     };
+    let runtime_items = assistant.runtime_items();
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         message_id: &message_id,
         turn_id: context.turn_id,
@@ -951,6 +1031,7 @@ fn push_accumulated_assistant(
         blocks: &assistant.blocks,
         file_changes: assistant.file_changes.clone(),
         assistant_parts: &assistant.assistant_parts,
+        runtime_items: &runtime_items,
         memory_citations: &assistant.memory_citations,
         options,
     }));
@@ -958,7 +1039,12 @@ fn push_accumulated_assistant(
     assistant.clear_after_emit();
 }
 
-fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
+fn user_message(
+    item: &Value,
+    created_at: i64,
+    turn_id: &str,
+    runtime_status: &str,
+) -> Option<Value> {
     let content = extract_text(item).unwrap_or_default();
     let attachments = user_message_image_attachments(item, created_at);
     if content.trim().is_empty() && attachments.is_empty() {
@@ -970,17 +1056,18 @@ fn user_message(item: &Value, created_at: i64, turn_id: &str) -> Option<Value> {
         "role": "user",
         "content": content,
         "status": "done",
+        "runtimeStatus": runtime_status,
         "createdAt": item_timestamp(item).unwrap_or(created_at),
         "subtaskId": turn_id,
         "turnId": turn_id,
     });
-    if let Some(client_message_id) =
+    if let Some(client_user_message_id) =
         string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
     {
         if let Some(object) = message.as_object_mut() {
             object.insert(
-                "clientMessageId".to_owned(),
-                Value::String(client_message_id),
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id),
             );
         }
     }
@@ -997,32 +1084,23 @@ fn push_user_message_once(
     item: &Value,
     created_at: i64,
     turn_id: &str,
+    runtime_status: &str,
     seen: &mut HashMap<String, usize>,
 ) -> bool {
-    let Some(message) = user_message(item, created_at, turn_id) else {
+    let Some(message) = user_message(item, created_at, turn_id, runtime_status) else {
         return false;
     };
 
-    if let Some(signature) = user_message_signature(item) {
-        if let Some(message_index) = seen.get(&signature).copied() {
-            if let Some(existing) = messages.get_mut(message_index) {
-                merge_missing_user_message_metadata(existing, &message);
-            }
-            return false;
+    let item_id = item_id(item, "user");
+    if let Some(message_index) = seen.get(&item_id).copied() {
+        if let Some(existing) = messages.get_mut(message_index) {
+            merge_missing_user_message_metadata(existing, &message);
         }
-        seen.insert(signature, messages.len());
+        return false;
     }
+    seen.insert(item_id, messages.len());
     messages.push(message);
     true
-}
-
-fn user_message_signature(item: &Value) -> Option<String> {
-    let content = extract_text(item)?;
-    let normalized = normalized_user_request_content(&content);
-    if normalized.is_empty() {
-        return None;
-    }
-    Some(normalized)
 }
 
 pub(crate) fn normalized_user_request_content(content: &str) -> String {
@@ -1057,8 +1135,8 @@ pub(crate) fn merge_missing_user_message_metadata(target: &mut Value, source: &V
         return;
     };
     for key in [
-        "clientMessageId",
-        "client_message_id",
+        "clientUserMessageId",
+        "client_user_message_id",
         "source",
         "runtimeGoalRequest",
         "runtime_goal_request",
@@ -1325,7 +1403,11 @@ fn collect_assistant_message(
                 }
                 AssistantMessagePhase::Final => {
                     if !duplicates_completed_plan_block(&content, &assistant.blocks) {
-                        assistant.assistant_parts.push(content);
+                        assistant.assistant_parts.push(AssistantTextPart {
+                            id: item_id(item, "assistant-text"),
+                            content,
+                            created_at: item_timestamp(item).unwrap_or(fallback_timestamp),
+                        });
                     }
                 }
             }
@@ -1435,7 +1517,8 @@ struct AssistantMessageDraft<'a> {
     stopped_notice: bool,
     blocks: &'a [Value],
     file_changes: Option<Value>,
-    assistant_parts: &'a [String],
+    assistant_parts: &'a [AssistantTextPart],
+    runtime_items: &'a [Value],
     memory_citations: &'a [Value],
     options: TranscriptBuildOptions,
 }
@@ -1444,12 +1527,18 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     let mut message = json!({
         "id": format!("assistant-{}", draft.message_id),
         "role": "assistant",
-        "content": draft.assistant_parts.join("\n\n"),
+        "content": draft
+            .assistant_parts
+            .iter()
+            .map(|part| part.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         "status": draft.status,
         "subtaskId": draft.subtask_id,
         "turnId": draft.turn_id,
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
+        "runtimeItems": draft.runtime_items,
     });
     if draft.options.truncate_content {
         limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
@@ -3016,26 +3105,45 @@ mod tests {
 
         let messages = transcript_messages(&thread, "device-1");
 
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 4);
         assert_eq!(messages[0]["role"], "user");
-        assert_eq!(messages[0]["content"], "inspect runtime");
-        assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(messages[1]["content"], "Done.");
-        assert_eq!(messages[1]["blocks"][0]["type"], "text");
         assert_eq!(
-            messages[1]["blocks"][0]["content"],
+            messages[0]["content"],
+            "# AGENTS.md instructions\n\n<environment_context>"
+        );
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "inspect runtime");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"], "inspect runtime");
+        assert_eq!(messages[3]["role"], "assistant");
+        assert_eq!(messages[3]["content"], "Done.");
+        assert_eq!(messages[3]["blocks"][0]["type"], "text");
+        assert_eq!(
+            messages[3]["blocks"][0]["content"],
             "I will inspect the runtime."
         );
-        assert_eq!(messages[1]["blocks"][0]["timestamp"], 1_780_000_001_000_i64);
-        assert_eq!(messages[1]["blocks"][1]["type"], "thinking");
+        assert_eq!(messages[3]["blocks"][0]["timestamp"], 1_780_000_001_000_i64);
+        assert_eq!(messages[3]["blocks"][1]["type"], "thinking");
         assert_eq!(
-            messages[1]["blocks"][1]["content"],
+            messages[3]["blocks"][1]["content"],
             "Checking the relevant files."
         );
-        assert_eq!(messages[1]["blocks"][2]["tool_name"], "exec_command");
-        assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
-        assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
-        assert_eq!(messages[1]["blocks"][2]["status"], "done");
+        assert_eq!(messages[3]["blocks"][2]["tool_name"], "exec_command");
+        assert_eq!(messages[3]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
+        assert_eq!(messages[3]["blocks"][2]["tool_output"], "runtime.rs");
+        assert_eq!(messages[3]["blocks"][2]["status"], "done");
+        assert_eq!(messages[3]["runtimeItems"][0]["id"], "commentary-1");
+        assert_eq!(messages[3]["runtimeItems"][0]["type"], "block");
+        assert_eq!(messages[3]["runtimeItems"][1]["id"], "reasoning-1");
+        assert_eq!(messages[3]["runtimeItems"][1]["type"], "block");
+        assert_eq!(messages[3]["runtimeItems"][2]["id"], "call-1");
+        assert_eq!(messages[3]["runtimeItems"][2]["type"], "block");
+        assert_eq!(messages[3]["runtimeItems"][3]["id"], "final-1");
+        assert_eq!(messages[3]["runtimeItems"][3]["type"], "assistant_text");
+        assert_eq!(
+            messages[3]["runtimeItems"][3]["createdAt"],
+            1_780_000_005_000_i64
+        );
     }
 
     #[test]
@@ -3352,7 +3460,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_deduplicates_user_event_when_response_item_is_present() {
+    fn transcript_preserves_distinct_response_and_event_user_items() {
         let thread = json!({
             "id": "thread-1",
             "cwd": "/tmp/project",
@@ -3403,9 +3511,12 @@ mod tests {
             .filter(|message| message["role"] == "user")
             .collect::<Vec<_>>();
 
-        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages.len(), 2);
         assert_eq!(user_messages[0]["content"], "start app");
-        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
+        assert_eq!(
+            user_messages[1]["clientUserMessageId"],
+            "runtime-local-pane-1"
+        );
         assert!(!messages.iter().any(|message| {
             message["content"]
                 .as_str()
@@ -3414,7 +3525,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_deduplicates_attachment_wrapper_and_visible_user_event() {
+    fn transcript_preserves_distinct_attachment_wrapper_and_visible_user_items() {
         let thread = json!({
             "id": "thread-1",
             "cwd": "/tmp/project",
@@ -3449,12 +3560,88 @@ mod tests {
             .filter(|message| message["role"] == "user")
             .collect::<Vec<_>>();
 
-        assert_eq!(user_messages.len(), 1);
+        assert_eq!(user_messages.len(), 2);
         assert_eq!(
             user_messages[0]["content"],
             "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
         );
-        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
+        assert_eq!(
+            user_messages[1]["clientUserMessageId"],
+            "runtime-local-pane-1"
+        );
+    }
+
+    #[test]
+    fn transcript_preserves_same_content_user_items_with_distinct_ids() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "id": "user-initial",
+                            "type": "userMessage",
+                            "content": [{"type": "inputText", "text": "Continue the goal"}]
+                        },
+                        {
+                            "id": "assistant-before",
+                            "type": "agentMessage",
+                            "text": "Initial progress"
+                        },
+                        {
+                            "id": "user-guidance",
+                            "type": "userMessage",
+                            "clientId": "runtime-local-pane-1",
+                            "content": [{"type": "inputText", "text": "Continue the goal"}]
+                        },
+                        {
+                            "id": "assistant-after",
+                            "type": "agentMessage",
+                            "text": "Goal complete"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(
+            messages
+                .iter()
+                .map(|message| (
+                    message["role"].as_str().unwrap(),
+                    message["content"].as_str().unwrap()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("user", "Continue the goal"),
+                ("assistant", "Initial progress"),
+                ("user", "Continue the goal"),
+                ("assistant", "Goal complete"),
+            ]
+        );
+        assert_eq!(messages[2]["clientUserMessageId"], "runtime-local-pane-1");
+    }
+
+    #[test]
+    fn transcript_runtime_items_preserve_duplicate_block_contents_by_position() {
+        let mut assistant = AssistantTurnAccumulation::new(None);
+        assistant.blocks = vec![
+            json!({"id": "duplicate-block", "title": "first"}),
+            json!({"id": "duplicate-block", "title": "second"}),
+        ];
+        assistant.record_new_items(0, 0);
+
+        let items = assistant.runtime_items();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["block"]["title"], "first");
+        assert_eq!(items[1]["block"]["title"], "second");
     }
 
     #[test]
@@ -3491,7 +3678,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_makes_message_and_block_ids_unique() {
+    fn transcript_uses_the_latest_snapshot_for_duplicate_item_ids() {
         let thread = json!({
             "id": "thread-1",
             "cwd": "/tmp/project",
@@ -3547,26 +3734,18 @@ mod tests {
         });
 
         let messages = transcript_messages(&thread, "device-1");
-        let message_ids = messages
-            .iter()
-            .filter_map(|message| message["id"].as_str())
-            .collect::<Vec<_>>();
-        let unique_message_ids = message_ids.iter().copied().collect::<HashSet<_>>();
-        assert_eq!(message_ids.len(), unique_message_ids.len());
-        assert_eq!(message_ids[0], "duplicate-user");
-        assert_eq!(message_ids[1], "duplicate-user-2");
-
-        let block_ids = messages
-            .last()
-            .and_then(|message| message["blocks"].as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|block| block["id"].as_str())
-            .collect::<Vec<_>>();
-        let unique_block_ids = block_ids.iter().copied().collect::<HashSet<_>>();
-        assert_eq!(block_ids.len(), unique_block_ids.len());
-        assert_eq!(block_ids[0], "file-changes-duplicate-file-change");
-        assert_eq!(block_ids[1], "file-changes-duplicate-file-change-2");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["id"], "duplicate-user");
+        assert_eq!(messages[0]["content"], "second request");
+        assert_eq!(messages[1]["blocks"].as_array().map(Vec::len), Some(1));
+        assert_eq!(
+            messages[1]["blocks"][0]["id"],
+            "file-changes-duplicate-file-change"
+        );
+        assert_eq!(
+            messages[1]["blocks"][0]["file_changes"]["files"][0]["path"],
+            "src/two.rs"
+        );
     }
 
     #[test]
@@ -4022,6 +4201,8 @@ mod tests {
             messages[3]["blocks"][1]["content"],
             "I will use the lockfile context."
         );
+        assert_eq!(messages[3]["runtimeItems"][0]["id"], "commentary-2");
+        assert_eq!(messages[3]["runtimeItems"].as_array().unwrap().len(), 1);
     }
 
     #[test]

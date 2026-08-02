@@ -888,7 +888,7 @@ mod tests {
                     }
                 ],
                 "userMessagePresentations": [{
-                    "clientMessageId": "runtime-local-pane-1",
+                    "clientUserMessageId": "runtime-local-pane-1",
                     "references": [{
                         "token": "$plugin:skill",
                         "href": "/tmp/plugin/skill/SKILL.md"

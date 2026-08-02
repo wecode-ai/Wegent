@@ -1,6 +1,9 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
 import {
+  DEEPSEEK_V4_CONTEXT_WINDOW,
+  DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
+  DEEPSEEK_V4_FLASH_MODEL_ID,
   KIMI_CODING_CONTEXT_WINDOW,
   KIMI_K27_CATALOG_MODEL_ID,
   KIMI_K3_CATALOG_MODEL_ID,
@@ -19,6 +22,7 @@ export interface LocalModelProviderProfile {
   apiFormat: LocalModelApiFormat
   requestPath: string
   modelsPath?: string
+  allowedModelIds?: readonly string[]
   toolProfile: LocalModelToolProfile
   group?: string
   contextWindow?: number
@@ -97,19 +101,22 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
   {
     id: 'deepseek',
     displayName: 'DeepSeek',
-    description: 'DeepSeek API',
+    description: 'DeepSeek Responses API for Codex',
     baseUrl: 'https://api.deepseek.com',
-    apiFormat: 'openai-chat-completions',
-    requestPath: '/chat/completions',
+    apiFormat: 'openai-responses',
+    requestPath: '/responses',
     modelsPath: '/models',
-    toolProfile: 'function',
+    allowedModelIds: [DEEPSEEK_V4_FLASH_MODEL_ID],
+    toolProfile: 'custom',
     group: 'DeepSeek',
-    contextWindow: 1_000_000,
-    webSearchMode: 'disabled',
+    contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
+    webSearchMode: 'live',
     imageGenerationEnabled: false,
     modelDefaults: {
-      'deepseek-v4-flash': { contextWindow: 1_000_000 },
-      'deepseek-v4-pro': { contextWindow: 1_000_000 },
+      [DEEPSEEK_V4_FLASH_MODEL_ID]: {
+        contextWindow: DEEPSEEK_V4_CONTEXT_WINDOW,
+        codexCatalogModelId: DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
+      },
     },
   },
   {
@@ -195,6 +202,7 @@ export async function discoverProviderModels(
     }
     const data = (body as { data?: unknown }).data
     if (!Array.isArray(data)) throw new Error('Provider returned an invalid model list')
+    const allowedModelIds = profile.allowedModelIds ? new Set(profile.allowedModelIds) : null
     const models = data
       .map(item => {
         if (!item || typeof item !== 'object') return null
@@ -203,6 +211,7 @@ export async function discoverProviderModels(
         return { id: id.trim(), displayName: id.trim() }
       })
       .filter((model): model is DiscoveredLocalModel => model !== null)
+      .filter(model => !allowedModelIds || allowedModelIds.has(model.id))
       .filter((model, index, all) => all.findIndex(item => item.id === model.id) === index)
       .sort((a, b) => a.displayName.localeCompare(b.displayName))
     if (models.length === 0) throw new Error('Provider returned no available models')

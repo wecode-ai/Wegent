@@ -445,6 +445,16 @@ fn create_log_plugin(
     let webview_log_file_name = format!("{WEBVIEW_LOG_FILE_NAME}-{process_id}");
     Ok(tauri_plugin_log::Builder::default()
         .clear_targets()
+        .max_file_size(if cfg!(debug_assertions) {
+            10 * 1024 * 1024
+        } else {
+            40_000
+        })
+        .rotation_strategy(if cfg!(debug_assertions) {
+            tauri_plugin_log::RotationStrategy::KeepSome(3)
+        } else {
+            tauri_plugin_log::RotationStrategy::KeepOne
+        })
         .level(if cfg!(debug_assertions) {
             log::LevelFilter::Trace
         } else {
@@ -4529,6 +4539,7 @@ pub fn run() {
             cloud_authorization_window::position_cloud_authorization_window,
             desktop_capture::capture_main_webview,
             desktop_capture::capture_popout_webview,
+            desktop_capture::capture_workspace_webview,
             acknowledge_frontend_resume_probe,
             register_frontend_recovery_bridge,
             #[cfg(desktop)]

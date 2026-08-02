@@ -52,8 +52,8 @@ pub(crate) fn append_runtime_handle_user_message_presentation(
     runtime_handle: &mut Value,
     presentation: Value,
 ) {
-    let Some(client_message_id) = presentation
-        .get("clientMessageId")
+    let Some(client_user_message_id) = presentation
+        .get("clientUserMessageId")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
     else {
@@ -61,7 +61,8 @@ pub(crate) fn append_runtime_handle_user_message_presentation(
     };
     let presentations = runtime_handle_user_message_presentations_mut(runtime_handle);
     if let Some(existing) = presentations.iter_mut().find(|existing| {
-        existing.get("clientMessageId").and_then(Value::as_str) == Some(client_message_id.as_str())
+        existing.get("clientUserMessageId").and_then(Value::as_str)
+            == Some(client_user_message_id.as_str())
     }) {
         *existing = presentation;
     } else {
