@@ -19,4 +19,4 @@ cd wework
 pnpm e2e:desktop:streaming-text
 ```
 
-The scenario uses real backend requests and a real Codex response stream. Do not hide a scroll regression by skipping the scenario, mocking frontend requests, or weakening the visibility assertion.
+The scenario uses real backend requests and a deterministic SSE response stream supplied by the desktop E2E harness. Do not hide a scroll regression by skipping the scenario, mocking frontend requests, or weakening the visibility assertion.
