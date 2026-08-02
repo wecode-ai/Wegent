@@ -25,11 +25,10 @@ class FeedbackService:
     def submit(
         self,
         db: Session,
-        user: User,
         values: FeedbackCreate,
         bundle: UploadFile,
     ) -> FeedbackResponse:
-        project = self._configured_project(db)
+        project, user = self._configured_project_and_user(db)
         existing = self._find_existing(db, project, user.id, values.report_id)
         if existing is None:
             created = loop_item_provider_router.create(
@@ -65,7 +64,7 @@ class FeedbackService:
         )
 
     @staticmethod
-    def _configured_project(db: Session) -> CloudProject:
+    def _configured_project_and_user(db: Session) -> tuple[CloudProject, User]:
         project_id = settings.WEWORK_FEEDBACK_PROJECT_ID.strip()
         if not project_id:
             raise FeedbackService._channel_error()
@@ -79,7 +78,12 @@ class FeedbackService:
         )
         if project is None:
             raise FeedbackService._channel_error()
-        return project
+        if project.created_by_user_id is None:
+            raise FeedbackService._channel_error()
+        user = db.get(User, project.created_by_user_id)
+        if user is None:
+            raise FeedbackService._channel_error()
+        return project, user
 
     @staticmethod
     def _ensure_bundle(

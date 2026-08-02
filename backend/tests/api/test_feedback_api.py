@@ -40,10 +40,6 @@ class FeedbackStorage:
         return content if max_bytes is None else content[:max_bytes]
 
 
-def _auth(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
 @pytest.fixture
 def feedback_project(test_db: Session, test_user: User) -> CloudProject:
     public_id = str(uuid.uuid4())
@@ -77,9 +73,8 @@ def _feedback_form(report_id: str, title: str) -> dict[str, str]:
     }
 
 
-def test_submit_feedback_creates_board_item_for_current_user(
+def test_submit_feedback_creates_board_item_for_feedback_project_owner(
     test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
     feedback_project: CloudProject,
@@ -92,7 +87,6 @@ def test_submit_feedback_creates_board_item_for_current_user(
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=_feedback_form("WF-100", "Workbench stopped responding"),
         files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
     )
@@ -122,7 +116,6 @@ def test_submit_feedback_creates_board_item_for_current_user(
 
 def test_submit_feedback_keeps_large_diagnostic_context_out_of_description(
     test_client: TestClient,
-    test_token: str,
     test_db: Session,
     feedback_project: CloudProject,
     feedback_storage: FeedbackStorage,
@@ -136,7 +129,6 @@ def test_submit_feedback_keeps_large_diagnostic_context_out_of_description(
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=form,
         files={"bundle": ("feedback.zip", b"full diagnostics", "application/zip")},
     )
@@ -150,9 +142,8 @@ def test_submit_feedback_keeps_large_diagnostic_context_out_of_description(
     assert list(feedback_storage.objects.values()) == [b"full diagnostics"]
 
 
-def test_submit_feedback_is_idempotent_per_user_and_report(
+def test_submit_feedback_is_idempotent_per_project_owner_and_report(
     test_client: TestClient,
-    test_token: str,
     test_db: Session,
     feedback_project: CloudProject,
     feedback_storage: FeedbackStorage,
@@ -164,12 +155,8 @@ def test_submit_feedback_is_idempotent_per_user_and_report(
     request = _feedback_form("WF-RETRY", "Repeated feedback")
     files = {"bundle": ("feedback.zip", b"diagnostics", "application/zip")}
 
-    first = test_client.post(
-        "/api/v1/feedback", headers=_auth(test_token), data=request, files=files
-    )
-    second = test_client.post(
-        "/api/v1/feedback", headers=_auth(test_token), data=request, files=files
-    )
+    first = test_client.post("/api/v1/feedback", data=request, files=files)
+    second = test_client.post("/api/v1/feedback", data=request, files=files)
 
     assert first.status_code == 201
     assert second.status_code == 201
@@ -182,14 +169,12 @@ def test_submit_feedback_is_idempotent_per_user_and_report(
 
 def test_submit_feedback_reports_unavailable_channel_when_not_configured(
     test_client: TestClient,
-    test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "WEWORK_FEEDBACK_PROJECT_ID", "")
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=_feedback_form("WF-101", "Cannot submit"),
         files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
     )
@@ -200,14 +185,12 @@ def test_submit_feedback_reports_unavailable_channel_when_not_configured(
 
 def test_submit_feedback_reports_unavailable_channel_when_project_is_missing(
     test_client: TestClient,
-    test_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "WEWORK_FEEDBACK_PROJECT_ID", "999999999")
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=_feedback_form("WF-MISSING", "Cannot submit"),
         files={"bundle": ("feedback.zip", b"diagnostics", "application/zip")},
     )
@@ -218,7 +201,6 @@ def test_submit_feedback_reports_unavailable_channel_when_project_is_missing(
 
 def test_submit_feedback_uses_gitlab_issue_provider_and_uploads_bundle(
     test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
@@ -267,7 +249,6 @@ def test_submit_feedback_uses_gitlab_issue_provider_and_uploads_bundle(
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=_feedback_form("WF-GITLAB", "GitLab feedback"),
         files={"bundle": ("feedback.zip", b"gitlab diagnostics", "application/zip")},
     )
@@ -287,7 +268,6 @@ def test_submit_feedback_uses_gitlab_issue_provider_and_uploads_bundle(
 
 def test_submit_feedback_uses_github_issue_without_persisting_bundle(
     test_client: TestClient,
-    test_token: str,
     test_db: Session,
     test_user: User,
     feedback_storage: FeedbackStorage,
@@ -325,7 +305,6 @@ def test_submit_feedback_uses_github_issue_without_persisting_bundle(
 
     response = test_client.post(
         "/api/v1/feedback",
-        headers=_auth(test_token),
         data=_feedback_form("WF-GITHUB", "GitHub feedback"),
         files={"bundle": ("feedback.zip", b"github diagnostics", "application/zip")},
     )

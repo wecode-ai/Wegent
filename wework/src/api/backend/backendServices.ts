@@ -23,6 +23,7 @@ export const WEWORK_CLIENT_ORIGIN = 'wework'
 
 export interface BackendWorkbenchServicesOptions {
   apiBaseUrl: string
+  feedbackUrl: string
   socketBaseUrl: string
   socketPath: string
   getToken: () => string | null
@@ -35,6 +36,7 @@ export function createBackendWorkbenchServices(
 ): WorkbenchServices {
   const runtimeConfig = getRuntimeConfig()
   const apiBaseUrl = options.apiBaseUrl ?? runtimeConfig.apiBaseUrl
+  const feedbackUrl = options.feedbackUrl ?? runtimeConfig.feedbackUrl
   const socketBaseUrl = options.socketBaseUrl ?? runtimeConfig.socketBaseUrl
   const socketPath = options.socketPath ?? runtimeConfig.socketPath
   const resolveToken = options.getToken ?? getToken
@@ -67,7 +69,7 @@ export function createBackendWorkbenchServices(
     taskApi,
     deviceApi,
     deliveryApi,
-    feedbackApi: createFeedbackApi(apiBaseUrl, resolveToken),
+    feedbackApi: feedbackUrl ? createFeedbackApi(feedbackUrl) : undefined,
     projectSpaceApis: {
       cloud: deliveryApi,
       defaultLocation: 'cloud',

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const project = {
@@ -77,10 +77,16 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 import { createDefaultWorkbenchServices } from './workbenchServices'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 
 describe('default workbench project-space services', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(false)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test('keeps cloud GitLab tasks on the backend in backend desktop mode', async () => {
@@ -102,5 +108,14 @@ describe('default workbench project-space services', () => {
     expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
     expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
     expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
+  })
+
+  test('adds build-time feedback submission to an offline local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
+
+    const services = createDefaultWorkbenchServices()
+
+    expect(services.feedbackApi).toBeDefined()
   })
 })

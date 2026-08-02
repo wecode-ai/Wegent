@@ -64,7 +64,6 @@ pub struct FeedbackBundleDecision {
 #[serde(rename_all = "camelCase")]
 pub struct FeedbackSubmitRequest {
     api_url: String,
-    access_token: String,
     staging_id: String,
     title: String,
     description: String,
@@ -465,9 +464,6 @@ fn submit_feedback_bundle_blocking(
     if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
         return Err("Feedback API URL must use HTTP or HTTPS".to_string());
     }
-    if request.access_token.trim().is_empty() {
-        return Err("Feedback authentication is unavailable".to_string());
-    }
     let staging_path = resolve_staging_path(app, &request.staging_id)?;
     let report_id = report_id_from_staging_archive(&staging_path)?;
     let bundle = reqwest::blocking::multipart::Part::file(&staging_path)
@@ -483,7 +479,6 @@ fn submit_feedback_bundle_blocking(
         .part("bundle", bundle);
     let response = reqwest::blocking::Client::new()
         .post(api_url)
-        .bearer_auth(request.access_token)
         .multipart(form)
         .send()
         .map_err(|error| format!("Failed to submit feedback: {error}"))?;

@@ -599,21 +599,22 @@ function TaskFeedbackDialogContent({
                 <FileArchive className="h-4 w-4" />
                 {t('workbench.feedback_confirm_export')}
               </button>
-              <button
-                type="button"
-                data-testid="task-feedback-submit-button"
-                disabled={exporting || !feedbackApi}
-                onClick={() => void submitFeedback()}
-                className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
-                title={!feedbackApi ? t('workbench.feedback_channel_unavailable') : undefined}
-              >
-                {exporting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-                {t('workbench.feedback_submit')}
-              </button>
+              {feedbackApi ? (
+                <button
+                  type="button"
+                  data-testid="task-feedback-submit-button"
+                  disabled={exporting}
+                  onClick={() => void submitFeedback()}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {t('workbench.feedback_submit')}
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>

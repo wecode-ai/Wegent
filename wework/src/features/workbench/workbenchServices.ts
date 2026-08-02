@@ -21,6 +21,7 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
+import { getRuntimeConfig } from '@/config/runtime'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
@@ -143,6 +144,11 @@ interface CloudConnectionServicesSnapshot {
   user?: User
 }
 
+function withConfiguredFeedbackApi(services: WorkbenchServices): WorkbenchServices {
+  const feedbackUrl = getRuntimeConfig().feedbackUrl
+  return feedbackUrl ? { ...services, feedbackApi: createFeedbackApi(feedbackUrl) } : services
+}
+
 export function createExecutorClientForWorkbenchServices(
   services: WorkbenchServices
 ): ExecutorClient {
@@ -184,7 +190,7 @@ export function createDefaultWorkbenchServices(
         user: cloudConnection.user,
       })
     }
-    return createLocalAppServices({ user: cloudConnection?.user })
+    return withConfiguredFeedbackApi(createLocalAppServices({ user: cloudConnection?.user }))
   }
 
   const cloudServices = createBackendWorkbenchServices()
