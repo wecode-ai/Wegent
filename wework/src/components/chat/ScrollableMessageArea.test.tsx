@@ -2054,6 +2054,91 @@ describe('ScrollableMessageArea', () => {
     vi.unstubAllGlobals()
   })
 
+  test('keeps the first user turn visible after starting from an empty conversation', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="first-user-turn" messages={[]} />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    let scrollHeight = 200
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="first-user-turn"
+        messages={[
+          {
+            id: 'first-user',
+            role: 'user',
+            content: '请处理这个问题',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 200,
+      behavior: 'auto',
+    })
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="first-user-turn"
+        messages={[
+          {
+            id: 'first-user',
+            role: 'user',
+            content: '请处理这个问题',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+          {
+            id: 'first-assistant',
+            role: 'assistant',
+            content: '正在处理',
+            status: 'streaming',
+            createdAt: '2026-05-29T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    scrollHeight = 1000
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   test('restores the previous scroll position when reopening a conversation', () => {
     const messageA = {
       id: 'a',

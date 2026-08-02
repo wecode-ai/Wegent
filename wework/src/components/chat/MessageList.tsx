@@ -306,7 +306,6 @@ export const MessageList = memo(function MessageList({
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: 'end',
-    followOnAppend: 'auto',
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT

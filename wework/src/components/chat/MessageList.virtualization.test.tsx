@@ -184,7 +184,6 @@ describe('MessageList Tauri virtualization', () => {
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         anchorTo: 'end',
-        followOnAppend: 'auto',
       })
     )
   })
