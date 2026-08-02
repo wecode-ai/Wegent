@@ -1941,6 +1941,187 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_guidance_corrects_a_stale_turn_id_and_retries_once() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-guidance-retry-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-guidance-retry-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-guidance-retry-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn_with_steer_mismatch(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-guide-retry",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-guide-retry").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let guided = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.guidance",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-guide-retry",
+                "message": "correct the active turn",
+                "clientGuidanceId": "guide-retry"
+            }
+        }))
+        .await
+        .expect("guidance should retry with the actual active turn");
+
+    assert_eq!(guided["accepted"], true);
+    assert_eq!(guided["turnId"], "turn-1");
+    wait_for_method_count(&log_path, "turn/steer", 2).await;
+    let steer_turn_ids = read_json_lines(&log_path)
+        .into_iter()
+        .filter(|call| call["method"] == "turn/steer")
+        .map(|call| {
+            call["params"]["expectedTurnId"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(steer_turn_ids, vec!["turn-stale", "turn-1"]);
+}
+
+#[tokio::test]
+async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-transcript-refresh-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-transcript-refresh-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-transcript-refresh-log", "jsonl");
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-transcript-refresh",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_idle(&handler, "local-task-transcript-refresh").await;
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-transcript-refresh",
+                "workspacePath": "/tmp/project",
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("refresh should resume and read the thread");
+
+    assert_eq!(transcript["success"], true);
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    wait_for_method_count(&log_path, "thread/read", 1).await;
+    let calls = read_json_lines(&log_path);
+    let resume_index = calls
+        .iter()
+        .rposition(|call| call["method"] == "thread/resume")
+        .expect("refresh should resume the thread");
+    let read_index = calls
+        .iter()
+        .rposition(|call| call["method"] == "thread/read")
+        .expect("refresh should read the thread snapshot");
+    assert!(resume_index < read_index);
+}
+
+#[tokio::test]
+async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-active-transcript-refresh-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-active-transcript-refresh-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-active-transcript-refresh-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-active-transcript-refresh",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-active-transcript-refresh").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-active-transcript-refresh",
+                "workspacePath": "/tmp/project",
+                "refresh": true
+            }
+        }))
+        .await
+        .expect("refresh should read the active thread");
+
+    assert_eq!(transcript["success"], true);
+    wait_for_method_count(&log_path, "thread/read", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/resume")
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_starts_a_new_turn_after_interrupting() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2900,11 +3081,21 @@ done
 }
 
 fn write_fake_codex_hanging_turn(log_path: &Path) -> PathBuf {
+    write_fake_codex_hanging_turn_inner(log_path, false)
+}
+
+fn write_fake_codex_hanging_turn_with_steer_mismatch(log_path: &Path) -> PathBuf {
+    write_fake_codex_hanging_turn_inner(log_path, true)
+}
+
+fn write_fake_codex_hanging_turn_inner(log_path: &Path, steer_mismatch: bool) -> PathBuf {
     let path = temp_path("fake-codex-send-hang", "sh");
     let _ = fs::remove_file(log_path);
     let content = format!(
         r#"#!/bin/sh
 LOG_PATH='{}'
+STEER_MISMATCH='{}'
+steer_count=0
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG_PATH"
   request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -2926,6 +3117,9 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[{{"id":"turn-1","status":"inProgress","items":[]}}]}}}}}}'
+      ;;
     *'"method":"thread/goal/get"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
@@ -2933,11 +3127,19 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
-      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      if [ "$STEER_MISMATCH" = "true" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-stale","status":"inProgress"}}}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      fi
       ;;
     *'"method":"turn/steer"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+      steer_count=$((steer_count + 1))
+      if [ "$STEER_MISMATCH" = "true" ] && [ "$steer_count" -eq 1 ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32602,"message":"expected active turn id `turn-stale` but found `turn-1`"}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+      fi
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -2946,7 +3148,8 @@ while IFS= read -r line; do
   esac
 done
 "#,
-        log_path.display()
+        log_path.display(),
+        steer_mismatch
     );
     write_executable(&path, &content);
     path

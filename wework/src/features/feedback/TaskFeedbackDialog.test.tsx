@@ -18,9 +18,9 @@ vi.mock('@/hooks/useTranslation', () => ({
         'workbench.feedback_runtime_logs': '运行日志',
         'workbench.feedback_preview': '预览导出内容',
         'workbench.feedback_confirm_export': '确认导出',
-        'workbench.feedback_submit': '提交到看板',
+        'workbench.feedback_submit': '提交反馈',
         'workbench.feedback_submitted': '反馈已提交',
-        'workbench.feedback_board_item': '看板事项',
+        'workbench.feedback_board_item': '反馈单编号',
         'workbench.feedback_default_title': 'Wework 问题反馈',
         'workbench.feedback_contact_developer_with_report': '提交失败：{{reportId}}',
         'workbench.feedback_back': '返回',
@@ -145,6 +145,7 @@ describe('TaskFeedbackDialog', () => {
     await waitFor(() =>
       expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
     )
+    expect(screen.queryByTestId('task-feedback-submit-button')).not.toBeInTheDocument()
     expect(getTaskContext).toHaveBeenCalledOnce()
     expect(invokeMock).toHaveBeenCalledWith(
       'preview_feedback_bundle',
@@ -165,7 +166,7 @@ describe('TaskFeedbackDialog', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
   })
 
-  test('submits the exact previewed bundle to the board', async () => {
+  test('submits the exact previewed bundle through the configured feedback API', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
       return Promise.reject(new Error(`Unexpected command: ${command}`))

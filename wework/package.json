@@ -18,7 +18,7 @@
     "ios:init": "tauri ios init",
     "dev:ios": "bash scripts/dev-ios-app.sh",
     "build:ios": "bash scripts/build-ios-app.sh",
-    "tauri:build": "pnpm run prepare:codex -- --materialize && pnpm run prepare:dws && tauri build",
+    "tauri:build": "pnpm run prepare:codex --materialize && pnpm run prepare:dws && tauri build",
     "lint": "eslint . && pnpm run lint:typography && pnpm run lint:task-lifecycle",
     "lint:typography": "node scripts/check-typography.mjs",
     "lint:task-lifecycle": "node scripts/check-runtime-task-lifecycle.mjs",

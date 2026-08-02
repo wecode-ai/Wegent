@@ -10,7 +10,7 @@ describe('createFeedbackApi', () => {
 
   test('submits the exported bundle through the native command', async () => {
     invokeMock.mockResolvedValue({ report_id: 'WF-1', item_id: 'FEEDBACK-1' })
-    const api = createFeedbackApi('https://wegent.example.com/api', () => 'token')
+    const api = createFeedbackApi('https://feedback.example.com/v1/reports')
 
     await api.submit({
       stagingId: 'staging-1',
@@ -21,8 +21,7 @@ describe('createFeedbackApi', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('submit_feedback_bundle', {
       request: {
-        apiUrl: 'https://wegent.example.com/api/v1/feedback',
-        accessToken: 'token',
+        apiUrl: 'https://feedback.example.com/v1/reports',
         stagingId: 'staging-1',
         title: 'Problem',
         description: 'Details',
@@ -31,17 +30,24 @@ describe('createFeedbackApi', () => {
     })
   })
 
-  test('reports an unavailable channel without authentication', async () => {
-    const api = createFeedbackApi('https://wegent.example.com/api', () => null)
+  test('supports a relative feedback endpoint without Backend authentication', async () => {
+    invokeMock.mockResolvedValue({ report_id: 'WF-2', item_id: 'FEEDBACK-2' })
+    const api = createFeedbackApi('/feedback')
 
-    await expect(
-      api.submit({
-        stagingId: 'staging-1',
-        title: 'Problem',
-        description: '',
-        context: {},
+    await api.submit({
+      stagingId: 'staging-2',
+      title: 'Problem',
+      description: '',
+      context: {},
+    })
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'submit_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          apiUrl: `${window.location.origin}/feedback`,
+        }),
       })
-    ).rejects.toThrow('反馈通道异常，请联系开发者')
-    expect(invokeMock).not.toHaveBeenCalled()
+    )
   })
 })

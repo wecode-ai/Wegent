@@ -1029,6 +1029,27 @@ fn turn_started_sets_or_replaces_the_active_turn() {
 }
 
 #[test]
+fn turn_start_response_resolves_the_active_turn_without_a_started_notification() {
+    assert_eq!(
+        turn_start_response_id(&json!({
+            "turn": {
+                "id": "turn-1",
+                "status": "inProgress"
+            }
+        }))
+        .as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        turn_start_response_id(&json!({
+            "turnId": "turn-2"
+        }))
+        .as_deref(),
+        Some("turn-2")
+    );
+}
+
+#[test]
 fn item_notification_cannot_replace_the_active_turn() {
     let state = CodexRunState::default();
     let notification = json!({

@@ -85,6 +85,38 @@ while retaining the same canonical `turnId`. Turn-level actions such as fork
 and rollback must use the canonical turn ID persisted by Codex, never a
 UI-only segmented message ID.
 
+### Codex Turn Identity and Recovery
+
+The Codex app-server `turn/start` response is the authoritative source for a
+new turn identity. The executor must record its turn ID immediately after the
+request succeeds. A later `turn/started` notification may confirm or correct
+that identity, but it must not be required before the turn becomes active.
+Guidance and interruption therefore still target the current turn when a live
+notification is delayed or missing.
+
+When the user sends guidance, Wework optimistically inserts the guidance
+message into the current turn before calling `runtime.tasks.guidance`. If
+Codex `turn/steer` explicitly reports that the expected turn ID differs from
+the actual active turn ID, the executor updates its record with the returned
+ID and retries exactly once. The successful response turn ID may rebind the
+optimistic message to the correct turn. On failure, Wework removes the
+optimistic message and keeps a retryable queue item so the transcript never
+shows guidance that Codex did not accept.
+
+**Interrupt and send now** optimistically marks the running turn as cancelled
+and removes in-flight optimistic guidance before requesting interruption. The
+interrupt operation treats an already absent active turn as idempotent
+success, then starts the replacement turn. If the request fails, the frontend
+restores the previous turn state and optimistic guidance instead of losing
+the user's message.
+
+Live events carry incremental updates only. After the WebView or runtime
+transport is rebuilt, recovery for a persisted Codex thread must call
+`thread/resume` and then read a complete snapshot with
+`thread/read(includeTurns)`. The snapshot re-establishes turns, messages, and
+running state; code must not continue inferring them from pre-disconnect
+in-memory events.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
