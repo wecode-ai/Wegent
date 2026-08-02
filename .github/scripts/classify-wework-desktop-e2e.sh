@@ -4,6 +4,7 @@ set -euo pipefail
 
 core_segments=(
   workspace-tabs
+  priority-filter
   core-task-flow
   window-lifecycle
   goal-lifecycle
@@ -89,6 +90,19 @@ classify_wework_path() {
       wework/src/components/chat/composer/Goal* | \
       wework/src/features/workbench/runtimeTaskReminders*)
       select_target "core:goal-lifecycle"
+      return
+      ;;
+
+    # The extracted priority section has its own runtime-task fixture.
+    wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
+      select_target "core:priority-filter"
+      return
+      ;;
+    # The main sidebar also owns project creation, chats, and attachments.
+    wework/src/components/layout/DesktopSidebar.tsx)
+      select_target "core:priority-filter"
+      select_target "core:core-task-flow"
+      select_target "core:workspace-attachments"
       return
       ;;
 
