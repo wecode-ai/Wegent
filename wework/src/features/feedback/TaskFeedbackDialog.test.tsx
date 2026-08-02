@@ -91,7 +91,8 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).not.toBeChecked()
   })
 
-  test('allows user-authored feedback without diagnostic categories', () => {
+  test('allows user-authored feedback without diagnostic categories', async () => {
+    invokeMock.mockResolvedValue(previewResult)
     render(
       <TaskFeedbackDialog
         open
@@ -109,6 +110,18 @@ describe('TaskFeedbackDialog', () => {
     })
 
     expect(screen.getByTestId('task-feedback-export-button')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          note: 'The toolbar disappears after reconnecting',
+          attachments: [],
+        }),
+      })
+    )
   })
 
   test('pastes files into the feedback and includes them in the preview bundle', async () => {
@@ -167,6 +180,7 @@ describe('TaskFeedbackDialog', () => {
   })
 
   test('removes a pasted attachment before previewing', async () => {
+    invokeMock.mockResolvedValue(previewResult)
     render(
       <TaskFeedbackDialog
         open
@@ -184,6 +198,15 @@ describe('TaskFeedbackDialog', () => {
     fireEvent.click(screen.getByTestId('task-feedback-remove-attachment-0'))
 
     expect(screen.queryByText('screenshot.png')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({ attachments: [] }),
+      })
+    )
   })
 
   test('keeps standard diagnostics available in new-conversation state', () => {

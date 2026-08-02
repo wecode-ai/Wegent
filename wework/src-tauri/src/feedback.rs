@@ -270,6 +270,10 @@ fn build_pending_bundle(
         }
         let mut total_bytes = 0usize;
         for (index, attachment) in request.attachments.iter().enumerate() {
+            let estimated_bytes = estimated_decoded_attachment_size(&attachment.data_base64);
+            if total_bytes.saturating_add(estimated_bytes) > MAX_ATTACHMENT_TOTAL_BYTES {
+                return Err("Feedback attachments are larger than 100 MB".to_string());
+            }
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(&attachment.data_base64)
                 .map_err(|error| {
@@ -298,6 +302,17 @@ fn build_pending_bundle(
         skipped,
         log_files,
     })
+}
+
+fn estimated_decoded_attachment_size(data_base64: &str) -> usize {
+    let padding = data_base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .take(2)
+        .count();
+    base64::decoded_len_estimate(data_base64.len()).saturating_sub(padding)
 }
 
 fn text_entry(archive_path: &str, content: String) -> PendingEntry {
@@ -786,8 +801,9 @@ fn write_zip_bytes(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_log_entries, decode_data_url, empty_task_context, redact, redact_home_path,
-        redact_json_value, sanitize_attachment_name, LogManifestEntry, PendingEntry,
+        collect_log_entries, decode_data_url, empty_task_context,
+        estimated_decoded_attachment_size, redact, redact_home_path, redact_json_value,
+        sanitize_attachment_name, LogManifestEntry, PendingEntry,
     };
     use std::collections::HashSet;
     use std::fs;
@@ -836,6 +852,13 @@ mod tests {
             sanitize_attachment_name("notes:one.txt", 2),
             "3-notes_one.txt"
         );
+    }
+
+    #[test]
+    fn estimates_decoded_attachment_size_without_padding_bytes() {
+        assert_eq!(estimated_decoded_attachment_size("YQ=="), 1);
+        assert_eq!(estimated_decoded_attachment_size("YWI="), 2);
+        assert_eq!(estimated_decoded_attachment_size("YWJj"), 3);
     }
 
     #[test]
