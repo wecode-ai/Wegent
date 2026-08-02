@@ -19,4 +19,4 @@ cd wework
 pnpm e2e:desktop:streaming-text
 ```
 
-该场景使用真实后端请求和真实 Codex 响应流，不得通过跳过、mock 前端请求或放宽可见性断言来掩盖滚动回归。
+该场景使用真实后端请求，并由桌面 E2E harness 提供确定性的 SSE 响应流；不得通过跳过、mock 前端请求或放宽可见性断言来掩盖滚动回归。
