@@ -255,7 +255,7 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveClass('hidden')
     expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
       'data-active',
-      'true'
+      'false'
     )
     expect(sourceActions).toHaveClass('invisible', 'pointer-events-none')
     expect(sourceActions).toHaveAttribute('aria-hidden', 'true')
@@ -264,6 +264,10 @@ describe('DocumentDetailDialog original file preview', () => {
 
     await user.click(screen.getByTestId('knowledge-document-source-tab'))
     expect(screen.getByTestId('mock-knowledge-source-preview')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
     expect(sourceActions).not.toHaveClass('invisible')
   })
 

@@ -9,7 +9,7 @@ import fileViewerPackage from '@file-viewer/react/package.json'
 import officePreset from '@file-viewer/preset-office'
 import { useMemo } from 'react'
 
-const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-office-v2`
+const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-protected-docs-v1`
 
 const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
   preset: officePreset,
@@ -53,9 +53,15 @@ interface FlyfishOfficePreviewProps {
   blob: Blob
   filename: string
   onError?: (error: Error) => void
+  protectedMode?: boolean
 }
 
-export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficePreviewProps) {
+export function FlyfishOfficePreview({
+  blob,
+  filename,
+  onError,
+  protectedMode = false,
+}: FlyfishOfficePreviewProps) {
   const file = useMemo(
     () =>
       blob instanceof File
@@ -68,11 +74,27 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
   const extension = filename.split('.').pop()?.toLowerCase()
   const isWord = extension === 'doc' || extension === 'docx'
   const isPresentation = extension === 'pptx'
-  const viewerOptions = isPresentation
+  const baseViewerOptions = isPresentation
     ? PRESENTATION_VIEWER_OPTIONS
     : isWord
       ? WORD_VIEWER_OPTIONS
       : OFFICE_VIEWER_OPTIONS
+  const viewerOptions = protectedMode
+    ? {
+        ...baseViewerOptions,
+        toolbar: {
+          ...(typeof baseViewerOptions.toolbar === 'object' ? baseViewerOptions.toolbar : {}),
+          download: false,
+          exportHtml: false,
+          print: false,
+          permissions: {
+            download: false,
+            print: false,
+            'export-html': false,
+          },
+        },
+      }
+    : baseViewerOptions
 
   const handleStateChange = (state: ViewerState) => {
     if (!state.error || !onError) return
