@@ -31,6 +31,11 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorSetRequest,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
@@ -1922,13 +1927,8 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
-    let selectedModel = findLocalModelConfigByModelName(data.modelId)
-    try {
-      await ensureLocalModelApiKeysHydrated()
-      selectedModel = findLocalModelConfigByModelName(data.modelId)
-    } catch (error) {
-      if (selectedModel?.apiKeyConfigured && !selectedModel.apiKey) throw error
-    }
+    await ensureLocalModelApiKeysHydrated()
+    const selectedModel = findLocalModelConfigByModelName(data.modelId)
     if (!options.syncConfiguredModelCatalog) return true
     if (!selectedModel?.catalogEntry) return true
 
@@ -2225,6 +2225,22 @@ export function createRuntimeWorkApiFromIpc(
     },
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.clear', data)
+    },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.get', data)
+    },
+    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.clear', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.resolve', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)

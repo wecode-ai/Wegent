@@ -63,7 +63,6 @@ export interface SaveLocalModelConfigInput {
   catalogReady?: boolean
   catalogPendingRuntimeInstanceId?: string | null
   enabled?: boolean
-  persistApiKey?: boolean
 }
 
 export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
@@ -79,28 +78,7 @@ export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
 export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
 
-const localModelApiKeys = new Map<string, string>()
-let localModelSecretWriteQueue: Promise<void> = Promise.resolve()
 let localModelApiKeyHydration: Promise<void> | null = null
-
-function scheduleLocalModelApiKeyWrite(configId: string, apiKey?: string): void {
-  if (!isTauriRuntime()) return
-  localModelSecretWriteQueue = localModelSecretWriteQueue
-    .catch(() => undefined)
-    .then(() =>
-      invoke('update_local_model_api_key', {
-        configId,
-        apiKey: apiKey || null,
-      })
-    )
-  void localModelSecretWriteQueue.catch(error => {
-    console.error('Failed to persist local model credentials', error)
-  })
-}
-
-export function flushLocalModelSecretWrites(): Promise<void> {
-  return localModelSecretWriteQueue
-}
 
 export async function hydrateLocalModelApiKeys(): Promise<void> {
   if (!isTauriRuntime()) return
@@ -116,35 +94,24 @@ export async function hydrateLocalModelApiKeys(): Promise<void> {
     configIds.length > 0
       ? await invoke<Record<string, string>>('read_local_model_api_keys', { configIds })
       : {}
-  localModelApiKeys.clear()
-  for (const [configId, apiKey] of Object.entries(storedApiKeys)) {
-    if (apiKey) localModelApiKeys.set(configId, apiKey)
-  }
-
-  const legacyApiKeys = configs.flatMap(config =>
-    config.apiKey ? [{ configId: config.id, apiKey: config.apiKey }] : []
+  if (Object.keys(storedApiKeys).length === 0) return
+  writeStoredConfigs(
+    configs.map(config => {
+      const apiKey = storedApiKeys[config.id]
+      return apiKey ? { ...config, apiKey, apiKeyConfigured: true } : config
+    })
   )
-  if (legacyApiKeys.length > 0) {
-    for (const { configId, apiKey } of legacyApiKeys) {
-      localModelApiKeys.set(configId, apiKey)
-      scheduleLocalModelApiKeyWrite(configId, apiKey)
-    }
-    globalThis.localStorage?.setItem(
-      LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-      JSON.stringify(configs.map(persistableLocalModelConfig))
-    )
-    await flushLocalModelSecretWrites()
-  }
-  dispatchChanged(readStoredConfigs())
+  void invoke('delete_local_model_api_keys', {
+    configIds: Object.keys(storedApiKeys),
+  }).catch(error => {
+    console.error('Failed to remove migrated local model credentials', error)
+  })
 }
 
 export function ensureLocalModelApiKeysHydrated(): Promise<void> {
   if (!isTauriRuntime()) return Promise.resolve()
   if (!localModelApiKeyHydration) {
-    localModelApiKeyHydration = hydrateLocalModelApiKeys().catch(error => {
-      localModelApiKeyHydration = null
-      throw error
-    })
+    localModelApiKeyHydration = hydrateLocalModelApiKeys()
   }
   return localModelApiKeyHydration
 }
@@ -195,28 +162,7 @@ function readStoredConfigs(): LocalModelConfig[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    const storedConfigs = parsed.filter(isLocalModelConfig)
-    const canMigrateLegacyApiKeys = isTauriRuntime()
-    let migratedLegacyApiKey = false
-    for (const config of storedConfigs) {
-      if (!config.apiKey) continue
-      localModelApiKeys.set(config.id, config.apiKey)
-      if (canMigrateLegacyApiKeys) {
-        scheduleLocalModelApiKeyWrite(config.id, config.apiKey)
-        migratedLegacyApiKey = true
-      }
-    }
-    if (migratedLegacyApiKey) {
-      globalThis.localStorage?.setItem(
-        LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-        JSON.stringify(storedConfigs.map(persistableLocalModelConfig))
-      )
-    }
-    return storedConfigs.map(config => {
-      const normalized = normalizeStoredLocalModelConfig(config)
-      const apiKey = localModelApiKeys.get(normalized.id)
-      return apiKey ? { ...normalized, apiKey } : normalized
-    })
+    return parsed.filter(isLocalModelConfig).map(normalizeStoredLocalModelConfig)
   } catch {
     return []
   }
@@ -373,19 +319,8 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
-  globalThis.localStorage?.setItem(
-    LOCAL_MODEL_SETTINGS_STORAGE_KEY,
-    JSON.stringify(
-      configs.map(config => (isTauriRuntime() ? persistableLocalModelConfig(config) : config))
-    )
-  )
+  globalThis.localStorage?.setItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY, JSON.stringify(configs))
   dispatchChanged(configs)
-}
-
-function persistableLocalModelConfig(config: LocalModelConfig): Omit<LocalModelConfig, 'apiKey'> {
-  const persistableConfig = { ...config }
-  delete persistableConfig.apiKey
-  return persistableConfig
 }
 
 function dispatchChanged(configs: LocalModelConfig[]): void {
@@ -616,14 +551,6 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     enabled: input.enabled ?? previous?.enabled ?? true,
     updatedAt: nextLocalModelUpdatedAt(previous),
   }
-  if (apiKey) {
-    localModelApiKeys.set(id, apiKey)
-  } else {
-    localModelApiKeys.delete(id)
-  }
-  if (input.persistApiKey !== false) {
-    scheduleLocalModelApiKeyWrite(id, apiKey)
-  }
   const index = existing.findIndex(config => config.id === id)
   const configs =
     index >= 0 ? existing.map(config => (config.id === id ? next : config)) : [...existing, next]
@@ -666,16 +593,11 @@ export function deleteLocalModelConfig(id: string): boolean {
   const configs = readStoredConfigs()
   const next = configs.filter(config => config.id !== id)
   if (next.length === configs.length) return false
-  localModelApiKeys.delete(id)
-  scheduleLocalModelApiKeyWrite(id)
   writeStoredConfigs(next)
   return true
 }
 
 export function clearLocalModelConfigs(): void {
-  const configIds = readStoredConfigs().map(config => config.id)
-  localModelApiKeys.clear()
-  for (const configId of configIds) scheduleLocalModelApiKeyWrite(configId)
   globalThis.localStorage?.removeItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
   dispatchChanged([])
 }

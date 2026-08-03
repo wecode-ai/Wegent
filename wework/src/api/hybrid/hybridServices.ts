@@ -683,6 +683,18 @@ export function createHybridWorkbenchServices(
     clearRuntimeGoal(data) {
       return routeByAddress(data.address).clearRuntimeGoal(data)
     },
+    getRuntimeSupervisor(data) {
+      return routeByAddress(data.address).getRuntimeSupervisor(data)
+    },
+    setRuntimeSupervisor(data) {
+      return routeByAddress(data.address).setRuntimeSupervisor(data)
+    },
+    clearRuntimeSupervisor(data) {
+      return routeByAddress(data.address).clearRuntimeSupervisor(data)
+    },
+    resolveRuntimeSupervisor(data) {
+      return routeByAddress(data.address).resolveRuntimeSupervisor(data)
+    },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest) {
       return runtimeApi(data.deviceId).openRuntimeWorkspace(data)
     },
@@ -986,6 +998,7 @@ function filterRuntimeChatStreamHandlers(
     onSubagentActivity: route(handlers.onSubagentActivity),
     onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
     onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
+    onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
     onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
     onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
     onGuidanceApplied: route(handlers.onGuidanceApplied),

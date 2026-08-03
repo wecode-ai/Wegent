@@ -25,12 +25,12 @@ import {
   isGuidanceToolName,
   isImageViewToolName,
   isFileReadToolName,
+  isNodeReplToolName,
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 
-const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
@@ -80,13 +80,7 @@ export function ToolBlockItem({
   }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
-    return (
-      <ThinkingBlockItem
-        block={block}
-        isRunning={isRunning}
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-      />
-    )
+    return null
   }
   if (block.type === 'text') {
     return (
@@ -139,6 +133,9 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
+    javascriptRunning: t('tool_activity.javascript_running'),
+    javascriptDone: t('tool_activity.javascript_done'),
+    javascriptError: t('tool_activity.javascript_error'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
@@ -854,79 +851,6 @@ function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
-function ThinkingBlockItem({
-  block,
-  isRunning,
-  onOpenWorkspaceFile,
-}: {
-  block: Extract<ProcessingBlock, { type: 'thinking' }>
-  isRunning: boolean
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-}) {
-  const { t } = useTranslation('chat')
-  const [expanded, setExpanded] = useState(false)
-
-  if (!block.content) return null
-
-  if (isRunning) {
-    const preview = buildBlockPreview(block.content)
-
-    return (
-      <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
-        <div
-          className="flex max-w-full items-center gap-1.5 text-text-secondary"
-          role="status"
-          aria-live="polite"
-          data-testid="thinking-live-preview"
-        >
-          <span className="shrink-0">{t('thinking.running')}</span>
-          <span className="shrink-0 text-text-muted">·</span>
-          <span className="min-w-0 truncate text-text-muted">
-            {preview || t('thinking.updating')}
-          </span>
-        </div>
-      </div>
-    )
-  }
-
-  const charCount = block.content.length
-  const detailId = `${block.id}-thinking-detail`
-
-  return (
-    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
-      <button
-        type="button"
-        data-testid="thinking-toggle-button"
-        aria-expanded={expanded}
-        aria-controls={detailId}
-        onClick={() => setExpanded(value => !value)}
-        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
-      >
-        <span className="min-w-0 truncate">
-          {t('thinking.completed')} · {charCount} {t('thinking.chars')}
-        </span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
-          strokeWidth={2}
-        />
-      </button>
-      {expanded && (
-        <div
-          id={detailId}
-          className="mt-2 min-w-0 overflow-x-hidden border-l border-border pl-4"
-          data-testid="thinking-detail"
-        >
-          <AssistantMarkdown
-            content={block.content}
-            variant="process"
-            onOpenFile={onOpenWorkspaceFile}
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
 function ProcessTextBlockItem({
   block,
   isRunning,
@@ -975,6 +899,9 @@ type GenericToolLabels = {
   searchError: string
   imageView: (filename: string) => string
   imageViewFallback: string
+  javascriptRunning: string
+  javascriptDone: string
+  javascriptError: string
 }
 
 function getBlockLabel(
@@ -984,6 +911,15 @@ function getBlockLabel(
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
+  if (isNodeReplToolName(name)) {
+    const label =
+      block.status === 'error'
+        ? genericLabels.javascriptError
+        : block.status === 'done'
+          ? genericLabels.javascriptDone
+          : genericLabels.javascriptRunning
+    return { icon: <TerminalIcon />, label }
+  }
   if (isCommandToolName(name)) {
     const activityKind = getToolActivityKind(block)
     if (activityKind === 'file') {
@@ -1228,18 +1164,100 @@ function renderBlockDetail(
     return null
   }
 
-  return null
+  return <GenericToolBlockDetail block={block} />
 }
 
 function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
-  return (
+  if (isGuidanceToolName(name)) return false
+  if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
     isFileEditToolName(name) ||
     isWebSearchToolName(name) ||
     isImageViewToolName(name)
+  ) {
+    return true
+  }
+  return block.toolInput !== undefined || block.toolOutput !== undefined
+}
+
+function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
+  const { t } = useTranslation('chat')
+  const inputText = stringifyToolValue(block.toolInput)
+  const outputText = stringifyToolValue(block.toolOutput)
+  const isJavaScript = isNodeReplToolName(block.toolName)
+  const code = isJavaScript ? getInputField(block, 'code', 'javascript', 'source') : undefined
+
+  return (
+    <div
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface"
+      data-testid="generic-tool-block-detail"
+    >
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <span className="min-w-0 truncate font-mono text-xs text-text-secondary">
+          {block.toolName}
+        </span>
+        {isJavaScript ? <span className="shrink-0 text-xs text-text-muted">JavaScript</span> : null}
+      </div>
+      <div className="flex min-w-0 flex-col gap-3 p-3">
+        {code ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_input')}
+            content={code}
+            testId="generic-tool-input"
+          />
+        ) : inputText ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_input')}
+            content={inputText}
+            testId="generic-tool-input"
+          />
+        ) : null}
+        {outputText ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_output')}
+            content={outputText}
+            testId="generic-tool-output"
+          />
+        ) : block.status === 'done' ? (
+          <p className="text-xs text-text-muted">{t('tool_activity.tool_no_output')}</p>
+        ) : null}
+      </div>
+    </div>
   )
+}
+
+function ToolDetailSection({
+  label,
+  content,
+  testId,
+}: {
+  label: string
+  content: string
+  testId: string
+}) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-1 text-xs text-text-muted">{label}</div>
+      <pre
+        className="max-h-48 max-w-full overflow-auto rounded-md bg-code-bg px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-text-secondary"
+        data-testid={testId}
+      >
+        {content}
+      </pre>
+    </section>
+  )
+}
+
+function stringifyToolValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
@@ -1535,23 +1553,4 @@ function getStringField(record: Record<string, unknown>, ...keys: string[]): str
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str
   return str.substring(0, maxLen) + '...'
-}
-
-function buildBlockPreview(content: string): string {
-  const normalized = content
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/[#>*_[\]()-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!normalized) return ''
-
-  const segments = normalized
-    .split(/[。！？!?]+|\.(?=\s|$)/)
-    .map(segment => segment.trim())
-    .filter(Boolean)
-  const preview = segments[segments.length - 1] ?? normalized
-
-  return truncate(preview, THINKING_PREVIEW_MAX_LENGTH)
 }

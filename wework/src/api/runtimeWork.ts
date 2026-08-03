@@ -21,6 +21,11 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
@@ -149,6 +154,22 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return client.post('/runtime-work/goal/clear', data)
+    },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/get', data)
+    },
+    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/set', data)
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/clear', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/resolve', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)

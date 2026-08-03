@@ -1265,6 +1265,9 @@ export function WorkbenchProvider({
             lifecycleStore.goalStatusReceived(address, null)
             refreshRuntimeWorkLists(address)
           },
+          onRuntimeSupervisorUpdated: address => {
+            refreshRuntimeWorkLists(address)
+          },
           onRuntimeGoalContinuation: (address, payload) => {
             applyRuntimeConversationGoalContinuation(address, payload)
             refreshRuntimeWorkLists(address)

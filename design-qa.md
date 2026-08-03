@@ -1,374 +1,106 @@
-# Wework Automations Detail Workspace Design QA
-
-## Existing-task interaction follow-up
-
-- Source visual truth: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785319216927/image.png`
-- Real-Tauri implementation: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/desktop-e2e/2026-07-29T10-21-57-835Z-98991/automations-00-existing-task-empty.png`
-- Combined comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/existing-task-comparison-final.png`
-- The run mode is named “现有任务” and reduces the Details card to the same two rows shown in the source: `运行于` and `任务`.
-- The task trigger uses the source copy “选择一个已固定任务”; the popup uses `目标任务` and the exact pinned-task empty-state guidance.
-- Only pinned, continuable local tasks are selectable. A scheduled execution reuses the selected task address and appends a turn instead of creating a new task.
-- The popup is right-aligned to its trigger, has a stable `352px` outer width, uses the available inner width, and passes the desktop E2E horizontal-overflow assertion.
-- The source and implementation use different viewport proportions and realistic content, but the focused hierarchy, two-row structure, right-aligned controls, popup anchoring, typography, borders, radii, and spacing match with no actionable P0, P1, or P2 difference.
-- Real desktop automation E2E passed for the empty state, local persistence, manual execution, pinning, existing-task selection, and scheduled continuation.
-
-final result: passed
-
-# Wework 工作区标签设计 QA
-
-## 目标
-
-- 参考图与实现对照：`docs/assets/images/wework-workspace-tabs-reference-comparison.png`（左侧为用户提供的设计图，右侧为真实 Tauri 实现）。
-- 实现范围：Wework 顶层任务 / 项目空间文档标签、项目名标题、关闭与恢复、新窗口。
-- 验证环境：macOS 真实 Tauri 隔离实例，浅色主题；主窗口 1280×720；独立项目窗口 1280×800。
-- 测试数据：隔离环境内创建本地项目“产品规划”，不读取或修改用户的个人项目数据。
-
-## 对照结果
-
-- 完整审查链：`docs/assets/images/wework-workspace-tabs-review-chain.png`
-- 最小权限独立窗口实机图：`docs/assets/images/wework-workspace-tabs-minimal-capability.png`
-- 标题栏高度、文档标签宽度、圆角连接、关闭按钮、加号位置与参考方向一致。
-- 标题栏使用稳定浅灰底色，选中标签使用内容表面色；未选中标签留在标题栏层，状态差异清晰。
-- 顶层产品名统一为“项目空间”；具体项目打开后标签标题显示项目名，例如“产品规划”。
-- 主窗口与独立项目窗口均无裁切、重叠、错误边框或圆角断裂。
-
-## 逐用例 QA 记录
-
-| 用例             | 前置条件与精确步骤                                          | 预期结果                                                                     | 实际结果、负向与恢复验证                                                                        | 证据                                  |
-| ---------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------- |
-| 初始与切换选中态 | 启动隔离实例；同时保留“任务”和项目标签；依次点击两个标签    | 只有活动标签使用白色内容表面、加粗文字与连接圆角，未选中标签停留在灰色标题栏 | 通过；首尾标签的连接圆角均未被滚动容器裁切，切换后 ARIA 选中态同步                              | 审查链 01、05                         |
-| 打开顶层项目空间 | 点击 `+`，再点击“项目空间”                                  | 菜单贴近触发器且不越界；打开的顶层标签标题为“项目空间”                       | 通过；重复打开会复用现有文档而非生成重复标签                                                    | 审查链 02、03；重复文档单测           |
-| 打开具体项目     | 在隔离实例创建“产品规划”，从项目空间进入该项目              | 活动标签立即显示“产品规划”，不继续显示顶层产品名                             | 通过；创建结果直接更新活动文档，避免异步列表刷新造成旧标题                                      | 审查链 04；项目标题单测               |
-| 关闭与回退       | 激活“产品规划”，点击其关闭按钮                              | 项目标签消失，活动文档稳定回退到“任务”                                       | 通过；E2E 使用轮询等待真实 DOM 移除，覆盖 WebView 延迟更新                                      | 审查链 06；桌面 E2E                   |
-| 恢复已关闭标签   | 完成上一用例后按 `⌘⇧T`                                      | “产品规划”恢复并成为活动标签                                                 | 通过；若原文档 ID 已被占用，会生成新 ID 后恢复，避免覆盖现有文档                                | 审查链 07；恢复冲突单测               |
-| 拖动排序         | 拖动项目标签跨过相邻标签                                    | 标签顺序更新，活动文档不变                                                   | 通过；WebKit `dragover` 无法读取 `dataTransfer` 时使用已提升的拖动状态恢复排序                  | 拖动回归单测                          |
-| 键盘上下文菜单   | 聚焦标签并按 `Shift+F10`，检查菜单项并关闭                  | 菜单在视口内显示，可键盘进入；关闭按钮和菜单使用中英文可访问名称             | 通过；同时覆盖 Context Menu 键入口和菜单边界夹取                                                | 审查链 08；键盘/本地化单测            |
-| 独立项目窗口     | 在项目标签菜单选择“在新窗口中打开”，等待新 WebView 完整渲染 | 独立窗口标题与标签均显示“产品规划”，内容完整且窗口控件可用                   | 通过；创建失败或等待超时会销毁残留窗口；权限仅保留窗口控制、窗口生命周期事件监听/解绑与日志能力 | 审查链 09；最小权限实机图；Tauri 单测 |
-| 多窗口截图确定性 | 同时存在主窗口和项目窗口时执行工作区截图命令                | 优先捕获当前聚焦的工作区窗口；无焦点时捕获最近创建的窗口                     | 通过；Rust 排序与回退路径编译、测试通过                                                         | 工作区截图命令测试                    |
-
-## 清理
-
-- 结束验证后停止隔离 Tauri 会话并清理其 Executor 进程组与临时认证链接。
-- “产品规划”仅存在于隔离测试数据；运行时原始截图保留在被 Git 忽略的 `wework/test-results/`，仓库只提交对照图和审查联系表。
-
-## 缺陷审查
-
-- P0：选中与未选中标签底色过于接近。已拆分标题栏和活动标签表面色，并重新截图验证。
-- P0：新建项目后标签仍显示“项目空间”。已改为直接使用创建结果更新活动标签，真实流程与单测均通过。
-- P1：右键菜单只能依赖鼠标。已增加 Shift+F10 / Context Menu 键入口。
-- P1：动态项目窗口无法纳入隔离截图链。已增加工作区窗口 WebView 截图命令并验证。
-- P2：未发现。
-
-## 最终结论
-
-final result: passed
-
----
-
-# Workspace Document Tabs Follow-up Review
+# Design QA: Wework priority sidebar
+
+## Sources
+
+- User-provided ChatGPT and previous Wework priority-sidebar screenshots attached to
+  the task.
+- ChatGPT desktop implementation inspected from the supplied local app bundle; no
+  extracted ChatGPT source or asset is shipped.
+- Real Tauri screenshots were inspected during development and retained as local,
+  ignored verification artifacts.
+- Reproducible automated evidence is the `priority-filter` checkpoint in
+  `wework/e2e/desktop/task-flow.e2e.mjs` and its Wework Desktop E2E CI job.
+
+## Verification context
+
+- Product: Wework desktop workbench
+- Runtime: real isolated Tauri development instance
+- Viewport capture: 2560 × 1440
+- Sidebar width in capture: 500 physical pixels
+- State: priority filter active, one running local project task
+
+## Comparison
+
+The ChatGPT priority list uses distinct two-line task rows: a primary title and a muted
+source line with a project or local-device icon. Rows have more vertical breathing room
+than ordinary sidebar history rows, while trailing status and hover actions occupy a
+stable right-side rail.
+
+The verified Wework implementation now matches those structural characteristics:
+
+- priority rows use a 48-pixel minimum height and compact vertical padding;
+- title and source metadata form a clear two-level hierarchy;
+- project tasks show their project name and standalone tasks show Wework;
+- waiting tasks use the compact blue attention dot;
+- running tasks retain the animated progress indicator;
+- hover actions remain visible and aligned without changing the row height;
+- ordinary non-priority task rows retain their existing dense 30-pixel layout.
+
+## Behavior parity
+
+The implementation follows the session model used by ChatGPT's priority view:
+
+- opening Priority snapshots the current priority, pinned, and recent task placement;
+- reading or completing an unread task does not remove it during the active session;
+- closing and reopening Priority rebuilds the snapshot, moving eligible handled tasks to
+  the date-grouped Recent section;
+- tasks that become urgent while Priority is open are appended without reordering the
+  existing snapshot;
+- a task already placed in Recent stays there if it becomes urgent during the same session;
+- Recent includes the last seven local calendar days and groups entries as Today,
+  Yesterday, or weekday;
+- pinned tasks stay in Priority by default and move to a separate Pinned section when
+  “Show pinned” is enabled;
+- “Mark all as read” only affects unread tasks in Priority;
+- bulk archive only targets the current Priority section, preserving Recent and Pinned;
+- archived or deleted tasks are removed from the active snapshot.
+
+Wework does not expose scheduled-task metadata through `RuntimeTaskSummary`, so the
+ChatGPT “Show scheduled” option is intentionally not fabricated.
+
+## QA plan and results
+
+| Behavior               | Preconditions and exact steps                                                                                                       | Expected and actual result                                                                                                                                                          | Negative and recovery coverage                                                                                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read persistence       | Start an isolated Tauri instance, create a waiting task, open Priority, open the task, answer its request, and wait for completion. | The handled task remains in Priority for the current session. Passed in real Tauri and the CI checkpoint.                                                                           | Closing and reopening Priority rebuilds placement; the handled task moves to Today under Recent and Priority shows its empty state.                                                   |
+| Dynamic reconciliation | Keep Priority open with one Recent task, then create a new waiting task.                                                            | The new urgent task appends to Priority without moving the existing Recent task. Passed in real Tauri and component tests.                                                          | If an existing Recent task becomes unread, it remains in Recent for that session; deleting or archiving a task removes it from the snapshot.                                          |
+| Show pinned            | Open Priority with a pinned waiting task, open the options menu, and toggle Show pinned on and off.                                 | On: the task moves to Pinned and Priority shows its empty state when no unpinned urgent task remains. Off: it returns to Priority. Passed in component and real-Tauri verification. | The global attention dot still reports the pinned urgent task while pinned items are not separated.                                                                                   |
+| Seven-day Recent       | Activate Priority at a fixed local time with tasks on Today, Yesterday, the seventh-day cutoff, and one second before the cutoff.   | The first three dates are grouped and the older task is excluded. Passed in pure state-model tests, including the inclusive cutoff boundary.                                        | Reopening creates a fresh local-calendar cutoff; stale and missing tasks are pruned.                                                                                                  |
+| Mark all read          | Open Priority with unread, waiting, pinned, and Recent tasks; choose Mark all as read.                                              | Only unread tasks currently placed in Priority receive the read action. Passed in component tests.                                                                                  | The action is disabled when Priority has no unread item and does not mutate Recent or separately pinned tasks.                                                                        |
+| Bulk archive           | Open Priority with multiple urgent tasks and a Recent task; choose Archive tasks and confirm.                                       | Every Priority item is attempted; Recent and separately pinned items are not archived. Passed in component tests.                                                                   | A rejected item is logged and does not stop later items; the dialog closes. Dirty worktrees are collected into the force-confirmation recovery dialog, and cancel leaves them intact. |
+
+## Cleanup
+
+- Stopped the isolated Tauri session and its session-local Executor process group.
+- Kept generated screenshots and desktop diagnostics under ignored test-result
+  directories; no local authentication data or runtime artifacts are committed.
+- The CI checkpoint creates and removes its own isolated workspace and task fixtures.
+
+## Iteration history
+
+1. Replaced the dense one-line priority rendering with a dedicated two-line layout.
+2. Restored the original one-line markup for non-priority rows after focused tests
+   detected a selector-level regression.
+3. Added a one-pixel list gap and tightened section horizontal alignment.
+4. Replaced the live-only filter with a stable priority-session snapshot and reconciliation
+   model derived from the ChatGPT implementation.
+5. Added separate pinned and seven-day Recent sections, plus matching bulk actions.
+6. Verified read persistence, reopen behavior, dynamic append, and pinned placement in a
+   real isolated Tauri session.
+7. Added the same read-persistence and reopen flow to the CI-covered desktop
+   `priority-filter` checkpoint.
+
+## Verification
+
+- Focused priority unit and component tests: 95 passed.
+- Full Wework test suite after merging the latest `main`: 2,609 passed.
+- TypeScript typecheck: passed.
+- Changed-file ESLint and Prettier checks: passed.
+- Real isolated Tauri interaction chain: passed.
+- CI-covered desktop `priority-filter` E2E checkpoint: passed.
+
+## Result
 
-## Source and implementation evidence
-
-- Repository-accessible source/implementation comparison:
-  `docs/assets/images/wework-workspace-tabs-reference-comparison.png` (source on the left,
-  real-Tauri implementation on the right).
-- Repository-accessible core-flow review chain:
-  `docs/assets/images/wework-workspace-tabs-review-chain.png`.
-- Repository-accessible real-Tauri project window under the minimal capability:
-  `docs/assets/images/wework-workspace-tabs-minimal-capability.png`.
-- Environment: isolated real Tauri app on macOS in light theme; 1280×720 main window and
-  1280×800 project window.
-- Test data: a local project named “产品规划”, created only inside the isolated verification
-  environment.
-
-## Case-level verification
-
-| Case                    | Preconditions and exact steps                                | Expected                                                                                        | Actual, negative, and recovery coverage                                                                                                                | Evidence                                                 |
-| ----------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| Active/inactive states  | Keep Task and project documents open; click each tab in turn | Only the active tab joins the white content surface; inactive tabs remain on the muted titlebar | Passed; ARIA selection followed focus and neither end cap was clipped                                                                                  | Review chain 01, 05                                      |
-| Open project spaces     | Click `+`, then “项目空间”                                   | A clamped menu opens and the top-level document is titled “项目空间”                            | Passed; opening the same document again reuses it                                                                                                      | Review chain 02, 03; duplicate-document unit test        |
-| Open a concrete project | Create and enter “产品规划”                                  | The active title changes immediately to the concrete project name                               | Passed; the create result updates the document before an asynchronous list refresh                                                                     | Review chain 04; project-title unit test                 |
-| Close and fallback      | Activate “产品规划” and press its close control              | The project tab is removed and Task becomes active                                              | Passed; desktop E2E polls for real WebView DOM removal                                                                                                 | Review chain 06; desktop E2E                             |
-| Restore                 | After closing, press `Cmd+Shift+T`                           | “产品规划” returns as the active document                                                       | Passed; an occupied historical ID is replaced with a fresh ID                                                                                          | Review chain 07; collision-recovery unit test            |
-| Reorder                 | Drag a project tab across its neighbor                       | Order changes without changing the active document                                              | Passed; lifted drag state recovers WebKit `dragover` events with empty transfer data                                                                   | Drag regression unit test                                |
-| Keyboard context menu   | Focus a tab and press `Shift+F10`                            | The menu opens inside the viewport with localized accessible names                              | Passed; Context Menu key and viewport clamping are also covered                                                                                        | Review chain 08; keyboard/i18n unit tests                |
-| New window              | Choose “Open in new window” and wait for the new WebView     | The new window renders “产品规划” completely with working chrome                                | Passed; create errors and readiness timeouts destroy partial windows; capability is limited to window controls, lifecycle listen/unlisten, and logging | Review chain 09; minimal-capability capture; Tauri tests |
-| Deterministic capture   | Capture while main and project windows both exist            | Capture the focused workspace, or the newest one when none is focused                           | Passed in Rust sorting/fallback coverage                                                                                                               | Workspace capture command test                           |
-
-## Cleanup and result
-
-- The isolated Tauri session, Executor process group, and temporary authentication link were
-  removed after verification.
-- Runtime screenshots remain under ignored `wework/test-results/`; only the comparison and review
-  contact sheet are committed for reviewer and CI access.
-- No actionable P0, P1, or P2 visual mismatch remains.
-
-final result: passed
-
-## Dropdown alignment follow-up
-
-- Source visual truth: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785311314363/image.png`
-- Real-Tauri implementation: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/dropdown-alignment-final.png`
-- Side-by-side comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/dropdown-comparison-final.png`
-- Replaced the remaining native detail-form selects with the same portal menu used by the frequency editor.
-- Trigger values now share one right alignment, chevrons sit directly beside their values, and every popup aligns to the trigger's right edge.
-- Popup rows intentionally keep labels left-aligned and selection checks right-aligned, matching the supplied ChatGPT menu references.
-- Verified Project in a real isolated Tauri window; Device, Model, Reasoning, Run location, Conversation mode, Repeat, Time, Weekdays, and Notifications use the same component path.
-- No actionable P0, P1, or P2 alignment mismatch remains.
-
-## Comparison target
-
-- Source visual truth, full workspace: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785306634852/image.png`
-- Source visual truth, detail form: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785306610025/image.png`
-- Rendered implementation: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/saved-final-3.png`
-- Full-view comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/full-comparison-final.png`
-- Focused detail comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/automation-chatgpt-qa/detail-comparison-final.png`
-- State: desktop, light theme, one active local automation selected, suggestions visible, detail form saved and clean
-
-## Viewport and normalization
-
-- Full source pixels: `3456 × 1932`; source CSS reference: approximately `1567 × 877`; inferred density: approximately `2.205`.
-- Detail source pixels: `1868 × 1094`.
-- Implementation pixels and CSS viewport: `1200 × 720`, isolated real-Tauri capture at density `1`.
-- Full comparison downsamples the source into a `1200 × 671` content frame and extends it to `1200 × 720` before appending the implementation.
-- Focused comparison aligns the source and implementation right-detail regions by visible panel width. The source has a wider/taller capture, so the focused comparison judges hierarchy, row treatment, typography, and control alignment rather than claiming raw pixel equality across different viewport proportions.
-
-## Primary interactions tested
-
-- Started an isolated real-Tauri Wework session with a session-local Executor.
-- Opened Scheduled tasks and created a daily brief from the suggestion.
-- Filled the no-project workspace fallback and persisted the automation through the real local Executor API.
-- Confirmed the stable three-column layout: Wework sidebar, automation list, inline detail workspace.
-- Edited the automation title and verified that Save appears only for dirty state, persists the update, and disappears after save.
-- Paused the automation, selected the Paused filter, confirmed the task remained visible, then resumed it and confirmed Active state.
-- Confirmed the Project field is a select control and the local device is displayed as “此电脑”, not “Local Executor”.
-- Verified the saved schedule summary, frequency preset, time, model, reasoning, run history, close, overflow, and pause/resume controls.
-- Checked the Tauri and Executor logs. Automation list, create, update, and toggle requests completed successfully with no related runtime error.
-
-## Required fidelity surfaces
-
-### Fonts and typography
-
-- Wework semantic typography tokens reproduce the source hierarchy: blue compact status, medium task title, regular prompt text, muted section labels, and medium row labels.
-- The implementation uses the native Wework system-font stack. Remaining antialiasing differences are platform-level P3 differences.
-
-### Spacing and layout rhythm
-
-- The implementation matches the source’s permanent list/detail split, selected list row, rounded prompt field, grouped settings cards, hairline row dividers, and section rhythm.
-- At the narrower `1200px` verification viewport, Wework’s existing `240px` sidebar leaves less detail width than the `1567px` source capture. The list remains fixed and the detail panel flexes without clipping.
-- Save is hidden for a clean existing automation, matching the source screenshot; it appears as a bottom action only after a field changes.
-
-### Colors and visual tokens
-
-- Neutral backgrounds, gray borders, inverse-neutral Create action, blue Active status, and semantic suggestion accents follow both the ChatGPT reference and Wework’s design system.
-- No proprietary ChatGPT CSS, fonts, or extracted visual assets are shipped.
-
-### Image quality and asset fidelity
-
-- The references contain no raster product artwork or photography.
-- Icons use the repository’s established Lucide library at Wework’s standard sizes. No handcrafted SVG, CSS drawing, emoji, or placeholder asset was introduced.
-
-### Copy and content
-
-- Filters, selected-task summary, status, task title, prompt, Details, Frequency, Repeat, Time, Notifications, and suggestion copy follow the Chinese ChatGPT App interaction.
-- Wework intentionally adds Run location, Device, Project, and the no-project workspace fallback because local and cloud execution require an explicit target.
-- Internal terminology is removed from user-facing copy: the local runtime is shown as “此电脑”.
-
-## Findings
-
-- No actionable P0, P1, or P2 mismatch remains.
-- P3: Wework’s existing sidebar is wider at the tested viewport and contains Wework-specific navigation rather than ChatGPT-specific navigation.
-- P3: the detail group contains additional execution-target rows required by Wework’s local/cloud architecture. These are intentional product constraints, not visual drift.
-- Residual test gap: the isolated session had no configured project, so visual verification covered the Project select’s “无” state and workspace fallback; project-option resolution is type-checked and derives from `runtimeWork.projects`, but a populated project option was not captured in this session.
-
-## Comparison history
-
-1. Initial implementation used an overlay drawer, exposed raw Cron configuration, always showed Save, displayed “Local Executor”, and rendered Project as a free-text workspace path.
-2. Replaced the overlay with the source-derived list plus permanent detail workspace, introduced readable frequency presets, and made the same detail form serve create and edit.
-3. Hid Save for clean saved tasks and collapsed the default frequency group to the source’s `重复 / 工作日` plus `时间` rows.
-4. Replaced Project with a dropdown backed by runtime projects and changed the local device label to “此电脑”; retained the workspace path only as the no-project fallback.
-5. Captured `saved-final-3.png` from real Tauri and repeated full-view and focused comparisons. No actionable P0/P1/P2 issue remains.
-
-## Final result
-
-final result: passed
-
----
-
-# Previous Design QA: Wework Automations Empty State
-
-## Comparison target
-
-- Source visual truth: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785238105404/image.png`
-- Rendered implementation: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/ai-verify/2026-07-28T17-15-02-425Z-56867/automations-empty-final.png`
-- Full-view comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/ai-verify/2026-07-28T17-15-02-425Z-56867/automation-full-comparison.png`
-- Focused content comparison: `/Users/axb-mac/.wecode/wegent-executor/workspace/worktrees/runtime-224302099/Wegent/wework/test-results/ai-verify/2026-07-28T17-15-02-425Z-56867/automation-content-comparison.png`
-- State: desktop, light theme, `/automations`, empty automation list, suggestion rows visible
-
-## Viewport and normalization
-
-- Source pixels: `3456 × 1932`
-- Source CSS reference size: `1567 × 877`
-- Source inferred density: approximately `2.205`
-- Implementation pixels: `2560 × 1440`
-- Implementation CSS viewport: `1280 × 720`
-- Implementation density: `2`
-- Full-view comparison normalizes the source to the implementation pixel canvas.
-- Focused comparison first downsamples both captures to their CSS viewport sizes, then aligns the `660px` automation content region. This avoids false font and spacing findings caused by the different device densities and desktop viewport widths.
-
-## Primary interactions tested
-
-- Opened the real Tauri app in an isolated `ai:verify` session.
-- Navigated to `/automations` and asserted the search input and three suggestions.
-- Opened the create panel from the top-right primary action.
-- Created a local automation from the daily brief suggestion with a real device and workspace.
-- Opened the created automation and asserted the right-side detail panel.
-- Verified schedule, local execution location, next run, run-now, pause, delete, and run-history controls.
-- Verified the final empty state again in a fresh isolated Tauri session.
-- No uncaught renderer exception, JavaScript type error, or WebView panic was found. The session logged a recoverable warning because the currently connected cloud backend did not yet expose the new cloud-automation response shape; local mode and the merged empty state remained functional.
-
-## Fidelity review
-
-### Fonts and typography
-
-- The page uses the Wework semantic typography scale and system UI font, matching the source hierarchy: large regular-weight title, secondary subtitle, compact search text, and `13px`/`12px` suggestion content.
-- The source ChatGPT brand name is intentionally replaced with Wework.
-- Residual platform font-rasterization differences are P3 only and do not change wrapping, hierarchy, or density.
-
-### Spacing and layout rhythm
-
-- The content column, search field, title block, suggestion heading, icon alignment, row density, and vertical rhythm match the normalized source.
-- The Wework sidebar keeps its existing product content and width instead of copying ChatGPT-specific projects and navigation data.
-- The top-right create action and the automation content preserve the source composition across the tested desktop viewport.
-
-### Colors and visual tokens
-
-- Neutral surfaces, gray secondary text, subtle hairline search border, inverse-neutral primary action, and blue/purple/green suggestion icons match the source intent.
-- Wework semantic tokens are used for product chrome; no extracted ChatGPT CSS or proprietary asset is bundled.
-
-### Image quality and asset fidelity
-
-- The target contains no raster artwork or photography.
-- Visible symbols use the established Lucide icon library with matching outline weight and semantic colors. No CSS drawings, emoji, placeholder images, or handcrafted SVG substitutes were introduced.
-
-### Copy and content
-
-- Title, search placeholder, suggestion names, schedule labels, and suggestion descriptions match the Chinese ChatGPT App automation page.
-- Product attribution is intentionally localized from ChatGPT to Wework.
-- Local/cloud execution copy is additional Wework functionality and appears only in management surfaces, not in the cloned empty-state composition.
-
-### Accessibility and responsiveness
-
-- Interactive controls use semantic buttons, labels, dialog roles, switch roles, accessible names, and stable `data-testid` values.
-- The mobile create action has a minimum `44px` height; side panels become full-width at mobile sizes.
-- No clipping or persistent-control overflow was observed in the tested desktop state.
-
-## Findings
-
-- No actionable P0, P1, or P2 visual mismatch remains.
-- P3: native font antialiasing and the Wework sidebar's product-specific content differ from the ChatGPT capture. These are expected platform/product differences and should not be replaced with bundled OpenAI fonts or ChatGPT-specific workspace data.
-
-## Comparison history
-
-1. Initial comparison found three P2 differences: the Wework title was optically too heavy, the search/suggestion group began about `8px` too early, and repeated suggestion rows were slightly too dense.
-2. Fixed the title weight, increased the header rhythm, shifted the content start, and increased suggestion row height.
-3. Captured `automations-empty-final.png` from a fresh real-Tauri session and repeated both full-view and focused density-normalized comparisons.
-4. The post-fix comparison shows aligned content width, search placement, suggestion baseline, and repeated row rhythm, with no remaining P0/P1/P2 finding.
-
-## Final result
-
-final result: passed
-
----
-
-# Previous Design QA: Multi-root Projects
-
-## Source visual truth
-
-- Edit project: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1784873788814/image.png`
-- Project picker: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1784873491209/image.png`
-- Create project: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1784876851519/image.png`
-
-## Implementation evidence
-
-- Create dialog: `wework/test-results/ai-verify/final-01-create-project-dialog.png`
-- Edit dialog with two roots: `wework/test-results/ai-verify/final-02-edit-project-dialog.png`
-- Primary-root change: `wework/test-results/ai-verify/final-03-primary-changed.png`
-- Saved project: `wework/test-results/ai-verify/final-04-edit-saved.png`
-- Single-row project picker: `wework/test-results/ai-verify/final-05-project-picker-single-row.png`
-- Local/cloud source dialog: `wework/test-results/ai-verify/final-06-source-dialog.png`
-- Create form after folder selection: `wework/test-results/ai-verify/final-07-create-project-form.png`
-- Create form with two roots: `wework/test-results/ai-verify/final-08-create-project-multi-root.png`
-- Created project: `wework/test-results/ai-verify/final-09-project-created.png`
-- Edit comparison: `wework/test-results/ai-verify/review/edit-comparison.png`
-- Picker comparison: `wework/test-results/ai-verify/review/picker-comparison.png`
-- Create comparison: `wework/test-results/ai-verify/review/create-comparison.png`
-
-## Viewport and normalization
-
-- Implementation viewport and capture: 2560 × 1440 pixels, desktop Wework Tauri window, light theme.
-- Edit source: 1238 × 880 pixels; normalized to fit within 1000 × 700. The implementation dialog was cropped from the full viewport to 1200 × 760 and normalized to fit within 1000 × 700.
-- Picker source: 518 × 396 pixels; normalized to fit within 700 × 540. The implementation picker was cropped from the full viewport to 760 × 620 and normalized to fit within 700 × 540.
-- Create source: 1112 × 666 pixels; normalized to fit within 1000 × 650. The implementation form was cropped from the full viewport to 1200 × 820 and normalized to fit within 1000 × 650.
-- The comparison judges component geometry and hierarchy after density normalization; surrounding desktop content is intentionally excluded.
-
-## State
-
-- Local Codex mode with a two-folder project.
-- Edit dialog shows both roots, the primary marker, make-primary action, remove actions, add-folder action, rename input, delete, cancel, and save.
-- Project picker shows one project row with only the primary folder as secondary context; it does not expand every source folder.
-
-## Full-view comparison evidence
-
-- The centered modal, dimmed overlay, rounded frame, input treatment, folder-list grouping, destructive action, and footer action hierarchy match the supplied edit-project reference.
-- The project picker keeps the supplied search/list visual hierarchy while representing the multi-root project as one row, as requested.
-
-## Focused region comparison evidence
-
-- `edit-comparison.png` verifies the input, source-folder rows, primary controls, add-folder row, and footer actions at readable scale.
-- `picker-comparison.png` verifies the search field, folder icon, project name, muted primary-folder label, selection mark, divider, and create actions at readable scale.
-- `create-comparison.png` verifies the title, name input, source-folder list, remove and add-folder actions, and create/cancel footer at readable scale.
-
-## Required fidelity surfaces
-
-- Fonts and typography: existing Wework typography tokens preserve the source hierarchy and readable optical weights; truncation is limited to the narrow project picker row.
-- Spacing and layout rhythm: modal padding, row heights, borders, radii, overlay, and footer alignment are consistent with the references and existing Wework components.
-- Colors and visual tokens: implementation uses Wework semantic tokens for surfaces, borders, muted text, destructive actions, and the primary button.
-- Image and asset fidelity: no raster product assets are required; icons use the repository's existing Lucide icon system.
-- Copy and content: Chinese copy is localized and accurately describes local/cloud creation and multi-folder editing.
-
-## Findings
-
-- No actionable P0, P1, or P2 visual differences remain.
-
-## Primary interactions tested
-
-- Open the centered create-project dialog.
-- Choose Local project without an intermediate new/existing split.
-- Select a folder, enter the create-project form, add a second source folder, name the project, and confirm creation.
-- Open Edit project from the project menu.
-- Add a second source folder.
-- Rename the project.
-- Change the primary folder.
-- Save and confirm the project name persists.
-- Open the project picker and confirm the project remains a single row showing only the primary-folder context.
-
-## Console and runtime errors
-
-- The verified interaction chain completed without a UI error state. Tauri and executor logs were checked for errors related to project creation, update, or rendering; none were found.
-
-## Comparison history
-
-- Initial implementation comparison: no P0/P1/P2 findings; no corrective visual iteration was required.
-- Follow-up create-flow comparison: removed the separate new-folder/existing-folder actions and added the post-selection create form requested in the second reference. The revised `create-comparison.png` has no P0/P1/P2 findings.
-
-## Implementation checklist
-
-- [x] Centered local/cloud create-project dialog.
-- [x] One local action group for creating or choosing folders.
-- [x] Multi-folder local Codex persistence.
-- [x] Single-row project representation.
-- [x] Edit, rename, add, remove, reorder primary, save, and delete controls.
-- [x] Real desktop interaction verification and screenshot chain.
-
-final result: passed
+Passed. The priority view now matches the relevant ChatGPT visual hierarchy and
+session behavior, including the case where selecting an unread task must not make it
+disappear immediately.

@@ -388,6 +388,9 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Priority task entries are selectable two-line data rows rather than compact
+  navigation rows. They use a `48px` minimum height so the title and `12px–14px`
+  source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
 - Sortable sidebar rows must keep the sortable container separate from the
   pointer activator. Only the primary icon-and-label or label region may start
@@ -532,6 +535,12 @@ recipe closely:
   than roughly `440px–475px`;
 - drag state uses a subtle neutral overlay; blocked/submitting state dims and
   becomes inert without destroying entered content.
+- In an active desktop thread, the workbench viewport owns vertical scrolling.
+  Its conversation column must be a `min-height: 100%`, non-shrinking flex
+  column, with the composer rendered as the sticky footer inside that flow.
+  Short threads therefore fill the viewport while long and virtualized threads
+  grow naturally. Keep bottom following stable across delayed virtual
+  measurements, but stop following immediately after an explicit user scroll.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.

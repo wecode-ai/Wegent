@@ -129,6 +129,14 @@ const GOAL_RESTART_PROMPT =
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
 const GOAL_RESTART_RESUME_PROMPT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_RESUME'
 const GOAL_RESTART_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_COMPLETE'
+const SUPERVISOR_PROMPT =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR: complete this task so supervision can inspect it.'
+const SUPERVISOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_COMPLETE'
+const SUPERVISOR_PRINCIPLES =
+  'Flag material goal drift and provide the smallest directly actionable correction.'
+const SUPERVISOR_CORRECTION =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION: explicitly confirm the original constraint.'
+const SUPERVISOR_CORRECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   ...Array.from({ length: 24 }, (_, index) =>
@@ -309,10 +317,12 @@ const PASTED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_PATHS_COMPLETE'
 const DROPPED_PATH_FOLDER_NAME = 'dropped-context-folder'
 const DROPPED_PATH_FILE_NAME = 'dropped-context.md'
 const DROPPED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_DROPPED_PATHS_COMPLETE'
-const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
-const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
+const TOOL_BLOCK_ORDER_PROMPT =
+  'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER: run the four requested tools in order.'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
 const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
+const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
+const GENERIC_MCP_TOOL_BLOCK_ID = 'wework-e2e-tool-generic-mcp'
 const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
@@ -370,6 +380,7 @@ const RUNS_PLUGIN_E2E =
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const repoDir = resolve(weworkDir, '..')
+const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
@@ -407,11 +418,8 @@ function readCommandLineOption(name) {
   return value
 }
 
-function validateDesktopSegmentOptions() {
-  if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
-    throw new Error('--segment and --from-segment cannot be used together')
-  }
-  const activeOnlyModes = [
+function getActiveOnlyModes() {
+  return [
     ['WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY=1', REQUEST_INPUT_ONLY],
     ['--view-image-only', VIEW_IMAGE_ONLY],
     ['--short-conversation-only', SHORT_CONVERSATION_ONLY],
@@ -443,6 +451,13 @@ function validateDesktopSegmentOptions() {
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
     ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
   ].filter(([, enabled]) => enabled)
+}
+
+function validateDesktopSegmentOptions() {
+  if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
+    throw new Error('--segment and --from-segment cannot be used together')
+  }
+  const activeOnlyModes = getActiveOnlyModes()
   if (activeOnlyModes.length > 1) {
     throw new Error(
       `Desktop E2E only modes are mutually exclusive: ${activeOnlyModes
@@ -474,6 +489,11 @@ function shouldRunDesktopCheckpoint(checkpoint) {
 
 function shouldStopAfterDesktopCheckpoint(checkpoint) {
   return DESKTOP_SEGMENT === checkpoint
+}
+
+function shouldConfigureToolDetailsMcp() {
+  if (TOOL_BLOCK_ORDER_ONLY) return true
+  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
 }
 
 function shouldRunPluginSegment(segment) {
@@ -2300,6 +2320,7 @@ async function createCheckpointTaskFixture(control, composerSelector) {
 }
 
 async function verifyPriorityFilter({ composerSelector, control }) {
+  let requestInputResponseReleased = false
   control.setScenario('request_user_input')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -2367,6 +2388,60 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await captureVerificationScreenshot(control, 'priority-filter-02-filtered-sidebar.png')
 
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Timed out releasing the priority-filter request-user-input response'
+    )
+    requestInputResponseReleased = true
+    await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+    await captureVerificationScreenshot(
+      control,
+      'priority-filter-03-handled-task-stays-priority.png'
+    )
+
+    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command(
+      'waitFor',
+      `[data-testid^="runtime-priority-recent-list-"] [data-testid="${requestInputTaskRowTestId}"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+    const reopenedPrioritySnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="runtime-priority-section"]')
+    )
+    assert.equal(
+      reopenedPrioritySnapshot.testIds.includes('runtime-priority-empty'),
+      true,
+      'Reopening the priority filter left the handled task in the Priority group'
+    )
+    await captureVerificationScreenshot(control, 'priority-filter-04-reopened-task-in-recent.png')
+
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2379,29 +2454,22 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       false,
       'The priority shortcut did not restore the regular sidebar'
     )
-    await captureVerificationScreenshot(control, 'priority-filter-03-shortcut-restored-sidebar.png')
+    await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
   } finally {
-    await withTimeout(
-      control.releaseRequestUserInputResponse(),
-      DEFAULT_STEP_TIMEOUT_MS,
-      'Timed out releasing the priority-filter request-user-input response'
-    )
+    if (!requestInputResponseReleased) {
+      try {
+        await withTimeout(
+          control.releaseRequestUserInputResponse(),
+          DEFAULT_STEP_TIMEOUT_MS,
+          'Timed out releasing the priority-filter request-user-input response'
+        )
+      } catch (releaseError) {
+        console.warn(
+          `[desktop-e2e] priority-filter cleanup release failed: ${String(releaseError)}`
+        )
+      }
+    }
   }
-
-  await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
-  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
-    text: REQUEST_USER_INPUT_QUESTION,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: REQUEST_USER_INPUT_COMPLETION_TEXT,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 }
 
@@ -2824,111 +2892,112 @@ async function ensureTaskRowVisible(control, taskRowTestId) {
   })
 }
 
-async function seedToolBlockOrderTask(executorHome, workspacePath) {
-  const indexPath = join(executorHome, 'runtime-work', 'index.json')
-  await mkdir(dirname(indexPath), { recursive: true })
-  const runtimeIndex = await readFile(indexPath, 'utf8')
-    .then(content => JSON.parse(content))
-    .catch(error => {
-      if (error?.code !== 'ENOENT') throw error
-      return {
-        version: 1,
-        tasks: {},
-        workspaces: {},
-        deleted_archived_task_ids: {},
-      }
-    })
-  const messageCreatedAt = Date.now()
-  const earlierCreatedAt = messageCreatedAt + 1_000
-  const laterCreatedAt = messageCreatedAt + 2_000
-
-  runtimeIndex.tasks ??= {}
-  runtimeIndex.tasks[TOOL_BLOCK_ORDER_TASK_ID] = {
-    local_task_id: TOOL_BLOCK_ORDER_TASK_ID,
-    thread_id: null,
-    workspace_path: workspacePath,
-    title: TOOL_BLOCK_ORDER_TASK_TITLE,
-    runtime: 'claude_code',
-    status: 'done',
-    running: false,
-    continuable: true,
-    thread_status: 'idle',
-    turn_status: 'completed',
-    created_at: messageCreatedAt,
-    updated_at: laterCreatedAt,
-    completed_at: laterCreatedAt,
-    runtime_handle: {
-      messages: [
-        {
-          id: 'assistant-tool-block-order',
-          role: 'assistant',
-          subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-          turnId: TOOL_BLOCK_ORDER_TASK_ID,
-          content: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-          status: 'done',
-          createdAt: new Date(messageCreatedAt).toISOString(),
-          blocks: [
-            {
-              id: LATER_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'exec_command',
-              toolInput: { cmd: 'printf later-created-tool' },
-              toolOutput: 'later-created-tool',
-              status: 'done',
-              createdAt: laterCreatedAt,
-              completedAt: laterCreatedAt + 100,
-            },
-            {
-              id: EARLIER_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'exec_command',
-              toolInput: { cmd: 'printf earlier-created-tool' },
-              toolOutput: 'earlier-created-tool',
-              status: 'done',
-              createdAt: earlierCreatedAt,
-              completedAt: earlierCreatedAt + 100,
-            },
-          ],
-        },
-      ],
-    },
-    parent: null,
-    ephemeral: false,
-    runtime_project_key: null,
-    runtime_workspace_roots: [],
-  }
-
-  await writeFile(indexPath, `${JSON.stringify(runtimeIndex, null, 2)}\n`, 'utf8')
+async function verifyExpandedToolDetail(
+  control,
+  { selector, detailText, inputText, outputText, screenshotName }
+) {
+  await control.command('click', `${selector} [data-tool-detail-toggle]`)
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-block-detail"]`, {
+    text: detailText,
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-input"]`, {
+    text: inputText,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-output"]`, {
+    text: outputText,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${selector} [data-tool-detail-toggle][aria-expanded="true"]`,
+    {
+      stableMs: 250,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, screenshotName, selector)
+  await control.command('click', `${selector} [data-tool-detail-toggle]`)
 }
 
-async function verifyToolBlockChronologicalOrder({
-  control,
-  executorHome,
-  restartDesktopApp,
-  workspacePath,
-}) {
-  await restartDesktopApp({
-    afterStop: () => seedToolBlockOrderTask(executorHome, workspacePath),
+async function ensureToggleExpanded(control, selector) {
+  const expandedCount = Number(
+    await control.command('getElementCount', `${selector}[aria-expanded="true"]`)
+  )
+  if (expandedCount > 0) return
+  await control.command('click', selector)
+  await control.command('waitFor', `${selector}[aria-expanded="true"]`, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+}
 
-  const taskRowTestId = `runtime-local-task-row-${TOOL_BLOCK_ORDER_TASK_ID}`
-  await ensureTaskRowVisible(control, taskRowTestId)
-  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
-    text: TOOL_BLOCK_ORDER_TASK_TITLE,
+async function verifyToolBlockChronologicalOrder({ composerSelector, control }) {
+  control.setScenario('tool_block_order')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  await selectE2EModel(control)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    TOOL_BLOCK_ORDER_PROMPT,
+    'tool_block_order'
+  )
+
+  await withTimeout(
+    control.guard(control.toolBlockNodeOutputObserved),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The Node REPL output did not return to the real model request'
+  )
+  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
+  await control.command('waitFor', nodeReplSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await verifyExpandedToolDetail(control, {
+    selector: nodeReplSelector,
+    detailText: 'node_repl.js',
+    inputText: "nodeRepl.write({ status: 'ready', value: 42 })",
+    outputText: "{ status: 'executed', result: 84 }",
+    screenshotName: 'tool-block-details-02-node-repl-expanded.png',
+  })
+  control.releaseToolBlockNode()
+
+  await withTimeout(
+    control.guard(control.toolBlockGenericOutputObserved),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The generic MCP output did not return to the real model request'
+  )
+  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
+  await control.command('waitFor', genericMcpSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await verifyExpandedToolDetail(control, {
+    selector: genericMcpSelector,
+    detailText: 'github__issues.get_issue_details',
+    inputText: '"issue_number": 123',
+    outputText: '"title": "Tool detail verification"',
+    screenshotName: 'tool-block-details-03-generic-mcp-expanded.png',
+  })
+  control.releaseToolBlockGeneric()
+
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="final-processing-toggle"]')
-  await control.command('click', '[data-testid="processing-summary-toggle"]')
+  await ensureToggleExpanded(control, '[data-testid="final-processing-toggle"]')
+  await ensureToggleExpanded(control, '[data-testid="processing-summary-toggle"]')
 
   const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
   const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
@@ -2942,16 +3011,38 @@ async function verifyToolBlockChronologicalOrder({
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', nodeReplSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', genericMcpSelector, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const [earlierMetrics] = JSON.parse(await control.command('getElementMetrics', earlierSelector))
+  const [nodeReplMetrics] = JSON.parse(await control.command('getElementMetrics', nodeReplSelector))
+  const [genericMcpMetrics] = JSON.parse(
+    await control.command('getElementMetrics', genericMcpSelector)
+  )
   const [laterMetrics] = JSON.parse(await control.command('getElementMetrics', laterSelector))
   assert.ok(
-    earlierMetrics.top < laterMetrics.top,
-    `The later-created tool appeared above the earlier tool (${laterMetrics.top} <= ${earlierMetrics.top})`
+    earlierMetrics.top < nodeReplMetrics.top &&
+      nodeReplMetrics.top < genericMcpMetrics.top &&
+      genericMcpMetrics.top < laterMetrics.top,
+    `Tool activities were not chronological (${earlierMetrics.top}, ${nodeReplMetrics.top}, ${genericMcpMetrics.top}, ${laterMetrics.top})`
   )
+  await control.command('scrollIntoView', earlierSelector)
   await captureVerificationScreenshot(
     control,
     'tool-block-order-01-chronological.png',
-    '[data-testid="message-assistant"]'
+    '[data-testid="final-processing-timeline"]'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-order-04-later-command.png',
+    laterSelector
   )
 }
 
@@ -4127,7 +4218,7 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
+async function ensureExperimentalFeaturesEnabled(control) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
     await control.command('click', '[data-testid="settings-button"]')
@@ -4141,7 +4232,11 @@ async function verifyAutomationLifecycle(control, workspacePath) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+  return initialSnapshot
+}
 
+async function verifyAutomationLifecycle(control, workspacePath) {
+  const initialSnapshot = await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -6272,6 +6367,19 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
+function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const namespace = tools.find(
+    candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
+  )
+  assert.ok(namespace, `Real Codex did not advertise MCP namespace ${namespaceName}`)
+  const tool = namespace.tools?.find(
+    candidate => candidate?.type === 'function' && candidate.name === toolName
+  )
+  assert.ok(tool, `MCP namespace ${namespaceName} did not advertise ${toolName}`)
+  return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
+}
+
 function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
@@ -6342,8 +6450,9 @@ function snapshotHasAssistantActivity(snapshot) {
   )
 }
 
-async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }) {
+async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
   control.setScenario('goal_idle')
+  const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
   const taskRowsBeforeGoal = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -6406,6 +6515,17 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     DEFAULT_STEP_TIMEOUT_MS,
     'The active Goal did not start its automatic continuation'
   )
+  const goalExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  assert.equal(
+    (goalExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
+    1,
+    `The Goal submission did not use exactly one Codex goal-started turn:\n${goalExecutorLog}`
+  )
+  assert.equal(
+    (goalExecutorLog.match(/codex shared turn request started/g) ?? []).length,
+    0,
+    `The Goal submission also issued turn/start and created an overlapping turn:\n${goalExecutorLog}`
+  )
 
   await waitForSnapshot(
     control,
@@ -6416,6 +6536,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       snapshot.testIds.includes('pause-response-button') &&
       snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes('assistant-error-card') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_IDLE_PROMPT) &&
       snapshot.text.includes(GOAL_IDLE_INITIAL_TEXT),
@@ -6494,6 +6615,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       !snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('assistant-error-card') &&
       !snapshot.testIds.includes('goal-status-bar'),
     'Opening the completed Goal task did not render a consistent final state',
     DEFAULT_STEP_TIMEOUT_MS
@@ -6510,6 +6632,55 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     settledDebugSnapshot.pane?.status?.isBusy,
     false,
     'The completed Goal kept the composer busy'
+  )
+}
+
+async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+  await ensureExperimentalFeaturesEnabled(control)
+  control.setScenario('supervisor')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
+  control.releaseSupervisorInitialResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="task-supervisor-toggle-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+  await control.command('click', '[data-testid="task-supervisor-mode-auto"]')
+  await control.command('fill', '[data-testid="task-supervisor-instructions"]', {
+    value: SUPERVISOR_PRINCIPLES,
+  })
+  await control.command('click', '[data-testid="task-supervisor-save-button"]')
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor evaluator did not inspect the completed task'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 3),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Auto-correction did not send a normal follow-up turn after the task became idle'
+  )
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: SUPERVISOR_CORRECTION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('task-supervisor-suggestion'),
+    'Auto-correction incorrectly rendered an approval card'
   )
 }
 
@@ -7092,6 +7263,21 @@ class DesktopE2EServer {
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
+    this.supervisorInitialRelease = new Promise(resolvePromise => {
+      this.releaseSupervisorInitial = resolvePromise
+    })
+    this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockNodeOutputObserved = resolvePromise
+    })
+    this.toolBlockNodeRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockNode = resolvePromise
+    })
+    this.toolBlockGenericOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockGenericOutputObserved = resolvePromise
+    })
+    this.toolBlockGenericRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockGeneric = resolvePromise
+    })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
     })
@@ -7274,9 +7460,11 @@ class DesktopE2EServer {
         'model_protocol_matrix',
         'provider_switch_retry',
         'view_image',
+        'tool_block_order',
         'official_plugin',
         'automation',
         'skill_mention_display',
+        'supervisor',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -7407,6 +7595,10 @@ class DesktopE2EServer {
 
   releaseRunningForkFollowUpResponse() {
     this.releaseRunningForkFollowUp()
+  }
+
+  releaseSupervisorInitialResponse() {
+    this.releaseSupervisorInitial()
   }
 
   releaseGoalIdleInitialResponse() {
@@ -7958,6 +8150,117 @@ class DesktopE2EServer {
     ) {
       this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order') {
+      this.recordScenarioRequest('tool_block_order', modelRequest)
+      const requestNumber = this.scenarioRequests.get('tool_block_order').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(TOOL_BLOCK_ORDER_PROMPT),
+          'The real Codex request did not contain the tool-block-order prompt'
+        )
+        const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(EARLIER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EARLIER_TOOL_BLOCK_ID),
+          true,
+          'The earlier command output did not return through the real Codex tool loop'
+        )
+        const tool = selectMcpTool(body, 'node_repl', 'js', {
+          code: "nodeRepl.write({ status: 'ready', value: 42 })",
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            NODE_REPL_TOOL_BLOCK_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
+        assert.equal(
+          requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
+          true,
+          'The Node REPL output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes("{ status: 'executed', result: 84 }"),
+          'The Node REPL MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockNodeOutputObserved()
+        await this.toolBlockNodeRelease
+        const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
+          owner: 'wecode-ai',
+          repo: 'Wegent',
+          issue_number: 123,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            GENERIC_MCP_TOOL_BLOCK_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
+        assert.equal(
+          requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
+          true,
+          'The generic MCP output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes('Tool detail verification'),
+          'The generic MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockGenericOutputObserved()
+        await this.toolBlockGenericRelease
+        const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(LATER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 5, `Unexpected tool-block-order request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
+        true,
+        'The later command output did not return through the real Codex tool loop'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(TOOL_BLOCK_ORDER_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -8739,6 +9042,58 @@ class DesktopE2EServer {
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'supervisor') {
+      this.recordScenarioRequest('supervisor', modelRequest)
+      const requestText = JSON.stringify(body)
+      if (requestText.includes('Current visible progress snapshot (JSON):')) {
+        assert.ok(
+          requestText.includes('correction'),
+          'The supervisor evaluator request did not include its structured output schema'
+        )
+        assert.ok(
+          requestText.includes(SUPERVISOR_COMPLETION_TEXT),
+          'The supervisor evaluator did not receive the latest assistant progress'
+        )
+        assert.equal(
+          requestText.includes(SUPERVISOR_PROMPT),
+          false,
+          'The supervisor evaluator received the original user transcript instead of recent AI content'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            JSON.stringify({
+              correction: SUPERVISOR_CORRECTION,
+              rationale: 'The completed reply should restate the original constraint.',
+            })
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([responseCreated(responseId), assistantMessage(SUPERVISOR_COMPLETION_TEXT)])
+      )
+      await this.supervisorInitialRelease
+      response.end(createSse([responseCompleted(responseId)]))
       return
     }
 
@@ -10086,6 +10441,23 @@ async function writeCodexConfig(
   )
 }
 
+function toolDetailsMcpConfigToml() {
+  const command = JSON.stringify(process.execPath)
+  const server = JSON.stringify(toolDetailsMcpServerPath)
+  return [
+    '[mcp_servers.node_repl]',
+    `command = ${command}`,
+    `args = [${server}, "node_repl"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+    '[mcp_servers."github__issues"]',
+    `command = ${command}`,
+    `args = [${server}, "github__issues"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+  ].join('\n')
+}
+
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -11096,7 +11468,13 @@ async function main() {
       return
     }
     if (!RUNS_PLUGIN_E2E) {
-      await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
+      await writeCodexConfig(
+        codexHome,
+        control.url,
+        `${desktopScenario?.codexConfigToml ?? ''}\n${
+          shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
+        }`
+      )
     }
 
     const appEnvironment = {
@@ -11336,10 +11714,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (TOOL_BLOCK_ORDER_ONLY) {
       phase = 'tool-block-chronological-order'
       await verifyToolBlockChronologicalOrder({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
-        executorHome,
-        restartDesktopApp,
-        workspacePath,
       })
       console.log(`Wework desktop tool-block-order E2E passed. Evidence: ${resultDir}`)
       return
@@ -11377,6 +11753,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyActiveGoalIdleUnreadLifecycle({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorLogPath,
       })
       console.log(`Wework desktop Goal idle-state E2E passed. Evidence: ${resultDir}`)
       return
@@ -12563,7 +12940,11 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
       phase = 'goal-idle-unread'
-      await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control })
+      await verifyActiveGoalIdleUnreadLifecycle({
+        composerSelector,
+        control,
+        executorLogPath,
+      })
 
       phase = 'goal-restart-recovery'
       await verifyGoalRestartRecoveryLifecycle({
@@ -12574,6 +12955,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       if (shouldStopAfterDesktopCheckpoint('goal-lifecycle')) {
         console.log(`Wework desktop goal-lifecycle checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('supervisor-lifecycle')) {
+      phase = 'supervisor-lifecycle'
+      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      if (shouldStopAfterDesktopCheckpoint('supervisor-lifecycle')) {
+        console.log(`Wework desktop supervisor-lifecycle checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -13085,10 +13475,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('rendering-extensions')) {
       phase = 'tool-block-chronological-order'
       await verifyToolBlockChronologicalOrder({
+        composerSelector,
         control,
-        executorHome,
-        restartDesktopApp,
-        workspacePath,
       })
 
       phase = 'standalone-view-image'

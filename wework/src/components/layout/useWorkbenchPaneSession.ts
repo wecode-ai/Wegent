@@ -102,6 +102,7 @@ interface RuntimePaneSendOptions {
 
 interface SendRuntimeMessageOptions {
   appendLocalMessage?: boolean
+  initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void
 }
 
@@ -933,6 +934,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               }
             : {}),
           ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+          ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(Object.keys(additionalContext).length > 0 ? { additionalContext } : {}),
@@ -1548,19 +1550,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           setError(null)
           setInput('')
           if (currentRuntimeTask) {
-            const response = await setRuntimeGoal({
-              address: currentRuntimeTask,
-              objective: submittedInput,
-              status: 'active',
-            })
-            if (!response.accepted) {
-              setInput(submittedInput)
-              setError(response.error || i18n.t('workbench.goal_set_failed'))
-              return
-            }
-            setRuntimeConversationGoal(currentRuntimeTask, response.goal)
-            lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
-            setGoalDraftActive(false)
+            const draftGoal = createPendingRuntimeGoal(submittedInput)
+            const initialGoal = runtimeGoalCreateInput(draftGoal)
             const queuedMessage: RuntimePaneQueuedMessage = {
               id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
               content: submittedInput,
@@ -1574,6 +1565,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
             projectChat.resetAttachments()
             if (paneStatus.isBusy) {
+              const response = await setRuntimeGoal({
+                address: currentRuntimeTask,
+                objective: submittedInput,
+                status: 'active',
+              })
+              if (!response.accepted) {
+                setInput(submittedInput)
+                setError(response.error || i18n.t('workbench.goal_set_failed'))
+                return
+              }
+              setRuntimeConversationGoal(currentRuntimeTask, response.goal)
+              lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
+              setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, queuedMessage])
               if (options.guideWhenBusy) {
                 await sendQueuedMessageAsGuidance(queuedMessage)
@@ -1581,11 +1585,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               return
             }
 
-            const sent = await sendRuntimeMessage(queuedMessage)
+            const sent = await sendRuntimeMessage(queuedMessage, { initialGoal })
             if (sent) {
+              setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
+              lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
+              setGoalDraftActive(false)
               setCodeCommentContexts([])
             } else {
-              setError('目标已更新，但指令发送失败')
               setInput(submittedInput)
             }
             return

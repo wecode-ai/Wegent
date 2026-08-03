@@ -419,6 +419,14 @@ function canonicalTranscriptTurnsFromMessages(
 
   const appendUser = (turn: RuntimeTranscriptTurn, message: NormalizedRuntimeMessage) => {
     const clientUserMessageId = message.clientUserMessageId ?? message.id
+    if (
+      typeof message.messageIndex === 'number' &&
+      (turn.messageIndex === undefined ||
+        turn.messageIndex === null ||
+        message.messageIndex < turn.messageIndex)
+    ) {
+      turn.messageIndex = message.messageIndex
+    }
     turn.items.push({
       id: clientUserMessageId,
       type: 'user_message',
@@ -440,6 +448,14 @@ function canonicalTranscriptTurnsFromMessages(
 
     const turnId = String(explicitTurnId ?? `fixture-turn:${message.id}`)
     const turn = getTurn(turnId)
+    if (
+      typeof message.messageIndex === 'number' &&
+      (turn.messageIndex === undefined ||
+        turn.messageIndex === null ||
+        message.messageIndex < turn.messageIndex)
+    ) {
+      turn.messageIndex = message.messageIndex
+    }
     pendingUsers.forEach(user => appendUser(turn, user))
     pendingUsers = []
 
@@ -6782,7 +6798,14 @@ describe('WorkbenchProvider runtime tasks', () => {
           taskId: 'runtime-a',
           workspacePath: '/workspace/project-alpha',
           runtime: 'codex',
-          messages: [{ id: 'runtime-a:user:o20', role: 'user', content: 'older message' }],
+          messages: [
+            {
+              id: 'runtime-a:user:o20',
+              role: 'user',
+              content: 'older message',
+              messageIndex: 20,
+            },
+          ],
           hasMoreBefore: false,
           beforeCursor: null,
         } satisfies RuntimeTranscriptResponse)
@@ -6791,7 +6814,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
         runtime: 'codex',
-        messages: [{ id: 'runtime-a:user:o120', role: 'user', content: 'recent message' }],
+        messages: [
+          {
+            id: 'runtime-a:user:o120',
+            role: 'user',
+            content: 'recent message',
+            messageIndex: 120,
+          },
+        ],
         hasMoreBefore: true,
         beforeCursor: 'offset:120',
       } satisfies RuntimeTranscriptResponse)
@@ -7670,16 +7700,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set follow-up'))
     await userEvent.click(screen.getByText('send follow-up'))
 
-    await waitFor(() => expect(setRuntimeGoal).toHaveBeenCalledTimes(1))
-    expect(setRuntimeGoal).toHaveBeenCalledWith({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-a',
-      },
-      objective: '继续修',
-      status: 'active',
-    })
+    expect(setRuntimeGoal).not.toHaveBeenCalled()
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
     expect(sendRuntimeMessage).toHaveBeenCalledWith({
       address: {
@@ -7688,6 +7709,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
       },
       clientUserMessageId: expect.any(String),
+      initialGoal: {
+        objective: '继续修',
+        status: 'active',
+        tokenBudget: null,
+      },
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -8782,16 +8808,18 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set edited runtime goal'))
     await userEvent.click(screen.getByText('send runtime goal'))
 
+    expect(setRuntimeGoal).not.toHaveBeenCalled()
     await waitFor(() =>
-      expect(setRuntimeGoal).toHaveBeenCalledWith({
-        address: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-a',
-        },
-        objective: '更新后的目标',
-        status: 'active',
-      })
+      expect(runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialGoal: {
+            objective: '更新后的目标',
+            status: 'active',
+            tokenBudget: null,
+          },
+          message: '更新后的目标',
+        })
+      )
     )
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })

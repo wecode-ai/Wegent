@@ -44,6 +44,12 @@ Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制
 5. Backend 做轻量聚合后返回给 Wework，不再读取或匹配 Backend `projects` 表。
 6. Wework 根据 runtime work 响应展示 Project 和 Conversation；每个 LocalTask 的打开和通知身份仍是 `deviceId + localTaskId`。
 
+选择或打开 LocalTask 是只读操作。为恢复 pane 状态而调用
+`runtime.tasks.transcript`、`runtime.tasks.goal.get` 等读取接口时，executor
+可以水合本地缓存字段，但不能修改 LocalTask 的 `updatedAt`。只有发送消息、
+重命名、goal 状态真实变化等任务内容或生命周期发生变化的操作，才可以推进任务
+活动时间；否则单纯查看任务会改变列表排序和“更新时间”展示。
+
 `runtime.tasks.list` 的响应有两层工作区语义。外层 workspace 表示侧栏 Project 分组，Codex git worktree 任务应归并到共同的仓库根目录；内层 LocalTask 表示任务实际运行目录，必须保留自己的 `workspacePath`。如果该目录是 git worktree，LocalTask 需要携带 `workspaceKind: worktree` 和 `worktreeId`，侧栏 worktree 图标、底部终端 cwd 和右侧工具目录都只从 LocalTask 字段判断。不能因为某个 LocalTask 是 worktree 就把父 workspace 标记为 worktree，也不能把 LocalTask 路径覆盖成父 workspace 路径。
 
 executor 不主动向 Backend 轮询或推送任务列表。离线设备不会贡献 LocalTask；Wework 可以显示映射目录离线，但不会从中心库缓存本地任务。

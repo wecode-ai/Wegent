@@ -49,11 +49,18 @@ function renderMenu({
   showLogout,
   onLogout = vi.fn(),
   onLogin,
-}: { showLogout?: boolean; onLogout?: () => void; onLogin?: () => void } = {}) {
+  onOpenAbout = vi.fn(),
+}: {
+  showLogout?: boolean
+  onLogout?: () => void
+  onLogin?: () => void
+  onOpenAbout?: () => void
+} = {}) {
   render(
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
+      onOpenAbout={onOpenAbout}
       onLogout={onLogout}
       onLogin={onLogin}
       showLogout={showLogout}
@@ -99,6 +106,15 @@ describe('DesktopSettingsMenu', () => {
       'font-normal',
       'text-text-primary'
     )
+  })
+
+  test('opens the About settings page from the menu', async () => {
+    const onOpenAbout = vi.fn()
+    renderMenu({ onOpenAbout })
+
+    await userEvent.click(screen.getByTestId('about-menu-button'))
+
+    expect(onOpenAbout).toHaveBeenCalledTimes(1)
   })
 
   test('does not render the old account or quota summary row', () => {

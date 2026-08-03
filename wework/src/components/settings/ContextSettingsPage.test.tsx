@@ -12,6 +12,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  supervisorPrinciples: '',
   experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
@@ -45,6 +46,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    supervisorPrinciples: '',
     experimentalFeaturesEnabled: false,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
@@ -113,5 +115,33 @@ describe('ContextSettingsPage', () => {
       expect(saveLocalCodexInstructionsMock).toHaveBeenCalledWith('Prefer TypeScript examples.')
     })
     expect(screen.getByTestId('context-wework-instructions-save-button')).toBeDisabled()
+  })
+
+  test('hides supervisor principles without experimental features', async () => {
+    render(<ContextSettingsPage />)
+
+    await screen.findByTestId('context-terminal-injection-toggle')
+    expect(screen.queryByTestId('context-supervisor-principles-textarea')).not.toBeInTheDocument()
+  })
+
+  test('shows and saves supervisor principles with experimental features', async () => {
+    getAppPreferencesMock.mockResolvedValue({
+      ...defaultPreferences,
+      experimentalFeaturesEnabled: true,
+    })
+    render(<ContextSettingsPage />)
+
+    const textarea = await screen.findByTestId('context-supervisor-principles-textarea')
+    expect(textarea).toHaveValue('')
+    expect(screen.getByTestId('context-supervisor-principles-save-button')).toBeDisabled()
+
+    await userEvent.type(textarea, '发现偏离目标时先给出最小纠正建议。')
+    await userEvent.click(screen.getByTestId('context-supervisor-principles-save-button'))
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        supervisorPrinciples: '发现偏离目标时先给出最小纠正建议。',
+      })
+    })
   })
 })

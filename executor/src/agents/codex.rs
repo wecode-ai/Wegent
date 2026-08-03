@@ -1187,6 +1187,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
+        let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
         let mut notification_rx = client
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
@@ -1278,19 +1279,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if !request.ephemeral {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    sync_goal_status_from_response(&mut state, &goal_response);
-                }
-            }
-
             if let Some(name) = initial_thread_name
                 .as_deref()
                 .map(str::trim)
@@ -1305,10 +1293,24 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
 
-        let turn_input = turn_input(&request.prompt);
+        if awaits_initial_goal_turn {
+            let goal = initial_thread_goal
+                .as_ref()
+                .expect("initial goal must exist when awaiting its turn");
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            sync_goal_status_from_response(&mut state, &goal_response);
+        } else if !request.ephemeral && resuming_thread {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                sync_goal_status_from_response(&mut state, &goal_response);
+            }
+        }
+
         let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
@@ -1316,31 +1318,38 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
-        log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let turn_start_response = match timeout_at(
-            startup_deadline,
-            client.request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(recover_stalled_shared_turn(
-                    client,
-                    &thread_id,
-                    startup_timeout_seconds,
-                )
-                .await);
-            }
+        let active_turn_id = if awaits_initial_goal_turn {
+            log_executor_event("codex shared goal turn awaiting", &turn_fields);
+            None
+        } else {
+            let turn_input = turn_input(&request.prompt);
+            turn_fields.push(("input_items", turn_input.len().to_string()));
+            log_executor_event("codex shared turn request started", &turn_fields);
+            let turn_start_response = match timeout_at(
+                startup_deadline,
+                client.request(
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        &thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
+            };
+            turn_start_response_id(&turn_start_response)
         };
-        let active_turn_id = turn_start_response_id(&turn_start_response);
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
@@ -3738,6 +3747,7 @@ fn resolve_codex_binary(value: &str) -> String {
 }
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 
 pub(crate) fn codex_runtime_approval_policy() -> Value {
     json!({
@@ -3751,10 +3761,27 @@ pub(crate) fn codex_runtime_approval_policy() -> Value {
     })
 }
 
-fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    if request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+        == Some(CODEX_READ_ONLY_PERMISSION_PROFILE)
+    {
+        CODEX_READ_ONLY_PERMISSION_PROFILE
+    } else {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+    }
+}
+
+fn insert_codex_runtime_permissions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
     params.insert(
         "permissions".to_owned(),
-        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+        Value::String(codex_runtime_permission_profile(request).to_owned()),
     );
 }
 
@@ -3808,13 +3835,14 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3836,13 +3864,14 @@ fn thread_fork_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3897,14 +3926,28 @@ fn thread_resume_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
+}
+
+fn insert_codex_developer_instructions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let instructions = request.system_prompt.trim();
+    if !instructions.is_empty() {
+        params.insert(
+            "developerInstructions".to_owned(),
+            Value::String(instructions.to_owned()),
+        );
+    }
 }
 
 fn append_thread_launch_params(
@@ -3951,7 +3994,7 @@ fn turn_start_params(
         );
     }
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -3971,7 +4014,19 @@ fn turn_start_params(
     if let Some(additional_context) = codex_additional_context(request) {
         params.insert("additionalContext".to_owned(), additional_context);
     }
+    if let Some(output_schema) = codex_output_schema(request) {
+        params.insert("outputSchema".to_owned(), output_schema);
+    }
     Value::Object(params)
+}
+
+fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("outputSchema")
+        .or_else(|| request.extra.get("output_schema"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {

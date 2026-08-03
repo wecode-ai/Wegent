@@ -242,7 +242,7 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
-                self.sync_runtime_task_goal_status(
+                self.hydrate_runtime_task_goal_status(
                     &link.local_task_id,
                     result
                         .get("goal")

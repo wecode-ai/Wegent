@@ -338,6 +338,7 @@ impl RuntimeWorkRpcHandler {
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
+        let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
@@ -347,7 +348,7 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id,
             initial_thread_name: None,
-            initial_thread_goal: None,
+            initial_thread_goal,
         });
 
         Ok(json!({

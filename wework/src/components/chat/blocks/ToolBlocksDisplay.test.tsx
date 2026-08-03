@@ -1554,20 +1554,18 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
   })
 
-  test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
-    const thinkingBlock: ProcessingBlock = {
-      id: 'thinking-1',
-      subtaskId: 1,
-      type: 'thinking',
-      content: 'Reading files',
-      status: 'streaming',
-      createdAt: 1770000000000,
-    }
+  test('shows the current reasoning summary in the trailing tool thinking row', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        thinkingContent="First step. Reading the latest files"
+      />
+    )
 
-    render(<ToolBlocksDisplay blocks={[thinkingBlock]} isStreaming={true} />)
-
-    expect(screen.getByTestId('thinking-live-preview')).toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    const preview = screen.getByTestId('tool-block-thinking')
+    expect(preview).toHaveTextContent('正在思考 · Reading the latest files')
+    expect(preview).not.toHaveTextContent('First step.')
   })
 
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {

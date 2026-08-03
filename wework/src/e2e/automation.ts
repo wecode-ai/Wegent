@@ -242,7 +242,6 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      persistApiKey: false,
       catalogReady: localModelsCatalogReady,
       enabled: true,
     })

@@ -1,4 +1,4 @@
-import { ChevronDown, Download, Gauge, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, Download, Gauge, Info, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -44,6 +44,7 @@ function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
+  onOpenAbout: () => void
   onLogout: () => void
   onLogin?: () => void
   showLogout?: boolean
@@ -51,6 +52,7 @@ interface DesktopSettingsMenuProps {
 
 export function DesktopSettingsMenu({
   onOpenSettings,
+  onOpenAbout,
   onLogout,
   onLogin,
   showLogout,
@@ -184,6 +186,12 @@ export function DesktopSettingsMenu({
         onClick={handleUpdateClick}
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
+      />
+      <SettingsMenuItem
+        testId="about-menu-button"
+        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
+        label={t('workbench.settings_nav_about', '关于')}
+        onClick={onOpenAbout}
       />
       {downloadMessage ? (
         <div

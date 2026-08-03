@@ -612,9 +612,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
         navigateTo(
-          options?.autoOpenAddCloudDeviceDialog || options?.settingsPage === 'connections'
+          options?.autoOpenAddCloudDeviceDialog
             ? '/settings/connections'
-            : '/settings'
+            : options?.settingsPage
+              ? `/settings/${options.settingsPage}`
+              : '/settings'
         )
       }}
       onLogout={onLogout}

@@ -44,6 +44,14 @@ Wework requests the task list on startup, explicit refresh, or device-state chan
 5. Backend performs light aggregation and returns the result to Wework without reading or matching the Backend `projects` table.
 6. Wework renders Projects and Conversations from the runtime work response, while each LocalTask is still opened and notified by `deviceId + localTaskId`.
 
+Selecting or opening a LocalTask is read-only. When Wework calls read APIs such
+as `runtime.tasks.transcript` or `runtime.tasks.goal.get` to restore pane state,
+the executor may hydrate local cache fields but must not change the LocalTask
+`updatedAt`. Only operations that change task content or lifecycle, such as
+sending a message, renaming, or an actual goal status transition, may advance
+task activity time. Otherwise, merely viewing a task would change list ordering
+and the displayed update time.
+
 The `runtime.tasks.list` response has two workspace levels. The outer workspace is the sidebar Project grouping, so Codex git worktree tasks should be grouped under their shared repository root. The inner LocalTask is the actual execution directory and must keep its own `workspacePath`. When that directory is a git worktree, the LocalTask must carry `workspaceKind: worktree` and `worktreeId`; the sidebar worktree icon, bottom terminal cwd, and right-side workspace tools all derive from LocalTask fields. A worktree LocalTask must not turn the parent workspace into a worktree, and the LocalTask path must not be overwritten with the parent workspace path.
 
 The executor does not poll or push task lists to Backend by itself. Offline devices do not contribute LocalTasks. Wework may show an offline mapped workspace, but it does not keep a central cache of local tasks.

@@ -4,7 +4,11 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, Codex and local models, proxies, context, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, appearance, Codex and local models, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+
+## View app information
+
+Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
 
 Common macOS shortcuts include:
 

@@ -453,7 +453,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
 }
 
 #[tokio::test]
-async fn runtime_tasks_create_sets_initial_goal_before_first_turn() {
+async fn runtime_tasks_create_uses_goal_started_turn_without_explicit_turn_start() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -501,16 +501,18 @@ async fn runtime_tasks_create_sets_initial_goal_before_first_turn() {
         .expect("create should be accepted");
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-goal", "thread-1").await;
-    wait_for_turn_count(&log_path, 1).await;
     wait_until_task_idle(&handler, "local-task-goal").await;
 
     let calls = read_json_lines(&log_path);
     let start_index = call_index(&calls, "thread/start");
     let goal_index = call_index(&calls, "thread/goal/set");
-    let turn_index = call_index(&calls, "turn/start");
     assert!(
-        start_index < goal_index && goal_index < turn_index,
-        "expected goal-first order; calls: {calls:?}"
+        start_index < goal_index,
+        "expected goal to be set after thread creation; calls: {calls:?}"
+    );
+    assert!(
+        calls.iter().all(|call| call["method"] != "turn/start"),
+        "goal/set starts the turn, so an explicit turn/start would overlap it: {calls:?}"
     );
 
     let goal_call = &calls[goal_index];
@@ -518,6 +520,86 @@ async fn runtime_tasks_create_sets_initial_goal_before_first_turn() {
     assert_eq!(goal_call["params"]["objective"], "ship goal-first");
     assert_eq!(goal_call["params"]["status"], "active");
     assert!(goal_call["params"]["tokenBudget"].is_null());
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_goal_does_not_start_a_second_overlapping_turn() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-goal-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-goal-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-send-goal-log", "jsonl");
+    let fake_codex = write_fake_codex_for_turns(&log_path, 2);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-goal-follow-up",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request(
+                    "first turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_for_turn_count(&log_path, 1).await;
+    wait_until_task_idle(&handler, "local-task-goal-follow-up").await;
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "taskId": "local-task-goal-follow-up",
+                "workspacePath": "/tmp/project",
+                "message": "finish the goal",
+                "initialGoal": {
+                    "objective": "finish the goal",
+                    "status": "active",
+                    "tokenBudget": null
+                },
+                "executionRequest": codex_execution_request(
+                    "finish the goal",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("goal follow-up should be accepted");
+    assert_eq!(sent["accepted"], true);
+    wait_until_task_idle(&handler, "local-task-goal-follow-up").await;
+
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/goal/set")
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "turn/start")
+            .count(),
+        1,
+        "the goal follow-up must use the turn started by goal/set"
+    );
 }
 
 #[tokio::test]
@@ -1415,7 +1497,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
             .iter()
             .filter(|call| call["method"] == "turn/start")
             .count(),
-        1
+        0
     );
     let continuation_marker = calls
         .iter()
@@ -2635,6 +2717,10 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/goal/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":{{"threadId":"thread-1","objective":"ship goal-first","status":"active","tokenBudget":null,"tokensUsed":0,"timeUsedSeconds":0,"createdAt":1780000000,"updatedAt":1780000000}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-1","turn":{{"id":"goal-turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"goal-turn-1","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-1","turnId":"goal-turn-1","goal":{{"threadId":"thread-1","objective":"ship goal-first","status":"complete","tokenBudget":null,"tokensUsed":10,"timeUsedSeconds":1,"createdAt":1780000000,"updatedAt":1780000001}}}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"goal-turn-1","status":"completed"}}}}}}'
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -2748,12 +2834,7 @@ while IFS= read -r line; do
     *'"method":"thread/goal/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":{{"threadId":"thread-goal","objective":"ship goal","status":"active","tokenBudget":null,"tokensUsed":0,"timeUsedSeconds":0,"createdAt":1780000000,"updatedAt":1780000000}}}}}}'
       printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-goal","goal":{{"threadId":"thread-goal","objective":"ship goal","status":"active","tokenBudget":null,"tokensUsed":0,"timeUsedSeconds":0,"createdAt":1780000000,"updatedAt":1780000000}}}}}}'
-      ;;
-    *'"method":"thread/name/set"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
-      ;;
-    *'"method":"turn/start"'*)
-      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-goal","turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-goal","turnId":"turn-1","delta":"first","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-goal","turn":{{"id":"turn-1","status":"completed"}}}}}}'
       printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"thread-goal","turn":{{"id":"turn-2","status":"inProgress"}}}}}}'
@@ -2761,6 +2842,9 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"thread/goal/updated","params":{{"threadId":"thread-goal","turnId":"turn-2","goal":{{"threadId":"thread-goal","objective":"ship goal","status":"complete","tokenBudget":null,"tokensUsed":10,"timeUsedSeconds":2,"createdAt":1780000000,"updatedAt":1780000002}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-goal","turn":{{"id":"turn-2","status":"completed"}}}}}}'
       printf '%s\n' '{{"event":"goal-continuation-completed"}}' >> "$LOG_PATH"
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"thread/unsubscribe"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'

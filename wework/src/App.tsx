@@ -716,6 +716,15 @@ function WeworkDevInstanceBadge() {
   const [collapsed, setCollapsed] = useState(true)
   const [position, setPosition] = useState<CSSProperties>()
   const draggedRef = useRef(false)
+  const copiedResetTimeoutRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (copiedResetTimeoutRef.current !== null) {
+        window.clearTimeout(copiedResetTimeoutRef.current)
+      }
+    },
+    []
+  )
   if (!info) return null
 
   const rows = getWeworkDevInstanceRows(info)
@@ -725,7 +734,13 @@ function WeworkDevInstanceBadge() {
   const copyValue = async (key: string, value: string) => {
     await navigator.clipboard?.writeText(value)
     setCopiedKey(key)
-    window.setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 1200)
+    if (copiedResetTimeoutRef.current !== null) {
+      window.clearTimeout(copiedResetTimeoutRef.current)
+    }
+    copiedResetTimeoutRef.current = window.setTimeout(() => {
+      copiedResetTimeoutRef.current = null
+      setCopiedKey(current => (current === key ? null : current))
+    }, 1200)
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {

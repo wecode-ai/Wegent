@@ -3,10 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 const LOCAL_MODEL_SECRET_SERVICE: &str = "com.wecode.wework.local-model";
-const LOCAL_MODEL_SECRET_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn local_model_secret_entry(config_id: &str) -> Result<keyring::Entry, String> {
     let config_id = config_id.trim();
@@ -21,7 +19,7 @@ fn local_model_secret_entry(config_id: &str) -> Result<keyring::Entry, String> {
 pub async fn read_local_model_api_keys(
     config_ids: Vec<String>,
 ) -> Result<HashMap<String, String>, String> {
-    let read = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         let mut api_keys = HashMap::new();
         for config_id in config_ids {
             let entry = local_model_secret_entry(&config_id)?;
@@ -36,34 +34,27 @@ pub async fn read_local_model_api_keys(
             }
         }
         Ok(api_keys)
-    });
-    tokio::time::timeout(LOCAL_MODEL_SECRET_TIMEOUT, read)
-        .await
-        .map_err(|_| "Timed out reading local model credentials".to_string())?
-        .map_err(|error| format!("Failed to join local model credential read: {error}"))?
+    })
+    .await
+    .map_err(|error| format!("Failed to join local model credential read: {error}"))?
 }
 
 #[tauri::command]
-pub async fn update_local_model_api_key(
-    config_id: String,
-    api_key: Option<String>,
-) -> Result<(), String> {
-    let update = tauri::async_runtime::spawn_blocking(move || {
-        let entry = local_model_secret_entry(&config_id)?;
-        match api_key.map(|value| value.trim().to_owned()) {
-            Some(api_key) if !api_key.is_empty() => entry
-                .set_password(&api_key)
-                .map_err(|error| format!("Failed to save local model credentials: {error}")),
-            _ => match entry.delete_credential() {
-                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(error) => Err(format!("Failed to delete local model credentials: {error}")),
-            },
+pub async fn delete_local_model_api_keys(config_ids: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        for config_id in config_ids {
+            let entry = local_model_secret_entry(&config_id)?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => {
+                    return Err(format!("Failed to delete local model credentials: {error}"));
+                }
+            }
         }
-    });
-    tokio::time::timeout(LOCAL_MODEL_SECRET_TIMEOUT, update)
-        .await
-        .map_err(|_| "Timed out updating local model credentials".to_string())?
-        .map_err(|error| format!("Failed to join local model credential update: {error}"))?
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Failed to join local model credential deletion: {error}"))?
 }
 
 #[cfg(test)]

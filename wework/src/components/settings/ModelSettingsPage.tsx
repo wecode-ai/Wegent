@@ -45,7 +45,6 @@ import {
   ensureLocalModelApiKeysHydrated,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
-  flushLocalModelSecretWrites,
   markLocalModelCatalogReady,
   normalizeLocalModelBaseUrl,
   normalizeLocalModelRequestPath,
@@ -968,7 +967,6 @@ function LocalModelSettingsSection({
           : undefined,
         enabled: form.enabled,
       })
-      await flushLocalModelSecretWrites()
       if (catalogEntry) {
         const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
         const writtenCatalogSnapshot = catalogModels.map(({ id: modelId, updatedAt }) => ({
@@ -1013,7 +1011,7 @@ function LocalModelSettingsSection({
     }
   }
 
-  const clearEditingApiKey = async () => {
+  const clearEditingApiKey = () => {
     if (!editingModel) return
     try {
       saveLocalModelConfig({
@@ -1035,7 +1033,6 @@ function LocalModelSettingsSection({
         catalogReady: editingModel.catalogReady,
         enabled: editingModel.enabled,
       })
-      await flushLocalModelSecretWrites()
       performStartEditing({ ...editingModel, apiKey: undefined })
     } catch (clearError) {
       setError(
@@ -1081,11 +1078,10 @@ function LocalModelSettingsSection({
     }
   }
 
-  const deleteModel = async (model: LocalModelConfig) => {
+  const deleteModel = (model: LocalModelConfig) => {
     setError(null)
     try {
       deleteLocalModelConfig(model.id)
-      await flushLocalModelSecretWrites()
       if (editingId === model.id) resetForm()
     } catch (deleteError) {
       setError(
