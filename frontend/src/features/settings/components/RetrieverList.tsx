@@ -24,7 +24,7 @@ import {
   GlobeAltIcon,
   LinkSlashIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, MoreHorizontal } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -53,6 +53,7 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
@@ -61,6 +62,12 @@ import {
 } from '@/features/resource-library/components/ResourceCreateButton'
 import { UnbindInUseDialog } from '@/features/resource-library/components/UnbindInUseDialog'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 interface RetrieverListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -78,6 +85,7 @@ interface RetrieverListProps {
   creationOnly?: boolean
   hideCreateActions?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 /**
@@ -105,6 +113,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   creationOnly = false,
   hideCreateActions = false,
   compact = false,
+  searchQuery = '',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -152,14 +161,24 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
       filteredRetrievers = retrievers.filter(retriever => retriever.type === 'group')
     } else if (sourceFilter === 'system') {
       filteredRetrievers = retrievers.filter(retriever => retriever.type === 'public')
+    } else if (sourceFilter === 'mine') {
+      filteredRetrievers = retrievers.filter(retriever => retriever.type !== 'public')
     }
 
     return filterResourceLibraryItemsByGroups(
       filteredRetrievers,
       groupFilter,
       retriever => retriever.namespace
+    ).filter(retriever =>
+      matchesResourceSearch(
+        searchQuery,
+        retriever.name,
+        retriever.displayName,
+        retriever.description,
+        retriever.storageType
+      )
     )
-  }, [retrievers, sourceFilter, groupFilter])
+  }, [retrievers, sourceFilter, groupFilter, searchQuery])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -432,7 +451,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
               {sortedRetrievers.map(retriever => (
                 <Card
                   key={`${retriever.type}-${retriever.namespace}-${retriever.name}`}
-                  className={getResourceCardClassName(compact)}
+                  className={cn(getResourceCardClassName(compact), compact && 'min-w-0 gap-2')}
                   data-testid={`retriever-card-${retriever.type}-${retriever.name}`}
                 >
                   <div className={getResourceCardBodyClassName(compact)}>
@@ -441,7 +460,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                       name={retriever.name}
                       displayName={retriever.displayName || undefined}
                       description={retriever.description}
-                      showId={true}
+                      showId={!compact}
                       isPublic={retriever.type === 'public'}
                       publicLabel={t('retrievers.public')}
                       icon={
@@ -481,7 +500,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                         },
                       ]}
                     />
-                    {hasRetrieverActions(retriever) && (
+                    {!compact && hasRetrieverActions(retriever) && (
                       <div
                         className={cn(
                           'flex flex-shrink-0 items-center gap-1',
@@ -548,6 +567,94 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                       </div>
                     )}
                   </div>
+                  {compact && hasRetrieverActions(retriever) && (
+                    <div
+                      className={cn(
+                        'relative z-20 flex min-w-0 flex-shrink-0 items-center justify-end gap-1.5',
+                        getResourceCardActionsClassName(true)
+                      )}
+                      data-testid={`retriever-card-actions-${retriever.type}-${retriever.name}`}
+                    >
+                      {retriever.type !== 'public' && !retriever.isReference && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                          onClick={() => handleTestConnection(retriever)}
+                          disabled={testingRetrieverName === retriever.name}
+                          title={t('common:retrievers.test_connection')}
+                          aria-label={t('common:retrievers.test_connection')}
+                          data-testid={`test-retriever-${retriever.name}-button`}
+                        >
+                          {testingRetrieverName === retriever.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <BeakerIcon className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                      {canEditRetriever(retriever) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => handleEdit(retriever)}
+                          title={t('common:retrievers.edit')}
+                          aria-label={t('common:retrievers.edit')}
+                          data-testid={`edit-retriever-${retriever.name}-button`}
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                          <span>{t('common:actions.edit')}</span>
+                        </Button>
+                      )}
+                      {canUnbindRetriever(retriever) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => void handleUnbindRequest(retriever)}
+                          disabled={checkingReferenceUsageName === retriever.name}
+                          title={t('common:actions.unbind')}
+                          aria-label={t('common:actions.unbind')}
+                          data-testid={`unbind-retriever-${retriever.name}-button`}
+                        >
+                          {checkingReferenceUsageName === retriever.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <LinkSlashIcon className="h-4 w-4" />
+                          )}
+                          <span>{t('common:actions.unbind')}</span>
+                        </Button>
+                      )}
+                      {canDeleteRetriever(retriever) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                              aria-label={t('common:actions.more_actions')}
+                              data-testid={`retriever-more-actions-${retriever.name}-button`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {canDeleteRetriever(retriever) && (
+                              <DropdownMenuItem
+                                danger
+                                onClick={() => setDeleteConfirmRetriever(retriever)}
+                                data-testid={`delete-retriever-${retriever.name}-button`}
+                              >
+                                <TrashIcon className="mr-2 h-4 w-4" />
+                                {t('common:retrievers.delete')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>
