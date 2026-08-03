@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
+import { readComposerAppsSnapshot } from './composerAppsSnapshot'
 import { appReference, displayAppName } from './composerMentionCandidates'
 import { registerComposerMentionIcon } from './composerMentions'
 import {
@@ -23,6 +24,13 @@ interface PluginPickerMenuProps {
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
+function enabledComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
+  return sortComposerPluginsByUsage(
+    items.filter(app => app.isEnabled !== false && app.isAccessible !== false),
+    readRecentPluginAppIds()
+  )
+}
+
 export function PluginPickerMenu({
   disabled = false,
   iconOnly = false,
@@ -32,8 +40,11 @@ export function PluginPickerMenu({
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [apps, setApps] = useState<LocalDeviceApp[]>([])
-  const [loading, setLoading] = useState(Boolean(onListLocalApps))
+  const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
+    onListLocalApps ? enabledComposerApps(readComposerAppsSnapshot()) : []
+  )
+  const hasCachedAppsRef = useRef(apps.length > 0)
+  const [loading, setLoading] = useState(() => Boolean(onListLocalApps) && apps.length === 0)
   const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
@@ -54,18 +65,16 @@ export function PluginPickerMenu({
   useEffect(() => {
     let current = true
     if (!onListLocalApps) return
+    if (!hasCachedAppsRef.current) setLoading(true)
     onListLocalApps()
       .then(items => {
         if (!current) return
-        setApps(
-          sortComposerPluginsByUsage(
-            items.filter(app => app.isEnabled !== false && app.isAccessible !== false),
-            readRecentPluginAppIds()
-          )
-        )
+        const next = enabledComposerApps(items)
+        hasCachedAppsRef.current = next.length > 0
+        setApps(next)
       })
       .catch(() => {
-        if (current) setApps([])
+        if (current && !hasCachedAppsRef.current) setApps([])
       })
       .finally(() => {
         if (current) setLoading(false)

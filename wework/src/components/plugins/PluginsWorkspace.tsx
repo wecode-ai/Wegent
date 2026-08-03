@@ -24,6 +24,8 @@ import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/c
 import {
   isLocalQrConnector,
   localConnectorAuthHealth,
+  localConnectorAuthLogout,
+  localQrManageActionFromHealth,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 import { createSystemSkillApi } from '@/api/systemSkills'
@@ -33,10 +35,10 @@ import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import {
   notifyLocalPluginSkillsChanged,
-  queuePluginCreatorChat,
   queuePluginPromptTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
+import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -1133,6 +1135,9 @@ export function PluginsWorkspace({
     resolve: () => void
     reject: (error: Error) => void
   } | null>(null)
+  const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
+    Record<string, 'connected' | 'disconnected'>
+  >({})
   const [customMcpForm, setCustomMcpForm] = useState<CustomMcpFormState>(emptyCustomMcpForm)
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
@@ -1194,31 +1199,10 @@ export function PluginsWorkspace({
     isLoading: true,
     error: null,
   })
-  const openPluginCreatorChat = useCallback(async () => {
+  const openPluginCreator = useCallback(() => {
     setIsCreateMenuOpen(false)
-    const unavailableMessage = t(
-      'workbench.plugins_creator_unavailable',
-      'Plugin Creator 暂不可用，请刷新后重试'
-    )
-    const showUnavailable = () => {
-      setPluginMarketplaceState(previous => ({
-        ...previous,
-        error: unavailableMessage,
-      }))
-    }
-    try {
-      const skills = await localPluginApi.listSkills({ forceReload: true })
-      const pluginCreator = skills.find(skill => skill.name === 'plugin-creator')
-      if (pluginCreator && queuePluginCreatorChat(pluginCreator)) {
-        navigateTo('/')
-        return
-      }
-    } catch {
-      showUnavailable()
-      return
-    }
-    showUnavailable()
-  }, [localPluginApi, t])
+    navigateTo('/plugins/create')
+  }, [])
   const [selectedMarketplacePluginDetail, setSelectedMarketplacePluginDetail] =
     useState<InstalledPluginItem | null>(null)
 
@@ -1785,15 +1769,18 @@ export function PluginsWorkspace({
       return
     }
 
-    const uninstallApi =
-      plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
-        ? localPluginApi.uninstallInstalledPlugin(id)
-        : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
-    uninstallApi
+    void logoutLocalQrConnectorsForPlugin(plugin.raw)
+      .catch(() => undefined)
+      .then(() =>
+        plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
+          ? localPluginApi.uninstallInstalledPlugin(id)
+          : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
+      )
       .then(() => {
         setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))
         setPluginMarketplaceState(clearMarketplaceInstall)
+        setLocalConnectorAuthBySlug({})
         notifyLocalPluginSkillsChanged()
         setPluginOperationNotice({
           id: `uninstalled-${id}`,
@@ -2242,18 +2229,52 @@ export function PluginsWorkspace({
           : plugin && 'displayName' in plugin
             ? String(plugin.displayName || plugin.name)
             : pluginKey
+      const target: LocalConnectorAuthTarget = {
+        pluginKey,
+        connectorSlug: slug,
+        localAuth: localConnector.localAuth ?? null,
+      }
+
+      let action: 'logout' | 'login' = 'login'
+      try {
+        const health = await localConnectorAuthHealth(target)
+        action = localQrManageActionFromHealth(health)
+      } catch {
+        // Keep login when the health probe fails.
+      }
+
+      if (action === 'logout') {
+        const confirmed = window.confirm(
+          t('workbench.plugins_local_qr_logout_confirm', {
+            defaultValue: `确定退出「${displayName}」登录？退出后需要重新扫码授权。`,
+            name: displayName,
+          })
+        )
+        if (!confirmed) return
+        try {
+          await localConnectorAuthLogout(target)
+          setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'disconnected' }))
+        } catch (error) {
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            error:
+              error instanceof Error
+                ? error.message
+                : t('workbench.plugins_local_qr_logout_failed', '退出登录失败'),
+          }))
+        }
+        return
+      }
+
       try {
         await promptLocalConnectorAuth({
-          target: {
-            pluginKey,
-            connectorSlug: slug,
-            localAuth: localConnector.localAuth ?? null,
-          },
-          title: t('workbench.plugins_local_qr_reauth_title', {
-            defaultValue: `重新登录 ${displayName}`,
+          target,
+          title: t('workbench.plugins_local_qr_login_title', {
+            defaultValue: `扫码登录 ${displayName}`,
             name: displayName,
           }),
         })
+        setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'connected' }))
       } catch (error) {
         setPluginMarketplaceState(previous => ({
           ...previous,
@@ -2663,6 +2684,58 @@ export function PluginsWorkspace({
   )
 
   useEffect(() => {
+    const detailPlugin = selectedPlugin
+      ? selectedPlugin
+      : selectedMarketplacePlugin
+        ? (() => {
+            const installedDetail =
+              selectedMarketplacePlugin.installedPluginId === null ||
+              selectedMarketplacePlugin.installedPluginId === undefined
+                ? null
+                : (installedPlugins.find(
+                    plugin =>
+                      String(plugin.id) === String(selectedMarketplacePlugin.installedPluginId)
+                  ) ?? null)
+            return installedDetail
+          })()
+        : null
+
+    const connectors = detailPlugin?.raw.spec.components.connectors ?? []
+    const localConnectors = connectors.filter(connector => isLocalQrConnector(connector))
+    if (activeTab !== 'plugins' || !detailPlugin || localConnectors.length === 0) {
+      setLocalConnectorAuthBySlug({})
+      return
+    }
+
+    let cancelled = false
+    const pluginKey = detailPlugin.raw.spec.source.pluginKey
+    void Promise.all(
+      localConnectors.map(async connector => {
+        try {
+          const health = await localConnectorAuthHealth({
+            pluginKey,
+            connectorSlug: connector.slug,
+            localAuth: connector.localAuth ?? null,
+          })
+          return [
+            connector.slug,
+            localQrManageActionFromHealth(health) === 'logout' ? 'connected' : 'disconnected',
+          ] as const
+        } catch {
+          return [connector.slug, 'disconnected'] as const
+        }
+      })
+    ).then(entries => {
+      if (cancelled) return
+      setLocalConnectorAuthBySlug(Object.fromEntries(entries))
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, installedPlugins, selectedMarketplacePlugin, selectedPlugin])
+
+  useEffect(() => {
     if (activeTab !== 'plugins' || !selectedMarketplacePlugin) {
       setSelectedMarketplacePluginDetail(null)
       return
@@ -2911,6 +2984,7 @@ export function PluginsWorkspace({
           }
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
           onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
+          connectorAuthBySlug={localConnectorAuthBySlug}
         />
         {pluginShareDialog}
         {pluginOperationNoticeOverlay}
@@ -3073,6 +3147,7 @@ export function PluginsWorkspace({
           onManageConnector={slug =>
             void managePluginConnector(slug, installedDetail ?? selectedMarketplacePlugin)
           }
+          connectorAuthBySlug={localConnectorAuthBySlug}
         />
         {pluginShareDialog}
         {pluginOperationNoticeOverlay}
@@ -3159,9 +3234,7 @@ export function PluginsWorkspace({
               <PluginCreateMenu
                 isOpen={isCreateMenuOpen}
                 onToggle={() => setIsCreateMenuOpen(previous => !previous)}
-                onCreatePlugin={() => {
-                  void openPluginCreatorChat()
-                }}
+                onCreatePlugin={openPluginCreator}
                 onAddMarket={() => {
                   setIsCreateMenuOpen(false)
                   setShowAddMarketDialog(true)

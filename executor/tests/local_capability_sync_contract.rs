@@ -982,6 +982,7 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
             "plugins": {
                 "old-plugin@market": {
                     "managed": true,
+                    "store_path": old_store_plugin.display().to_string(),
                     "runtime": {
                         "claude_link": old_claude_link.display().to_string(),
                         "codex_link": old_codex_link.display().to_string()
@@ -1016,6 +1017,7 @@ async fn replace_sync_removes_stale_managed_plugin_but_keeps_local_user_plugin()
     assert!(installed["plugins"].get("local-plugin@market").is_some());
     assert!(!old_claude_link.exists());
     assert!(!old_codex_link.exists());
+    assert!(!old_store_plugin.exists());
 }
 
 #[test]

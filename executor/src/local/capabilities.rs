@@ -872,8 +872,17 @@ where
                 runtime.uninstall_plugin(&name, &marketplace).await?;
             }
             plugins.remove(&key);
-            remove_runtime_link_from_value(plugin.get("runtime"), "claude_link")?;
-            remove_runtime_link_from_value(plugin.get("runtime"), "codex_link")?;
+            if let Some(runtime) = plugin.get("runtime") {
+                if let Some(path) = value_string(runtime.get("claude_link")) {
+                    remove_existing_path(Path::new(&path))?;
+                }
+                if let Some(path) = value_string(runtime.get("codex_link")) {
+                    remove_existing_path(Path::new(&path))?;
+                }
+            }
+            if let Some(store_path) = value_string(plugin.get("store_path")).map(PathBuf::from) {
+                remove_existing_path(&store_path)?;
+            }
             ensure_object_field(manifest, "plugins").remove(&key);
         }
         write_json(

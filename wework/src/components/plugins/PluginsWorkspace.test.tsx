@@ -1829,9 +1829,9 @@ describe('PluginsWorkspace', () => {
           plugins: [defaultCodexPlugin],
         },
         {
-          name: 'wegent-personal',
+          name: 'wework-personal',
           displayName: 'Personal',
-          path: 'wegent-personal',
+          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
           plugins: [
             {
               id: '202',
@@ -1848,6 +1848,9 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     expect(screen.getByText('My Skill')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
+    expect(screen.getByText('My Skill')).toBeInTheDocument()
+    expect(screen.queryByText('Documents')).not.toBeInTheDocument()
   })
 
   test('renders configured local marketplaces as secondary market tabs', async () => {
@@ -2233,52 +2236,15 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-marketplace-edit-local-openai')).not.toBeInTheDocument()
   })
 
-  test('opens Plugin Creator in a normal new chat with an inline skill mention', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    mockCodexAppServerInvoke({
-      skills: [
-        {
-          name: 'plugin-creator',
-          description: 'Create Codex plugins',
-          path: '/Users/test/.codex/skills/.system/plugin-creator/SKILL.md',
-          scope: 'system',
-          enabled: true,
-        },
-      ],
-    })
+  test('opens the managed Plugin Creator workspace', async () => {
     render(<PluginsWorkspace />)
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
 
-    await waitFor(() => expect(window.location.pathname).toBe('/'))
-    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toEqual({
-      input: '[$Plugin Creator](/Users/test/.codex/skills/.system/plugin-creator/SKILL.md) ',
-      pluginName: '',
-      templates: [],
-      openInNewChat: true,
-    })
-    expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
-  })
-
-  test('keeps the marketplace open when Plugin Creator is unavailable', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    mockCodexAppServerInvoke({ skills: [] })
-    render(<PluginsWorkspace />)
-    const initialPath = window.location.pathname
-
-    await userEvent.click(screen.getByTestId('plugins-create-button'))
-    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
-
-    expect(await screen.findByText('Plugin Creator 暂不可用，请刷新后重试')).toBeInTheDocument()
-    expect(window.location.pathname).toBe(initialPath)
+    expect(window.location.pathname).toBe('/plugins/create')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+    expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
   })
 
   test('closes the create menu on outside click and Escape', async () => {

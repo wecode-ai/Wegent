@@ -5,6 +5,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type {
@@ -257,10 +258,13 @@ export function PluginManagementWorkspace({
       })
       return
     }
-    const request = isCloudManagedInstalledPlugin(plugin.raw)
-      ? cloudPluginApi.uninstallInstalledPlugin(id, currentDeviceId || undefined)
-      : localPluginApi.uninstallInstalledPlugin(id)
-    void request
+    void logoutLocalQrConnectorsForPlugin(plugin.raw)
+      .catch(() => undefined)
+      .then(() =>
+        isCloudManagedInstalledPlugin(plugin.raw)
+          ? cloudPluginApi.uninstallInstalledPlugin(id, currentDeviceId || undefined)
+          : localPluginApi.uninstallInstalledPlugin(id)
+      )
       .then(() => {
         setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
         setSelectedPluginId(current => (String(current) === String(id) ? null : current))

@@ -161,7 +161,7 @@ export interface ChatInputProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
-  toolbarLeadingContext?: ReactNode
+  inputLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -533,7 +533,7 @@ export function ChatInput({
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
-  toolbarLeadingContext,
+  inputLeadingContext,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -822,7 +822,7 @@ export function ChatInput({
           isStreaming={isStreaming}
           onPause={onPause}
           showWorkspaceMenu={showWorkspaceMenu}
-          toolbarLeadingContext={toolbarLeadingContext}
+          inputLeadingContext={inputLeadingContext}
         />
         {queueResumeDialog}
         {modelSwitchWarningDialog}

@@ -2,6 +2,7 @@ import { Boxes, Plus } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -132,7 +133,9 @@ export function PluginCreateWorkspace({
       editPluginName
         ? `Use the Codex plugin-creator workflow to continue editing the existing local plugin "${editPluginName}" in Wegent.`
         : 'Use the Codex plugin-creator workflow to create a local Codex-compatible plugin for Wegent.',
-      'Install it into the managed local marketplace named wegent-personal. Do not upload it or publish it.',
+      `Create and install it in the registered managed local marketplace named "${WEWORK_PERSONAL_MARKETPLACE_ID}". Resolve that marketplace's existing local path before creating any files.`,
+      'Do not use the Plugin Creator defaults under ~/plugins or ~/.agents. Keep the managed marketplace manifests in sync and verify the plugin is discoverable from that marketplace before reporting success.',
+      'Do not upload it or publish it.',
       createType === 'skill'
         ? 'Create a single-Skill plugin: .codex-plugin/plugin.json plus exactly one skills/<slug>/SKILL.md.'
         : 'The plugin must use .codex-plugin/plugin.json.',
@@ -236,13 +239,13 @@ export function PluginCreateWorkspace({
             showProjectWorkBar={!isMobile}
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
-            toolbarLeadingContext={
+            inputLeadingContext={
               <span
                 data-testid="plugin-creator-context"
-                className="flex h-7 min-w-0 items-center gap-1.5 rounded-lg bg-muted px-2 text-sm font-medium text-text-secondary"
+                className="inline-flex shrink-0 items-center gap-1 text-sm font-normal text-focus"
               >
-                <Boxes className="h-4 w-4 shrink-0" />
-                <span className="truncate">Plugin Creator</span>
+                <Boxes className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>Plugin Creator</span>
               </span>
             }
           />

@@ -80,7 +80,7 @@ interface ProjectChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
-  toolbarLeadingContext?: ReactNode
+  inputLeadingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -138,7 +138,7 @@ export function ProjectChatComposer({
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
-  toolbarLeadingContext,
+  inputLeadingContext,
 }: ProjectChatComposerProps) {
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const workspaceMenuProjects = useMemo(
@@ -277,39 +277,45 @@ export function ProjectChatComposer({
             {disabledReason}
           </div>
         )}
-        <ComposerTextarea
-          testId={inputTestId}
-          textareaRef={textareaRef}
-          value={value}
-          onChange={onChange}
-          onSubmit={onSubmit}
-          canSend={canSend}
-          disabled={disabled}
-          placeholder={placeholder}
-          rows={2}
-          onPasteFiles={onFileSelect}
-          onOpenSkillFile={onOpenSkillFile}
-          workspaceTarget={workspaceTarget}
-          workspaceFileApi={workspaceFileApi}
-          cloudMentionCandidates={cloudMentionCandidates}
-          conversationMentionCandidates={conversationMentionCandidates}
-          cloudProjectCandidates={cloudProjectCandidates}
-          cloudSpaceEnabled={cloudSpaceEnabled}
-          onSelectCloudProject={onSelectCloudProject}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
-          skillMenuClassName="left-[-1rem] right-[-0.5rem]"
-          onListLocalSkills={onListLocalSkills}
-          onListLocalApps={onListLocalApps}
-          models={models}
-          selectedModel={selectedModel}
-          selectedModelOptions={selectedModelOptions}
-          planModeActive={planModeActive}
-          onSetPlanMode={onSetPlanMode}
-          onSetGoal={onSetGoal}
-          onSelectModel={onSelectModel}
-          onBlockedModelSelect={onBlockedModelSelect}
-          isModelSelectionReady={isModelSelectionReady}
-        />
+        <div
+          data-testid={inputLeadingContext ? 'composer-input-leading-context' : undefined}
+          className="flex min-h-[48px] w-full items-baseline gap-1"
+        >
+          {inputLeadingContext}
+          <ComposerTextarea
+            testId={inputTestId}
+            textareaRef={textareaRef}
+            value={value}
+            onChange={onChange}
+            onSubmit={onSubmit}
+            canSend={canSend}
+            disabled={disabled}
+            placeholder={placeholder}
+            rows={2}
+            onPasteFiles={onFileSelect}
+            onOpenSkillFile={onOpenSkillFile}
+            workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
+            cloudMentionCandidates={cloudMentionCandidates}
+            conversationMentionCandidates={conversationMentionCandidates}
+            cloudProjectCandidates={cloudProjectCandidates}
+            cloudSpaceEnabled={cloudSpaceEnabled}
+            onSelectCloudProject={onSelectCloudProject}
+            className="max-h-[112px] min-h-[48px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+            skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+            onListLocalSkills={onListLocalSkills}
+            onListLocalApps={onListLocalApps}
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            planModeActive={planModeActive}
+            onSetPlanMode={onSetPlanMode}
+            onSetGoal={onSetGoal}
+            onSelectModel={onSelectModel}
+            onBlockedModelSelect={onBlockedModelSelect}
+            isModelSelectionReady={isModelSelectionReady}
+          />
+        </div>
         <ComposerToolbar
           sendButtonTestId={submitButtonTestId}
           onListLocalApps={onListLocalApps}
@@ -357,7 +363,6 @@ export function ProjectChatComposer({
           }
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
-          leadingContext={toolbarLeadingContext}
         />
       </form>
     </div>

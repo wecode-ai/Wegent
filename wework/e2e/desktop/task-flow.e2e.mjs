@@ -1502,7 +1502,6 @@ async function verifyPluginLifecycle(control) {
   let activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask.taskId
   const activeProjectId = activeTaskBeforePluginTrial.workbench.currentProject?.id
   assert.ok(activeProjectId, 'The plugin lifecycle requires an active project')
-  const activeStandaloneChatKey = activeTaskBeforePluginTrial.workbench.composer?.standaloneChatKey
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
@@ -1521,36 +1520,27 @@ async function verifyPluginLifecycle(control) {
 
   await control.command('click', '[data-testid="plugins-create-button"]')
   await control.command('click', '[data-testid="plugins-create-plugin-option"]')
-  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+  await control.command('waitFor', '[data-testid="plugin-create-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForSnapshot(
     control,
     snapshot =>
+      snapshot.testIds.includes('plugin-create-workspace') &&
       snapshot.testIds.includes('project-chat-composer') &&
       snapshot.testIds.includes('composer-toolbar') &&
       snapshot.testIds.includes('attachment-file-input') &&
       snapshot.testIds.includes('model-selector-button') &&
-      snapshot.testIds.includes('chat-message-input') &&
-      snapshot.testIds.includes('send-message-button') &&
-      snapshot.text.includes('Plugin Creator') &&
-      !snapshot.testIds.includes('plugin-create-workspace'),
-    'Plugin Creator did not open as an inline mention in the normal chat composer'
-  )
-  await waitForWorkbenchDebugState(
-    control,
-    snapshot =>
-      snapshot.workbench?.currentRuntimeTask === null &&
-      snapshot.workbench?.currentProject?.id === activeProjectId &&
-      (activeStandaloneChatKey === undefined ||
-        snapshot.workbench?.composer?.standaloneChatKey === activeStandaloneChatKey + 1),
-    'Plugin Creator did not open a fresh chat under the active project'
+      snapshot.testIds.includes('plugin-create-prompt-input') &&
+      snapshot.testIds.includes('plugin-create-submit-button') &&
+      snapshot.text.includes('Plugin Creator'),
+    'The managed Plugin Creator workspace did not open'
   )
   await captureVerificationScreenshot(control, 'plugins-00-creator.png')
-  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+  await control.command('fill', '[data-testid="plugin-create-prompt-input"]', {
     value: PLUGIN_CREATOR_PROMPT,
   })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+  await control.command('clickWhenEnabled', '[data-testid="plugin-create-submit-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })

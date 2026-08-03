@@ -68,18 +68,41 @@ fn resolve_request(payload: &Value) -> Result<(PathBuf, LocalAuthSpec), AppIpcEr
     let connector_slug = string_field(payload, "connectorSlug")
         .or_else(|| string_field(payload, "connector_slug"))
         .or_else(|| string_field(payload, "slug"));
-    let plugin_root = resolve_plugin_root(&plugin_key, payload)?;
-    let spec = load_local_auth_spec(&plugin_root, connector_slug.as_deref())?;
-    Ok((plugin_root, spec))
+    let candidates = resolve_plugin_root_candidates(&plugin_key, payload)?;
+    let mut last_error: Option<AppIpcError> = None;
+    for plugin_root in candidates {
+        match load_local_auth_spec(&plugin_root, connector_slug.as_deref()) {
+            Ok(spec) => return Ok((plugin_root, spec)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        AppIpcError::new(
+            "plugin_not_installed",
+            format!("Installed plugin '{plugin_key}' was not found on this device"),
+        )
+    }))
 }
 
-fn resolve_plugin_root(plugin_key: &str, payload: &Value) -> Result<PathBuf, AppIpcError> {
+fn store_dir_matches_plugin_key(dir_name: &str, plugin_key: &str) -> bool {
+    // Prefer exact plugin-key segments so "weibo" does not steal "gitlab-weibo"
+    // or an older "weibo-api-wiki" package without connectors.
+    let needle = format!("-{plugin_key}-");
+    dir_name.contains(&needle)
+        || dir_name.ends_with(&format!("-{plugin_key}"))
+        || dir_name == plugin_key
+}
+
+fn resolve_plugin_root_candidates(
+    plugin_key: &str,
+    payload: &Value,
+) -> Result<Vec<PathBuf>, AppIpcError> {
     if let Some(explicit) =
         string_field(payload, "pluginRoot").or_else(|| string_field(payload, "plugin_root"))
     {
         let path = PathBuf::from(explicit);
         if path.is_dir() {
-            return Ok(path);
+            return Ok(vec![path]);
         }
         return Err(AppIpcError::new(
             "plugin_root_missing",
@@ -100,7 +123,7 @@ fn resolve_plugin_root(plugin_key: &str, payload: &Value) -> Result<PathBuf, App
         if let Ok(entries) = fs::read_dir(&store_plugins) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.contains(plugin_key) {
+                if store_dir_matches_plugin_key(&name, plugin_key) {
                     candidates.push(entry.path());
                 }
             }
@@ -123,18 +146,17 @@ fn resolve_plugin_root(plugin_key: &str, payload: &Value) -> Result<PathBuf, App
         }
     }
 
-    // Prefer the newest version directory by name.
+    // Prefer the newest version directory by name, then skip packages whose
+    // manifest lacks the requested localAuth connector.
     candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
-    for candidate in candidates {
-        if has_plugin_manifest(&candidate) {
-            return Ok(candidate);
-        }
+    candidates.retain(|candidate| has_plugin_manifest(candidate));
+    if candidates.is_empty() {
+        return Err(AppIpcError::new(
+            "plugin_not_installed",
+            format!("Installed plugin '{plugin_key}' was not found on this device"),
+        ));
     }
-
-    Err(AppIpcError::new(
-        "plugin_not_installed",
-        format!("Installed plugin '{plugin_key}' was not found on this device"),
-    ))
+    Ok(candidates)
 }
 
 fn has_plugin_manifest(path: &Path) -> bool {

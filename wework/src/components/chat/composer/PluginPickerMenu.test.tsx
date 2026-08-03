@@ -8,6 +8,7 @@ import {
   SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
 } from '@/features/plugins/pluginTrial'
 import { PluginPickerMenu } from './PluginPickerMenu'
+import { writeComposerAppsSnapshot } from './composerAppsSnapshot'
 import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
 
 const githubApp: LocalDeviceApp = {
@@ -130,5 +131,26 @@ describe('PluginPickerMenu', () => {
       'composer-plugin-picker-item-github',
       'composer-plugin-picker-item-plugin:superpowers',
     ])
+  })
+
+  test('paints preview icons from the composer apps snapshot before fetch resolves', async () => {
+    writeComposerAppsSnapshot([githubApp, superpowersApp, echoIdApp])
+    let resolveApps!: (apps: LocalDeviceApp[]) => void
+    const onListLocalApps = vi.fn(
+      () =>
+        new Promise<LocalDeviceApp[]>(resolve => {
+          resolveApps = resolve
+        })
+    )
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+
+    expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(3)
+    expect(screen.getByTestId('composer-plugin-picker-button')).toHaveTextContent('插件')
+
+    resolveApps([githubApp, superpowersApp])
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(2)
+    )
   })
 })

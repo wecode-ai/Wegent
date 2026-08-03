@@ -122,12 +122,26 @@ export async function findFirstLocalQrNeedingLogin(
   return null
 }
 
+const KNOWN_CONNECTOR_PLUGIN_KEYS: Record<string, string> = {
+  'weibo-wiki': 'weibo-api-wiki',
+}
+
+const KNOWN_PLUGIN_DISPLAY_NAMES: Record<string, string> = {
+  'weibo-api-wiki': '微博开放平台内部WIKI',
+}
+
 export function messageRequiresConnectorAuth(text: string | null | undefined): boolean {
   if (!text) return false
-  return (
+  if (
     text.includes('connector_auth_required') ||
     /"error"\s*:\s*"connector_auth_required"/i.test(text) ||
-    /需要重新登录|会话已过期|need_login/i.test(text)
+    /need_login/i.test(text)
+  ) {
+    return true
+  }
+  // Agents often paraphrase the machine error; match host-resume phrasing.
+  return /尚未登录|需要重新登录|会话已过期|登录会话已失效|重新认证|身份认证|主机连接器|二维码(?:登录|卡片)|扫码登录|\b\w[\w.-]*\s+Connector\b/i.test(
+    text
   )
 }
 
@@ -136,5 +150,94 @@ export function extractConnectorAuthPluginKey(text: string | null | undefined): 
   const match =
     text.match(/"plugin(?:Key|_key)"\s*:\s*"([^"]+)"/i) ||
     text.match(/pluginKey[=:]\s*([a-z0-9._-]+)/i)
-  return match?.[1] ?? null
+  if (match?.[1]) return match[1]
+  if (/weibo-api-wiki/i.test(text) || /微博开放平台内部\s*WIKI/i.test(text)) {
+    return 'weibo-api-wiki'
+  }
+  return null
+}
+
+export function extractConnectorAuthConnectorSlug(text: string | null | undefined): string | null {
+  if (!text) return null
+  const match =
+    text.match(/"connector(?:Slug|_slug)"\s*:\s*"([^"]+)"/i) ||
+    text.match(/connectorSlug[=:]\s*([a-z0-9._-]+)/i)
+  if (match?.[1]) return match[1]
+  const prose = text.match(/\b([a-z][a-z0-9._-]*)\s+Connector\b/i)
+  return prose?.[1] ?? null
+}
+
+/**
+ * Build a minimal auth target from assistant/tool text.
+ * Executor resolves localAuth from the on-disk plugin manifest, so the UI only
+ * needs pluginKey + connectorSlug.
+ */
+export function resolveLocalConnectorAuthHint(
+  text: string | null | undefined
+): { pluginKey: string; connectorSlug: string; displayName: string } | null {
+  if (!text || !messageRequiresConnectorAuth(text)) return null
+  let pluginKey = extractConnectorAuthPluginKey(text)
+  let connectorSlug = extractConnectorAuthConnectorSlug(text)
+  if (!pluginKey && connectorSlug) {
+    pluginKey = KNOWN_CONNECTOR_PLUGIN_KEYS[connectorSlug] ?? null
+  }
+  if (!connectorSlug && pluginKey === 'weibo-api-wiki') {
+    connectorSlug = 'weibo-wiki'
+  }
+  if (!pluginKey || !connectorSlug) return null
+  return {
+    pluginKey,
+    connectorSlug,
+    displayName: KNOWN_PLUGIN_DISPLAY_NAMES[pluginKey] ?? pluginKey,
+  }
+}
+
+function pluginHasLocalQrConnector(plugin: InstalledPlugin): boolean {
+  return (plugin.spec.components.connectors ?? []).some(connector => isLocalQrConnector(connector))
+}
+
+/**
+ * `plugin/installed` summaries omit connector localAuth. Enrich from plugin/read
+ * so mid-task QR resume can resolve health/start/poll commands.
+ */
+export async function enrichInstalledPluginsForLocalQr(
+  plugins: InstalledPlugin[],
+  readDetail: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
+): Promise<InstalledPlugin[]> {
+  return Promise.all(
+    plugins.map(async plugin => {
+      if (pluginHasLocalQrConnector(plugin)) return plugin
+      try {
+        const detailed = await readDetail(plugin)
+        return pluginHasLocalQrConnector(detailed) ? detailed : plugin
+      } catch {
+        return plugin
+      }
+    })
+  )
+}
+
+export function filterLocalQrRequirements(
+  plugins: InstalledPlugin[],
+  options?: {
+    pluginKey?: string | null
+    connectorSlug?: string | null
+  }
+): LocalQrConnectorRequirement[] {
+  const pluginKey = options?.pluginKey?.trim()
+  const connectorSlug = options?.connectorSlug?.trim()
+  let requirements = pluginKey
+    ? listLocalQrConnectors(plugins).filter(
+        item =>
+          item.pluginKey.toLowerCase() === pluginKey.toLowerCase() ||
+          item.displayName.toLowerCase() === pluginKey.toLowerCase()
+      )
+    : listLocalQrConnectors(plugins, { authPolicies: ['on_install', 'on_use'] })
+  if (connectorSlug) {
+    const matched = requirements.filter(
+      item => item.connectorSlug.toLowerCase() === connectorSlug.toLowerCase()
+    )
+    if (matched.length > 0) requirements = matched
+  }
+  return requirements
 }

@@ -72,6 +72,13 @@ export function isLocalQrConnector(
   return Boolean(connector?.localAuth?.kind === 'local_qr' || connector?.localAuth?.start?.length)
 }
 
+/** Decide manage-connection action from a local QR health probe. */
+export function localQrManageActionFromHealth(
+  health: LocalConnectorAuthResult | null | undefined
+): 'logout' | 'login' {
+  return health?.status === 'ok' ? 'logout' : 'login'
+}
+
 export function pollIntervalMs(localAuth?: PluginLocalAuthDefinition | null): number {
   const seconds = localAuth?.pollIntervalSeconds ?? 2
   return Math.max(1, Math.min(seconds, 30)) * 1000

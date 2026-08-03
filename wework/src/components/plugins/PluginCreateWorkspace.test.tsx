@@ -92,7 +92,11 @@ describe('PluginCreateWorkspace', () => {
 
     expect(screen.getByTestId('project-chat-composer')).toBeInTheDocument()
     expect(screen.getByTestId('composer-toolbar')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-creator-context')).toHaveTextContent('Plugin Creator')
+    const creatorContext = screen.getByTestId('plugin-creator-context')
+    expect(creatorContext).toHaveTextContent('Plugin Creator')
+    expect(creatorContext).toHaveClass('text-focus')
+    expect(screen.getByTestId('composer-input-leading-context')).toContainElement(creatorContext)
+    expect(screen.getByTestId('composer-toolbar')).not.toContainElement(creatorContext)
     expect(screen.getByTestId('plugin-create-submit-button')).toBeDisabled()
 
     const attachment = new File(['context'], 'requirements.txt', { type: 'text/plain' })
@@ -126,7 +130,9 @@ describe('PluginCreateWorkspace', () => {
     ])
     await waitFor(() =>
       expect(workbench.sendCurrentInput).toHaveBeenCalledWith(
-        expect.stringContaining('Create a release-notes plugin'),
+        expect.stringMatching(
+          /registered managed local marketplace named "wework-personal"[\s\S]*Do not use the Plugin Creator defaults under ~\/plugins or ~\/\.agents[\s\S]*Create a release-notes plugin/
+        ),
         expect.objectContaining({
           forceNewTask: true,
           additionalSkills: [

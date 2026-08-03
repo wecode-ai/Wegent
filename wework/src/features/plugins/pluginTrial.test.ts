@@ -11,7 +11,6 @@ import {
   pluginTrialInput,
   pluginTrialTemplates,
   queuePluginPromptTrial,
-  queuePluginCreatorChat,
   queuePluginReferenceTrial,
   queuePluginTrial,
   recordPluginUsage,
@@ -127,29 +126,6 @@ describe('plugin trial state', () => {
     expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
     expect(consumePluginTrialInput()).toBe('[$Documents](plugin://documents@OpenAI Bundled) ')
     expect(consumePluginTrialInput()).toBeNull()
-  })
-
-  test('queues Plugin Creator as an inline skill mention in a new chat', () => {
-    expect(
-      queuePluginCreatorChat({
-        name: 'plugin-creator',
-        path: '/Users/test/.codex/skills/.system/plugin-creator/SKILL.md',
-      })
-    ).toBe(true)
-
-    expect(consumePluginTrial()).toEqual({
-      input: '[$Plugin Creator](/Users/test/.codex/skills/.system/plugin-creator/SKILL.md) ',
-      pluginName: '',
-      templates: [],
-      openInNewChat: true,
-    })
-  })
-
-  test('does not queue an unrelated local skill as Plugin Creator', () => {
-    expect(queuePluginCreatorChat({ name: 'documents', path: '/tmp/documents/SKILL.md' })).toBe(
-      false
-    )
-    expect(consumePluginTrial()).toBeNull()
   })
 
   test('queues a canonical plugin reference without an installed plugin record', () => {

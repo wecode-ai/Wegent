@@ -1,7 +1,6 @@
-import type { InstalledPlugin, LocalDeviceSkill, PluginPathComponent } from '@/types/api'
+import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
-import { localSkillReference } from '@/lib/local-skill-reference'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
@@ -218,16 +217,6 @@ export function queuePluginTrial(
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
     templates: pluginTrialTemplates(plugin),
     openInNewChat,
-  })
-}
-
-export function queuePluginCreatorChat(skill: Pick<LocalDeviceSkill, 'name' | 'path'>): boolean {
-  if (skill.name !== 'plugin-creator' || !skill.path.trim()) return false
-  return queuePendingPluginTrial({
-    input: `${localSkillReference(skill, 'Plugin Creator')} `,
-    pluginName: '',
-    templates: [],
-    openInNewChat: true,
   })
 }
 

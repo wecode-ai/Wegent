@@ -27,6 +27,7 @@ import {
 } from '@/lib/native-workspace-path-picker'
 import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
+import { readComposerAppsSnapshot } from './composerAppsSnapshot'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -125,7 +126,9 @@ export function ComposerTextarea({
   const activeOptionCountRef = useRef(0)
   const suppressEnterUntilKeyUpRef = useRef(false)
   const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
-  const [apps, setApps] = useState<LocalDeviceApp[]>([])
+  const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
+    onListLocalApps ? readComposerAppsSnapshot() : []
+  )
   const [isComposing, setIsComposing] = useState(false)
   const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -495,7 +498,7 @@ export function ComposerTextarea({
         appsLoadedRef.current = false
         appsLoadingRef.current = false
         appsRequestIdRef.current += 1
-        setApps([])
+        // Keep stale apps visible while the new source refreshes.
       }
       if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
         return
@@ -548,7 +551,7 @@ export function ComposerTextarea({
       appsLoadingRef.current = false
       appsRequestIdRef.current += 1
       setSkills([])
-      setApps([])
+      // Keep stale composer apps visible while the forced refresh runs.
       setLoading(false)
       setLoadError(false)
       setAppsLoading(false)

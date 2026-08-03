@@ -36,6 +36,7 @@ import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
 } from '@/features/plugins/composerPluginMetadata'
+import { writeComposerAppsSnapshot } from '@/components/chat/composer/composerAppsSnapshot'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
@@ -235,6 +236,7 @@ export function WorkbenchProvider({
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
+  const localAppsInflightRef = useRef<Promise<LocalDeviceApp[]> | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
@@ -1541,72 +1543,90 @@ export function WorkbenchProvider({
     if (cached && cached.expiresAt > Date.now()) {
       return cached.apps
     }
+    if (localAppsInflightRef.current) {
+      return localAppsInflightRef.current
+    }
 
-    let apps: LocalDeviceApp[] = []
-    let installedPlugins: InstalledPlugin[] = []
-    try {
-      apps = await localPluginApi.listApps()
-    } catch (error) {
-      console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
-    }
-    try {
-      const localState = await localPluginApi.readState()
-      const cloudItems = await cloudPluginApi
-        .listInstalledPlugins(localState.deviceId || undefined)
-        .then(response => response.items)
-        .catch(() => [])
-      installedPlugins = mergeInstalledPlugins(
-        cloudItems,
-        localState.installedPlugins,
-        localState.deviceId
-      )
-    } catch (error) {
-      console.warn('[Wework] Failed to load Codex app plugin metadata.', error)
-    }
-    if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
+    const loadPromise = (async () => {
+      let apps: LocalDeviceApp[] = []
+      let installedPlugins: InstalledPlugin[] = []
       try {
-        const installedConnectors = await listWegentInstalledConnectorApps(
-          cloudConnection.apiBaseUrl,
-          cloudConnection.token
+        apps = await localPluginApi.listApps()
+      } catch (error) {
+        console.warn(
+          '[Wework] Failed to load local Codex apps; continuing with skills only.',
+          error
         )
-        const connectedApps = installedConnectors.apps.filter(app => app.enabled && app.callable)
-        const synced = await requestLocalExecutor<{
-          apps: Array<{ slug: string; skillPath: string }>
-        }>('runtime.connectors.apps.sync', {
-          apps: connectedApps.map(app => ({
-            slug: app.slug,
-            name: app.runtime_name ?? app.slug,
-            description: app.description ?? '',
-            tools: app.tool_summaries ?? [],
-          })),
-        })
-        const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
-        apps.push(
-          ...connectedApps.map(app => ({
-            id: `wegent:${app.slug}`,
-            name: app.runtime_name ?? app.slug,
-            description: app.description ?? '',
-            logoUrl: app.icon_url ?? null,
-            isAccessible: true,
-            isEnabled: true,
-            pluginDisplayNames: ['Wegent Cloud'],
-            source: 'wegent-connector',
-            skillPath: skillPathBySlug.get(app.slug) ?? null,
-          }))
+      }
+      try {
+        const localState = await localPluginApi.readState()
+        const cloudItems = await cloudPluginApi
+          .listInstalledPlugins(localState.deviceId || undefined)
+          .then(response => response.items)
+          .catch(() => [])
+        installedPlugins = mergeInstalledPlugins(
+          cloudItems,
+          localState.installedPlugins,
+          localState.deviceId
         )
       } catch (error) {
-        console.warn('[Wework] Failed to load Wegent connector apps.', error)
+        console.warn('[Wework] Failed to load Codex app plugin metadata.', error)
+      }
+      if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
+        try {
+          const installedConnectors = await listWegentInstalledConnectorApps(
+            cloudConnection.apiBaseUrl,
+            cloudConnection.token
+          )
+          const connectedApps = installedConnectors.apps.filter(app => app.enabled && app.callable)
+          const synced = await requestLocalExecutor<{
+            apps: Array<{ slug: string; skillPath: string }>
+          }>('runtime.connectors.apps.sync', {
+            apps: connectedApps.map(app => ({
+              slug: app.slug,
+              name: app.runtime_name ?? app.slug,
+              description: app.description ?? '',
+              tools: app.tool_summaries ?? [],
+            })),
+          })
+          const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+          apps.push(
+            ...connectedApps.map(app => ({
+              id: `wegent:${app.slug}`,
+              name: app.runtime_name ?? app.slug,
+              description: app.description ?? '',
+              logoUrl: app.icon_url ?? null,
+              isAccessible: true,
+              isEnabled: true,
+              pluginDisplayNames: ['Wegent Cloud'],
+              source: 'wegent-connector',
+              skillPath: skillPathBySlug.get(app.slug) ?? null,
+            }))
+          )
+        } catch (error) {
+          console.warn('[Wework] Failed to load Wegent connector apps.', error)
+        }
+      }
+      apps = appendInstalledPluginsAsComposerApps(
+        enrichComposerApps(apps, installedPlugins),
+        installedPlugins
+      )
+      localAppsCacheRef.current = {
+        expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+        apps,
+      }
+      writeComposerAppsSnapshot(apps)
+      return apps
+    })()
+
+    localAppsInflightRef.current = loadPromise
+    try {
+      return await loadPromise
+    } finally {
+      if (localAppsInflightRef.current === loadPromise) {
+        localAppsInflightRef.current = null
       }
     }
-    apps = appendInstalledPluginsAsComposerApps(
-      enrichComposerApps(apps, installedPlugins),
-      installedPlugins
-    )
-    localAppsCacheRef.current = {
-      expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-      apps,
-    }
-    return apps
   }, [
     cloudConnection.apiBaseUrl,
     cloudConnection.isConnected,
@@ -1615,17 +1635,25 @@ export function WorkbenchProvider({
     localPluginApi,
   ])
 
+  // Invalidate when cloud auth context changes, then warm the composer
+  // plugin cache so the conversation toolbar can paint without waiting for
+  // `/` or a plugin-picker click.
   useEffect(() => {
+    localSkillsCacheRef.current.clear()
+    localAppsCacheRef.current = null
+    localAppsInflightRef.current = null
+    void listLocalApps()
+
     const clearLocalSkillCache = () => {
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
+      localAppsInflightRef.current = null
     }
-    clearLocalSkillCache()
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     }
-  }, [cloudConnection.apiBaseUrl, cloudConnection.isConnected, cloudConnection.token])
+  }, [listLocalApps])
 
   const workspaceFileApi = useMemo(
     () => ({

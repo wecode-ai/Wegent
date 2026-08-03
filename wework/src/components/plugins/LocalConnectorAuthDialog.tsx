@@ -33,79 +33,100 @@ export function LocalConnectorAuthDialog({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
-  const cancelledRef = useRef(false)
-  const successRef = useRef(false)
+  const onSuccessRef = useRef(onSuccess)
+  const tRef = useRef(t)
+  const sessionRef = useRef(0)
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess
+    tRef.current = t
+  }, [onSuccess, t])
+
+  const pluginKey = target.pluginKey
+  const connectorSlug = target.connectorSlug
+  const pluginRoot = target.pluginRoot ?? null
+  const intervalMs = pollIntervalMs(target.localAuth)
+  const supportsLocalQr = isLocalQrConnector(target)
 
   useEffect(() => {
     if (!open) return
-    cancelledRef.current = false
-    successRef.current = false
+    const session = ++sessionRef.current
+    const isCurrent = () => sessionRef.current === session
     let timer: ReturnType<typeof setTimeout> | null = null
+    const authTarget: LocalConnectorAuthTarget = {
+      pluginKey,
+      connectorSlug,
+      ...(pluginRoot ? { pluginRoot } : {}),
+    }
 
     const start = async () => {
       setBusy(true)
       setError(null)
       setStatus(null)
       try {
-        if (!isLocalQrConnector(target)) {
+        if (!supportsLocalQr) {
           throw new Error('Connector does not support local QR authentication')
         }
-        const started = await localConnectorAuthStart(target)
-        if (cancelledRef.current) return
+        const started = await localConnectorAuthStart(authTarget)
+        if (!isCurrent()) return
+        setError(null)
         setStatus(started)
         if (started.status === 'ok') {
-          successRef.current = true
-          onSuccess(started)
+          onSuccessRef.current(started)
           return
         }
         const tick = async () => {
-          if (cancelledRef.current || successRef.current) return
+          if (!isCurrent()) return
           try {
-            const next = await localConnectorAuthPoll(target)
-            if (cancelledRef.current) return
+            const next = await localConnectorAuthPoll(authTarget)
+            if (!isCurrent()) return
             setStatus(previous => ({
               ...next,
               qrImage: next.qrImage ?? previous?.qrImage ?? null,
               qrPath: next.qrPath ?? previous?.qrPath ?? null,
             }))
             if (next.status === 'ok') {
-              successRef.current = true
-              onSuccess(next)
+              onSuccessRef.current(next)
               return
             }
             if (next.status === 'expired' || next.status === 'error') {
-              setError(next.hint || t('plugins_local_qr_expired', '二维码已失效，请重新开始登录'))
+              setError(
+                next.hint ||
+                  tRef.current('plugins_local_qr_expired', '二维码已失效，请重新开始登录')
+              )
               return
             }
-            timer = setTimeout(tick, pollIntervalMs(target.localAuth))
+            timer = setTimeout(tick, intervalMs)
           } catch (pollError) {
-            if (cancelledRef.current) return
+            if (!isCurrent()) return
             setError(
               pollError instanceof Error
                 ? pollError.message
-                : t('plugins_local_qr_poll_failed', '检查登录状态失败')
+                : tRef.current('plugins_local_qr_poll_failed', '检查登录状态失败')
             )
           }
         }
-        timer = setTimeout(tick, pollIntervalMs(target.localAuth))
+        timer = setTimeout(tick, intervalMs)
       } catch (startError) {
-        if (cancelledRef.current) return
+        if (!isCurrent()) return
         setError(
           startError instanceof Error
             ? startError.message
-            : t('plugins_local_qr_start_failed', '无法生成登录二维码')
+            : tRef.current('plugins_local_qr_start_failed', '无法生成登录二维码')
         )
       } finally {
-        if (!cancelledRef.current) setBusy(false)
+        if (isCurrent()) setBusy(false)
       }
     }
 
     void start()
     return () => {
-      cancelledRef.current = true
+      if (sessionRef.current === session) {
+        sessionRef.current += 1
+      }
       if (timer) clearTimeout(timer)
     }
-  }, [open, onSuccess, refreshKey, t, target])
+  }, [open, refreshKey, pluginKey, connectorSlug, pluginRoot, intervalMs, supportsLocalQr])
 
   if (!open) return null
 

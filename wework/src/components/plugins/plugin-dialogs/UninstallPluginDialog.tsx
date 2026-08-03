@@ -46,10 +46,14 @@ export function UninstallPluginDialog({
           {t('workbench.plugins_uninstall_plugin_title', '卸载插件？')}
         </h2>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {t('workbench.plugins_uninstall_plugin_description', '{{name}} 将从当前账号卸载。', {
-            name: pluginName,
-            defaultValue: `${pluginName} 将从当前账号卸载。`,
-          })}
+          {t(
+            'workbench.plugins_uninstall_plugin_description',
+            '{{name}} 将从当前账号和本机卸载，并清除本机登录态与安装缓存；市场仍可重新安装。',
+            {
+              name: pluginName,
+              defaultValue: `${pluginName} 将从当前账号和本机卸载，并清除本机登录态与安装缓存；市场仍可重新安装。`,
+            }
+          )}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button

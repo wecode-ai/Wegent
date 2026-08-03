@@ -18,6 +18,7 @@ import type {
   PluginMarketplaceItem,
   PluginMarketplaceListResponse,
 } from '@/types/api'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -494,7 +495,7 @@ function toMarketplaceItem(
   detail?: CodexPluginDetail | null
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
-  const isPersonal = marketplace.name === 'wegent-personal'
+  const isPersonal = marketplace.name === WEWORK_PERSONAL_MARKETPLACE_ID
   return {
     id: plugin.id,
     remotePluginId: plugin.remotePluginId ?? plugin.id,
@@ -532,7 +533,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
-  const isCreated = marketplace.name === 'wegent-personal'
+  const isCreated = marketplace.name === WEWORK_PERSONAL_MARKETPLACE_ID
   const skillStates = Object.fromEntries(
     (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
   )
@@ -809,10 +810,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       const currentState = cachedState ?? (await readState())
       const personalMarketplace = currentState.marketplaces.find(
-        marketplace => marketplace.id === 'wegent-personal'
+        marketplace => marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID
       )
       if (!personalMarketplace || !isLocalMarketplacePath(personalMarketplace.path)) {
-        throw new Error('The wegent-personal marketplace is unavailable')
+        throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
       }
       const imported = await invoke<LocalPluginCopyImportResult>(
         'local_executor_import_plugin_copy',

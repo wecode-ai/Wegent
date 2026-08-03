@@ -16,78 +16,113 @@ interface ConnectorAuthCardProps {
   onCancel?: () => void
 }
 
+function startErrorMessage(startError: unknown, fallback: string): string {
+  if (startError instanceof Error) return startError.message
+  if (
+    typeof startError === 'object' &&
+    startError &&
+    'message' in startError &&
+    typeof (startError as { message: unknown }).message === 'string'
+  ) {
+    return (startError as { message: string }).message
+  }
+  return fallback
+}
+
 export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: ConnectorAuthCardProps) {
   const { t } = useTranslation('chat')
   const [status, setStatus] = useState<LocalConnectorAuthResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const cancelledRef = useRef(false)
-  const successRef = useRef(false)
+  const [retryNonce, setRetryNonce] = useState(0)
+  const onSuccessRef = useRef(onSuccess)
+  const tRef = useRef(t)
+  const sessionRef = useRef(0)
 
   useEffect(() => {
-    cancelledRef.current = false
-    successRef.current = false
+    onSuccessRef.current = onSuccess
+    tRef.current = t
+  }, [onSuccess, t])
+
+  const pluginKey = target.pluginKey
+  const connectorSlug = target.connectorSlug
+  const pluginRoot = target.pluginRoot ?? null
+  const intervalMs = pollIntervalMs(target.localAuth)
+
+  useEffect(() => {
+    const session = ++sessionRef.current
+    const isCurrent = () => sessionRef.current === session
     let timer: ReturnType<typeof setTimeout> | null = null
+    const authTarget: LocalConnectorAuthTarget = {
+      pluginKey,
+      connectorSlug,
+      ...(pluginRoot ? { pluginRoot } : {}),
+    }
 
     const run = async () => {
+      setError(null)
+      setStatus(null)
       try {
-        const started = await localConnectorAuthStart(target)
-        if (cancelledRef.current) return
+        const started = await localConnectorAuthStart(authTarget)
+        if (!isCurrent()) return
+        setError(null)
         setStatus(started)
         if (started.status === 'ok') {
-          successRef.current = true
-          onSuccess(started)
+          onSuccessRef.current(started)
           return
         }
         const tick = async () => {
-          if (cancelledRef.current || successRef.current) return
+          if (!isCurrent()) return
           try {
-            const next = await localConnectorAuthPoll(target)
-            if (cancelledRef.current) return
+            const next = await localConnectorAuthPoll(authTarget)
+            if (!isCurrent()) return
             setStatus(previous => ({
               ...next,
               qrImage: next.qrImage ?? previous?.qrImage ?? null,
               qrPath: next.qrPath ?? previous?.qrPath ?? null,
             }))
             if (next.status === 'ok') {
-              successRef.current = true
-              onSuccess(next)
+              onSuccessRef.current(next)
               return
             }
             if (next.status === 'expired' || next.status === 'error') {
-              setError(next.hint || t('connector_auth_expired', '二维码已失效，请重试'))
+              setError(next.hint || tRef.current('connector_auth_expired', '二维码已失效，请重试'))
               return
             }
-            timer = setTimeout(tick, pollIntervalMs(target.localAuth))
+            timer = setTimeout(tick, intervalMs)
           } catch (pollError) {
-            if (cancelledRef.current) return
+            if (!isCurrent()) return
             setError(
               pollError instanceof Error
                 ? pollError.message
-                : t('connector_auth_poll_failed', '检查登录状态失败')
+                : tRef.current('connector_auth_poll_failed', '检查登录状态失败')
             )
           }
         }
-        timer = setTimeout(tick, pollIntervalMs(target.localAuth))
+        timer = setTimeout(tick, intervalMs)
       } catch (startError) {
-        if (cancelledRef.current) return
+        if (!isCurrent()) return
         setError(
-          startError instanceof Error
-            ? startError.message
-            : t('connector_auth_start_failed', '无法生成登录二维码')
+          startErrorMessage(
+            startError,
+            tRef.current('connector_auth_start_failed', '无法生成登录二维码')
+          )
         )
       }
     }
 
     void run()
     return () => {
-      cancelledRef.current = true
+      if (sessionRef.current === session) {
+        sessionRef.current += 1
+      }
       if (timer) clearTimeout(timer)
     }
-  }, [onSuccess, t, target])
+  }, [pluginKey, connectorSlug, pluginRoot, intervalMs, retryNonce])
 
   const qrSrc = status?.qrImage?.dataUrl || null
-  const statusText =
-    status?.status === 'scanned'
+  const statusText = error
+    ? error
+    : status?.status === 'scanned'
       ? t('connector_auth_scanned', '已扫码，请在手机上确认登录')
       : status?.status === 'waiting_scan' || status?.status === 'need_scan'
         ? t('connector_auth_waiting', '请用新浪口袋扫描二维码')
@@ -110,13 +145,20 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
         </p>
       </div>
       <div className="flex flex-col items-center gap-3 rounded-xl bg-muted/30 p-4">
-        {qrSrc ? (
+        {qrSrc && !error ? (
           <img
             src={qrSrc}
             alt="Login QR code"
             className="h-52 w-52 rounded-lg bg-white p-2"
             data-testid="connector-auth-qr"
           />
+        ) : error ? (
+          <div className="flex h-52 w-52 flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-background p-3 text-center">
+            <QrCode className="h-7 w-7 text-muted-foreground" />
+            <p className="text-xs text-destructive" data-testid="connector-auth-error">
+              {error}
+            </p>
+          </div>
         ) : (
           <div className="flex h-52 w-52 items-center justify-center rounded-lg border border-dashed bg-background">
             <Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
@@ -126,10 +168,19 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
           <QrCode className="h-4 w-4 text-muted-foreground" />
           <span>{statusText}</span>
         </div>
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </div>
-      {onCancel ? (
-        <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex justify-end gap-2">
+        {error ? (
+          <button
+            type="button"
+            className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+            data-testid="connector-auth-retry"
+            onClick={() => setRetryNonce(value => value + 1)}
+          >
+            {t('workbench.retry', '重试')}
+          </button>
+        ) : null}
+        {onCancel ? (
           <button
             type="button"
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
@@ -137,8 +188,8 @@ export function ConnectorAuthCard({ target, title, onSuccess, onCancel }: Connec
           >
             {t('common.cancel', '取消')}
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   )
 }

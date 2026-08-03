@@ -2541,7 +2541,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               <ChevronRight className="h-4 w-4" aria-hidden="true" />
                             </button>
                           )}
-                          {!rightPanelExpanded && (
+                          {connectorAuthGate.pending ? (
+                            <ConnectorAuthCard
+                              target={connectorAuthGate.pending.target}
+                              title={connectorAuthGate.pending.title}
+                              onSuccess={() => {
+                                void connectorAuthGate.completePending()
+                              }}
+                              onCancel={connectorAuthGate.clearPending}
+                            />
+                          ) : !rightPanelExpanded ? (
                             <>
                               {showConversationDeviceBanner ? (
                                 <ConversationDeviceOfflineBanner
@@ -2561,16 +2570,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   className="mb-2"
                                 />
                               )}
-                              {connectorAuthGate.pending ? (
-                                <ConnectorAuthCard
-                                  target={connectorAuthGate.pending.target}
-                                  title={connectorAuthGate.pending.title}
-                                  onSuccess={() => {
-                                    void connectorAuthGate.completePending()
-                                  }}
-                                  onCancel={connectorAuthGate.clearPending}
-                                />
-                              ) : pendingRequestUserInput ? (
+                              {pendingRequestUserInput ? (
                                 <RequestUserInputCard
                                   key={
                                     requestUserInputPayloadKey(pendingRequestUserInput) ??
@@ -2648,7 +2648,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 />
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     </>
