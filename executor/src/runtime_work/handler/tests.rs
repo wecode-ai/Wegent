@@ -1334,11 +1334,15 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let event = event_rx
         .try_recv()
         .expect("a non-active turn should still be routed by its own identity");
-    assert_eq!(event["event"], "response.output_text.delta");
+    assert_eq!(event["event"], "response.block.created");
     assert_eq!(event["payload"]["taskId"], local_task_id);
     assert_eq!(event["payload"]["subtaskId"], "turn-earlier");
-    assert_eq!(event["payload"]["data"]["delta"], "Earlier");
-    assert_eq!(event["payload"]["data"]["itemId"], "msg-earlier");
+    assert_eq!(event["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(event["payload"]["data"]["block"]["content"], "Earlier");
+    assert_eq!(
+        event["payload"]["data"]["block"]["process_item_id"],
+        "msg-earlier"
+    );
 
     let _ = fs::remove_file(index_path);
 }
