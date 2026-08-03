@@ -2035,7 +2035,10 @@ function AssistantMessage({
             </div>
           ) : null}
           {usesFinalProcessingShell ? (
-            <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
+            <div
+              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              data-testid="final-processing-timeline"
+            >
               <button
                 type="button"
                 data-testid="final-processing-toggle"
