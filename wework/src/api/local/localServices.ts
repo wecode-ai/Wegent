@@ -1926,13 +1926,8 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
-    let selectedModel = findLocalModelConfigByModelName(data.modelId)
-    try {
-      await ensureLocalModelApiKeysHydrated()
-      selectedModel = findLocalModelConfigByModelName(data.modelId)
-    } catch (error) {
-      if (selectedModel?.apiKeyConfigured && !selectedModel.apiKey) throw error
-    }
+    await ensureLocalModelApiKeysHydrated()
+    const selectedModel = findLocalModelConfigByModelName(data.modelId)
     if (!options.syncConfiguredModelCatalog) return true
     if (!selectedModel?.catalogEntry) return true
 
