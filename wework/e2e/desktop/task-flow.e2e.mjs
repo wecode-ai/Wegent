@@ -2418,7 +2418,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     assert.equal(
       reopenedPrioritySnapshot.testIds.includes('runtime-priority-empty'),
       true,
-      'Reopening the priority filter did not rebuild the handled task into Recent'
+      'Reopening the priority filter left the handled task in the Priority group'
     )
     await captureVerificationScreenshot(control, 'priority-filter-04-reopened-task-in-recent.png')
 

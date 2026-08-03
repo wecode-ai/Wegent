@@ -62,6 +62,8 @@
     "priority_filter_mark_all_read": "Mark all as read",
     "priority_filter_archive": "Archive tasks",
     "priority_filter_archive_title": "Archive {{count}} priority tasks?",
+    "priority_filter_archive_title_one": "Archive {{count}} priority task?",
+    "priority_filter_archive_title_other": "Archive {{count}} priority tasks?",
     "priority_filter_archive_description": "Only tasks in Priority will be archived. Recent tasks won't be archived.",
     "projects": "Projects",
     "project": "Project",

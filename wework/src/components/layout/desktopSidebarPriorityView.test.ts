@@ -59,6 +59,7 @@ describe('desktopSidebarPriorityView', () => {
         source('today'),
         source('yesterday', { recencyAt: new Date('2026-08-02T09:00:00').getTime() }),
         source('weekday', { recencyAt: new Date('2026-07-29T09:00:00').getTime() }),
+        source('cutoff', { recencyAt: new Date('2026-07-28T00:00:00').getTime() }),
         source('old', { recencyAt: new Date('2026-07-27T23:59:59').getTime() }),
       ],
       false,
@@ -70,6 +71,7 @@ describe('desktopSidebarPriorityView', () => {
         source('today'),
         source('yesterday', { recencyAt: new Date('2026-08-02T09:00:00').getTime() }),
         source('weekday', { recencyAt: new Date('2026-07-29T09:00:00').getTime() }),
+        source('cutoff', { recencyAt: new Date('2026-07-28T00:00:00').getTime() }),
         source('old', { recencyAt: new Date('2026-07-27T23:59:59').getTime() }),
       ],
       false
@@ -79,7 +81,9 @@ describe('desktopSidebarPriorityView', () => {
       'today',
       'yesterday',
       'weekday',
+      'weekday',
     ])
+    expect(view.recentGroups.flatMap(group => group.items)).toContainEqual({ key: 'cutoff' })
     expect(view.recentGroups.flatMap(group => group.items)).not.toContainEqual({ key: 'old' })
   })
 

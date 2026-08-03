@@ -1,5 +1,5 @@
 import { Archive, MailOpen, Pin } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DesktopSidebarPriorityRecentGroup } from './desktopSidebarPriorityView'
@@ -32,7 +32,11 @@ export function DesktopSidebarPrioritySection<Item>({
   onArchivePriority,
 }: DesktopSidebarPrioritySectionProps<Item>) {
   const { i18n, t } = useTranslation('common')
-  const hasAttentionItems = priorityItems.length > 0 || pinnedItems.length > 0
+  const language = i18n.resolvedLanguage || i18n.language
+  const weekdayFormatter = useMemo(
+    () => new Intl.DateTimeFormat(language, { weekday: 'long' }),
+    [language]
+  )
   const formatRecentGroupTitle = (group: DesktopSidebarPriorityRecentGroup<Item>): string => {
     if (group.relativeDay === 'today') {
       return t('workbench.priority_filter_today', '今天')
@@ -40,9 +44,7 @@ export function DesktopSidebarPrioritySection<Item>({
     if (group.relativeDay === 'yesterday') {
       return t('workbench.priority_filter_yesterday', '昨天')
     }
-    return new Intl.DateTimeFormat(i18n.resolvedLanguage || i18n.language, {
-      weekday: 'long',
-    }).format(group.dayStart)
+    return weekdayFormatter.format(group.dayStart)
   }
   const renderList = (items: Item[], testId: string) => (
     <div data-testid={testId} role="list" className="flex flex-col gap-px">
@@ -55,7 +57,7 @@ export function DesktopSidebarPrioritySection<Item>({
   )
 
   return (
-    <div data-testid="runtime-priority-section" className="mt-1 flex flex-col px-0.5" role="list">
+    <div data-testid="runtime-priority-section" className="mt-1 flex flex-col px-0.5">
       <section>
         <div className="group/priority flex h-[30px] items-center px-2.5">
           <span className="text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
@@ -94,7 +96,7 @@ export function DesktopSidebarPrioritySection<Item>({
             />
           </div>
         </div>
-        {!hasAttentionItems ? (
+        {priorityItems.length === 0 ? (
           <div
             data-testid="runtime-priority-empty"
             className="px-3 py-2 text-sm text-[rgb(var(--color-sidebar-text-muted))]"

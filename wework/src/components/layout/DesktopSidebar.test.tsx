@@ -1034,9 +1034,14 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-unread-dot-existing-recent')).toBeInTheDocument()
   })
 
-  test('marks unread priority tasks as read and archives only the priority group', async () => {
+  test('marks unread priority tasks as read and continues scoped archiving after a failure', async () => {
     const onMarkRuntimeTaskRead = vi.fn()
-    const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const archiveError = new Error('Device offline')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onArchiveRuntimeTask = vi
+      .fn()
+      .mockRejectedValueOnce(archiveError)
+      .mockResolvedValue(undefined)
     const updatedAt = new Date().toISOString()
     renderSidebar({
       runtimeWork: {
@@ -1104,6 +1109,9 @@ describe('DesktopSidebar', () => {
       'priority-unread',
       'priority-waiting',
     ])
+    expect(consoleError).toHaveBeenCalledWith('Failed to archive priority task', archiveError)
+    expect(screen.queryByTestId('runtime-priority-archive-dialog')).not.toBeInTheDocument()
+    consoleError.mockRestore()
   })
 
   test('sorts priority tasks with numeric-string timestamps', async () => {
@@ -1298,6 +1306,12 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-priority-filter-attention-dot')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
     expect(screen.getByTestId('runtime-local-task-row-pinned-waiting')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-toggle-pinned'))
+    expect(screen.getByTestId('runtime-priority-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-pinned-list')).toHaveTextContent(
+      'Pinned waiting task'
+    )
   })
 
   test('keeps search in the product header and orders primary sidebar actions', () => {

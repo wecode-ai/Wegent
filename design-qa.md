@@ -2,13 +2,14 @@
 
 ## Sources
 
-- Reference screenshot: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785728366836/image.png`
-- Previous Wework screenshot: `/Users/axb-mac/.wegent-executor/workspace/attachments/draft/1785728373311/image.png`
-- Reference implementation: `/Users/axb-mac/dev/aigc/wegent_workspace/chatgpt-app-asar/webview/assets/app-initial-DRyZ1Lin.js`
-- Verified implementation screenshot: `wework/test-results/ai-verify/2026-08-03T03-51-11-593Z-40243/priority-sidebar.png`
-- Recent-after-reopen screenshot: `wework/test-results/ai-verify/2026-08-03T06-19-53-806Z-59202/priority-recent-after-reopen.png`
-- Dynamic-append screenshot: `wework/test-results/ai-verify/2026-08-03T06-19-53-806Z-59202/priority-dynamic-append.png`
-- Desktop E2E evidence: `wework/test-results/desktop-e2e/2026-08-03T06-24-35-705Z-80140`
+- User-provided ChatGPT and previous Wework priority-sidebar screenshots attached to
+  the task.
+- ChatGPT desktop implementation inspected from the supplied local app bundle; no
+  extracted ChatGPT source or asset is shipped.
+- Real Tauri screenshots were inspected during development and retained as local,
+  ignored verification artifacts.
+- Reproducible automated evidence is the `priority-filter` checkpoint in
+  `wework/e2e/desktop/task-flow.e2e.mjs` and its Wework Desktop E2E CI job.
 
 ## Verification context
 
@@ -57,6 +58,24 @@ The implementation follows the session model used by ChatGPT's priority view:
 Wework does not expose scheduled-task metadata through `RuntimeTaskSummary`, so the
 ChatGPT “Show scheduled” option is intentionally not fabricated.
 
+## QA plan and results
+
+| Behavior               | Preconditions and exact steps                                                                                                       | Expected and actual result                                                                                                                                                          | Negative and recovery coverage                                                                                                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read persistence       | Start an isolated Tauri instance, create a waiting task, open Priority, open the task, answer its request, and wait for completion. | The handled task remains in Priority for the current session. Passed in real Tauri and the CI checkpoint.                                                                           | Closing and reopening Priority rebuilds placement; the handled task moves to Today under Recent and Priority shows its empty state.                                                   |
+| Dynamic reconciliation | Keep Priority open with one Recent task, then create a new waiting task.                                                            | The new urgent task appends to Priority without moving the existing Recent task. Passed in real Tauri and component tests.                                                          | If an existing Recent task becomes unread, it remains in Recent for that session; deleting or archiving a task removes it from the snapshot.                                          |
+| Show pinned            | Open Priority with a pinned waiting task, open the options menu, and toggle Show pinned on and off.                                 | On: the task moves to Pinned and Priority shows its empty state when no unpinned urgent task remains. Off: it returns to Priority. Passed in component and real-Tauri verification. | The global attention dot still reports the pinned urgent task while pinned items are not separated.                                                                                   |
+| Seven-day Recent       | Activate Priority at a fixed local time with tasks on Today, Yesterday, the seventh-day cutoff, and one second before the cutoff.   | The first three dates are grouped and the older task is excluded. Passed in pure state-model tests, including the inclusive cutoff boundary.                                        | Reopening creates a fresh local-calendar cutoff; stale and missing tasks are pruned.                                                                                                  |
+| Mark all read          | Open Priority with unread, waiting, pinned, and Recent tasks; choose Mark all as read.                                              | Only unread tasks currently placed in Priority receive the read action. Passed in component tests.                                                                                  | The action is disabled when Priority has no unread item and does not mutate Recent or separately pinned tasks.                                                                        |
+| Bulk archive           | Open Priority with multiple urgent tasks and a Recent task; choose Archive tasks and confirm.                                       | Every Priority item is attempted; Recent and separately pinned items are not archived. Passed in component tests.                                                                   | A rejected item is logged and does not stop later items; the dialog closes. Dirty worktrees are collected into the force-confirmation recovery dialog, and cancel leaves them intact. |
+
+## Cleanup
+
+- Stopped the isolated Tauri session and its session-local Executor process group.
+- Kept generated screenshots and desktop diagnostics under ignored test-result
+  directories; no local authentication data or runtime artifacts are committed.
+- The CI checkpoint creates and removes its own isolated workspace and task fixtures.
+
 ## Iteration history
 
 1. Replaced the dense one-line priority rendering with a dedicated two-line layout.
@@ -74,7 +93,7 @@ ChatGPT “Show scheduled” option is intentionally not fabricated.
 ## Verification
 
 - Focused priority unit and component tests: 95 passed.
-- Full Wework test suite: 2,588 passed.
+- Full Wework test suite after merging the latest `main`: 2,609 passed.
 - TypeScript typecheck: passed.
 - Changed-file ESLint and Prettier checks: passed.
 - Real isolated Tauri interaction chain: passed.

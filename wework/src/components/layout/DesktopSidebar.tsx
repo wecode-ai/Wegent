@@ -1687,16 +1687,6 @@ function RuntimeTaskRow({
                   >
                     <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
                   </span>
-                ) : priorityReason === 'waiting' && priorityLayout ? (
-                  <span
-                    data-testid={`runtime-local-task-waiting-${task.taskId}`}
-                    role="status"
-                    title={t('workbench.priority_filter_waiting', '等待回复')}
-                    aria-label={t('workbench.priority_filter_waiting', '等待回复')}
-                    className="flex h-[30px] w-[30px] items-center justify-center"
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                  </span>
                 ) : priorityReason === 'waiting' ? (
                   <span
                     data-testid={`runtime-local-task-waiting-${task.taskId}`}
@@ -1705,7 +1695,11 @@ function RuntimeTaskRow({
                     aria-label={t('workbench.priority_filter_waiting', '等待回复')}
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    {priorityLayout ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : (
+                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    )}
                   </span>
                 ) : unread ? (
                   <span
@@ -2921,12 +2915,16 @@ export function DesktopSidebar({
     const dirtyItems: RuntimePriorityTaskItem[] = []
     try {
       for (const item of items) {
-        const result = await onArchiveRuntimeTask(
-          getRuntimeTaskAddress(item.workspace, item.task),
-          options
-        )
-        if (!options?.force && result?.status === 'dirty_worktree') {
-          dirtyItems.push(item)
+        try {
+          const result = await onArchiveRuntimeTask(
+            getRuntimeTaskAddress(item.workspace, item.task),
+            options
+          )
+          if (!options?.force && result?.status === 'dirty_worktree') {
+            dirtyItems.push(item)
+          }
+        } catch (error) {
+          console.error('Failed to archive priority task', error)
         }
       }
       setPriorityArchiveItems(null)
@@ -4047,7 +4045,7 @@ export function DesktopSidebar({
             submitting={isArchivingPriority}
             testId="runtime-priority-archive-dialog"
             onClose={closePriorityArchiveDialog}
-            onConfirm={() => runPriorityArchive(priorityArchiveItems ?? [])}
+            onConfirm={() => void runPriorityArchive(priorityArchiveItems ?? [])}
           />
           <ArchiveConversationsConfirmDialog
             open={priorityForceArchiveItems !== null}
@@ -4058,7 +4056,9 @@ export function DesktopSidebar({
             submitting={isArchivingPriority}
             testId="runtime-priority-force-archive-dialog"
             onClose={closePriorityForceArchiveDialog}
-            onConfirm={() => runPriorityArchive(priorityForceArchiveItems ?? [], { force: true })}
+            onConfirm={() =>
+              void runPriorityArchive(priorityForceArchiveItems ?? [], { force: true })
+            }
           />
           <ArchiveConversationsConfirmDialog
             open={archiveSectionMode !== null}
