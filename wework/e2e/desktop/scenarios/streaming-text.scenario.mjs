@@ -169,7 +169,7 @@ function reasoningEvents(itemId, text) {
   ]
 }
 
-function streamingEvents(id) {
+function streamingEvents(id, completionText = COMPLETION_TEXT) {
   const itemId = `${id}-message`
   return {
     itemId,
@@ -200,7 +200,7 @@ function streamingEvents(id) {
         item_id: itemId,
         output_index: 0,
         content_index: 0,
-        text: COMPLETION_TEXT,
+        text: completionText,
       },
       {
         type: 'response.output_item.done',
@@ -210,7 +210,7 @@ function streamingEvents(id) {
           type: 'message',
           status: 'completed',
           role: 'assistant',
-          content: [{ type: 'output_text', text: COMPLETION_TEXT, annotations: [] }],
+          content: [{ type: 'output_text', text: completionText, annotations: [] }],
         },
       },
       responseCompleted(id),
@@ -459,7 +459,9 @@ export function createDesktopScenario({
   let releaseResponse
   let releaseStart
   let releaseToolCompletion
+  let releaseToolFinalCompletion
   let resolveRequest
+  let resolveToolFinalTextStarted
   let resolveToolFollowUp
   let targetRequest
   const appendRelease = new Promise(resolve => {
@@ -479,6 +481,12 @@ export function createDesktopScenario({
   })
   const toolFollowUpReceived = new Promise(resolve => {
     resolveToolFollowUp = resolve
+  })
+  const toolFinalTextStarted = new Promise(resolve => {
+    resolveToolFinalTextStarted = resolve
+  })
+  const toolFinalCompletionRelease = new Promise(resolve => {
+    releaseToolFinalCompletion = resolve
   })
 
   const verifyStoppedTurnOrder = async control => {
@@ -583,15 +591,19 @@ export function createDesktopScenario({
         toolRegressionStage = 'awaiting-completion-release'
         resolveToolFollowUp()
         await toolCompletionRelease
+        const stream = streamingEvents(responseId, TOOL_COMPLETION)
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse(stream.start))
+        await writeSseEvents(response, textDeltaEvents(stream.itemId, TOOL_COMPLETION))
+        resolveToolFinalTextStarted()
+        await toolFinalCompletionRelease
         toolRegressionStage = 'complete'
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(TOOL_COMPLETION),
-            responseCompleted(responseId),
-          ])
-        )
+        response.end(sse(stream.finish))
         return true
       }
 
@@ -706,10 +718,21 @@ export function createDesktopScenario({
       })
       await capture(control, 'streaming-text-00-live-reasoning-summary.png')
       releaseToolCompletion()
+      await toolFinalTextStarted
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TOOL_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const liveFinalTextSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        liveFinalTextSnapshot.text.includes(REASONING_PREVIEW),
+        false,
+        'The stale reasoning summary remained visible after assistant text started streaming'
+      )
+      await capture(control, 'streaming-text-01-reasoning-hidden-during-text.png')
+      releaseToolFinalCompletion()
       const toolRegressionSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -722,7 +745,7 @@ export function createDesktopScenario({
         false,
         'The collapsed reasoning disclosure exposed its full summary'
       )
-      await capture(control, 'streaming-text-01-processing-collapsed.png')
+      await capture(control, 'streaming-text-02-processing-collapsed.png')
       await control.command('click', '[data-testid="final-processing-toggle"]')
       const expandedProcessingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -737,7 +760,7 @@ export function createDesktopScenario({
         false,
         'The completed response retained its reasoning summary'
       )
-      await capture(control, 'streaming-text-02-reasoning-removed.png')
+      await capture(control, 'streaming-text-03-reasoning-removed.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

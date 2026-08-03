@@ -1854,12 +1854,19 @@ function getDisplayProcessingBlocks(
     })
 }
 
-function getLatestThinkingContent(blocks: ProcessingBlock[] | undefined): string {
+function getLatestActiveThinkingContent(blocks: ProcessingBlock[] | undefined): string {
   if (!blocks?.length) return ''
 
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index]
-    if (block?.type === 'thinking' && block.content.trim()) return block.content
+    if (
+      block?.type === 'thinking' &&
+      block.status !== 'done' &&
+      block.status !== 'error' &&
+      block.content.trim()
+    ) {
+      return block.content
+    }
   }
 
   return ''
@@ -1942,7 +1949,9 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
-  const activeThinkingContent = isStreaming ? getLatestThinkingContent(message.blocks) : ''
+  const activeThinkingContent = isStreaming
+    ? (message.streamingThinkingContent ?? getLatestActiveThinkingContent(message.blocks))
+    : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning

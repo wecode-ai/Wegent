@@ -84,7 +84,12 @@ export function reduceRuntimeConversationTurns(
             })
           }
         }
-        return { ...turn, items, status: 'streaming' }
+        return {
+          ...turn,
+          items,
+          status: 'streaming',
+          streamingThinkingContent: resolveStreamingThinkingContent(turn, action, items),
+        }
       })
     case 'assistant_cached':
       return updateTurn(turns, action.subtaskId, turn => ({
@@ -97,6 +102,7 @@ export function reduceRuntimeConversationTurns(
         ...turn,
         items: upsertBlocks(turn.items, action.blocks),
         status: 'done',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         fileChanges: action.fileChanges ?? turn.fileChanges,
         error: undefined,
@@ -106,6 +112,7 @@ export function reduceRuntimeConversationTurns(
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'cancelled',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         stoppedNotice: true,
       }))
@@ -113,6 +120,7 @@ export function reduceRuntimeConversationTurns(
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'failed',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         error: action.error,
         errorType: action.errorType,
@@ -123,22 +131,44 @@ export function reduceRuntimeConversationTurns(
         fileChanges: action.fileChanges,
       }))
     case 'block_created':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: upsertBlocks(turn.items, [action.block]),
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        const items = upsertBlocks(turn.items, [action.block])
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            action.block.type === 'thinking' || action.block.type === 'tool'
+              ? latestThinkingContent(items)
+              : action.block.type === 'text' || action.block.type === 'plan'
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
     case 'block_updated':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: turn.items.map(item =>
+      return updateTurn(turns, action.subtaskId, turn => {
+        const previousBlock = turn.items.find(
+          item => item.type === 'block' && item.id === action.blockId
+        )
+        const items = turn.items.map(item =>
           item.type === 'block' && item.id === action.blockId
             ? {
                 ...item,
                 block: mergeProcessingBlockUpdate(item.block, action.updates),
               }
             : item
-        ),
-      }))
+        )
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            previousBlock?.type === 'block' && previousBlock.block.type === 'thinking'
+              ? latestThinkingContent(items)
+              : previousBlock?.type === 'block' &&
+                  (previousBlock.block.type === 'text' || previousBlock.block.type === 'plan')
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
   }
 }
 
@@ -205,6 +235,9 @@ function mergeRuntimeConversationTurn(
 ): RuntimeConversationTurn {
   const items = mergeRuntimeConversationItems(local.items, snapshot.items)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
+  const preserveStreamingThinking =
+    snapshot.status === 'streaming' &&
+    assistantTextContent(local.items) === assistantTextContent(snapshot.items)
   return {
     ...local,
     ...snapshot,
@@ -215,6 +248,9 @@ function mergeRuntimeConversationTurn(
     completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
     error: preserveLocalFailure ? local.error : snapshot.error,
     errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
+    streamingThinkingContent: preserveStreamingThinking
+      ? local.streamingThinkingContent
+      : snapshot.streamingThinkingContent,
   }
 }
 
@@ -532,6 +568,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       errorType: isLast ? turn.errorType : undefined,
       completedAt: isLast ? turn.completedAt : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
+      streamingThinkingContent: isLast ? turn.streamingThinkingContent : undefined,
       references: isLast ? turn.references : undefined,
       memoryCitations: isLast ? turn.memoryCitations : undefined,
       runtimeGuidanceSplitBefore: splitBefore || undefined,
@@ -579,6 +616,31 @@ function projectedGuidanceBlock(
 function turnStatus(turn: RuntimeConversationTurn): WorkbenchMessage['status'] {
   if (turn.status === 'cancelled') return 'done'
   return turn.status
+}
+
+function resolveStreamingThinkingContent(
+  turn: RuntimeConversationTurn,
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>,
+  items: RuntimeConversationItem[]
+): string | undefined {
+  if (action.reasoningChunk) return latestThinkingContent(items)
+  if (action.blocks?.some(block => block.type === 'tool')) return latestThinkingContent(items)
+  if (action.content) return undefined
+  return turn.streamingThinkingContent
+}
+
+function latestThinkingContent(items: RuntimeConversationItem[]): string | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item?.type === 'block' && item.block.type === 'thinking' && item.block.content.trim()) {
+      return item.block.content
+    }
+  }
+  return undefined
+}
+
+function assistantTextContent(items: RuntimeConversationItem[]): string {
+  return items.flatMap(item => (item.type === 'assistant_text' ? [item.content] : [])).join('\n\n')
 }
 
 function mergeProcessingBlockUpdate(

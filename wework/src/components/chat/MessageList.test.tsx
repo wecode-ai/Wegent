@@ -1725,6 +1725,7 @@ describe('MessageList', () => {
             content: '',
             status: 'streaming',
             blocks,
+            streamingThinkingContent: '检查运行日志并定位事件边界',
             createdAt: '2026-06-24T08:00:01.000Z',
           },
         ]}
@@ -1736,6 +1737,38 @@ describe('MessageList', () => {
     expect(preview).toHaveTextContent('·')
     expect(preview).toHaveTextContent('检查运行日志并定位事件边界')
     expect(screen.queryByTestId('thinking-live-preview')).not.toBeInTheDocument()
+  })
+
+  test('hides the stale reasoning summary once assistant text starts streaming', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'thinking-1',
+        subtaskId: 11,
+        type: 'thinking',
+        content: '检查运行日志并定位事件边界',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-blocks',
+            role: 'assistant',
+            content: '已经定位到问题，接下来修复状态边界。',
+            status: 'streaming',
+            blocks,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const indicator = screen.getByTestId('thinking-indicator')
+    expect(indicator).toHaveTextContent('正在思考')
+    expect(indicator).not.toHaveTextContent('检查运行日志并定位事件边界')
   })
 
   test('keeps the latest reasoning summary on the thinking row after a tool completes', () => {
@@ -1768,6 +1801,7 @@ describe('MessageList', () => {
             content: '',
             status: 'streaming',
             blocks,
+            streamingThinkingContent: '先检查监督线程与后续请求的事件衔接。',
             createdAt: '2026-06-24T08:00:01.000Z',
           },
         ]}

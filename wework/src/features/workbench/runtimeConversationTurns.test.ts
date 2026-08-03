@@ -878,6 +878,67 @@ describe('runtimeConversationTurns', () => {
         }),
       }),
     ])
+    expect(turns[0].streamingThinkingContent).toBe('Reading files and checking tests')
+    expect(projectRuntimeConversationTurns(turns)[0].streamingThinkingContent).toBe(
+      'Reading files and checking tests'
+    )
+  })
+
+  test('clears the active reasoning summary when final text starts streaming', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'Checking the implementation',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'The fix is ready.',
+    })
+
+    expect(turns[0].streamingThinkingContent).toBeUndefined()
+    expect(projectRuntimeConversationTurns(turns)[0].streamingThinkingContent).toBeUndefined()
+  })
+
+  test('keeps the active reasoning summary across a tool continuation', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'Checking the implementation',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'I will inspect the files.',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      blocks: [
+        {
+          id: 'tool-1',
+          subtaskId: 'turn-1',
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'pwd' },
+          status: 'pending',
+          createdAt: 1770000000000,
+        },
+      ],
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-1',
+    })
+
+    expect(turns[0].streamingThinkingContent).toBe('Checking the implementation')
   })
 
   test('uses UTF-16 code-unit offsets when replacing streamed text', () => {
