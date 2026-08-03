@@ -445,6 +445,8 @@
     "app_update_endpoint_missing": "Automatic update checks are not available in this build",
     "app_update_check_failed": "Failed to check for updates",
     "app_update_install_failed": "Failed to install update",
+    "app_update_beta_channel": "Receive Beta updates",
+    "app_update_beta_channel_description": "Receive both Beta and stable releases, and update to whichever has the higher version.",
     "settings_category_integrations": "Integrations",
     "settings_category_coding": "Coding",
     "empty_title": "What should we do?",
