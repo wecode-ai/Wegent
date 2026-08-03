@@ -2,6 +2,7 @@ import {
   Activity,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -86,6 +87,8 @@ import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsCo
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { User } from '@/types/api'
+import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
+import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -226,54 +229,56 @@ function WorkspaceTabSurface({
   const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
 
   return (
-    <Activity mode={active ? 'visible' : 'hidden'}>
-      <div
-        className="h-full"
-        data-testid={`workspace-tab-content-${tab.id}`}
-        data-workspace-tab-content={tab.id}
-      >
-        {renderProvider ? (
-          <WorkbenchProvider
-            user={user}
-            onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
-            workspaceTabId={tab.id}
-          >
-            {onOpenWeworkForAppshot && active && !iframe ? (
-              <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
-            ) : null}
-            {renderWorkbench ? (
-              <div
-                className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
-                aria-hidden={!nativeWorkbenchActive}
-              >
-                <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
-              </div>
-            ) : null}
-            {auxiliaryPage ? (
-              <div
-                data-testid="desktop-auxiliary-surface"
-                className={cn(
-                  'h-full',
-                  usesAuxiliaryDesktopSurface &&
-                    'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
-                )}
-              >
-                {auxiliaryPage}
-              </div>
-            ) : null}
-          </WorkbenchProvider>
-        ) : null}
-        {renderedIframe ? (
-          <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
-            <AppIframe
-              src={renderedIframe.src}
-              title={renderedIframe.title}
+    <WorkspaceTabPortalOwner ownerId={tab.id}>
+      <Activity mode={active ? 'visible' : 'hidden'}>
+        <div
+          className="h-full"
+          data-testid={`workspace-tab-content-${tab.id}`}
+          data-workspace-tab-content={tab.id}
+        >
+          {renderProvider ? (
+            <WorkbenchProvider
+              user={user}
+              onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
-            />
-          </div>
-        ) : null}
-      </div>
-    </Activity>
+            >
+              {onOpenWeworkForAppshot && active && !iframe ? (
+                <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+              ) : null}
+              {renderWorkbench ? (
+                <div
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+                  aria-hidden={!nativeWorkbenchActive}
+                >
+                  <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
+                </div>
+              ) : null}
+              {auxiliaryPage ? (
+                <div
+                  data-testid="desktop-auxiliary-surface"
+                  className={cn(
+                    'h-full',
+                    usesAuxiliaryDesktopSurface &&
+                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
+                  )}
+                >
+                  {auxiliaryPage}
+                </div>
+              ) : null}
+            </WorkbenchProvider>
+          ) : null}
+          {renderedIframe ? (
+            <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
+              <AppIframe
+                src={renderedIframe.src}
+                title={renderedIframe.title}
+                workspaceTabId={tab.id}
+              />
+            </div>
+          ) : null}
+        </div>
+      </Activity>
+    </WorkspaceTabPortalOwner>
   )
 }
 
@@ -294,6 +299,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
     })
   }
+
+  useLayoutEffect(() => {
+    setActiveWorkspaceTabPortalOwner(workspaceTabs?.activeTabId ?? null)
+  }, [workspaceTabs?.activeTabId])
 
   useEffect(() => {
     if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {

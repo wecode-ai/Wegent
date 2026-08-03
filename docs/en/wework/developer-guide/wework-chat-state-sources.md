@@ -301,6 +301,15 @@ The workbench owns live state that cannot be serialized reliably, including comp
 
 Do not unmount the workbench during route transitions, and do not add incomplete restoration fallbacks for Terminal or browser state. New top-level pages should join the auxiliary-page rendering branch without changing the workbench lifecycle.
 
+Multiple top-level document tabs use React `Activity` to retain independent
+workbench instances. Updates inside a hidden `Activity` may be deferred while
+portals that it created in global titlebar targets remain attached. Every
+global titlebar portal must therefore identify its owning document tab, and
+`AppRoutes` must control portal visibility from the active-tab state. Do not
+rely only on conditional rendering inside the hidden workbench to withdraw a
+portal. After a tab switch, only the active tab may expose its main header,
+panel actions, right-workspace title, and feedback entry.
+
 ## Workbench Pane Cache
 
 The desktop workbench caches up to 20 regular panes so messages, composer drafts, and local UI state survive switches between parallel tasks. Once the limit is exceeded, inactive panes are evicted in least-recently-used order. Panes for running tasks and panes with pinned terminals remain mounted outside the regular cache limit until the task finishes or the terminal is unpinned. Maintain this boundary through the existing `CachedWorkbenchPaneStack` LRU and pinning mechanisms; do not add a second pane cache in the layout.
