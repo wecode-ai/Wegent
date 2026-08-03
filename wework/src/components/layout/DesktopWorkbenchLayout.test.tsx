@@ -2942,7 +2942,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
+    expect(screen.getByTestId('about-menu-button')).toHaveTextContent('关于')
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('opens the About settings page from the sidebar menu', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('about-menu-button'))
+
+    expect(window.location.pathname).toBe('/settings/about')
+    expect(screen.getByTestId('settings-nav-about')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+    expect(screen.getByRole('heading', { name: 'Wework' })).toBeInTheDocument()
   })
 
   test('opens settings page from the browser path on reload', () => {

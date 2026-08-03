@@ -181,9 +181,7 @@ export function CloudWorkPage() {
             onListDeviceDirectories={listDeviceDirectories}
             onCreateDeviceDirectory={createDeviceDirectory}
             onOpenSettings={options =>
-              navigateTo(
-                options?.settingsPage === 'connections' ? '/settings/connections' : '/settings'
-              )
+              navigateTo(options?.settingsPage ? `/settings/${options.settingsPage}` : '/settings')
             }
             onLogout={logout}
           />
