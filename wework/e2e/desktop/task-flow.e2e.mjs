@@ -2913,14 +2913,10 @@ async function verifyExpandedToolDetail(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    `${selector} [data-tool-detail-toggle][aria-expanded="true"]`,
-    {
-      stableMs: 250,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${selector} [data-tool-detail-toggle][aria-expanded="true"]`, {
+    stableMs: 250,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, screenshotName, selector)
   await control.command('click', `${selector} [data-tool-detail-toggle]`)
 }
@@ -6704,21 +6700,24 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
       turnId: 'stale-supervisor-turn',
     }),
   })
-  const runningSnapshot = await waitForWorkbenchDebugState(
-    control,
-    snapshot =>
-      snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
-      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
-      snapshot.pane?.status?.isBusy === true,
-    'The live supervisor correction was not represented as running'
-  )
-  assert.equal(
-    runningSnapshot.pane?.status?.taskExecution?.running,
-    true,
-    'The supervisor correction had a live executor response but task execution was idle'
-  )
-  await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
-  control.releaseSupervisorCorrectionResponse()
+  try {
+    const runningSnapshot = await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+        snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+        snapshot.pane?.status?.isBusy === true,
+      'The live supervisor correction was not represented as running'
+    )
+    assert.equal(
+      runningSnapshot.pane?.status?.taskExecution?.running,
+      true,
+      'The supervisor correction had a live executor response but task execution was idle'
+    )
+    await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
+  } finally {
+    control.releaseSupervisorCorrectionResponse()
+  }
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: SUPERVISOR_CORRECTION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

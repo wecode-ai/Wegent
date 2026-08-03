@@ -16,9 +16,15 @@ export function RuntimeTaskLifecycleProvider({
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
 
     const handleLifecycleEvent = (event: Event) => {
-      const detail = (event as CustomEvent<{ address: RuntimeTaskAddress; type: string }>).detail
+      const detail = (
+        event as CustomEvent<{
+          address: RuntimeTaskAddress
+          type: string
+          turnId?: string | null
+        }>
+      ).detail
       if (detail?.type === 'turn_settled') {
-        store.turnSettled(detail.address)
+        store.turnSettled(detail.address, detail.turnId)
       }
     }
     window.addEventListener(E2E_RUNTIME_LIFECYCLE_EVENT, handleLifecycleEvent)
