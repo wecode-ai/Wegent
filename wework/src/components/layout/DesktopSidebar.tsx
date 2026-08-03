@@ -11,6 +11,7 @@ import {
   Globe2,
   GitCompareArrows,
   Grid3X3,
+  Laptop,
   Loader2,
   MessageCircle,
   MessageCircleOff,
@@ -23,7 +24,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KeyboardEvent,
   MouseEvent as ReactMouseEvent,
@@ -125,6 +126,13 @@ import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
 import { DesktopSidebarPrioritySection } from './DesktopSidebarPrioritySection'
+import {
+  createDesktopSidebarPrioritySession,
+  reconcileDesktopSidebarPrioritySession,
+  selectDesktopSidebarPriorityView,
+  type DesktopSidebarPrioritySession,
+  type DesktopSidebarPrioritySource,
+} from './desktopSidebarPriorityView'
 import {
   ProjectSidebarHoverCardContent,
   type ProjectHoverSource,
@@ -275,7 +283,7 @@ interface RuntimePriorityTaskItem {
   projectName: string | null
   projectStateDeviceId: string | null
   isStandaloneChat: boolean
-  reason: RuntimeTaskPriorityReason
+  reason: RuntimeTaskPriorityReason | null
 }
 
 interface ArchiveConversationsConfirmDialogProps {
@@ -755,6 +763,13 @@ function getRuntimeTaskPriorityTime(task: RuntimeTaskSummary): number {
   const numeric = typeof value === 'number' ? value : Number(value)
   const timestamp = Number.isFinite(numeric) ? numeric : new Date(value).getTime()
   return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function getRuntimePriorityTaskKey(
+  workspace: RuntimeDeviceWorkspace,
+  task: RuntimeTaskSummary
+): string {
+  return `${workspace.deviceId}:${getRuntimeTaskThreadId(task) || task.taskId}`
 }
 
 function getProjectHoverSources(
@@ -1379,6 +1394,7 @@ function RuntimeTaskRow({
   onArchiveRuntimeTask,
   onToggleRuntimeTaskNotification,
   priorityReason,
+  priorityLayout = false,
 }: {
   workspace: RuntimeDeviceWorkspace
   task: RuntimeTaskSummary
@@ -1403,6 +1419,7 @@ function RuntimeTaskRow({
     subscribed: boolean
   ) => Promise<void> | void
   priorityReason?: RuntimeTaskPriorityReason
+  priorityLayout?: boolean
 }) {
   const { t } = useTranslation('common')
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
@@ -1591,7 +1608,8 @@ function RuntimeTaskRow({
           }}
           onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
-            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
+            'group/task relative flex min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
+            priorityLayout ? 'min-h-[48px] py-1.5' : 'h-[30px]',
             indentClassName,
             disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
             selected
@@ -1600,17 +1618,46 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
-          <span className="min-w-0 flex-1 truncate">
-            <span
-              data-sidebar-drag-activator
-              data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
-            >
-              {task.title}
+          {priorityLayout ? (
+            <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+              <span className="truncate">
+                <span
+                  data-sidebar-drag-activator
+                  data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
+                >
+                  {task.title}
+                </span>
+              </span>
+              <span
+                data-testid={`runtime-local-task-source-${task.taskId}`}
+                className="flex min-w-0 items-center gap-1 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]"
+              >
+                {projectName ? (
+                  <FolderOpen className="h-3 w-3 shrink-0" aria-hidden="true" />
+                ) : (
+                  <Laptop className="h-3 w-3 shrink-0" aria-hidden="true" />
+                )}
+                <span className="truncate">
+                  {projectName || t('workbench.app_wework', 'Wework')}
+                </span>
+              </span>
             </span>
-          </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate">
+              <span
+                data-sidebar-drag-activator
+                data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
+              >
+                {task.title}
+              </span>
+            </span>
+          )}
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
-            className="relative ml-1 flex h-[30px] min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]"
+            className={cn(
+              'relative ml-1 flex min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]',
+              priorityLayout ? 'self-stretch' : 'h-[30px]'
+            )}
           >
             <span
               data-testid={`runtime-local-task-time-${task.taskId}`}
@@ -1648,7 +1695,11 @@ function RuntimeTaskRow({
                     aria-label={t('workbench.priority_filter_waiting', '等待回复')}
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    {priorityLayout ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                    ) : (
+                      <Bell className="h-3.5 w-3.5 text-[rgb(var(--color-sidebar-text-muted))]" />
+                    )}
                   </span>
                 ) : unread ? (
                   <span
@@ -2595,8 +2646,15 @@ export function DesktopSidebar({
   const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
     'projects' | 'chats' | null
   >(null)
+  const [priorityArchiveItems, setPriorityArchiveItems] = useState<
+    RuntimePriorityTaskItem[] | null
+  >(null)
+  const [priorityForceArchiveItems, setPriorityForceArchiveItems] = useState<
+    RuntimePriorityTaskItem[] | null
+  >(null)
   const [isArchivingProjectSection, setIsArchivingProjectSection] = useState(false)
   const [isArchivingChatSection, setIsArchivingChatSection] = useState(false)
+  const [isArchivingPriority, setIsArchivingPriority] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateDialogOpen, setProjectCreateDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -2623,6 +2681,7 @@ export function DesktopSidebar({
     readStoredBoolean(chatsExpandedStorageKey, true)
   )
   const [priorityFilterActive, setPriorityFilterActive] = useState(false)
+  const [prioritySession, setPrioritySession] = useState<DesktopSidebarPrioritySession | null>(null)
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
     readStoredBoolean(priorityPinnedStorageKey, false)
@@ -2730,67 +2789,157 @@ export function DesktopSidebar({
         (right.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
     )
   }, [chatTaskItemsWithPinState, sidebarRuntimeProjects])
-  const allPriorityTaskItems = useMemo<RuntimePriorityTaskItem[]>(() => {
+  const allPriorityViewTaskItems = useMemo<RuntimePriorityTaskItem[]>(() => {
     const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
-      getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).flatMap(({ workspace, task }) => {
-        const reason = getRuntimeTaskPriorityReason(
+      getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).map(({ workspace, task }) => ({
+        workspace,
+        task,
+        projectName: projectWork.project.name,
+        projectStateDeviceId: projectWork.project.stateDeviceId ?? workspace.deviceId,
+        isStandaloneChat: false,
+        reason: getRuntimeTaskPriorityReason(
           workspace,
           task,
           visibleUnreadRuntimeTaskKeys,
           lifecycleSnapshot.runningTaskKeys
-        )
-        if (!reason) return []
-        return [
-          {
-            workspace,
-            task,
-            projectName: projectWork.project.name,
-            projectStateDeviceId: projectWork.project.stateDeviceId ?? workspace.deviceId,
-            isStandaloneChat: false,
-            reason,
-          },
-        ]
-      })
+        ),
+      }))
     )
-    const standaloneChatTasks = chatTaskItemsWithPinState.flatMap(({ workspace, task }) => {
-      const reason = getRuntimeTaskPriorityReason(
+    const standaloneChatTasks = chatTaskItemsWithPinState.map(({ workspace, task }) => ({
+      workspace,
+      task,
+      projectName: null,
+      projectStateDeviceId: workspace.deviceId,
+      isStandaloneChat: true,
+      reason: getRuntimeTaskPriorityReason(
         workspace,
         task,
         visibleUnreadRuntimeTaskKeys,
         lifecycleSnapshot.runningTaskKeys
-      )
-      if (!reason) return []
-      return [
-        {
-          workspace,
-          task,
-          projectName: null,
-          projectStateDeviceId: workspace.deviceId,
-          isStandaloneChat: true,
-          reason,
-        },
-      ]
-    })
+      ),
+    }))
 
-    return [...projectTasks, ...standaloneChatTasks].sort(
-      (left, right) =>
-        getRuntimeTaskPriorityRank(left.reason) - getRuntimeTaskPriorityRank(right.reason) ||
-        getRuntimeTaskPriorityTime(right.task) - getRuntimeTaskPriorityTime(left.task)
-    )
+    return [...projectTasks, ...standaloneChatTasks]
   }, [
     chatTaskItemsWithPinState,
     lifecycleSnapshot.runningTaskKeys,
     sidebarRuntimeProjects,
     visibleUnreadRuntimeTaskKeys,
   ])
-  const priorityTaskItems = useMemo(
+  const priorityViewSources = useMemo<DesktopSidebarPrioritySource<RuntimePriorityTaskItem>[]>(
     () =>
-      priorityShowPinned
-        ? allPriorityTaskItems
-        : allPriorityTaskItems.filter(({ task }) => !task.pinned),
-    [allPriorityTaskItems, priorityShowPinned]
+      allPriorityViewTaskItems.map(item => ({
+        key: getRuntimePriorityTaskKey(item.workspace, item.task),
+        item,
+        pinned: Boolean(item.task.pinned),
+        pinnedOrder: item.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER,
+        priorityRank: item.reason === null ? null : getRuntimeTaskPriorityRank(item.reason),
+        recencyAt: getRuntimeTaskPriorityTime(item.task),
+      })),
+    [allPriorityViewTaskItems]
   )
-  const priorityNeedsAttention = priorityTaskItems.length > 0
+  const livePriorityTaskItems = useMemo(
+    () =>
+      allPriorityViewTaskItems
+        .filter(item => item.reason !== null)
+        .sort(
+          (left, right) =>
+            getRuntimeTaskPriorityRank(left.reason!) - getRuntimeTaskPriorityRank(right.reason!) ||
+            getRuntimeTaskPriorityTime(right.task) - getRuntimeTaskPriorityTime(left.task)
+        ),
+    [allPriorityViewTaskItems]
+  )
+  const priorityNeedsAttention = livePriorityTaskItems.length > 0
+  let currentPrioritySession = prioritySession
+  if (priorityFilterActive && currentPrioritySession) {
+    const reconciledSession = reconcileDesktopSidebarPrioritySession(
+      currentPrioritySession,
+      priorityViewSources,
+      priorityShowPinned
+    )
+    if (reconciledSession !== currentPrioritySession) {
+      currentPrioritySession = reconciledSession
+      setPrioritySession(reconciledSession)
+    }
+  }
+  const priorityView = currentPrioritySession
+    ? selectDesktopSidebarPriorityView(
+        currentPrioritySession,
+        priorityViewSources,
+        priorityShowPinned
+      )
+    : {
+        pinnedItems: [],
+        priorityItems: livePriorityTaskItems,
+        recentGroups: [],
+      }
+  const togglePriorityFilter = useCallback(() => {
+    if (priorityFilterActive) {
+      setPriorityFilterActive(false)
+      setPrioritySession(null)
+      return
+    }
+    setPrioritySession(createDesktopSidebarPrioritySession(priorityViewSources, priorityShowPinned))
+    setPriorityFilterActive(true)
+  }, [
+    priorityFilterActive,
+    priorityShowPinned,
+    priorityViewSources,
+    setPriorityFilterActive,
+    setPrioritySession,
+  ])
+
+  const unreadPriorityTaskItems = useMemo(
+    () =>
+      priorityView.priorityItems.filter(item =>
+        visibleUnreadRuntimeTaskKeys.has(getRuntimeTaskReminderItemKey(item.workspace, item.task))
+      ),
+    [priorityView.priorityItems, visibleUnreadRuntimeTaskKeys]
+  )
+  const markAllPriorityTasksRead = () => {
+    if (!onMarkRuntimeTaskRead) return
+    for (const item of unreadPriorityTaskItems) {
+      onMarkRuntimeTaskRead(getRuntimeTaskAddress(item.workspace, item.task))
+    }
+  }
+  const openPriorityArchiveDialog = () => {
+    if (!onArchiveRuntimeTask || priorityView.priorityItems.length === 0) return
+    setPriorityArchiveItems(priorityView.priorityItems)
+  }
+  const runPriorityArchive = async (
+    items: RuntimePriorityTaskItem[],
+    options?: ArchiveRuntimeTaskOptions
+  ) => {
+    if (!onArchiveRuntimeTask || items.length === 0) return
+    setIsArchivingPriority(true)
+    const dirtyItems: RuntimePriorityTaskItem[] = []
+    try {
+      for (const item of items) {
+        try {
+          const result = await onArchiveRuntimeTask(
+            getRuntimeTaskAddress(item.workspace, item.task),
+            options
+          )
+          if (!options?.force && result?.status === 'dirty_worktree') {
+            dirtyItems.push(item)
+          }
+        } catch (error) {
+          console.error('Failed to archive priority task', error)
+        }
+      }
+      setPriorityArchiveItems(null)
+      setPriorityForceArchiveItems(dirtyItems.length > 0 ? dirtyItems : null)
+    } finally {
+      setIsArchivingPriority(false)
+    }
+  }
+  const closePriorityArchiveDialog = () => {
+    if (!isArchivingPriority) setPriorityArchiveItems(null)
+  }
+  const closePriorityForceArchiveDialog = () => {
+    if (!isArchivingPriority) setPriorityForceArchiveItems(null)
+  }
+
   const setChatTaskPinned = async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
     const chatTask = chatTaskItems.find(
@@ -3019,6 +3168,8 @@ export function DesktopSidebar({
     storageScopeRef.current = storageScope
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
     setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
+    setPriorityFilterActive(false)
+    setPrioritySession(null)
     setPriorityShowPinned(readStoredBoolean(priorityPinnedStorageKey, false))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
   }, [
@@ -3039,12 +3190,12 @@ export function DesktopSidebar({
       )
         return
       event.preventDefault()
-      setPriorityFilterActive(active => !active)
+      togglePriorityFilter()
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [priorityFilterShortcut])
+  }, [priorityFilterShortcut, togglePriorityFilter])
 
   useEffect(() => {
     if (!settingsMenuOpen && !imNotificationMenuOpen) {
@@ -3169,7 +3320,7 @@ export function DesktopSidebar({
                   <button
                     type="button"
                     data-testid="runtime-priority-filter-button"
-                    onClick={() => setPriorityFilterActive(active => !active)}
+                    onClick={togglePriorityFilter}
                     aria-pressed={priorityFilterActive}
                     className={cn(
                       'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500',
@@ -3264,10 +3415,20 @@ export function DesktopSidebar({
             </nav>
             {priorityFilterActive ? (
               <DesktopSidebarPrioritySection
-                taskItems={priorityTaskItems}
-                getTaskKey={item => `${item.workspace.deviceId}:${item.task.taskId}`}
+                priorityItems={priorityView.priorityItems}
+                pinnedItems={priorityView.pinnedItems}
+                recentGroups={priorityView.recentGroups}
+                getTaskKey={item => getRuntimePriorityTaskKey(item.workspace, item.task)}
                 showPinned={priorityShowPinned}
                 onTogglePinned={() => setPriorityShowPinned(showPinned => !showPinned)}
+                canMarkAllAsRead={
+                  Boolean(onMarkRuntimeTaskRead) && unreadPriorityTaskItems.length > 0
+                }
+                canArchivePriority={
+                  Boolean(onArchiveRuntimeTask) && priorityView.priorityItems.length > 0
+                }
+                onMarkAllAsRead={markAllPriorityTasksRead}
+                onArchivePriority={openPriorityArchiveDialog}
                 renderTaskItem={item => (
                   <RuntimeTaskRow
                     workspace={item.workspace}
@@ -3277,8 +3438,9 @@ export function DesktopSidebar({
                     unread={visibleUnreadRuntimeTaskKeys.has(
                       getRuntimeTaskReminderItemKey(item.workspace, item.task)
                     )}
-                    priorityReason={item.reason}
-                    indentClassName="pl-2.5"
+                    priorityReason={item.reason ?? undefined}
+                    priorityLayout
+                    indentClassName="pl-2"
                     imNotificationSettings={imNotificationSettings}
                     showDeviceMarker={false}
                     stateDeviceId={item.projectStateDeviceId}
@@ -3867,6 +4029,36 @@ export function DesktopSidebar({
             onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
             onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
             onRefreshDevices={onRefreshDevices}
+          />
+          <ArchiveConversationsConfirmDialog
+            open={priorityArchiveItems !== null}
+            title={t('workbench.priority_filter_archive_title', {
+              defaultValue: '归档 {{count}} 个优先级任务？',
+              count: priorityArchiveItems?.length ?? 0,
+            })}
+            description={t(
+              'workbench.priority_filter_archive_description',
+              '只会归档“优先级”分组中的任务，不会归档最近任务'
+            )}
+            confirmLabel={t('workbench.archive_project_dialog_confirm', '全部归档')}
+            cancelLabel={t('workbench.cancel', '取消')}
+            submitting={isArchivingPriority}
+            testId="runtime-priority-archive-dialog"
+            onClose={closePriorityArchiveDialog}
+            onConfirm={() => void runPriorityArchive(priorityArchiveItems ?? [])}
+          />
+          <ArchiveConversationsConfirmDialog
+            open={priorityForceArchiveItems !== null}
+            title={t('workbench.archive_runtime_task_dirty_worktree_title')}
+            description={t('workbench.archive_runtime_tasks_dirty_worktree_force_desc')}
+            confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
+            cancelLabel={t('workbench.cancel', '取消')}
+            submitting={isArchivingPriority}
+            testId="runtime-priority-force-archive-dialog"
+            onClose={closePriorityForceArchiveDialog}
+            onConfirm={() =>
+              void runPriorityArchive(priorityForceArchiveItems ?? [], { force: true })
+            }
           />
           <ArchiveConversationsConfirmDialog
             open={archiveSectionMode !== null}

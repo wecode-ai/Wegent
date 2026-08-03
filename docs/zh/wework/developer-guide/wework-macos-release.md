@@ -89,6 +89,17 @@ scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verifi
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
+## Tauri 依赖升级
+
+升级 Tauri 时需要同时维护 Rust 核心依赖和前端工具链，避免开发、测试与发布使用不同版本：
+
+- 在 `wework/src-tauri/Cargo.toml` 中升级 `tauri` 和兼容的 `tauri-build`，并刷新 `wework/src-tauri/Cargo.lock`。
+- 在 `wework/package.json` 中升级 `@tauri-apps/api` 和 `@tauri-apps/cli`，并刷新仓库根目录的 `pnpm-lock.yaml`。
+- Tauri 插件独立发布，不要求与核心包使用相同版本号；只升级与当前核心版本兼容且变更确实需要的插件。
+- 升级后至少运行 Wework TypeScript 类型检查、Vitest、Rust 测试和格式检查。窗口、托盘、IPC、asset protocol 或打包链路发生变化时，还必须使用 `pnpm --filter wework ai:verify` 启动隔离的真实 Tauri 应用验证，不能只依赖浏览器或 mock 测试。
+
+如果多个 worktree 同时运行桌面验证，应为每个实例设置独立的 `WEWORK_PORT`。共享 Cargo target 会串行协调编译；首次升级依赖时，本机 executor 的编译可能超过普通界面启动等待时间，应结合隔离会话下的 Tauri 和 executor 日志确认它仍在编译，而不是把慢启动误判为运行时失败。
+
 ## GitHub Release 自动更新
 
 仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS DMG、Windows installer、Tauri updater archive、签名文件和 updater manifest。客户端内置的 updater endpoint 指向固定的 `wework-updater` Release，并通过 Tauri 的 `target` 和 `arch` 占位符选择更新渠道与平台：

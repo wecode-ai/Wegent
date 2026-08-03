@@ -106,7 +106,7 @@ export default function TeamSelectorButton({
 
   const handleUseMoreAgents = () => {
     setOpen(false)
-    router.push(`${paths.resourceLibrary.getHref()}?tab=discover&type=agent&from=chat`)
+    router.push(`${paths.resourceLibrary.getHref()}?tab=mine&type=agent&from=chat`)
   }
 
   const handleWizardSuccess = async (teamId: number, _teamName: string) => {

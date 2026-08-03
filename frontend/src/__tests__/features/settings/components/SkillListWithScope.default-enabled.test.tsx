@@ -25,6 +25,7 @@ import { getGroup } from '@/apis/groups'
 import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
 import type { UnifiedSkill } from '@/apis/skills'
 import { fetchTeamsList } from '@/features/settings/services/teams'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 
 jest.mock('@/apis/skills', () => ({
   addSkillToMyDefault: jest.fn(),
@@ -49,6 +50,14 @@ jest.mock('@/apis/skillMarket', () => ({
 jest.mock('@/apis/groups', () => ({
   getGroup: jest.fn(),
 }))
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    listMyPublished: jest.fn(),
+  },
+}))
+
+const mockListMyPublished = resourceLibraryApi.listMyPublished as jest.Mock
 
 jest.mock('@/features/common/UserContext', () => ({
   useUser: () => ({ user: { id: 1, user_name: 'yansheng3', role: 'user' } }),
@@ -113,7 +122,9 @@ jest.mock('@/features/settings/components/skills/SkillReferenceConflictDialog', 
 const translations: Record<string, string> = {
   'actions.delete': '删除',
   'actions.download': '下载',
+  'actions.edit': '编辑',
   'resource-library:actions.edit_skill': '编辑技能',
+  'publication.published_to_library': '已发布到资源库',
   'skills.defaultEnabled.title': '自动启用技能',
   'skills.defaultEnabled.description':
     '这些技能会在你的所有对话中自动生效；也可以为模式或智能体设置例外。',
@@ -226,6 +237,7 @@ function buildSkill(overrides: Partial<UnifiedSkill>): UnifiedSkill {
     is_active: overrides.is_active ?? true,
     is_public: overrides.is_public ?? false,
     user_id: overrides.user_id ?? 1,
+    publication_status: overrides.publication_status,
     availability: overrides.availability,
     source: overrides.source,
     created_at: overrides.created_at,
@@ -235,6 +247,7 @@ function buildSkill(overrides: Partial<UnifiedSkill>): UnifiedSkill {
 
 describe('SkillListWithScope default enabled skills', () => {
   beforeEach(() => {
+    mockListMyPublished.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 })
     mockedFetchUnifiedSkillsList.mockImplementation(async params => {
       if (params?.scope === 'all') {
         return [
@@ -376,10 +389,8 @@ describe('SkillListWithScope default enabled skills', () => {
 
     const librarySection = await screen.findByTestId('skill-library-section')
 
-    expect(
-      within(librarySection).getByRole('heading', { level: 2, name: '我的技能' })
-    ).toBeInTheDocument()
-    expect(within(librarySection).getByText('管理你创建和已启用的技能。')).toBeInTheDocument()
+    expect(within(librarySection).queryByRole('heading', { name: '我的技能' })).toBeNull()
+    expect(within(librarySection).queryByText('管理你创建和已启用的技能。')).toBeNull()
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
     expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
     const personalCard = within(librarySection).getByTestId('skill-library-item-1')
@@ -394,6 +405,36 @@ describe('SkillListWithScope default enabled skills', () => {
 
     expect(mockedRemoveSkillFromMyDefault).toHaveBeenCalledWith(1)
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
+  })
+
+  it('marks marketplace-published skills in the compact card header', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 7,
+        name: 'published-skill',
+        displayName: 'Published Skill',
+      }),
+      buildSkill({
+        id: 8,
+        name: 'private-skill',
+        displayName: 'Private Skill',
+      }),
+    ])
+    mockListMyPublished.mockResolvedValue({
+      items: [{ id: 7, status: 'published' }],
+      total: 1,
+      page: 1,
+      limit: 100,
+    })
+
+    render(<SkillListWithScope scope="personal" compact />)
+
+    const publishedCard = await screen.findByTestId('skill-library-item-7')
+    expect(within(publishedCard).getByTestId('published-skill-7-indicator')).toHaveAccessibleName(
+      '已发布到资源库'
+    )
+    const privateCard = screen.getByTestId('skill-library-item-8')
+    expect(within(privateCard).queryByTestId('published-skill-8-indicator')).toBeNull()
   })
 
   it('notifies the resource library when an external skill creation is cancelled', async () => {
@@ -460,15 +501,16 @@ describe('SkillListWithScope default enabled skills', () => {
     })
     expect(within(librarySection).getByText('Group Default Skill')).toBeInTheDocument()
     expect(within(librarySection).getByTestId('installed-skill-card-3')).toHaveClass(
-      'min-h-[180px]',
       'rounded-xl',
       'p-4'
     )
     expect(within(librarySection).getByText('Personal Library Skill')).toBeInTheDocument()
-    expect(within(librarySection).getByTestId('skill-library-item-4')).toHaveClass('min-h-[180px]')
-    expect(within(librarySection).getByTestId('skill-card-footer-4')).toHaveTextContent(
-      'yansheng32026-07-29'
+    expect(within(librarySection).getByTestId('skill-library-item-4')).not.toHaveClass(
+      'min-h-[180px]'
     )
+    expect(within(librarySection).queryByTestId('skill-card-footer-4')).not.toBeInTheDocument()
+    expect(within(librarySection).queryByText('yansheng3')).not.toBeInTheDocument()
+    expect(within(librarySection).queryByText('2026-07-29')).not.toBeInTheDocument()
   })
 
   it('uses a responsive card grid in compact resource-library views', async () => {
@@ -484,39 +526,37 @@ describe('SkillListWithScope default enabled skills', () => {
       'xl:grid-cols-4'
     )
     const [card] = within(list).getAllByTestId(/^skill-library-item-/)
-    expect(card).toHaveClass('min-h-[180px]', 'gap-3')
+    expect(card).toHaveClass('gap-3')
+    expect(card).not.toHaveClass('min-h-[180px]')
     expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
       'h-11',
       'w-11',
       'rounded-xl',
       'border'
     )
-    expect(within(card).queryByTestId('skill-card-actions-1')).not.toBeInTheDocument()
+    const topActions = within(card).getByTestId('skill-card-top-actions-1')
+    const bottomActions = within(card).getByTestId('skill-card-actions-1')
+    expect(bottomActions).toHaveClass('mt-auto', 'w-full', 'border-t', 'pt-3')
     expect(card).toHaveClass('group')
     const moreButton = within(card).getByTestId('skill-card-more-button-1')
-    expect(moreButton).toHaveClass(
-      'h-11',
-      'w-11',
-      'opacity-100',
-      'md:h-7',
-      'md:w-7',
-      'md:opacity-0',
-      'md:group-hover:opacity-100',
-      'md:group-focus-within:opacity-100'
-    )
+    const editButton = within(card).getByTestId('edit-skill-button-1')
+    expect(within(topActions).queryByTestId('edit-skill-button-1')).not.toBeInTheDocument()
+    expect(within(topActions).queryByTestId('skill-card-more-button-1')).not.toBeInTheDocument()
+    expect(within(bottomActions).getByText('编辑')).toBeInTheDocument()
+    expect(editButton).toHaveClass('flex-1')
+    expect(moreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
     const autoEnableSwitch = within(card).getByRole('switch')
+    expect(within(card).getByText('自动启用')).toBeInTheDocument()
     expect(
-      moreButton.compareDocumentPosition(autoEnableSwitch) & Node.DOCUMENT_POSITION_FOLLOWING
+      autoEnableSwitch.compareDocumentPosition(moreButton) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     await user.click(moreButton)
-    expect(await screen.findByTestId('edit-skill-button-1')).toBeInTheDocument()
-    expect(screen.getByText('编辑技能')).toBeInTheDocument()
     expect(await screen.findByTestId('download-skill-button-1')).toBeInTheDocument()
     expect(screen.getByText('下载')).toBeInTheDocument()
     expect(screen.getByTestId('view-skill-references-button-1')).toBeInTheDocument()
     expect(screen.getByTestId('delete-skill-button-1')).toBeInTheDocument()
     expect(screen.getByText('删除')).toBeInTheDocument()
-    expect(screen.getByText('技能库')).toBeInTheDocument()
+    expect(screen.queryByText('技能库')).not.toBeInTheDocument()
   })
 
   it('opens an existing personal skill in the shared editor', async () => {
@@ -524,8 +564,7 @@ describe('SkillListWithScope default enabled skills', () => {
     render(<SkillListWithScope scope="personal" compact showAutoEnabledSkills={false} />)
 
     const card = await screen.findByTestId('skill-library-item-1')
-    await user.click(within(card).getByTestId('skill-card-more-button-1'))
-    await user.click(await screen.findByTestId('edit-skill-button-1'))
+    await user.click(within(card).getByTestId('edit-skill-button-1'))
 
     expect(screen.getByTestId('skill-upload-modal')).toHaveAttribute(
       'data-editing-skill',
@@ -551,12 +590,12 @@ describe('SkillListWithScope default enabled skills', () => {
     const card = await screen.findByTestId('skill-library-item-9')
     expect(within(card).getByText('系统技能')).toBeInTheDocument()
     expect(within(card).getByText('v2.0.0')).toHaveClass('text-text-muted')
-    expect(within(card).getByText('automation')).toBeInTheDocument()
-    expect(within(card).getByText('scheduler')).toBeInTheDocument()
-    expect(within(card).getByText('+2')).toBeInTheDocument()
+    expect(within(card).queryByText('automation')).not.toBeInTheDocument()
+    expect(within(card).queryByText('scheduler')).not.toBeInTheDocument()
+    expect(within(card).queryByText('+2')).not.toBeInTheDocument()
     expect(within(card).queryByText('subscription')).not.toBeInTheDocument()
     expect(within(card).queryByText('report')).not.toBeInTheDocument()
-    expect(within(card).queryByText('自动启用')).not.toBeInTheDocument()
+    expect(within(card).getByText('自动启用')).toBeInTheDocument()
     expect(within(card).getByRole('switch', { name: '设为自动启用' })).toBeInTheDocument()
     expect(within(card).queryByTestId('skill-card-more-button-9')).not.toBeInTheDocument()
     expect(within(card).queryByTestId('skill-card-actions-9')).not.toBeInTheDocument()
@@ -600,11 +639,14 @@ describe('SkillListWithScope default enabled skills', () => {
 
     const librarySection = await screen.findByTestId('skill-library-section')
     const card = within(librarySection).getByTestId('installed-skill-card-5')
-    const moreButton = within(card).getByTestId('installed-skill-more-button-5')
     const autoEnableSwitch = within(card).getByRole('switch', { name: '取消自动启用' })
-    expect(
-      moreButton.compareDocumentPosition(autoEnableSwitch) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    const topActions = within(card).getByTestId('installed-skill-actions-5')
+    const footerActions = within(card).getByTestId('installed-skill-footer-actions-5')
+    expect(within(topActions).queryByTestId('configure-installed-skill-5')).not.toBeInTheDocument()
+    expect(within(footerActions).getByTestId('configure-installed-skill-5')).toHaveTextContent(
+      '配置'
+    )
+    expect(footerActions).toHaveClass('mt-auto', 'w-full', 'border-t', 'pt-3')
     await user.click(autoEnableSwitch)
 
     expect(mockedRemoveSkillFromMyDefault).toHaveBeenCalledWith(5)
@@ -648,8 +690,7 @@ describe('SkillListWithScope default enabled skills', () => {
     render(<SkillListWithScope scope="personal" />)
 
     const librarySection = await screen.findByTestId('skill-library-section')
-    await user.click(within(librarySection).getByTestId('installed-skill-more-button-1'))
-    await user.click(await screen.findByTestId('configure-installed-skill-1'))
+    await user.click(within(librarySection).getByTestId('configure-installed-skill-1'))
 
     expect(screen.queryByTestId('auto-enabled-settings-view')).not.toBeInTheDocument()
     expect(librarySection).toBeInTheDocument()
@@ -771,6 +812,46 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).queryByText('Personal Skill')).not.toBeInTheDocument()
   })
 
+  it('keeps personal, group, and installed skills in mine while excluding system skills', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      buildSkill({
+        id: 10,
+        name: 'personal-mine-skill',
+        displayName: 'Personal Mine Skill',
+      }),
+      buildSkill({
+        id: 11,
+        name: 'group-mine-skill',
+        displayName: 'Group Mine Skill',
+        namespace: 'platform',
+      }),
+      buildSkill({
+        id: 12,
+        name: 'installed-mine-skill',
+        displayName: 'Installed Mine Skill',
+        user_id: 2,
+        availability: { inMyDefault: true },
+      }),
+      buildSkill({
+        id: 13,
+        name: 'system-skill',
+        displayName: 'System Skill',
+        user_id: 0,
+        is_public: true,
+      }),
+    ])
+
+    render(<SkillListWithScope scope="all" sourceFilter="mine" compact />)
+
+    const librarySection = await screen.findByTestId('skill-library-section')
+
+    expect(within(librarySection).getByText('Personal Mine Skill')).toBeInTheDocument()
+    expect(within(librarySection).getByText('Group Mine Skill')).toBeInTheDocument()
+    expect(within(librarySection).getByText('Installed Mine Skill')).toBeInTheDocument()
+    expect(within(librarySection).getByTestId('installed-skill-card-12')).toBeInTheDocument()
+    expect(within(librarySection).queryByText('System Skill')).not.toBeInTheDocument()
+  })
+
   it('shows edit and download actions to a group developer without delete access', async () => {
     const user = userEvent.setup()
     mockedGetGroup.mockResolvedValue({
@@ -792,9 +873,8 @@ describe('SkillListWithScope default enabled skills', () => {
     render(<SkillListWithScope scope="group" selectedGroup="platform" compact />)
 
     const card = await screen.findByTestId('skill-library-item-20')
+    expect(within(card).getByTestId('edit-skill-button-20')).toBeInTheDocument()
     await user.click(within(card).getByTestId('skill-card-more-button-20'))
-
-    expect(await screen.findByTestId('edit-skill-button-20')).toBeInTheDocument()
     expect(screen.getByTestId('download-skill-button-20')).toBeInTheDocument()
     expect(screen.queryByTestId('delete-skill-button-20')).not.toBeInTheDocument()
   })

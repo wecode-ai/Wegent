@@ -35,6 +35,7 @@ interface TeamListWithScopeProps {
   creationOnly?: boolean
   compact?: boolean
   hideCreateActions?: boolean
+  searchQuery?: string
 }
 
 export function TeamListWithScope({
@@ -56,6 +57,7 @@ export function TeamListWithScope({
   creationOnly = false,
   compact = false,
   hideCreateActions = false,
+  searchQuery = '',
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -118,6 +120,7 @@ export function TeamListWithScope({
         creationOnly={creationOnly}
         compact={compact}
         hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -142,6 +145,7 @@ export function TeamListWithScope({
         creationOnly={creationOnly}
         compact={compact}
         hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -176,6 +180,7 @@ export function TeamListWithScope({
         creationOnly={creationOnly}
         compact={compact}
         hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     </div>
   )

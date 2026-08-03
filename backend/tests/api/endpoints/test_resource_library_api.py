@@ -4,6 +4,7 @@
 
 from app.models.kind import Kind
 from app.models.resource_member import ResourceMember
+from app.services.resource_library_service import resource_library_service
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -157,3 +158,28 @@ def test_bind_owned_agent_to_personal_scope_by_reference(
         .count()
         == 1
     )
+
+
+def test_list_group_installs_accepts_hierarchical_namespace(
+    test_client, test_token, monkeypatch
+):
+    captured_namespace = None
+
+    def list_group_installs(_db, **kwargs):
+        nonlocal captured_namespace
+        captured_namespace = kwargs["group_namespace"]
+        return {"items": [], "total": 0, "page": 1, "limit": 100}
+
+    monkeypatch.setattr(
+        resource_library_service, "list_group_installs", list_group_installs
+    )
+
+    response = test_client.get(
+        "/api/resource-library/groups/"
+        "parent-group%2Fchild-group%2Fproject-team/installs"
+        "?resource_type=skill&page=1&limit=100",
+        headers=_headers(test_token),
+    )
+
+    assert response.status_code == 200
+    assert captured_namespace == "parent-group/child-group/project-team"

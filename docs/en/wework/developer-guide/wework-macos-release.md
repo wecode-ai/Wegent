@@ -89,6 +89,17 @@ To validate local updater behavior, serve the script output directory:
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
+## Tauri Dependency Upgrades
+
+Update the Rust core dependencies and frontend toolchain together so development, testing, and release builds do not use different Tauri versions:
+
+- Update `tauri` and a compatible `tauri-build` in `wework/src-tauri/Cargo.toml`, then refresh `wework/src-tauri/Cargo.lock`.
+- Update `@tauri-apps/api` and `@tauri-apps/cli` in `wework/package.json`, then refresh the repository-root `pnpm-lock.yaml`.
+- Tauri plugins are released independently and do not need to share the core package version. Upgrade only plugins that are compatible with the selected core version and whose changes are needed.
+- After upgrading, run the Wework TypeScript type check, Vitest suite, Rust tests, and formatting checks. When the change affects windows, tray behavior, IPC, the asset protocol, or packaging, also use `pnpm --filter wework ai:verify` to start an isolated real Tauri application; browser-only or mocked tests are not sufficient.
+
+When multiple worktrees run desktop verification concurrently, assign a distinct `WEWORK_PORT` to each instance. The shared Cargo target serializes compilation, and the first local executor build after a dependency upgrade can exceed the normal UI startup wait. Inspect the isolated session's Tauri and executor logs to distinguish ongoing compilation from a runtime failure.
+
 ## GitHub Release Auto Update
 
 The repository includes `.github/workflows/wework-app.yml` for producing macOS DMGs, Windows installers, Tauri updater archives, signatures, and updater manifests on GitHub Actions. The updater endpoint embedded in the client points to the fixed `wework-updater` Release and uses Tauri `target` and `arch` placeholders to select the update channel and platform:
