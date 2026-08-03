@@ -11,6 +11,8 @@ let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
+export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
+  'wework:embedded-browser-local-file-preview'
 export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
   'wework:embedded-browser-invalid-tls-certificate'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
@@ -50,6 +52,12 @@ export interface EmbeddedBrowserDownloadEvent {
   status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'
   receivedBytes: number | null
   totalBytes: number | null
+}
+
+export interface EmbeddedBrowserLocalFilePreviewEvent {
+  label: string
+  nativeLabel: string
+  url: string
 }
 
 export interface EmbeddedBrowserAgentStateEvent {
@@ -123,6 +131,16 @@ export function listenEmbeddedBrowserDownloads(
   return listen<EmbeddedBrowserDownloadEvent>(EMBEDDED_BROWSER_DOWNLOAD_EVENT, event => {
     handler(event.payload)
   })
+}
+
+export function listenEmbeddedBrowserLocalFilePreview(
+  handler: (event: EmbeddedBrowserLocalFilePreviewEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserLocalFilePreviewEvent>(
+    EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
+    event => handler(event.payload)
+  )
 }
 
 export function listenEmbeddedBrowserAgentState(

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
@@ -13,6 +13,7 @@ const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
+const LOCAL_FILE_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-local-file-notice"]`
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
 const REDIRECT_PATH = '/embedded-browser-agent-redirect'
@@ -27,6 +28,7 @@ const HOVER_TEXT = 'hovered'
 const SELECT_TEXT = 'selected: finance'
 const CHECKED_TEXT = 'checked: true'
 const SCROLLED_TEXT = 'scroll marker visible'
+const LOCAL_FILE_TEXT = 'Local File Browser Fixture'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
 
@@ -86,6 +88,19 @@ function fixtureHtml() {
         result.textContent = 'checked: ' + event.target.checked;
       });
     </script>
+  </body>
+</html>`
+}
+
+function localFixtureHtml() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${LOCAL_FILE_TEXT}</title>
+  </head>
+  <body>
+    <h1>${LOCAL_FILE_TEXT}</h1>
   </body>
 </html>`
 }
@@ -579,6 +594,46 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.equal(capabilities.kind, 'browser.capabilities')
       assert.equal(capabilities.actions.trustedNativeInput, 'poc_only')
 
+      // file:// local file support: the bridge renders a local HTML page, and
+      // an un-previewable local file surfaces a notice instead of downloading.
+      const localHtmlPath = join(resultDir, 'local-file-fixture.html')
+      await writeFile(localHtmlPath, localFixtureHtml(), 'utf8')
+      const localOpenResult = await bridgeCall({
+        action: 'open',
+        url: pathToFileURL(localHtmlPath).href,
+        timeoutMs: 8_000,
+      })
+      assert.equal(
+        localOpenResult.ok,
+        true,
+        `Bridge file:// open failed: ${JSON.stringify(localOpenResult)}`
+      )
+      const localFileInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        localFileInspect.inspectText.includes(LOCAL_FILE_TEXT),
+        `file:// page was not rendered: ${localFileInspect.inspectText}`
+      )
+
+      const localZipPath = join(resultDir, 'local-file-fixture.zip')
+      const zipBytes = Buffer.alloc(1024)
+      zipBytes.set([0x50, 0x4b, 0x03, 0x04])
+      await writeFile(localZipPath, zipBytes)
+      const localZipUrl = pathToFileURL(localZipPath).href
+      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        localZipUrl,
+        uiTimeoutMs,
+        'Browser URL input did not receive local zip URL before submit'
+      )
+      await control.command('press', BROWSER_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', LOCAL_FILE_NOTICE_SELECTOR, { timeoutMs: uiTimeoutMs })
+
       await writeFile(
         join(resultDir, 'embedded-browser-agent-result.json'),
         `${JSON.stringify(
@@ -596,6 +651,8 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
             waitReason: waitResult.reason,
             screenshot: screenshotResult,
             capabilities: capabilities.p2,
+            localFileInspectId: localFileInspect.inspectId,
+            localFileUrl: pathToFileURL(localHtmlPath).href,
             finalText: afterDeleteInspect.inspectText,
           },
           null,

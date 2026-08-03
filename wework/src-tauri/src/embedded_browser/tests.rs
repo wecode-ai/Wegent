@@ -47,11 +47,13 @@ fn placeholder_load_does_not_replace_the_requested_url() {
 }
 
 #[test]
-fn bridge_navigation_only_allows_http_and_https() {
+fn bridge_navigation_allows_http_https_and_file() {
     assert!(bridge_navigation_url("https://example.com/").is_ok());
     assert!(bridge_navigation_url("http://example.com/").is_ok());
-    assert!(bridge_navigation_url("file:///etc/passwd").is_err());
+    assert!(bridge_navigation_url("file:///etc/passwd").is_ok());
+    assert!(bridge_navigation_url("file:///Users/me/report.html").is_ok());
     assert!(bridge_navigation_url("javascript:alert(1)").is_err());
+    assert!(bridge_navigation_url("data:text/html,<b>x</b>").is_err());
 }
 
 #[test]

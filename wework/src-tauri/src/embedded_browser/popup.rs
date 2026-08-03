@@ -28,6 +28,13 @@ fn popup_origin(url: &tauri::Url) -> String {
 
 pub(super) fn classify_popup_url(url: &tauri::Url) -> (&'static str, &'static str, Option<String>) {
     let scheme = url.scheme().to_ascii_lowercase();
+    if scheme == "file" {
+        return (
+            "local_file",
+            "controlled_popup_required",
+            Some("Local file popups open in the current window.".to_string()),
+        );
+    }
     if scheme != "http" && scheme != "https" {
         return (
             "external_scheme",

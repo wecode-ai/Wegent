@@ -8,6 +8,7 @@ export const DESKTOP_CHECKPOINTS = [
   'conversation-state',
   'workspace-attachments',
   'rendering-extensions',
+  'embedded-browser',
 ]
 
 export const PLUGIN_SEGMENTS = [

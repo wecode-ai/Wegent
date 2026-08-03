@@ -59,6 +59,8 @@ const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_PLACEHOLDER_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
+const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT: &str =
+    "wework:embedded-browser-local-file-preview";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
 const EMBEDDED_BROWSER_AGENT_STATE_EVENT: &str = "wework:embedded-browser-agent-state";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
@@ -204,6 +206,14 @@ struct EmbeddedBrowserDownloadPayload {
     total_bytes: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserLocalFilePreviewPayload {
+    label: String,
+    native_label: String,
+    url: String,
+}
+
 #[derive(Clone)]
 struct EmbeddedBrowserDownloadControl {
     app: tauri::AppHandle,
@@ -284,7 +294,7 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
 #[cfg(any(not(target_os = "macos"), test))]
 fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
     match url.scheme() {
-        "http" | "https" => WebviewUrl::External(url),
+        "http" | "https" | "file" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
 }
@@ -322,6 +332,31 @@ fn download_event_owner<'a>(
     native_label: &str,
 ) -> Option<String> {
     logical_owner_for_native_label(identities, native_label)
+}
+
+fn emit_local_file_preview_blocked(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    url: &str,
+) {
+    let label = state.webviews.lock().ok().and_then(|webviews| {
+        download_event_owner(
+            webviews.iter().map(|(logical_label, entry)| {
+                (logical_label.as_str(), entry.native_label.as_str())
+            }),
+            native_label,
+        )
+    });
+    let Some(label) = label else { return };
+    let _ = app.emit(
+        EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
+        EmbeddedBrowserLocalFilePreviewPayload {
+            label,
+            native_label: native_label.to_string(),
+            url: url.to_string(),
+        },
+    );
 }
 
 fn remove_logical_entry_if_native_matches<T>(
@@ -1315,6 +1350,13 @@ pub async fn embedded_browser_open(
                 url.clone(),
             );
             let (_kind, strategy, _warning) = classify_popup_url(&url);
+            if strategy == "controlled_popup_required" && url.scheme() == "file" {
+                // Open local-file popups in the current window instead of a new window.
+                if let Some(webview) = app_for_popup.get_webview(&native_label_for_popup) {
+                    let _ = webview.navigate(url);
+                }
+                return NewWindowResponse::Deny;
+            }
             if strategy == "user_confirmation_required" || strategy == "controlled_popup_required" {
                 NewWindowResponse::Deny
             } else {
@@ -1329,6 +1371,17 @@ pub async fn embedded_browser_open(
         let download_state = state.inner().clone();
         builder.on_download(move |_webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
+                if url.scheme() == "file" {
+                    // The webview cannot preview this local file and would download
+                    // it. Cancel the download and let the frontend show a notice.
+                    emit_local_file_preview_blocked(
+                        &download_app,
+                        &download_state,
+                        &download_native_label,
+                        url.as_str(),
+                    );
+                    return false;
+                }
                 match browser_download_destination(&download_app, destination) {
                     Ok((path, _suggested_name, _ask_before_download)) => {
                         let url = url.to_string();

@@ -714,6 +714,7 @@
     "browser_download_resume": "Resume download",
     "browser_download_delete": "Delete download",
     "browser_download_reveal": "Show in Finder",
+    "browser_local_file_notice": "This file can't be previewed",
     "browser_settings_title": "Browser",
     "browser_settings_subtitle": "Manage the Wework built-in browser, link routing, and downloads",
     "browser_settings_general": "General",

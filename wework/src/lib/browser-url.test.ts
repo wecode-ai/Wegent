@@ -31,4 +31,22 @@ describe('browser URL helpers', () => {
     )
     expect(normalizeBrowserUrl('asset://other-host/Users/me/workspace/chart.html')).toBeNull()
   })
+
+  test('allows local file URLs and returns a valid encoded URL', () => {
+    expect(normalizeBrowserUrl('file:///Users/me/report.html')).toBe('file:///Users/me/report.html')
+    expect(normalizeBrowserUrl('file:///Users/me/test file.html')).toBe(
+      'file:///Users/me/test%20file.html'
+    )
+    expect(normalizeBrowserUrl('file:///Users/me/test%20file.html')).toBe(
+      'file:///Users/me/test%20file.html'
+    )
+    expect(normalizeBrowserUrl('file:///Users/me/测试.html')).toBe(
+      'file:///Users/me/%E6%B5%8B%E8%AF%95.html'
+    )
+    expect(normalizeBrowserUrl('file:///C:/Users/me/report.html')).toBe(
+      'file:///C:/Users/me/report.html'
+    )
+    // A hostname form is still a syntactically valid file URL; pass it through.
+    expect(normalizeBrowserUrl('file://etc/passwd')).toBe('file://etc/passwd')
+  })
 })

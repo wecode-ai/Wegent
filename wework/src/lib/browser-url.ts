@@ -24,6 +24,7 @@ export function normalizeBrowserUrl(value: string, appUrl?: string): string | nu
     if (
       url.protocol !== 'http:' &&
       url.protocol !== 'https:' &&
+      url.protocol !== 'file:' &&
       !isLocalAssetUrl(url) &&
       !matchesTauriAppOrigin(url, appUrl)
     ) {
