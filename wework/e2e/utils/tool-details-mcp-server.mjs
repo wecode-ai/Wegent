@@ -49,7 +49,7 @@ function respondError(id, code, message) {
 function callTool(name, args) {
   if (serverName === 'node_repl' && name === 'js') {
     return {
-      content: [{ type: 'text', text: "{ status: 'ready', value: 42 }" }],
+      content: [{ type: 'text', text: "{ status: 'executed', result: 84 }" }],
       isError: false,
     }
   }
@@ -76,7 +76,15 @@ const input = readline.createInterface({
 })
 
 input.on('line', line => {
-  const request = JSON.parse(line)
+  if (!line.trim()) return
+  let request
+  try {
+    request = JSON.parse(line)
+  } catch (error) {
+    console.error(`[tool-details-mcp] Ignoring malformed JSON: ${String(error)}`)
+    return
+  }
+  if (request === null || typeof request !== 'object' || Array.isArray(request)) return
   if (!('id' in request)) return
 
   if (request.method === 'initialize') {

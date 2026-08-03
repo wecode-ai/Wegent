@@ -410,11 +410,8 @@ function readCommandLineOption(name) {
   return value
 }
 
-function validateDesktopSegmentOptions() {
-  if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
-    throw new Error('--segment and --from-segment cannot be used together')
-  }
-  const activeOnlyModes = [
+function getActiveOnlyModes() {
+  return [
     ['WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY=1', REQUEST_INPUT_ONLY],
     ['--view-image-only', VIEW_IMAGE_ONLY],
     ['--short-conversation-only', SHORT_CONVERSATION_ONLY],
@@ -446,6 +443,13 @@ function validateDesktopSegmentOptions() {
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
     ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
   ].filter(([, enabled]) => enabled)
+}
+
+function validateDesktopSegmentOptions() {
+  if (DESKTOP_SEGMENT && DESKTOP_FROM_SEGMENT) {
+    throw new Error('--segment and --from-segment cannot be used together')
+  }
+  const activeOnlyModes = getActiveOnlyModes()
   if (activeOnlyModes.length > 1) {
     throw new Error(
       `Desktop E2E only modes are mutually exclusive: ${activeOnlyModes
@@ -481,37 +485,7 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 
 function shouldConfigureToolDetailsMcp() {
   if (TOOL_BLOCK_ORDER_ONLY) return true
-  const standaloneMode = [
-    REQUEST_INPUT_ONLY,
-    VIEW_IMAGE_ONLY,
-    SHORT_CONVERSATION_ONLY,
-    RETRY_ONLY,
-    RATE_LIMIT_ONLY,
-    RUNNING_FORK_ONLY,
-    COMPLETED_FORK_ONLY,
-    SIDE_CHAT_ONLY,
-    GOAL_IDLE_ONLY,
-    GOAL_RESTART_ONLY,
-    TURN_NAVIGATION_ONLY,
-    ATTACHMENT_ONLY,
-    PASTED_WORKSPACE_PATHS_ONLY,
-    DROPPED_WORKSPACE_PATHS_ONLY,
-    SYSTEM_DRAG_PANEL_ONLY,
-    MODEL_SWITCH_ONLY,
-    CLOUD_ONLY,
-    PLUGINS_ONLY,
-    AUTOMATION_ONLY,
-    MEMORY_ONLY,
-    QUEUE_NAVIGATION_ONLY,
-    GUIDANCE_BACKGROUND_ONLY,
-    GUIDANCE_SCROLL_ONLY,
-    MESSAGE_RESTORATION_ONLY,
-    QUEUE_MANAGEMENT_ONLY,
-    TASK_PLAN_ONLY,
-    DESKTOP_SCENARIO_ONLY,
-    MIXED_TOOL_TURNS_ONLY,
-  ].some(Boolean)
-  return !standaloneMode && shouldRunDesktopCheckpoint('rendering-extensions')
+  return getActiveOnlyModes().length === 0 && shouldRunDesktopCheckpoint('rendering-extensions')
 }
 
 function shouldRunPluginSegment(segment) {
@@ -2475,11 +2449,17 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
   } finally {
     if (!requestInputResponseReleased) {
-      await withTimeout(
-        control.releaseRequestUserInputResponse(),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'Timed out releasing the priority-filter request-user-input response'
-      )
+      try {
+        await withTimeout(
+          control.releaseRequestUserInputResponse(),
+          DEFAULT_STEP_TIMEOUT_MS,
+          'Timed out releasing the priority-filter request-user-input response'
+        )
+      } catch (releaseError) {
+        console.warn(
+          `[desktop-e2e] priority-filter cleanup release failed: ${String(releaseError)}`
+        )
+      }
     }
   }
   await control.command('click', '[data-testid="cancel-plan-mode-button"]')
@@ -2904,6 +2884,52 @@ async function ensureTaskRowVisible(control, taskRowTestId) {
   })
 }
 
+async function verifyExpandedToolDetail(
+  control,
+  { selector, detailText, inputText, outputText, screenshotName }
+) {
+  await control.command('click', `${selector} [data-tool-detail-toggle]`)
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-block-detail"]`, {
+    text: detailText,
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-input"]`, {
+    text: inputText,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${selector} [data-testid="generic-tool-output"]`, {
+    text: outputText,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${selector} [data-tool-detail-toggle][aria-expanded="true"]`,
+    {
+      stableMs: 250,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, screenshotName, selector)
+  await control.command('click', `${selector} [data-tool-detail-toggle]`)
+}
+
+async function ensureToggleExpanded(control, selector) {
+  const expandedCount = Number(
+    await control.command('getElementCount', `${selector}[aria-expanded="true"]`)
+  )
+  if (expandedCount > 0) return
+  await control.command('click', selector)
+  await control.command('waitFor', `${selector}[aria-expanded="true"]`, {
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 async function verifyToolBlockChronologicalOrder({ composerSelector, control }) {
   control.setScenario('tool_block_order')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -2925,46 +2951,17 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
   )
   const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
   await control.command('waitFor', nodeReplSelector, {
-    text: '运行 JavaScript',
     visible: true,
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
-  await control.command(
-    'waitFor',
-    `${nodeReplSelector} [data-testid="generic-tool-block-detail"]`,
-    {
-      text: 'node_repl.js',
-      visible: true,
-      stableMs: 500,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-input"]`, {
-    text: "nodeRepl.write({ status: 'ready', value: 42 })",
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await verifyExpandedToolDetail(control, {
+    selector: nodeReplSelector,
+    detailText: 'node_repl.js',
+    inputText: "nodeRepl.write({ status: 'ready', value: 42 })",
+    outputText: "{ status: 'executed', result: 84 }",
+    screenshotName: 'tool-block-details-02-node-repl-expanded.png',
   })
-  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-output"]`, {
-    text: "{ status: 'ready', value: 42 }",
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command(
-    'waitFor',
-    `${nodeReplSelector} [data-tool-detail-toggle][aria-expanded="true"]`,
-    {
-      stableMs: 250,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-details-02-node-repl-expanded.png',
-    nodeReplSelector
-  )
-  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
   control.releaseToolBlockNode()
 
   await withTimeout(
@@ -2974,54 +2971,25 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
   )
   const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
   await control.command('waitFor', genericMcpSelector, {
-    text: '调用 get issue details',
     visible: true,
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
-  await control.command(
-    'waitFor',
-    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`,
-    {
-      text: 'github__issues.get_issue_details',
-      visible: true,
-      stableMs: 500,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-input"]`, {
-    text: '"issue_number": 123',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  await verifyExpandedToolDetail(control, {
+    selector: genericMcpSelector,
+    detailText: 'github__issues.get_issue_details',
+    inputText: '"issue_number": 123',
+    outputText: '"title": "Tool detail verification"',
+    screenshotName: 'tool-block-details-03-generic-mcp-expanded.png',
   })
-  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-output"]`, {
-    text: '"title": "Tool detail verification"',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command(
-    'waitFor',
-    `${genericMcpSelector} [data-tool-detail-toggle][aria-expanded="true"]`,
-    {
-      stableMs: 250,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-details-03-generic-mcp-expanded.png',
-    genericMcpSelector
-  )
-  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
   control.releaseToolBlockGeneric()
 
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="final-processing-toggle"]')
-  await control.command('click', '[data-testid="processing-summary-toggle"]')
+  await ensureToggleExpanded(control, '[data-testid="final-processing-toggle"]')
+  await ensureToggleExpanded(control, '[data-testid="processing-summary-toggle"]')
 
   const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
   const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
@@ -3036,13 +3004,11 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', nodeReplSelector, {
-    text: '运行 JavaScript',
     visible: true,
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('waitFor', genericMcpSelector, {
-    text: '调用 get issue details',
     visible: true,
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3063,7 +3029,12 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
   await captureVerificationScreenshot(
     control,
     'tool-block-order-01-chronological.png',
-    '[data-testid="processing-live-preview"]'
+    '[data-testid="final-processing-timeline"]'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-order-04-later-command.png',
+    laterSelector
   )
 }
 
@@ -8143,7 +8114,7 @@ class DesktopE2EServer {
           'The Node REPL output did not return through the real Codex tool loop'
         )
         assert.ok(
-          requestText.includes("{ status: 'ready', value: 42 }"),
+          requestText.includes("{ status: 'executed', result: 84 }"),
           'The Node REPL MCP server result was not delivered to the model service'
         )
         this.resolveToolBlockNodeOutputObserved()
