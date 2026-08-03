@@ -20,7 +20,6 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import { isSidebarDragActivatorTarget } from './sidebarDragActivator'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -155,6 +154,26 @@ function enableTauri() {
   })
 }
 
+function mockSidebarSortableRect(element: HTMLElement, top: number) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: top,
+    top,
+    left: 0,
+    right: 240,
+    bottom: top + 30,
+    width: 240,
+    height: 30,
+    toJSON: () => ({}),
+  } as DOMRect)
+}
+
+async function waitForSidebarPointerSensorCleanup() {
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 60))
+  })
+}
+
 describe('DesktopSidebar', () => {
   beforeEach(() => {
     experimentalFeatures.enabled = true
@@ -251,7 +270,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('exposes a remote project as sortable through its local Codex state identity', () => {
+  test('starts project pointer sorting only from its content-sized activator', async () => {
     const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
     renderSidebar({
       devices: [
@@ -322,11 +341,73 @@ describe('DesktopSidebar', () => {
     const remoteSortable = document.querySelector(
       '[data-sidebar-sortable-id="local-device:remote-project-id"]'
     ) as HTMLElement
+    const localSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:/repo/local"]'
+    ) as HTMLElement
+    const remoteActivator = screen.getByTestId('project-drag-activator-8')
+    const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
+
+    mockSidebarSortableRect(localSortable, 0)
+    mockSidebarSortableRect(remoteSortable, 30)
+
     expect(remoteSortable).toHaveAttribute('tabindex', '0')
     expect(remoteSortable).toHaveAttribute('role', 'button')
-    expect(remoteSortable.querySelector('[data-testid="project-item-button"]')).toHaveAttribute(
-      'data-sidebar-drag-activator'
-    )
+    expect(remoteActivator).toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteButton).not.toHaveAttribute('data-sidebar-drag-activator')
+
+    fireEvent.pointerDown(remoteButton, {
+      button: 0,
+      buttons: 1,
+      clientX: 220,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 220,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    expect(remoteSortable).not.toHaveAttribute('data-dragging')
+    fireEvent.pointerUp(document, { button: 0, clientX: 220, clientY: 10, pointerId: 1 })
+
+    fireEvent.pointerDown(remoteActivator, {
+      button: 0,
+      buttons: 1,
+      clientX: 20,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    expect(remoteSortable).toHaveAttribute('data-dragging', 'true')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 5,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 20,
+      clientY: 5,
+      isPrimary: true,
+      pointerId: 2,
+    })
+
+    await waitFor(() => expect(onReorderRuntimeProjects).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(remoteSortable).not.toHaveAttribute('data-dragging'))
+    await waitForSidebarPointerSensorCleanup()
   })
 
   test('shows an interactive Codex-style project hover card', async () => {
@@ -1557,7 +1638,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('exposes pointer and keyboard sorting affordances in the task section', () => {
+  test('starts task pointer sorting only from its content-sized activator', async () => {
     const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
@@ -1608,20 +1689,95 @@ describe('DesktopSidebar', () => {
     expect(secondSortable).toHaveAttribute('tabindex', '0')
 
     const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
+    const firstTitleSpace = firstActivator.parentElement as HTMLElement
+    const firstTrailing = screen.getByTestId('runtime-local-task-trailing-chat-1')
     const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
+    mockSidebarSortableRect(firstSortable, 0)
+    mockSidebarSortableRect(secondSortable, 30)
+
     expect(firstSortable).toContainElement(firstActivator)
     expect(firstActivator).not.toContainElement(firstActions)
     expect(firstActivator).toHaveAttribute('data-sidebar-drag-activator')
-    expect(isSidebarDragActivatorTarget(firstActivator)).toBe(true)
-    expect(isSidebarDragActivatorTarget(firstActions)).toBe(false)
-    expect(isSidebarDragActivatorTarget(screen.getByTestId('runtime-local-task-row-chat-1'))).toBe(
-      false
+    expect(firstTitleSpace).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstTrailing).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstActions).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(screen.getByTestId('runtime-local-task-row-chat-1')).not.toHaveAttribute(
+      'data-sidebar-drag-activator'
     )
 
     fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
     fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
     expect(onOpenRuntimeTask).toHaveBeenCalledTimes(2)
     expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
+
+    for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
+      fireEvent.pointerDown(target, {
+        button: 0,
+        buttons: 1,
+        clientX: 220,
+        clientY: 10,
+        isPrimary: true,
+        pointerId: pointerId + 1,
+      })
+      fireEvent.pointerMove(document, {
+        buttons: 1,
+        clientX: 220,
+        clientY: 45,
+        isPrimary: true,
+        pointerId: pointerId + 1,
+      })
+      expect(firstSortable).not.toHaveAttribute('data-dragging')
+      fireEvent.pointerUp(document, {
+        button: 0,
+        clientX: 220,
+        clientY: 45,
+        pointerId: pointerId + 1,
+      })
+    }
+
+    fireEvent.pointerDown(firstActivator, {
+      button: 0,
+      buttons: 1,
+      clientX: 20,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 15,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    expect(firstSortable).not.toHaveAttribute('data-dragging')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    expect(firstSortable).toHaveAttribute('data-dragging', 'true')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 50,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 20,
+      clientY: 50,
+      isPrimary: true,
+      pointerId: 4,
+    })
+
+    await waitFor(() => expect(onReorderRuntimeProjectTasks).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
+    await waitForSidebarPointerSensorCleanup()
   })
 
   test('refreshes relative runtime task time while the sidebar stays mounted', () => {
@@ -2552,7 +2708,8 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('project-item-button'))
 
-    const title = screen.getByText(taskTitle)
+    const titleActivator = screen.getByText(taskTitle)
+    const title = titleActivator.parentElement as HTMLElement
     const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
     const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
 
