@@ -62,6 +62,16 @@ function normalizeComposerGroup(
       context => context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
     ) as DingTalkDocContext[]
     const first = group.context as DingTalkDocContext
+    if (first.scope_mode) {
+      return {
+        ...group,
+        context: {
+          ...first,
+          selected_document_count: first.document_ids?.length ?? 0,
+          selected_folder_count: first.folder_ids?.length ?? 0,
+        },
+      }
+    }
     return {
       ...group,
       context: {

@@ -33,6 +33,11 @@ export interface ExternalKnowledgeRef {
   document_id?: string
   parent_id?: string
   target_name?: string
+  scope_mode?: 'all' | 'custom'
+  folder_ids?: string[]
+  document_ids?: string[]
+  excluded_node_ids?: string[]
+  include_descendants?: boolean
 }
 
 /**
@@ -132,6 +137,15 @@ export interface DingTalkDocContext extends BaseContextItem {
   container_id?: string
   /** User-facing container name, for example a WikiSpace name. */
   container_name?: string
+  /** Dynamic scope represented by this container-level context. */
+  scope_mode?: 'all' | 'custom'
+  /** Selected folder nodes. Their future descendants remain in scope. */
+  folder_ids?: string[]
+  /** Individually selected document nodes. */
+  document_ids?: string[]
+  /** Nodes explicitly removed from an inherited whole/folder selection. */
+  excluded_node_ids?: string[]
+  include_descendants?: boolean
   /** Counts represented by an aggregated composer badge. */
   selected_document_count?: number
   selected_folder_count?: number

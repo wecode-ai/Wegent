@@ -35,10 +35,6 @@ interface ContextSelectorProps {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
-  /** Batch selection callback for selecting multiple contexts at once (e.g., group selection) */
-  onSelectMultiple?: (contexts: ContextItem[]) => void
-  /** Batch deselection callback for deselecting multiple contexts at once */
-  onDeselectMultiple?: (ids: (number | string)[]) => void
   /** Atomic replacement callback for updating scoped knowledge selections. */
   onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
   children: React.ReactNode
@@ -93,8 +89,6 @@ export default function ContextSelector({
   selectedContexts,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
   onReplaceContexts,
   children,
   taskId,
@@ -345,8 +339,6 @@ export default function ContextSelector({
                 onRetry={handleKnowledgeBaseRetry}
                 onSelect={onSelect}
                 onDeselect={onDeselect}
-                onSelectMultiple={onSelectMultiple}
-                onDeselectMultiple={onDeselectMultiple}
                 onReplaceContexts={onReplaceContexts}
               />
             </div>

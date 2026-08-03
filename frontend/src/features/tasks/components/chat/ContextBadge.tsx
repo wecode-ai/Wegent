@@ -54,6 +54,11 @@ function formatDingTalkScopeLabel(
   context: DingTalkDocContext,
   t: (key: string, options?: Record<string, unknown>) => string
 ) {
+  if (context.scope_mode === 'all') {
+    return (context.excluded_node_ids?.length ?? 0) > 0
+      ? t('picker.scopeAllExceptCompact', { count: context.excluded_node_ids?.length ?? 0 })
+      : t('picker.scopeAll')
+  }
   const folderCount = context.selected_folder_count ?? 0
   const documentCount = context.selected_document_count ?? (folderCount > 0 ? 0 : 1)
 

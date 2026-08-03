@@ -525,6 +525,11 @@ export function useChatStreamHandlers({
               document_id: ref.document_id,
               parent_id: ref.parent_id,
               target_name: ref.target_name,
+              scope_mode: ref.scope_mode,
+              folder_ids: ref.folder_ids,
+              document_ids: ref.document_ids,
+              excluded_node_ids: ref.excluded_node_ids,
+              include_descendants: ref.include_descendants,
             },
           })
         })
@@ -538,17 +543,32 @@ export function useChatStreamHandlers({
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
       }
 
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-      if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
+      snapshotContexts
+        .filter(ctx => ctx.type === 'dingtalk_doc')
+        .map(ctx => ctx as import('@/types/context').DingTalkDocContext)
+        .forEach(scope => {
+          const containerId =
+            scope.container_id ?? (scope.source === 'docs' ? 'docs-root' : scope.dingtalk_node_id)
+          contextItems.push({
+            type: 'external_knowledge',
+            data: {
+              provider: 'dingtalk',
+              mode: 'explicit',
+              id: containerId,
+              name: scope.container_name ?? scope.name,
+              scope: scope.source,
+              target_type: 'knowledge_base',
+              scope_mode: scope.scope_mode ?? 'custom',
+              folder_ids:
+                scope.folder_ids ?? (scope.node_type === 'folder' ? [scope.dingtalk_node_id] : []),
+              document_ids:
+                scope.document_ids ??
+                (scope.node_type === 'folder' ? [] : [scope.dingtalk_node_id]),
+              excluded_node_ids: scope.excluded_node_ids ?? [],
+              include_descendants: scope.include_descendants ?? true,
+            },
           })
-          .join('\n')
-        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
-      }
+        })
 
       const queueAttachmentIds = queueMessageContexts.flatMap(
         ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
@@ -789,7 +809,6 @@ export function useChatStreamHandlers({
       taskType,
       selectedDocumentIds,
       knowledgeBaseId,
-      t,
       selectedTeam?.id,
       currentTaskId,
       selectedTaskDetail,

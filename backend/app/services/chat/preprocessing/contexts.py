@@ -810,6 +810,11 @@ def _sync_external_contexts_to_task(
             "document_id": type_data.get("document_id"),
             "parent_id": type_data.get("parent_id"),
             "target_name": type_data.get("target_name"),
+            "scope_mode": type_data.get("scope_mode"),
+            "folder_ids": type_data.get("folder_ids"),
+            "document_ids": type_data.get("document_ids"),
+            "excluded_node_ids": type_data.get("excluded_node_ids"),
+            "include_descendants": type_data.get("include_descendants"),
         }
         refs.append({key: value for key, value in ref.items() if value is not None})
 
@@ -1102,23 +1107,34 @@ def _prepare_contexts_for_creation(
                     )
                     continue
 
+                type_data = {
+                    "provider": str(provider),
+                    "mode": str(mode),
+                    "id": str(external_id) if external_id is not None else None,
+                    "scope": external_data.get("scope"),
+                    "target_type": external_data.get("target_type"),
+                    "node_id": external_data.get("node_id"),
+                    "document_id": external_data.get("document_id"),
+                    "parent_id": external_data.get("parent_id"),
+                    "target_name": external_data.get("target_name"),
+                }
+                for key in (
+                    "scope_mode",
+                    "folder_ids",
+                    "document_ids",
+                    "excluded_node_ids",
+                    "include_descendants",
+                ):
+                    if key in external_data:
+                        type_data[key] = external_data[key]
+
                 external_context = SubtaskContext(
                     subtask_id=subtask_id,
                     user_id=user_id,
                     context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
                     name=str(external_name),
                     status=ContextStatus.READY.value,
-                    type_data={
-                        "provider": str(provider),
-                        "mode": str(mode),
-                        "id": str(external_id) if external_id is not None else None,
-                        "scope": external_data.get("scope"),
-                        "target_type": external_data.get("target_type"),
-                        "node_id": external_data.get("node_id"),
-                        "document_id": external_data.get("document_id"),
-                        "parent_id": external_data.get("parent_id"),
-                        "target_name": external_data.get("target_name"),
-                    },
+                    type_data=type_data,
                 )
                 external_knowledge_contexts_to_create.append(external_context)
             except Exception as e:

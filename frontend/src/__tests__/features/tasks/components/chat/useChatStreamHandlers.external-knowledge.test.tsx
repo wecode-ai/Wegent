@@ -211,6 +211,52 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
     expect(request).not.toHaveProperty('externalKnowledgeRefsReplace')
   })
 
+  it('sends a dynamic DingTalk scope without rewriting a pasted DingTalk link', async () => {
+    const dingtalkScope: ContextItem = {
+      type: 'dingtalk_doc',
+      id: 'dingtalk-scope:wikispace:space-1',
+      name: '研发空间',
+      doc_url: 'https://alidocs.dingtalk.com/i/spaces/space-1/overview',
+      node_type: 'folder',
+      dingtalk_node_id: 'space-1',
+      source: 'wikispace',
+      container_id: 'space-1',
+      container_name: '研发空间',
+      scope_mode: 'custom',
+      folder_ids: ['folder-1'],
+      document_ids: ['document-1'],
+      excluded_node_ids: ['document-2'],
+      include_descendants: true,
+    }
+    const pastedLink = 'https://alidocs.dingtalk.com/i/nodes/document-3'
+    const { result } = renderSendHook([dingtalkScope])
+
+    await act(async () => {
+      await result.current.handleSendMessage(pastedLink)
+    })
+
+    const request = mockContextSendMessage.mock.calls[0][0]
+    expect(request.message).toBe(pastedLink)
+    expect(request.contexts).toEqual([
+      {
+        type: 'external_knowledge',
+        data: {
+          provider: 'dingtalk',
+          mode: 'explicit',
+          id: 'space-1',
+          name: '研发空间',
+          scope: 'wikispace',
+          target_type: 'knowledge_base',
+          scope_mode: 'custom',
+          folder_ids: ['folder-1'],
+          document_ids: ['document-1'],
+          excluded_node_ids: ['document-2'],
+          include_descendants: true,
+        },
+      },
+    ])
+  })
+
   it('sends a strict current-KB scope with selected notebook documents', async () => {
     const { result } = renderSendHook([], {
       taskType: 'knowledge',

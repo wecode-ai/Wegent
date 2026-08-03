@@ -93,8 +93,6 @@ interface KnowledgeSourcePickerProps {
   onRetry: () => void
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
-  onSelectMultiple?: (contexts: ContextItem[]) => void
-  onDeselectMultiple?: (ids: (number | string)[]) => void
   onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
 }
 
@@ -605,8 +603,6 @@ export function KnowledgeSourcePicker({
   onRetry,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
   onReplaceContexts,
 }: KnowledgeSourcePickerProps) {
   const { t } = useTranslation('knowledge')
@@ -622,14 +618,6 @@ export function KnowledgeSourcePicker({
   const [activeKnowledgeBase, setActiveKnowledgeBase] = useState<ActiveKnowledgeBase | null>(null)
   const [activeDingTalkSpace, setActiveDingTalkSpace] = useState<DingtalkDocNode | null>(null)
   const dingtalkTrees = useDingTalkDocTrees({ enabled: activeSource.startsWith('dingtalk') })
-  const { selectedIds: selectedDingTalkIds, toggleNode: toggleDingTalkNode } =
-    useDingTalkKnowledgeSelection({
-      selectedContexts,
-      onSelect,
-      onDeselect,
-      onSelectMultiple,
-      onDeselectMultiple,
-    })
 
   const externalProviderId = activeSource.startsWith('external:')
     ? activeSource.slice('external:'.length)
@@ -769,6 +757,16 @@ export function KnowledgeSourcePicker({
     },
     [onDeselect, onReplaceContexts, onSelect]
   )
+  const {
+    getScope: getDingTalkScope,
+    toggleNode: toggleDingTalkNode,
+    toggleAll: toggleAllDingTalk,
+  } = useDingTalkKnowledgeSelection({
+    selectedContexts,
+    onSelect,
+    onDeselect,
+    onReplace: replaceContexts,
+  })
 
   const canAddExternalRefs = useCallback(
     (
@@ -1296,7 +1294,14 @@ export function KnowledgeSourcePicker({
           loading={dingtalkTrees.loading}
           error={dingtalkTrees.error}
           configured={dingtalkTrees.isConfigured}
+          scope={getDingTalkScope('docs', 'docs-root')}
           onRetry={dingtalkTrees.fetchDocs}
+          onToggle={() =>
+            toggleAllDingTalk('docs', {
+              id: 'docs-root',
+              name: tChat('dingtalkDocs.allDocs'),
+            })
+          }
         />
       )
     }
@@ -1310,8 +1315,16 @@ export function KnowledgeSourcePicker({
           error={dingtalkTrees.wikispaceError}
           configured={dingtalkTrees.wikispaceConfigured}
           activeNode={activeDingTalkSpace}
+          getScope={getDingTalkScope}
           onRetry={dingtalkTrees.fetchWikispace}
           onOpen={setActiveDingTalkSpace}
+          onToggle={node =>
+            toggleAllDingTalk(node.source, {
+              id: node.workspace_id || node.dingtalk_node_id,
+              name: node.name,
+              url: node.doc_url,
+            })
+          }
         />
       )
     }
@@ -1543,13 +1556,17 @@ export function KnowledgeSourcePicker({
           notConfiguredLabel={tChat('dingtalkDocs.notConfigured')}
           emptyLabel={tChat('dingtalkDocs.empty')}
           query={searchValue}
-          selectedIds={selectedDingTalkIds}
+          scope={getDingTalkScope('docs', 'docs-root')}
           onRetry={dingtalkTrees.fetchDocs}
           onToggle={node =>
-            toggleDingTalkNode(node, {
-              id: 'docs-root',
-              name: tChat('dingtalkDocs.allDocs'),
-            })
+            toggleDingTalkNode(
+              node,
+              {
+                id: 'docs-root',
+                name: tChat('dingtalkDocs.allDocs'),
+              },
+              dingtalkTrees.nodes
+            )
           }
         />
       )
@@ -1570,13 +1587,21 @@ export function KnowledgeSourcePicker({
           notConfiguredLabel={tChat('dingtalkDocs.wikispaceNotConfigured')}
           emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
           query={searchValue}
-          selectedIds={selectedDingTalkIds}
+          scope={getDingTalkScope(
+            'wikispace',
+            activeDingTalkSpace.workspace_id || activeDingTalkSpace.dingtalk_node_id
+          )}
           onRetry={dingtalkTrees.fetchWikispace}
           onToggle={node =>
-            toggleDingTalkNode(node, {
-              id: activeDingTalkSpace.workspace_id || activeDingTalkSpace.dingtalk_node_id,
-              name: activeDingTalkSpace.name,
-            })
+            toggleDingTalkNode(
+              node,
+              {
+                id: activeDingTalkSpace.workspace_id || activeDingTalkSpace.dingtalk_node_id,
+                name: activeDingTalkSpace.name,
+                url: activeDingTalkSpace.doc_url,
+              },
+              activeDingTalkSpace.children ?? []
+            )
           }
         />
       )

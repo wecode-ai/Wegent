@@ -9,14 +9,10 @@ import { ChevronRight, Database, FileText, Folder, FolderOpen } from 'lucide-rea
 
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, DingTalkDocContext } from '@/types/context'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  buildDingTalkDocContext,
-  getDingTalkSelectedIds,
-  getDingTalkSelectionKey,
-} from './DingTalkDocContextSelector'
+import { getDingTalkSelectionKey } from './DingTalkDocContextSelector'
 
 export function countDingTalkNodes(nodes: DingtalkDocNode[]): number {
   return nodes.reduce((count, node) => count + 1 + countDingTalkNodes(node.children ?? []), 0)
@@ -41,9 +37,23 @@ function filterDingTalkNodes(nodes: DingtalkDocNode[], query: string): DingtalkD
   }, [])
 }
 
-function collectSelectableDingTalkNodes(node: DingtalkDocNode): DingtalkDocNode[] {
-  if (node.node_type !== 'folder') return [node]
-  return (node.children ?? []).flatMap(collectSelectableDingTalkNodes)
+type SelectionState = 'checked' | 'mixed' | 'unchecked'
+
+function flattenDingTalkNodes(nodes: DingtalkDocNode[]): DingtalkDocNode[] {
+  return nodes.flatMap(node => [node, ...flattenDingTalkNodes(node.children ?? [])])
+}
+
+function hasAncestorInSet(
+  node: DingtalkDocNode,
+  ids: Set<string>,
+  nodesById: Map<string, DingtalkDocNode>
+): boolean {
+  let parentId = node.parent_node_id
+  while (parentId) {
+    if (ids.has(parentId)) return true
+    parentId = nodesById.get(parentId)?.parent_node_id ?? ''
+  }
+  return false
 }
 
 function DingTalkPickerLoading({ label }: { label: string }) {
@@ -78,65 +88,253 @@ export function useDingTalkKnowledgeSelection({
   selectedContexts,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
+  onReplace,
 }: {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
-  onSelectMultiple?: (contexts: ContextItem[]) => void
-  onDeselectMultiple?: (ids: (number | string)[]) => void
+  onReplace?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
 }) {
-  const selectedIds = getDingTalkSelectedIds(selectedContexts)
+  const getScope = useCallback(
+    (source: DingtalkDocNode['source'], containerId: string) =>
+      selectedContexts.find(
+        (context): context is DingTalkDocContext =>
+          context.type === 'dingtalk_doc' &&
+          context.source === source &&
+          context.container_id === containerId
+      ),
+    [selectedContexts]
+  )
+
+  const replaceScope = useCallback(
+    (existing: DingTalkDocContext | undefined, next?: DingTalkDocContext) => {
+      const ids = existing ? [existing.id] : []
+      if (onReplace) {
+        onReplace(ids, next ? [next] : [])
+        return
+      }
+      ids.forEach(onDeselect)
+      if (next) onSelect(next)
+    },
+    [onDeselect, onReplace, onSelect]
+  )
+
+  const buildScope = useCallback(
+    (
+      source: DingtalkDocNode['source'],
+      container: { id: string; name: string; url?: string },
+      values: Pick<
+        DingTalkDocContext,
+        'scope_mode' | 'folder_ids' | 'document_ids' | 'excluded_node_ids'
+      >
+    ): DingTalkDocContext => ({
+      id: `dingtalk-scope:${source}:${container.id}`,
+      name: container.name,
+      type: 'dingtalk_doc',
+      doc_url: container.url ?? '',
+      node_type: 'folder',
+      dingtalk_node_id: container.id,
+      source,
+      container_id: container.id,
+      container_name: container.name,
+      include_descendants: true,
+      ...values,
+    }),
+    []
+  )
+
+  const toggleAll = useCallback(
+    (source: DingtalkDocNode['source'], container: { id: string; name: string; url?: string }) => {
+      const existing = getScope(source, container.id)
+      if (existing?.scope_mode === 'all' && !(existing.excluded_node_ids?.length ?? 0)) {
+        replaceScope(existing)
+        return
+      }
+      replaceScope(
+        existing,
+        buildScope(source, container, {
+          scope_mode: 'all',
+          folder_ids: [],
+          document_ids: [],
+          excluded_node_ids: [],
+        })
+      )
+    },
+    [buildScope, getScope, replaceScope]
+  )
 
   const toggleNode = useCallback(
-    (node: DingtalkDocNode, container?: { id?: string; name?: string }) => {
-      if (node.node_type === 'folder') {
-        const descendants = collectSelectableDingTalkNodes(node)
-        const descendantIds = descendants.map(descendant =>
-          getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id)
-        )
-        const allSelected =
-          descendantIds.length > 0 && descendantIds.every(id => selectedIds.has(id))
-        if (allSelected) {
-          if (onDeselectMultiple) {
-            onDeselectMultiple(descendantIds)
-          } else {
-            descendantIds.forEach(id => onDeselect(id))
-          }
+    (
+      node: DingtalkDocNode,
+      container: { id: string; name: string; url?: string },
+      roots: DingtalkDocNode[]
+    ) => {
+      const existing = getScope(node.source, container.id)
+      const folderIds = existing?.folder_ids ?? []
+      const documentIds = existing?.document_ids ?? []
+      const excludedIds = existing?.excluded_node_ids ?? []
+      const nodesById = new Map(
+        flattenDingTalkNodes(roots).map(item => [item.dingtalk_node_id, item])
+      )
+      const targetIds = node.node_type === 'folder' ? folderIds : documentIds
+      const explicitlySelected = targetIds.includes(node.dingtalk_node_id)
+      const directlyExcluded = excludedIds.includes(node.dingtalk_node_id)
+      const excludedByAncestor = hasAncestorInSet(node, new Set(excludedIds), nodesById)
+      const inheritedFromFolder = hasAncestorInSet(node, new Set(folderIds), nodesById)
+
+      if (existing?.scope_mode === 'all') {
+        if (excludedByAncestor) {
+          const ancestorId = findNearestAncestorInSet(node, new Set(excludedIds), nodesById)
+          replaceScope(
+            existing,
+            buildScope(node.source, container, {
+              scope_mode: 'all',
+              folder_ids: [],
+              document_ids: [],
+              excluded_node_ids: excludedIds.filter(id => id !== ancestorId),
+            })
+          )
           return
         }
-
-        const contexts = descendants
-          .filter(
-            descendant =>
-              !selectedIds.has(
-                getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id)
-              )
-          )
-          .map(descendant => buildDingTalkDocContext(descendant, container))
-        if (onSelectMultiple) {
-          onSelectMultiple(contexts)
-        } else {
-          contexts.forEach(context => onSelect(context))
-        }
+        replaceScope(
+          existing,
+          buildScope(node.source, container, {
+            scope_mode: 'all',
+            folder_ids: [],
+            document_ids: [],
+            excluded_node_ids: directlyExcluded
+              ? excludedIds.filter(id => id !== node.dingtalk_node_id)
+              : [...excludedIds, node.dingtalk_node_id],
+          })
+        )
         return
       }
 
-      const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
-      if (selectedIds.has(selectionKey)) {
-        onDeselect(selectionKey)
-      } else {
-        onSelect(buildDingTalkDocContext(node, container))
+      if (excludedByAncestor) {
+        const ancestorId = findNearestAncestorInSet(node, new Set(excludedIds), nodesById)
+        replaceScope(
+          existing,
+          buildScope(node.source, container, {
+            scope_mode: 'custom',
+            folder_ids: folderIds,
+            document_ids: documentIds,
+            excluded_node_ids: excludedIds.filter(id => id !== ancestorId),
+          })
+        )
+        return
       }
+
+      if (directlyExcluded || inheritedFromFolder) {
+        replaceScope(
+          existing,
+          buildScope(node.source, container, {
+            scope_mode: 'custom',
+            folder_ids: folderIds,
+            document_ids: documentIds,
+            excluded_node_ids: directlyExcluded
+              ? excludedIds.filter(id => id !== node.dingtalk_node_id)
+              : [...excludedIds, node.dingtalk_node_id],
+          })
+        )
+        return
+      }
+
+      const descendantIds = new Set(
+        flattenDingTalkNodes(node.children ?? []).map(item => item.dingtalk_node_id)
+      )
+      const nextFolderIds =
+        node.node_type === 'folder'
+          ? explicitlySelected
+            ? folderIds.filter(id => id !== node.dingtalk_node_id)
+            : [...folderIds.filter(id => !descendantIds.has(id)), node.dingtalk_node_id]
+          : folderIds
+      const nextDocumentIds =
+        node.node_type === 'folder'
+          ? explicitlySelected
+            ? documentIds
+            : documentIds.filter(id => !descendantIds.has(id))
+          : explicitlySelected
+            ? documentIds.filter(id => id !== node.dingtalk_node_id)
+            : [...documentIds, node.dingtalk_node_id]
+      const nextExcludedIds =
+        node.node_type === 'folder' && !explicitlySelected
+          ? excludedIds.filter(id => !descendantIds.has(id))
+          : excludedIds
+      if (nextFolderIds.length === 0 && nextDocumentIds.length === 0) {
+        replaceScope(existing)
+        return
+      }
+      replaceScope(
+        existing,
+        buildScope(node.source, container, {
+          scope_mode: 'custom',
+          folder_ids: nextFolderIds,
+          document_ids: nextDocumentIds,
+          excluded_node_ids: nextExcludedIds,
+        })
+      )
     },
-    [onDeselect, onDeselectMultiple, onSelect, onSelectMultiple, selectedIds]
+    [buildScope, getScope, replaceScope]
   )
 
   return {
-    selectedIds,
+    getScope,
     toggleNode,
+    toggleAll,
   }
+}
+
+function findNearestAncestorInSet(
+  node: DingtalkDocNode,
+  ids: Set<string>,
+  nodesById: Map<string, DingtalkDocNode>
+): string | undefined {
+  let parentId = node.parent_node_id
+  while (parentId) {
+    if (ids.has(parentId)) return parentId
+    parentId = nodesById.get(parentId)?.parent_node_id ?? ''
+  }
+  return undefined
+}
+
+export function getDingTalkContainerSelectionState(
+  scope: DingTalkDocContext | undefined
+): SelectionState {
+  if (!scope) return 'unchecked'
+  if (scope.scope_mode === 'all' && (scope.excluded_node_ids?.length ?? 0) === 0) {
+    return 'checked'
+  }
+  return 'mixed'
+}
+
+export function getDingTalkNodeSelectionState(
+  node: DingtalkDocNode,
+  scope: DingTalkDocContext | undefined,
+  roots: DingtalkDocNode[]
+): SelectionState {
+  if (!scope) return 'unchecked'
+  const nodesById = new Map(flattenDingTalkNodes(roots).map(item => [item.dingtalk_node_id, item]))
+  const folderIds = new Set(scope.folder_ids ?? [])
+  const documentIds = new Set(scope.document_ids ?? [])
+  const excludedIds = new Set(scope.excluded_node_ids ?? [])
+  const excluded =
+    excludedIds.has(node.dingtalk_node_id) || hasAncestorInSet(node, excludedIds, nodesById)
+  const inherited =
+    scope.scope_mode === 'all' ||
+    folderIds.has(node.dingtalk_node_id) ||
+    hasAncestorInSet(node, folderIds, nodesById)
+  const selected =
+    !excluded &&
+    (inherited || (node.node_type !== 'folder' && documentIds.has(node.dingtalk_node_id)))
+  const descendantIds = new Set(
+    flattenDingTalkNodes(node.children ?? []).map(item => item.dingtalk_node_id)
+  )
+  const hasPartialDescendant =
+    [...folderIds, ...documentIds].some(id => descendantIds.has(id)) ||
+    [...excludedIds].some(id => descendantIds.has(id))
+
+  if (node.node_type === 'folder' && hasPartialDescendant) return 'mixed'
+  return selected ? 'checked' : 'unchecked'
 }
 
 export function DingTalkDocsRootRow({
@@ -145,14 +343,18 @@ export function DingTalkDocsRootRow({
   loading,
   error,
   configured,
+  scope,
   onRetry,
+  onToggle,
 }: {
   nodes: DingtalkDocNode[]
   totalCount: number
   loading: boolean
   error: string | null
   configured: boolean
+  scope?: DingTalkDocContext
   onRetry: () => void
+  onToggle: () => void
 }) {
   const { t } = useTranslation('chat')
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
@@ -177,6 +379,12 @@ export function DingTalkDocsRootRow({
             </span>
           </span>
         </span>
+        <ScopeSelectionButton
+          state={getDingTalkContainerSelectionState(scope)}
+          label={t('chat:dingtalkDocs.allDocs')}
+          testId="knowledge-picker-dingtalk-all-docs-select"
+          onClick={onToggle}
+        />
       </div>
     </div>
   )
@@ -189,8 +397,10 @@ export function DingTalkWikispaceRows({
   error,
   configured,
   activeNode,
+  getScope,
   onRetry,
   onOpen,
+  onToggle,
 }: {
   nodes: DingtalkDocNode[]
   query: string
@@ -198,8 +408,13 @@ export function DingTalkWikispaceRows({
   error: string | null
   configured: boolean
   activeNode: DingtalkDocNode | null
+  getScope: (
+    source: DingtalkDocNode['source'],
+    containerId: string
+  ) => DingTalkDocContext | undefined
   onRetry: () => void
   onOpen: (node: DingtalkDocNode) => void
+  onToggle: (node: DingtalkDocNode) => void
 }) {
   const { t } = useTranslation('chat')
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
@@ -215,6 +430,9 @@ export function DingTalkWikispaceRows({
     <div className="space-y-1 p-2">
       {visibleNodes.map(node => {
         const active = activeNode?.dingtalk_node_id === node.dingtalk_node_id
+        const state = getDingTalkContainerSelectionState(
+          getScope(node.source, node.workspace_id || node.dingtalk_node_id)
+        )
         return (
           <div
             key={getDingTalkSelectionKey(node.source, node.dingtalk_node_id)}
@@ -240,10 +458,46 @@ export function DingTalkWikispaceRows({
               </span>
               <ChevronRight className="h-4 w-4 text-text-muted" />
             </button>
+            <ScopeSelectionButton
+              state={state}
+              label={node.name}
+              testId={`knowledge-picker-dingtalk-space-select-${node.dingtalk_node_id}`}
+              onClick={() => onToggle(node)}
+            />
           </div>
         )
       })}
     </div>
+  )
+}
+
+function ScopeSelectionButton({
+  state,
+  label,
+  testId,
+  onClick,
+}: {
+  state: SelectionState
+  label: string
+  testId: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={state === 'mixed' ? 'mixed' : state === 'checked'}
+      aria-label={label}
+      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary md:h-9 md:w-9"
+      onClick={onClick}
+      data-testid={testId}
+    >
+      <SelectionIndicator
+        checked={state === 'checked'}
+        indeterminate={state === 'mixed'}
+        mixedIcon="bar"
+      />
+    </button>
   )
 }
 
@@ -277,7 +531,7 @@ export function DingTalkDocumentColumn({
   notConfiguredLabel,
   emptyLabel,
   query,
-  selectedIds,
+  scope,
   onRetry,
   onToggle,
 }: {
@@ -290,7 +544,7 @@ export function DingTalkDocumentColumn({
   notConfiguredLabel: string
   emptyLabel: string
   query: string
-  selectedIds: Set<string>
+  scope?: DingTalkDocContext
   onRetry: () => void
   onToggle: (node: DingtalkDocNode) => void
 }) {
@@ -313,8 +567,9 @@ export function DingTalkDocumentColumn({
             <DingTalkDocumentNode
               key={getDingTalkSelectionKey(node.source, node.dingtalk_node_id)}
               node={node}
+              roots={nodes}
               depth={0}
-              selectedIds={selectedIds}
+              scope={scope}
               forceOpen={Boolean(query.trim())}
               onToggle={onToggle}
             />
@@ -327,14 +582,16 @@ export function DingTalkDocumentColumn({
 
 function DingTalkDocumentNode({
   node,
+  roots,
   depth,
-  selectedIds,
+  scope,
   forceOpen,
   onToggle,
 }: {
   node: DingtalkDocNode
+  roots: DingtalkDocNode[]
   depth: number
-  selectedIds: Set<string>
+  scope?: DingTalkDocContext
   forceOpen: boolean
   onToggle: (node: DingtalkDocNode) => void
 }) {
@@ -346,18 +603,7 @@ function DingTalkDocumentNode({
       setOpen(true)
     }
   }, [forceOpen])
-  const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
-  const selectableDescendants = isFolder ? collectSelectableDingTalkNodes(node) : []
-  const selectedDescendantCount = selectableDescendants.filter(descendant =>
-    selectedIds.has(getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id))
-  ).length
-  const selected = isFolder
-    ? selectableDescendants.length > 0 && selectedDescendantCount === selectableDescendants.length
-    : selectedIds.has(selectionKey)
-  const partiallySelected =
-    isFolder &&
-    selectedDescendantCount > 0 &&
-    selectedDescendantCount < selectableDescendants.length
+  const state = getDingTalkNodeSelectionState(node, scope, roots)
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
 
   return (
@@ -390,16 +636,15 @@ function DingTalkDocumentNode({
         <button
           type="button"
           role="checkbox"
-          aria-checked={partiallySelected ? 'mixed' : selected}
+          aria-checked={state === 'mixed' ? 'mixed' : state === 'checked'}
           aria-label={node.name}
-          disabled={isFolder && selectableDescendants.length === 0}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary md:h-9 md:w-9"
           onClick={() => onToggle(node)}
           data-testid={`knowledge-picker-dingtalk-node-select-${node.source}-${node.dingtalk_node_id}`}
         >
           <SelectionIndicator
-            checked={selected}
-            indeterminate={partiallySelected}
+            checked={state === 'checked'}
+            indeterminate={state === 'mixed'}
             mixedIcon="bar"
           />
         </button>
@@ -409,8 +654,9 @@ function DingTalkDocumentNode({
             <DingTalkDocumentNode
               key={getDingTalkSelectionKey(child.source, child.dingtalk_node_id)}
               node={child}
+              roots={roots}
               depth={depth + 1}
-              selectedIds={selectedIds}
+              scope={scope}
               forceOpen={forceOpen}
               onToggle={onToggle}
             />

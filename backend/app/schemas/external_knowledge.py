@@ -24,6 +24,11 @@ class ExternalKnowledgeRef(BaseModel):
     document_id: Optional[str] = None
     parent_id: Optional[str] = None
     target_name: Optional[str] = None
+    scope_mode: Optional[Literal["all", "custom"]] = None
+    folder_ids: Optional[list[str]] = None
+    document_ids: Optional[list[str]] = None
+    excluded_node_ids: Optional[list[str]] = None
+    include_descendants: Optional[bool] = None
     boundBy: Optional[str] = None
     boundAt: Optional[str] = None
 

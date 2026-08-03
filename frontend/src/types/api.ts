@@ -694,6 +694,11 @@ export interface SubtaskContextBrief {
   external_node_id?: string | null
   external_document_id?: string | null
   external_parent_id?: string | null
+  external_scope_mode?: 'all' | 'custom' | null
+  external_folder_ids?: string[] | null
+  external_document_ids?: string[] | null
+  external_excluded_node_ids?: string[] | null
+  external_include_descendants?: boolean | null
   // External web content fields
   video_count?: number | null
   site?: string | null

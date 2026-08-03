@@ -95,6 +95,11 @@ function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnow
     node_id: context.external_node_id ?? undefined,
     document_id: context.external_document_id ?? undefined,
     parent_id: context.external_parent_id ?? undefined,
+    scope_mode: context.external_scope_mode ?? undefined,
+    folder_ids: context.external_folder_ids ?? undefined,
+    document_ids: context.external_document_ids ?? undefined,
+    excluded_node_ids: context.external_excluded_node_ids ?? undefined,
+    include_descendants: context.external_include_descendants ?? undefined,
   }
 }
 

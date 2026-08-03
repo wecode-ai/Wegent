@@ -47,6 +47,7 @@
     "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
     "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
     "scopeAll": "全部",
+    "scopeAllExceptCompact": "全部，排除 {{count}} 项",
     "scopeAllDocuments": "全部 · {{count}} 文档",
     "scopeDocumentsCompact_one": "{{count}} 个文档",
     "scopeDocumentsCompact_other": "{{count}} 个文档",

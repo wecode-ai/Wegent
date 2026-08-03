@@ -74,6 +74,49 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
     }
 
 
+def test_prepare_contexts_preserves_dynamic_dingtalk_scope() -> None:
+    contexts = [
+        SimpleNamespace(
+            type="external_knowledge",
+            data={
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+                "name": "研发空间",
+                "scope": "wikispace",
+                "scope_mode": "custom",
+                "folder_ids": ["folder-1"],
+                "document_ids": ["document-1"],
+                "excluded_node_ids": ["document-2"],
+                "include_descendants": True,
+            },
+        )
+    ]
+
+    _, _, _, external_contexts = _prepare_contexts_for_creation(
+        contexts=contexts,
+        subtask_id=166,
+        user_id=2,
+    )
+
+    assert external_contexts[0].type_data == {
+        "provider": "dingtalk",
+        "mode": "explicit",
+        "id": "space-1",
+        "scope": "wikispace",
+        "target_type": None,
+        "node_id": None,
+        "document_id": None,
+        "parent_id": None,
+        "target_name": None,
+        "scope_mode": "custom",
+        "folder_ids": ["folder-1"],
+        "document_ids": ["document-1"],
+        "excluded_node_ids": ["document-2"],
+        "include_descendants": True,
+    }
+
+
 def test_link_contexts_syncs_external_contexts_to_task_spec() -> None:
     db = Mock()
     task = Mock(spec=TaskResource)

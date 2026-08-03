@@ -206,12 +206,27 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
 
 function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
-  const subtitle =
-    context.external_target_type === 'document'
-      ? t('picker.scopeDocumentsCompact', { count: 1 })
-      : context.external_target_type === 'folder'
-        ? t('picker.scopeFoldersCompact', { count: 1 })
-        : t('picker.scopeAll')
+  const folderCount = context.external_folder_ids?.length ?? 0
+  const documentCount = context.external_document_ids?.length ?? 0
+  let subtitle = t('picker.scopeAll')
+  if (context.external_scope_mode === 'all') {
+    const excludedCount = context.external_excluded_node_ids?.length ?? 0
+    if (excludedCount > 0) {
+      subtitle = t('picker.scopeAllExceptCompact', { count: excludedCount })
+    }
+  } else if (context.external_scope_mode === 'custom') {
+    if (folderCount > 0 && documentCount > 0) {
+      subtitle = t('picker.scopeMixedCompact', { folderCount, documentCount })
+    } else if (folderCount > 0) {
+      subtitle = t('picker.scopeFoldersCompact', { count: folderCount })
+    } else {
+      subtitle = t('picker.scopeDocumentsCompact', { count: documentCount })
+    }
+  } else if (context.external_target_type === 'document') {
+    subtitle = t('picker.scopeDocumentsCompact', { count: 1 })
+  } else if (context.external_target_type === 'folder') {
+    subtitle = t('picker.scopeFoldersCompact', { count: 1 })
+  }
   const source = context.external_provider
     ? getExternalKnowledgeSource(context.external_provider)
     : undefined

@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
+import { useDingTalkKnowledgeSelection } from '@/features/tasks/components/chat/DingTalkKnowledgePicker'
 import type { ContextItem } from '@/types/context'
+import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetAllGroupedKnowledgeBases = jest.fn()
@@ -18,6 +20,64 @@ const mockGetDingTalkDocs = jest.fn()
 const mockGetDingTalkSyncStatus = jest.fn()
 const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
+
+describe('useDingTalkKnowledgeSelection', () => {
+  it('converts an inherited child selection into an exclusion', () => {
+    const child: DingtalkDocNode = {
+      id: 2,
+      dingtalk_node_id: 'document-1',
+      name: '研发文档',
+      doc_url: 'https://alidocs.dingtalk.com/i/nodes/document-1',
+      parent_node_id: 'folder-1',
+      node_type: 'file',
+      workspace_id: 'space-1',
+      content_type: 'ALIDOC',
+      source: 'wikispace',
+      is_active: true,
+      last_synced_at: '',
+      content_updated_at: '',
+      created_at: '',
+      updated_at: '',
+      children: [],
+    }
+    const folder: DingtalkDocNode = {
+      ...child,
+      id: 1,
+      dingtalk_node_id: 'folder-1',
+      name: '研发资料',
+      parent_node_id: 'space-1',
+      node_type: 'folder',
+      content_type: '',
+      children: [child],
+    }
+    const onReplace = jest.fn()
+    const { result, rerender } = renderHook(
+      ({ contexts }: { contexts: ContextItem[] }) =>
+        useDingTalkKnowledgeSelection({
+          selectedContexts: contexts,
+          onSelect: jest.fn(),
+          onDeselect: jest.fn(),
+          onReplace,
+        }),
+      { initialProps: { contexts: [] as ContextItem[] } }
+    )
+
+    act(() => {
+      result.current.toggleNode(folder, { id: 'space-1', name: '研发空间' }, [folder])
+    })
+    const selectedScope = onReplace.mock.calls[0][1][0] as ContextItem
+    rerender({ contexts: [selectedScope] })
+
+    act(() => {
+      result.current.toggleNode(child, { id: 'space-1', name: '研发空间' }, [folder])
+    })
+
+    expect(onReplace).toHaveBeenLastCalledWith(
+      ['dingtalk-scope:wikispace:space-1'],
+      [expect.objectContaining({ excluded_node_ids: ['document-1'] })]
+    )
+  })
+})
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -1078,7 +1138,7 @@ describe('ContextSelector organization grouping', () => {
     expect(documentColumn).toHaveClass('flex', 'h-full', 'min-h-0', 'flex-col')
   })
 
-  it('uses DingTalk containers for browsing and selects folder descendants as a snapshot', async () => {
+  it('selects the DingTalk personal root, folders, and documents as dynamic scopes', async () => {
     const onSelect = jest.fn()
     mockGetDingTalkDocs.mockResolvedValue({
       total_count: 2,
@@ -1160,27 +1220,36 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-all-docs')).toBeInTheDocument()
       expect(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1')).toBeInTheDocument()
     })
-    expect(
-      screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-empty-parent')
-    ).toBeDisabled()
-
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
     expect(onSelect).not.toHaveBeenCalled()
-    expect(
-      screen.queryByTestId('knowledge-picker-dingtalk-all-docs-select')
-    ).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-folder-1'))
-    expect(onSelect).toHaveBeenCalledWith(
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs-select'))
+    expect(onSelect).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        id: 'docs:file-1',
-        type: 'dingtalk_doc',
-        container_id: 'docs-root',
+        id: 'dingtalk-scope:docs:docs-root',
+        scope_mode: 'all',
       })
     )
+
+    onSelect.mockClear()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-folder-1'))
+    expect(onSelect).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 'dingtalk-scope:docs:docs-root',
+        type: 'dingtalk_doc',
+        container_id: 'docs-root',
+        folder_ids: ['folder-1'],
+        scope_mode: 'custom',
+      })
+    )
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-file-1'))
+    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ document_ids: ['file-1'] }))
   })
 
-  it('opens DingTalk wikispace children without selecting the whole space', async () => {
+  it('separates DingTalk wikispace navigation from whole-space selection', async () => {
     const onSelect = jest.fn()
     mockGetDingTalkWikispaceNodes.mockResolvedValue({
       total_count: 2,
@@ -1244,23 +1313,33 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
     })
 
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-select-space-1'))
+    expect(onSelect).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: 'dingtalk-scope:wikispace:space-1',
+        scope_mode: 'all',
+      })
+    )
+
+    onSelect.mockClear()
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-space-1'))
     expect(onSelect).not.toHaveBeenCalled()
-    expect(
-      screen.queryByTestId('knowledge-picker-dingtalk-space-select-space-1')
-    ).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(
         screen.getByTestId('knowledge-picker-dingtalk-node-wikispace-wiki-file-1')
       ).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-wikispace-wiki-file-1'))
-    expect(onSelect).toHaveBeenCalledWith(
+    fireEvent.click(
+      screen.getByTestId('knowledge-picker-dingtalk-node-select-wikispace-wiki-file-1')
+    )
+    expect(onSelect).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        id: 'wikispace:wiki-file-1',
+        id: 'dingtalk-scope:wikispace:space-1',
         type: 'dingtalk_doc',
         container_id: 'space-1',
+        document_ids: ['wiki-file-1'],
+        scope_mode: 'custom',
       })
     )
   })

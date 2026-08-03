@@ -47,6 +47,7 @@
     "selectedFolders": "{{count}} folders selected, including subfolders",
     "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
     "scopeAll": "All",
+    "scopeAllExceptCompact": "All except {{count}}",
     "scopeAllDocuments": "All · {{count}} docs",
     "scopeDocumentsCompact_one": "{{count}} doc",
     "scopeDocumentsCompact_other": "{{count}} docs",
