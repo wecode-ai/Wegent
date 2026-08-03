@@ -68,13 +68,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     value,
   ])
 
-  const setDraft = useCallback((nextDraft: string) => {
-    draftRef.current = nextDraft
-    // During active typing we intentionally do NOT sync to React state.
-    // ProseMirror already displays the text internally; syncing every
-    // keystroke forces the whole Workbench tree to re-render and causes
-    // input lag. The draft is flushed on blur, compositionend, or submit.
-  }, [])
+  const setDraft = useCallback(
+    (nextDraft: string) => {
+      draftRef.current = nextDraft
+      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
+      onChange(nextDraft)
+    },
+    [onChange, scopeKey, value]
+  )
 
   const handleBlur = useCallback(() => {
     window.requestAnimationFrame(() => syncDraftToState(draftRef.current))
