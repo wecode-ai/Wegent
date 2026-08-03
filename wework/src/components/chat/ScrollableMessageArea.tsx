@@ -25,7 +25,7 @@ import {
 
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
-const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
+const STABLE_SCROLL_DELAYS = [0, 50, 150, 300, 600, 1000]
 const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 interface RuntimeTranscriptGap {
   start: number
@@ -702,7 +702,7 @@ function ScrollableMessagePaneContent({
     }
 
     if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
-      scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+      scrollToBottom('auto', { saveSnapshot: false })
     }
   }, [
     conversationKey,
@@ -719,6 +719,7 @@ function ScrollableMessagePaneContent({
     messages.length,
     scheduleStableRestoreSavedScrollPosition,
     scheduleStableScrollToBottom,
+    scrollToBottom,
     setScrollToBottom,
   ])
 
