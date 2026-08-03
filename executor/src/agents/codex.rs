@@ -1187,6 +1187,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
+        let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
         let mut notification_rx = client
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
@@ -1290,18 +1291,21 @@ async fn run_codex_app_server_turn_on_shared_client(
                     )
                     .await?;
             }
+        }
 
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
+        if awaits_initial_goal_turn {
+            let goal = initial_thread_goal
+                .as_ref()
+                .expect("initial goal must exist when awaiting its turn");
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            sync_goal_status_from_response(&mut state, &goal_response);
+        } else if !request.ephemeral && resuming_thread {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
                 sync_goal_status_from_response(&mut state, &goal_response);
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    sync_goal_status_from_response(&mut state, &goal_response);
-                }
             }
         }
 
@@ -1317,7 +1321,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let active_turn_id = if initial_thread_goal.is_some() && !request.ephemeral {
+        let active_turn_id = if awaits_initial_goal_turn {
             log_executor_event("codex shared goal turn awaiting", &turn_fields);
             None
         } else {
