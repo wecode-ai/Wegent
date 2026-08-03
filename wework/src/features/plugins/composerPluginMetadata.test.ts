@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
-import { appendInstalledPluginsAsComposerApps, enrichComposerApps } from './composerPluginMetadata'
+import {
+  appendInstalledPluginsAsComposerApps,
+  composerAppPluginKey,
+  enrichComposerApps,
+} from './composerPluginMetadata'
 
 const githubApp: LocalDeviceApp = {
   id: 'github',
@@ -43,6 +47,17 @@ const githubPlugin: InstalledPlugin = {
   },
   status: { state: 'enabled' },
 }
+
+test('uses the connector slug as its plugin icon key', () => {
+  expect(
+    composerAppPluginKey({
+      ...githubApp,
+      id: 'wegent:github',
+      pluginDisplayNames: ['Wegent Cloud'],
+      source: 'wegent-connector',
+    })
+  ).toBe('github')
+})
 
 const superpowersPlugin: InstalledPlugin = {
   apiVersion: 'wegent.ai/v1',

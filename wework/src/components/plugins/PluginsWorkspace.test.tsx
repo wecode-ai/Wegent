@@ -1567,6 +1567,10 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace cloudMarketplaceAvailable={false} projectName="Wegent" />)
 
+    expect(await screen.findByText('Code Review')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+    expect(screen.queryByText('Code Review')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
     await userEvent.click((await screen.findAllByTestId(/^plugin-marketplace-row-/))[0])
 
     expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-fallback')
@@ -1864,11 +1868,27 @@ describe('PluginsWorkspace', () => {
           name: 'local-openai',
           displayName: 'OpenAI 官方市场',
           path: 'https://github.com/openai/plugins',
+          plugins: [
+            {
+              id: '302',
+              name: 'local-docs',
+              displayName: 'Local Docs',
+              description: 'Local marketplace plugin',
+            },
+          ],
         },
         {
           name: 'local-team',
           displayName: 'Team 市场',
           path: '/Users/test/team-marketplace.json',
+          plugins: [
+            {
+              id: '303',
+              name: 'team-tool',
+              displayName: 'Team Tool',
+              description: 'Team marketplace plugin',
+            },
+          ],
         },
       ],
     })
@@ -1878,6 +1898,15 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-tab-default')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-tab-local-openai')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-marketplace-tab-local-team')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-marketplace-tab-local-openai'))
+    expect(screen.getByText('Local Docs')).toBeInTheDocument()
+    expect(screen.queryByText('Team Tool')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-marketplace-tab-local-team'))
+    expect(screen.queryByText('Local Docs')).not.toBeInTheDocument()
+    expect(screen.getByText('Team Tool')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-all'))
+    expect(screen.getByText('Local Docs')).toBeInTheDocument()
+    expect(screen.getByText('Team Tool')).toBeInTheDocument()
   })
 
   test('selects a newly added local marketplace', async () => {

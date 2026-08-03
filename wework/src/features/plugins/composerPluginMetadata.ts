@@ -5,6 +5,16 @@ function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()
 }
 
+export function composerAppPluginKey(app: LocalDeviceApp): string {
+  if (app.source === 'installed-plugin') {
+    return app.id.replace(/^plugin:/, '')
+  }
+  if (app.source === 'wegent-connector') {
+    return app.id.replace(/^wegent:/, '')
+  }
+  return app.pluginDisplayNames?.[0] ?? app.id
+}
+
 function pluginAliases(plugin: InstalledPlugin): Set<string> {
   const source = plugin.spec.source
   const payload = plugin.spec.sourcePayload

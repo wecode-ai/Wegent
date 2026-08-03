@@ -16,6 +16,7 @@ import {
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
+import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
@@ -294,10 +295,7 @@ export function ComposerTextarea({
       searchAliases: candidate.searchAliases,
       Icon: Plug,
       iconUrl: resolvePluginLogoUrl({
-        pluginKey:
-          candidate.app.source === 'installed-plugin'
-            ? candidate.app.id.replace(/^plugin:/, '')
-            : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+        pluginKey: composerAppPluginKey(candidate.app),
         logo: candidate.app.logoUrl,
       }),
       trailingIcon: CornerDownLeft,
@@ -720,10 +718,7 @@ export function ComposerTextarea({
         registerComposerMentionIcon(
           candidate.reference,
           resolvePluginLogoUrl({
-            pluginKey:
-              candidate.app.source === 'installed-plugin'
-                ? candidate.app.id.replace(/^plugin:/, '')
-                : (candidate.app.pluginDisplayNames?.[0] ?? candidate.app.id),
+            pluginKey: composerAppPluginKey(candidate.app),
             logo: candidate.app.logoUrl,
           })
         )

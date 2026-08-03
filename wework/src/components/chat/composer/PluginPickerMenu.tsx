@@ -5,6 +5,7 @@ import {
   insertPluginReference,
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
+import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
@@ -118,10 +119,7 @@ export function PluginPickerMenu({
             >
               {apps.slice(0, 3).map(app => {
                 const logo = resolvePluginLogoUrl({
-                  pluginKey:
-                    app.source === 'installed-plugin'
-                      ? app.id.replace(/^plugin:/, '')
-                      : (app.pluginDisplayNames?.[0] ?? app.id),
+                  pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
                 })
                 return (
@@ -172,10 +170,7 @@ export function PluginPickerMenu({
             ) : visibleApps.length > 0 ? (
               visibleApps.slice(0, 8).map(app => {
                 const logo = resolvePluginLogoUrl({
-                  pluginKey:
-                    app.source === 'installed-plugin'
-                      ? app.id.replace(/^plugin:/, '')
-                      : (app.pluginDisplayNames?.[0] ?? app.id),
+                  pluginKey: composerAppPluginKey(app),
                   logo: app.logoUrl,
                 })
                 return (

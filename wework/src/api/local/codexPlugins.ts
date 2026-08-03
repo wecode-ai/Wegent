@@ -18,7 +18,10 @@ import type {
   PluginMarketplaceItem,
   PluginMarketplaceListResponse,
 } from '@/types/api'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import {
+  isPersonalMarketplaceId,
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+} from '@/features/plugins/builtinPlugins'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -495,7 +498,7 @@ function toMarketplaceItem(
   detail?: CodexPluginDetail | null
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
-  const isPersonal = marketplace.name === WEWORK_PERSONAL_MARKETPLACE_ID
+  const isPersonal = isPersonalMarketplaceId(marketplace.name)
   return {
     id: plugin.id,
     remotePluginId: plugin.remotePluginId ?? plugin.id,
@@ -533,7 +536,7 @@ function toInstalledPlugin(
   detail?: CodexPluginDetail | null
 ): InstalledPlugin {
   const components = pluginComponents(detail)
-  const isCreated = marketplace.name === WEWORK_PERSONAL_MARKETPLACE_ID
+  const isCreated = isPersonalMarketplaceId(marketplace.name)
   const skillStates = Object.fromEntries(
     (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
   )

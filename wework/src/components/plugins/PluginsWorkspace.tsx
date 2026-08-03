@@ -38,6 +38,10 @@ import {
   queuePluginPromptTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
+import {
+  CODEX_PERSONAL_MARKETPLACE_ID,
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+} from '@/features/plugins/builtinPlugins'
 import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
   InstalledSkill,
@@ -465,6 +469,19 @@ function localMarketplaceKey(id: string): string {
 
 function cloudMarketplaceKey(): string {
   return 'cloud:default'
+}
+
+const BUILT_IN_LOCAL_MARKETPLACE_IDS = new Set([
+  'openai-api-curated',
+  'openai-bundled',
+  'openai-primary-runtime',
+  CODEX_PERSONAL_MARKETPLACE_ID,
+  'wegent',
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+])
+
+function isUserAddedMarketplace(marketplace: MarketplaceOption): boolean {
+  return marketplace.kind === 'local' && !BUILT_IN_LOCAL_MARKETPLACE_IDS.has(marketplace.id)
 }
 
 function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
@@ -1164,6 +1181,10 @@ export function PluginsWorkspace({
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(rememberedMarketplaceKey)
+  const [marketplaceSourceFilterKey, setMarketplaceSourceFilterKey] = useState(() => {
+    const rememberedKey = rememberedMarketplaceKey()
+    return rememberedKey.startsWith('local:') ? rememberedKey : ''
+  })
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [canPublish, setCanPublish] = useState(false)
@@ -1225,6 +1246,14 @@ export function PluginsWorkspace({
         t('workbench.plugins_wework_cloud_marketplace', 'Wework 云端市场')
       )
       setMarketplaces(options)
+      setMarketplaceSourceFilterKey(current =>
+        current &&
+        options.some(
+          marketplace => marketplace.key === current && isUserAddedMarketplace(marketplace)
+        )
+          ? current
+          : ''
+      )
       setSelectedMarketplaceKey(current => {
         // 优先选择云端市场作为默认选项
         if (cloudMarketplaceAvailable && !current) {
@@ -1841,6 +1870,7 @@ export function PluginsWorkspace({
           const selectedKey = localMarketplaceKey(state.selectedMarketplaceId)
           rememberMarketplaceKey(selectedKey)
           setSelectedMarketplaceKey(selectedKey)
+          setMarketplaceSourceFilterKey(selectedKey)
         }
         setAddMarketForm({ source: '', gitRef: '', subPath: '' })
         setShowAddMarketDialog(false)
@@ -2786,14 +2816,23 @@ export function PluginsWorkspace({
     }),
     [t]
   )
+  const localMarketplaceTabs = useMemo(
+    () => marketplaces.filter(isUserAddedMarketplace),
+    [marketplaces]
+  )
   const visibleMarketplaceItems = useMemo(
     () =>
-      pluginMarketplaceState.items.filter(
-        item =>
+      pluginMarketplaceState.items.filter(item => {
+        if (marketplaceSourceFilterKey) {
+          const marketplaceId = marketplaceSourceFilterKey.slice('local:'.length)
+          return localMarketplaceIdFromItem(item) === marketplaceId
+        }
+        return (
           marketplaceDistributionFilter === 'all' ||
           marketplacePluginDistribution(item) === marketplaceDistributionFilter
-      ),
-    [marketplaceDistributionFilter, pluginMarketplaceState.items]
+        )
+      }),
+    [marketplaceDistributionFilter, marketplaceSourceFilterKey, pluginMarketplaceState.items]
   )
   const displayedMarketplaceItems = visibleMarketplaceItems.slice(0, marketplaceVisibleCount)
   const hiddenMarketplaceItems = visibleMarketplaceItems.slice(marketplaceVisibleCount)
@@ -3277,14 +3316,57 @@ export function PluginsWorkspace({
                     key={distribution}
                     type="button"
                     role="tab"
-                    aria-selected={marketplaceDistributionFilter === distribution}
+                    aria-selected={
+                      !marketplaceSourceFilterKey && marketplaceDistributionFilter === distribution
+                    }
                     data-testid={`plugins-distribution-tab-${distribution}`}
                     className="plugin-market-filter"
-                    onClick={() => setMarketplaceDistributionFilter(distribution)}
+                    onClick={() => {
+                      setMarketplaceSourceFilterKey('')
+                      setMarketplaceDistributionFilter(distribution)
+                    }}
                   >
                     {label}
                   </button>
                 ))}
+                {localMarketplaceTabs.map(marketplace => (
+                  <button
+                    key={marketplace.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={marketplace.key === marketplaceSourceFilterKey}
+                    data-testid={`plugins-marketplace-tab-${marketplace.id}`}
+                    className={[
+                      'plugin-market-filter',
+                      marketplace.key === marketplaceSourceFilterKey ? 'bg-surface' : '',
+                    ].join(' ')}
+                    onClick={() => {
+                      rememberMarketplaceKey(marketplace.key)
+                      setSelectedMarketplaceKey(marketplace.key)
+                      setMarketplaceSourceFilterKey(marketplace.key)
+                      setMarketplaceDistributionFilter('all')
+                    }}
+                  >
+                    {marketplace.name}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="sr-only"
+                aria-hidden="true"
+                data-testid="plugins-marketplace-source-switcher"
+              >
+                {marketplaces
+                  .filter(marketplace => marketplace.kind === 'cloud')
+                  .map(marketplace => (
+                    <span
+                      key={marketplace.key}
+                      data-testid={`plugins-marketplace-tab-${marketplace.id}`}
+                      className={marketplace.key === selectedMarketplaceKey ? 'bg-surface' : ''}
+                    >
+                      {marketplace.name}
+                    </span>
+                  ))}
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 md:w-auto">
                 <label className="relative min-w-0 flex-1 md:w-[300px] md:flex-none">
@@ -3304,22 +3386,6 @@ export function PluginsWorkspace({
                   />
                 </label>
               </div>
-            </div>
-
-            <div
-              className="sr-only"
-              aria-hidden="true"
-              data-testid="plugins-marketplace-source-switcher"
-            >
-              {marketplaces.map(marketplace => (
-                <span
-                  key={marketplace.key}
-                  data-testid={`plugins-marketplace-tab-${marketplace.id}`}
-                  className={marketplace.key === selectedMarketplaceKey ? 'bg-surface' : ''}
-                >
-                  {marketplace.name}
-                </span>
-              ))}
             </div>
           </div>
         )}
