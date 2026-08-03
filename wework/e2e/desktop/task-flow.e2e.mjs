@@ -6638,6 +6638,11 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
 async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   await ensureExperimentalFeaturesEnabled(control)
   control.setScenario('supervisor')
+  const taskRowsBeforeSupervisor = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -6669,6 +6674,51 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     DEFAULT_STEP_TIMEOUT_MS,
     'Auto-correction did not send a normal follow-up turn after the task became idle'
   )
+  await withTimeout(
+    control.awaitSupervisorCorrectionResponseStarted(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor correction response did not start'
+  )
+  const supervisorTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeSupervisor,
+    'WEWORK_DESKTOP_E2E_SUPERVISOR'
+  )
+  const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
+  const supervisorRunningTestId = `runtime-local-task-running-${supervisorTaskId}`
+  await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const beforeStaleSettlement = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,
+    supervisorTaskId,
+    'The supervisor correction task was not current before replaying the stale settlement'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: beforeStaleSettlement.workbench.currentRuntimeTask,
+      type: 'turn_settled',
+      turnId: 'stale-supervisor-turn',
+    }),
+  })
+  const runningSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+      snapshot.pane?.status?.isBusy === true,
+    'The live supervisor correction was not represented as running'
+  )
+  assert.equal(
+    runningSnapshot.pane?.status?.taskExecution?.running,
+    true,
+    'The supervisor correction had a live executor response but task execution was idle'
+  )
+  await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
+  control.releaseSupervisorCorrectionResponse()
   await control.command('waitFor', '[data-testid="message-user"]', {
     text: SUPERVISOR_CORRECTION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -7266,6 +7316,12 @@ class DesktopE2EServer {
     this.supervisorInitialRelease = new Promise(resolvePromise => {
       this.releaseSupervisorInitial = resolvePromise
     })
+    this.supervisorCorrectionStarted = new Promise(resolvePromise => {
+      this.resolveSupervisorCorrectionStarted = resolvePromise
+    })
+    this.supervisorCorrectionRelease = new Promise(resolvePromise => {
+      this.releaseSupervisorCorrection = resolvePromise
+    })
     this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
       this.resolveToolBlockNodeOutputObserved = resolvePromise
     })
@@ -7599,6 +7655,14 @@ class DesktopE2EServer {
 
   releaseSupervisorInitialResponse() {
     this.releaseSupervisorInitial()
+  }
+
+  awaitSupervisorCorrectionResponseStarted() {
+    return this.guard(this.supervisorCorrectionStarted)
+  }
+
+  releaseSupervisorCorrectionResponse() {
+    this.releaseSupervisorCorrection()
   }
 
   releaseGoalIdleInitialResponse() {
@@ -9066,11 +9130,21 @@ class DesktopE2EServer {
         return
       }
       if (requestText.includes(SUPERVISOR_CORRECTION)) {
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-          responseCompleted(responseId),
-        ])
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            responseCreated(responseId),
+            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+          ])
+        )
+        this.resolveSupervisorCorrectionStarted()
+        await this.supervisorCorrectionRelease
+        response.end(createSse([responseCompleted(responseId)]))
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
