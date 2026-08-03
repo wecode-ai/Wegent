@@ -32,6 +32,10 @@ import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hoo
 
 interface KnowledgeBaseFormProps {
   typeSection?: ReactNode
+  /** False for a code wiki: left blank, the repository's own name is used. */
+  nameRequired?: boolean
+  /** Overrides the placeholder, to say what a blank name will be filled in with. */
+  namePlaceholder?: string
   name: string
   description: string
   onNameChange: (value: string) => void
@@ -136,6 +140,8 @@ function FormSection({
 
 export function KnowledgeBaseForm({
   typeSection,
+  nameRequired = true,
+  namePlaceholder,
   name,
   description,
   onNameChange,
@@ -305,7 +311,8 @@ export function KnowledgeBaseForm({
           <SimpleConfigRow
             label={
               <>
-                {t('knowledge:document.knowledgeBase.name')} <span className="text-red-400">*</span>
+                {t('knowledge:document.knowledgeBase.name')}
+                {nameRequired && <span className="text-red-400"> *</span>}
               </>
             }
           >
@@ -313,7 +320,7 @@ export function KnowledgeBaseForm({
               id="knowledge-name"
               value={name}
               onChange={e => onNameChange(e.target.value)}
-              placeholder={t('knowledge:document.knowledgeBase.namePlaceholder')}
+              placeholder={namePlaceholder ?? t('knowledge:document.knowledgeBase.namePlaceholder')}
               maxLength={100}
               data-testid="kb-name-input"
               className="bg-base"

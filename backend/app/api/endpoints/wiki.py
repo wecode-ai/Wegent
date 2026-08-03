@@ -13,6 +13,7 @@ from app.core import security
 from app.core.wiki_config import wiki_settings
 from app.db.session import get_wiki_db
 from app.models.user import User
+from app.models.wiki import WikiGeneration
 from app.schemas.wiki import (
     WikiContentInDB,
     WikiContentWriteRequest,
@@ -20,6 +21,7 @@ from app.schemas.wiki import (
     WikiGenerationDetail,
     WikiGenerationInDB,
     WikiGenerationListResponse,
+    WikiPageRead,
     WikiProjectDetail,
     WikiProjectInDB,
     WikiProjectListResponse,
@@ -72,11 +74,79 @@ def _verify_internal_token(
         logger.debug(f"JWT token verification failed: {e}")
         pass
 
+    # Third, a skill identity token. This is what a skill running inside an executor
+    # actually holds: the task token it is also given carries no `sub`, so the user
+    # lookup above rejects it. Without this the write API is reachable only with the
+    # fixed operator token, which no executor is issued.
+    if _user_from_skill_identity(token, db) is not None:
+        return
+
     # If neither method works, reject the request
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Invalid authorization token. Use either internal API token or valid user JWT token.",
     )
+
+
+def _user_from_skill_identity(token: str, db: Session) -> Optional[User]:
+    """The user a skill identity token stands for, or ``None``.
+
+    Same shape as the skill download endpoints use, so a skill authenticates the
+    same way wherever it calls back to.
+    """
+    from app.services.auth import verify_skill_identity_token
+
+    token_info = verify_skill_identity_token(token)
+    if not token_info:
+        return None
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        return None
+    return user
+
+
+def _internal_caller(
+    authorization: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Authenticate an internal caller and say which user it is, if any.
+
+    ``None`` means the fixed internal token was used, which is a trusted operator
+    rather than a person and is not scoped to one generation.
+    """
+    _verify_internal_token(authorization=authorization, db=db)
+    token = authorization[7:].strip()
+    if token == wiki_settings.INTERNAL_API_TOKEN:
+        return None
+    try:
+        return security.get_current_user_from_token(token, db)
+    except Exception:  # pragma: no cover - _verify_internal_token already accepted it
+        return _user_from_skill_identity(token, db)
+
+
+def _assert_caller_owns_generation(
+    wiki_db: Session, caller: Optional[User], generation_id: int
+) -> None:
+    """Refuse a caller asking about a generation that is not theirs.
+
+    Authenticating a JWT says who is asking, not what they may ask about. Without
+    this any signed-in user could read any generation's pages, which is a different
+    thing from the documented "your own version" — and that version is a copy of a
+    wiki whose repository they may have no access to at all.
+    """
+    if caller is None:
+        return
+
+    generation = (
+        wiki_db.query(WikiGeneration).filter(WikiGeneration.id == generation_id).first()
+    )
+    if generation is None:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    if generation.user_id != caller.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This generation belongs to another account",
+        )
 
 
 def _resolve_user_id(
@@ -215,6 +285,36 @@ def save_wiki_generation_contents(
         payload=payload,
     )
     return None
+
+
+@internal_router.get("/generations/{generation_id}/pages", response_model=WikiPageRead)
+def read_wiki_generation_page(
+    generation_id: int,
+    path: str = Query(..., min_length=1, description="Stable page path to read"),
+    caller: Optional[User] = Depends(_internal_caller),
+    wiki_db: Session = Depends(get_wiki_db),
+):
+    """Read one page of the version the agent is writing into (internal use).
+
+    An incremental version begins as a complete copy of the published wiki, so the
+    agent's own generation is also the current wiki — which makes "read your own
+    version" both the capability it needs and the narrowest scope that provides it.
+    Without this the instruction to revise a page cannot be followed: the agent knows
+    the page's path and cannot see a word of what it says.
+
+    Answers 404 when the path holds no page. That is a useful answer rather than a
+    failure — in an incremental run it means the page is new.
+    """
+    _assert_caller_owns_generation(wiki_db, caller, generation_id)
+    page = wiki_service.get_generation_page(
+        wiki_db=wiki_db, generation_id=generation_id, path=path
+    )
+    if page is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Generation {generation_id} has no page at '{path}'",
+        )
+    return page
 
 
 @router.get(
@@ -402,22 +502,36 @@ def get_wiki_stats_summary(
 # ========== Config Endpoints ==========
 @router.get("/config")
 def get_wiki_config(
+    code_wiki: bool = Query(
+        default=False,
+        description="Report on the code wiki team rather than the legacy wiki team",
+    ),
     current_user: User = Depends(security.get_current_user),
     main_db: Session = Depends(get_db),
 ):
     """Get wiki configuration including default team info and bound model"""
     from app.services.adapters.team_kinds import team_kinds_service
 
-    default_team_name = wiki_settings.DEFAULT_TEAM_NAME
+    # Which team to report on. The legacy wiki and a code wiki run different teams,
+    # so answering for the wrong one tells the caller a model is bound when the run
+    # it is about to start has none.
+    default_team_name = (
+        wiki_settings.CODE_WIKI_TEAM_NAME
+        if code_wiki
+        else wiki_settings.DEFAULT_TEAM_NAME
+    )
     default_user_id = wiki_settings.DEFAULT_USER_ID
     default_team = None
     has_bound_model = False
     bound_model_name = None
 
     if default_team_name:
-        # Determine which user_id to use for team lookup
-        # If DEFAULT_USER_ID is set (> 0), use it; otherwise use current user
-        lookup_user_id = default_user_id if default_user_id > 0 else current_user.id
+        # A code wiki runs as its own owner, so the team has to be resolved for the
+        # caller: answering for the legacy wiki account would report a bound model
+        # that the run about to start does not have.
+        lookup_user_id = (
+            current_user.id if code_wiki or default_user_id <= 0 else default_user_id
+        )
 
         # Find team by name and namespace
         team = team_kinds_service.get_team_by_name_and_namespace(

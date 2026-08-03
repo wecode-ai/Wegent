@@ -53,6 +53,7 @@ import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
 import { useOffPageDocumentPolling } from '../hooks/useOffPageDocumentPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
+import { documentViewOf } from '@/types/knowledge'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
@@ -1577,7 +1578,7 @@ export function DocumentList({
         onOpenChange={open => !open && setViewingDoc(null)}
         document={currentViewingDoc}
         knowledgeBaseId={knowledgeBase.id}
-        kbType={knowledgeBase.kb_type}
+        kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         canEdit={currentViewingDoc ? canManageDocument(currentViewingDoc) : false}
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
@@ -1589,7 +1590,7 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
-        kbType={knowledgeBase.kb_type}
+        kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}
         onFolderChange={setSelectedUploadFolderId}

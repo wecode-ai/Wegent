@@ -17,10 +17,15 @@ from fastapi import HTTPException
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
+from app.repository.file_status import file_status_letter
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
+
+# Reading repository state happens on a scheduled path, but an unresponsive instance
+# must still fail rather than hold the worker.
+REPO_STATE_TIMEOUT_SECONDS = 15
 
 
 class GiteaProvider(RepositoryProvider):
@@ -852,3 +857,96 @@ class GiteaProvider(RepositoryProvider):
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Failed to check Gitea repository access: {str(e)}")
             raise HTTPException(status_code=502, detail=f"Gitea API error: {str(e)}")
+
+    # ---- repository state, for deciding whether a code wiki needs regenerating ----
+
+    def get_default_branch_head(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Dict[str, str]:
+        """Return the default branch and the commit it points at."""
+        api_base_url = self._get_api_base_url(git_domain)
+        headers = self._build_headers(token)
+
+        repo = requests.get(
+            f"{api_base_url}/repos/{repo_name}",
+            headers=headers,
+            timeout=REPO_STATE_TIMEOUT_SECONDS,
+        )
+        repo.raise_for_status()
+        branch_name = (repo.json() or {}).get("default_branch") or "main"
+
+        branch = requests.get(
+            f"{api_base_url}/repos/{repo_name}/branches/{branch_name}",
+            headers=headers,
+            timeout=REPO_STATE_TIMEOUT_SECONDS,
+        )
+        branch.raise_for_status()
+        commit = (branch.json() or {}).get("commit") or {}
+        return {"branch": branch_name, "commit": commit.get("id", "")}
+
+    def get_changed_files(
+        self, token: str, git_domain: str, repo_name: str, base: str, head: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """List the files that changed between two commits.
+
+        Returns:
+            One entry per file, or ``None`` when this Gitea cannot answer. The
+            compare endpoint arrived in Gitea 1.17 and self-hosted instances lag, so
+            an older one reports the diff as unknown and gets a full rebuild rather
+            than an error.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        response = requests.get(
+            f"{api_base_url}/repos/{repo_name}/compare/{base}...{head}",
+            headers=self._build_headers(token),
+            timeout=REPO_STATE_TIMEOUT_SECONDS,
+        )
+        if response.status_code == 404:
+            self.logger.info(
+                "Gitea at %s has no compare endpoint; reporting the diff as unknown",
+                git_domain,
+            )
+            return None
+        response.raise_for_status()
+
+        payload = response.json() or {}
+        return [
+            {
+                "path": entry.get("filename", ""),
+                "status": file_status_letter(entry.get("status", "")),
+            }
+            for entry in (payload.get("files") or [])
+            if entry.get("filename")
+        ]
+
+    def describe_repository(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Metadata a caller needs before binding a repository, or ``None``.
+
+        ``None`` means "not readable with what was supplied"; private and absent are
+        deliberately not told apart.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"token {self.decrypt_token(token)}"
+        try:
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}",
+                headers=headers,
+                timeout=REPO_STATE_TIMEOUT_SECONDS,
+            )
+        except requests.exceptions.RequestException as e:
+            self._log_domain_failure("describe repository", git_domain, e)
+            return None
+        if response.status_code != 200:
+            return None
+
+        data = response.json() or {}
+        return {
+            "visibility": "private" if data.get("private") else "public",
+            "default_branch": data.get("default_branch") or "",
+            "name": data.get("full_name") or repo_name,
+            "description": data.get("description") or "",
+        }

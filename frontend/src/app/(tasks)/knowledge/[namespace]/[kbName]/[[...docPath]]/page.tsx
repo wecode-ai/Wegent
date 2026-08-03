@@ -21,7 +21,7 @@
  *   /knowledge/{namespace}/{kbName}/path/doc.md
  */
 
-import { Suspense, useState, useCallback, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import { BookOpen, FileText } from 'lucide-react'
@@ -42,7 +42,6 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
 import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
-import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeView } from '@/types/knowledge'
@@ -64,9 +63,6 @@ const KnowledgeDocumentPage = dynamic(
     })),
   { ssr: false }
 )
-
-// Storage key for knowledge sidebar collapsed state
-const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
 
 function KnowledgeVirtualPageContent() {
   const params = useParams()
@@ -107,47 +103,10 @@ function KnowledgeVirtualPageContent() {
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  // Knowledge sidebar collapsed state (for document tab)
-  const [isKnowledgeSidebarCollapsed, setIsKnowledgeSidebarCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY) === 'true'
-    }
-    return false
-  })
-
   const [knowledgeViewState, setKnowledgeViewState] = useState<KnowledgeViewState>({
     visible: false,
     currentView: 'notebook',
   })
-
-  // Listen for knowledge sidebar collapse changes from KnowledgeDocumentPageDesktop
-  useEffect(() => {
-    const handleCollapseChange = (event: CustomEvent<{ collapsed: boolean }>) => {
-      setIsKnowledgeSidebarCollapsed(event.detail.collapsed)
-    }
-
-    window.addEventListener(
-      'knowledge-sidebar-collapse-change',
-      handleCollapseChange as EventListener
-    )
-
-    return () => {
-      window.removeEventListener(
-        'knowledge-sidebar-collapse-change',
-        handleCollapseChange as EventListener
-      )
-    }
-  }, [])
-
-  // Handle expanding the knowledge sidebar from TopNavigation
-  const handleExpandKnowledgeSidebar = useCallback(() => {
-    setIsKnowledgeSidebarCollapsed(false)
-    localStorage.setItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY, 'false')
-    window.dispatchEvent(
-      new CustomEvent('knowledge-sidebar-collapse-change', { detail: { collapsed: false } })
-    )
-  }, [])
 
   useEffect(() => {
     saveLastTab('wiki')
@@ -228,18 +187,6 @@ function KnowledgeVirtualPageContent() {
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
-          centerContent={
-            <KnowledgeTabs
-              activeTab="document"
-              onTabChange={tab => {
-                if (tab === 'code') {
-                  router.push('/knowledge?type=code')
-                }
-              }}
-              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
-              onExpandClick={handleExpandKnowledgeSidebar}
-            />
-          }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isTaskSidebarCollapsed}
         >

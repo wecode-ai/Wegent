@@ -19,6 +19,13 @@ class WikiSettings(BaseSettings):
         "wiki-team"  # Default execution team name (matches init_data/01-default-resources.yaml)
     )
     DEFAULT_AGENT_TYPE: str = "ClaudeCode"  # Default agent type
+    # Team that runs knowledge-base code wikis (env var: WIKI_CODE_WIKI_TEAM_NAME).
+    # Separate from DEFAULT_TEAM_NAME because the two paths hand their agents
+    # different instructions and different submission rules; pointing both at one team
+    # would give the legacy wiki the page-path write contract it cannot satisfy.
+    CODE_WIKI_TEAM_NAME: str = (
+        "code-wiki-team"  # Matches init_data/02-public-resources.yaml
+    )
     DEFAULT_USER_ID: int = 0  # Default user ID for task creation (0 = use current user)
     DEFAULT_LANGUAGE: str = (
         "en"  # Default language for wiki documentation generation (en/zh)
