@@ -4590,7 +4590,7 @@ pub fn run() {
             #[cfg(desktop)]
             local_model_secrets::read_local_model_api_keys,
             #[cfg(desktop)]
-            local_model_secrets::update_local_model_api_key,
+            local_model_secrets::delete_local_model_api_keys,
             get_app_log_directory,
             get_app_preferences,
             close_main_window_to_tray,
