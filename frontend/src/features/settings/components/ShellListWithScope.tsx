@@ -29,6 +29,7 @@ interface ShellListWithScopeProps {
   creationOnly?: boolean
   hideCreateActions?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 export function ShellListWithScope({
@@ -46,6 +47,7 @@ export function ShellListWithScope({
   creationOnly = false,
   hideCreateActions = false,
   compact = false,
+  searchQuery = '',
 }: ShellListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -104,6 +106,7 @@ export function ShellListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -124,6 +127,7 @@ export function ShellListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -154,6 +158,7 @@ export function ShellListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     </div>
   )

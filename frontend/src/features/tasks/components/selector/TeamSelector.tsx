@@ -66,7 +66,7 @@ export default function TeamSelector({
   const searchParams = useSearchParams()
   const isMobile = useMediaQuery('(max-width: 767px)')
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), [])
-  const agentMarketHref = `${paths.resourceLibrary.getHref()}?tab=discover&type=agent&from=chat`
+  const myAgentsHref = `${paths.resourceLibrary.getHref()}?tab=mine&type=agent&from=chat`
 
   // Get taskId from URL
   const taskIdFromUrl =
@@ -263,14 +263,14 @@ export default function TeamSelector({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full',
         isMobile ? 'px-4 py-3 min-h-[44px]' : 'px-2.5 py-2'
       )}
-      onClick={() => router.push(agentMarketHref)}
+      onClick={() => router.push(myAgentsHref)}
       data-testid="team-selector-use-more-agents"
       role="button"
       tabIndex={0}
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          router.push(agentMarketHref)
+          router.push(myAgentsHref)
         }
       }}
     >

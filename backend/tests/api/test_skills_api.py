@@ -1498,6 +1498,7 @@ tags: ["public", "api", "test"]
             assert len(matching) == 1
             assert matching[0]["id"] == skill.id
             assert matching[0]["namespace"] == skill.namespace
+            assert matching[0]["publication_status"] == "published"
 
         remove_response = test_client.delete(
             f"/api/v1/kinds/skills/{skill.id}/bindings/groups",
