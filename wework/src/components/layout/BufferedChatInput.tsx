@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, startTransition } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
 
 export interface BufferedChatInputInsertion {
@@ -9,6 +9,8 @@ export interface BufferedChatInputInsertion {
 interface BufferedChatInputProps extends ChatInputProps {
   insertion?: BufferedChatInputInsertion | null
 }
+
+const DRAFT_FLUSH_DELAY_MS = 300
 
 export const BufferedChatInput = memo(function BufferedChatInput({
   value,
@@ -27,15 +29,33 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftState.draft : value
   const draftRef = useRef(draft)
   const appliedInsertionIdRef = useRef<number | null>(null)
+  const flushTimeoutRef = useRef<number | null>(null)
+
+  const cancelPendingFlush = useCallback(() => {
+    if (flushTimeoutRef.current !== null) {
+      window.clearTimeout(flushTimeoutRef.current)
+      flushTimeoutRef.current = null
+    }
+  }, [])
 
   const syncDraftToState = useCallback(
     (nextDraft: string) => {
-      startTransition(() => {
-        setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
-      })
+      cancelPendingFlush()
+      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
       onChange(nextDraft)
     },
-    [onChange, scopeKey, value]
+    [cancelPendingFlush, onChange, scopeKey, value]
+  )
+
+  const scheduleDraftFlush = useCallback(
+    (nextDraft: string) => {
+      cancelPendingFlush()
+      flushTimeoutRef.current = window.setTimeout(() => {
+        flushTimeoutRef.current = null
+        onChange(nextDraft)
+      }, DRAFT_FLUSH_DELAY_MS)
+    },
+    [cancelPendingFlush, onChange]
   )
 
   useEffect(() => {
@@ -43,10 +63,11 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     return () => {
       const pendingDraft = draftRef.current
       if (pendingDraft !== value) {
+        cancelPendingFlush()
         onChange(pendingDraft)
       }
     }
-  }, [onChange, scopeKey, value])
+  }, [cancelPendingFlush, onChange, value])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
@@ -72,9 +93,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (nextDraft: string) => {
       draftRef.current = nextDraft
       setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
-      onChange(nextDraft)
+      scheduleDraftFlush(nextDraft)
     },
-    [onChange, scopeKey, value]
+    [scheduleDraftFlush, scopeKey, value]
   )
 
   const handleBlur = useCallback(() => {
@@ -95,13 +116,12 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       }
       if (submittedDraft.trim()) {
         draftRef.current = ''
-        startTransition(() => {
-          setDraftState({ scopeKey, sourceValue: '', draft: '' })
-        })
+        cancelPendingFlush()
+        setDraftState({ scopeKey, sourceValue: '', draft: '' })
         onChange('')
       }
     },
-    [onChange, onSubmit, scopeKey]
+    [cancelPendingFlush, onChange, onSubmit, scopeKey]
   )
 
   return (
