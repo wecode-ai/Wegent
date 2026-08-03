@@ -326,12 +326,15 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
+    const personalCategory = screen.getByTestId('settings-category-personal')
     const integrationsCategory = screen.getByTestId('settings-category-integrations')
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
+    expect(personalCategory).toHaveClass('mt-2')
+    expect(integrationsCategory).toHaveClass('mt-5')
     expect(integrationsCategory).toHaveTextContent('集成')
     expect(codingCategory).toHaveTextContent('编码')
     expect(archivedCategory).toHaveTextContent('已归档')
@@ -354,7 +357,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
   })
 
-  test('adds titlebar clearance for the settings back button in Tauri', () => {
+  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -363,13 +366,11 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[52px]', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).not.toHaveClass('h-[76px]', 'pt-6')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
-        'macos-titlebar-drag-region'
-      )
-    ).toHaveAttribute('data-tauri-drag-region')
+    expect(screen.queryByTestId('settings-main-titlebar-drag-region')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page').querySelector('main')).toHaveClass('pt-8')
   })
 
   test('opens the add device dialog from the cloud work route query', async () => {
