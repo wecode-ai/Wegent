@@ -38,5 +38,5 @@ function buildThinkingPreview(content: string): string {
 
   return preview.length <= THINKING_PREVIEW_MAX_LENGTH
     ? preview
-    : `${preview.substring(0, THINKING_PREVIEW_MAX_LENGTH)}...`
+    : `${preview.substring(0, THINKING_PREVIEW_MAX_LENGTH - 3)}...`
 }

@@ -711,7 +711,21 @@ export function createDesktopScenario({
       }
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await toolFollowUpReceived
+      try {
+        await Promise.race([
+          toolFollowUpReceived,
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('The tool-output follow-up request was not received')),
+              uiTimeoutMs
+            )
+          ),
+        ])
+      } catch (error) {
+        releaseToolCompletion()
+        releaseToolFinalCompletion()
+        throw error
+      }
       await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
         text: `正在思考 · ${REASONING_PREVIEW}`,
         timeoutMs: uiTimeoutMs,

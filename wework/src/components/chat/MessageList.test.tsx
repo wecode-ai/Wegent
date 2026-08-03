@@ -1739,6 +1739,29 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-live-preview')).not.toBeInTheDocument()
   })
 
+  test('keeps the truncated reasoning preview within the configured maximum length', () => {
+    const content = 'a'.repeat(120)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-blocks',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            streamingThinkingContent: content,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const preview = screen.getByTestId('thinking-indicator').textContent?.split(' · ')[1]
+    expect(preview).toHaveLength(96)
+    expect(preview).toMatch(/\.\.\.$/)
+  })
+
   test('hides the stale reasoning summary once assistant text starts streaming', () => {
     const blocks: ProcessingBlock[] = [
       {
