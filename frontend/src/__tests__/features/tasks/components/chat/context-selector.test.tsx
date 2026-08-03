@@ -676,6 +676,16 @@ describe('ContextSelector organization grouping', () => {
         'aria-checked',
         'true'
       )
+      expect(screen.getByTestId('knowledge-picker-folder-scope-10')).toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-folder-scope-10')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
@@ -683,6 +693,12 @@ describe('ContextSelector organization grouping', () => {
       expect(contextChanges).toHaveBeenLastCalledWith([])
       expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
         'aria-checked',
+        'false'
+      )
+      expect(screen.getByTestId('knowledge-picker-folder-scope-10')).not.toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).not.toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toHaveAttribute(
+        'aria-pressed',
         'false'
       )
     })

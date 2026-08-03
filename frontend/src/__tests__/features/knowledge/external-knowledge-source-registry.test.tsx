@@ -414,6 +414,22 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
     expect(onChange.mock.calls.at(-1)?.[0][0].ref.target_type).toBeUndefined()
 
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toBeDisabled()
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-node-document:doc-1'))
+    expect(onChange.mock.calls.at(-1)?.[0][0].ref.target_type).toBeUndefined()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).not.toBeDisabled()
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+
     fireEvent.click(screen.getByTestId('knowledge-picker-external-node-document:doc-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
