@@ -19,7 +19,6 @@ use tokio::{
 use crate::{
     agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
-    local::git::{is_worktree, resolve_merge_base, run_git},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
     local::workspace_files::{
@@ -33,9 +32,12 @@ use crate::{
     },
     version::get_version,
 };
-
 #[cfg(windows)]
+use crate::local::git::{is_worktree, resolve_merge_base, run_git};
+
 const DEFAULT_DEVICE_ID: &str = "local-device";
+#[cfg(windows)]
+const DEV_NULL: &str = "NUL";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
@@ -1527,7 +1529,10 @@ async fn handle_builtin_device_command(
                 if file.is_empty() {
                     continue;
                 }
-                let file_diff = run_git(&path, &["diff", "--binary", "--no-index", "--", "/dev/null", file], &env);
+                let file_diff = run_git(&path,
+                    &["diff", "--binary", "--no-index", "--", DEV_NULL, file],
+                    &env,
+                );
                 if file_diff.success() {
                     output.push_str(&file_diff.stdout);
                 }
@@ -1550,7 +1555,10 @@ async fn handle_builtin_device_command(
                 if file.is_empty() {
                     continue;
                 }
-                let file_diff = run_git(&path, &["diff", "--binary", "--no-index", "--", "/dev/null", file], &env);
+                let file_diff = run_git(&path,
+                    &["diff", "--binary", "--no-index", "--", DEV_NULL, file],
+                    &env,
+                );
                 if file_diff.success() {
                     output.push_str(&file_diff.stdout);
                 }

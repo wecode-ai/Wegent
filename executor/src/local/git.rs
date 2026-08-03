@@ -18,10 +18,11 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
     process::{Command, Stdio},
     time::Instant,
 };
+#[cfg(windows)]
+use std::path::PathBuf;
 
 use crate::local::command::build_env;
 
@@ -29,6 +30,7 @@ use crate::local::command::build_env;
 /// Common installation directories for Git on Windows. These are appended to the process PATH
 /// so that `git` can be resolved even when the executor is started from an environment that
 /// does not include them.
+#[cfg(windows)]
 const WINDOWS_GIT_PATHS: &[&str] = &[
     "C:\\Program Files\\Git\\cmd",
     "C:\\Program Files (x86)\\Git\\cmd",
@@ -111,41 +113,17 @@ pub fn run_git(cwd: &str, args: &[&str], extra_env: &HashMap<String, String>) ->
     }
 }
 
-/// Run a Git subcommand with a hard timeout.
-///
-/// This is the async variant used by the device-command handler.
-pub async fn run_git_async(
-    cwd: &str,
-    args: &[&str],
-    extra_env: &HashMap<String, String>,
-) -> GitOutput {
-    let cwd = cwd.to_owned();
-    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-    let extra_env = extra_env.clone();
-
-    tokio::task::spawn_blocking(move || run_git(&cwd, &args.iter().map(String::as_str).collect::<Vec<_>>(), &extra_env))
-        .await
-        .unwrap_or_else(|error| GitOutput {
-            stdout: String::new(),
-            stderr: format!("git task panicked: {error}"),
-            exit_code: None,
-            duration: 0.0,
-        })
-}
-
 /// Run a Git subcommand and return its stdout if it succeeded and produced output.
 pub fn git_stdout(cwd: &str, args: &[&str], extra_env: &HashMap<String, String>) -> Option<String> {
-    run_git(cwd, args, extra_env)
-        .success()
-        .then_some(())
-        .and_then(|_| {
-            run_git(cwd, args, extra_env)
-                .stdout
-                .trim()
-                .to_owned()
-                .into()
-        })
-        .filter(|value: &String| !value.is_empty())
+    let output = run_git(cwd, args, extra_env);
+    if !output.success() {
+        return None;
+    }
+    let trimmed = output.stdout.trim().to_owned();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed)
 }
 
 /// Check whether `path` points to a Git worktree.
@@ -212,9 +190,6 @@ fn prepend_windows_git_paths(command: &mut Command) {
         command.env("PATH", joined);
     }
 }
-
-#[cfg(not(windows))]
-fn prepend_windows_git_paths(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
