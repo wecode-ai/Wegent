@@ -309,8 +309,8 @@ const PASTED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_PATHS_COMPLETE'
 const DROPPED_PATH_FOLDER_NAME = 'dropped-context-folder'
 const DROPPED_PATH_FILE_NAME = 'dropped-context.md'
 const DROPPED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_DROPPED_PATHS_COMPLETE'
-const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
-const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
+const TOOL_BLOCK_ORDER_PROMPT =
+  'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER: run the four requested tools in order.'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
 const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
 const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
@@ -372,6 +372,7 @@ const RUNS_PLUGIN_E2E =
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const repoDir = resolve(weworkDir, '..')
+const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
 
@@ -476,6 +477,41 @@ function shouldRunDesktopCheckpoint(checkpoint) {
 
 function shouldStopAfterDesktopCheckpoint(checkpoint) {
   return DESKTOP_SEGMENT === checkpoint
+}
+
+function shouldConfigureToolDetailsMcp() {
+  if (TOOL_BLOCK_ORDER_ONLY) return true
+  const standaloneMode = [
+    REQUEST_INPUT_ONLY,
+    VIEW_IMAGE_ONLY,
+    SHORT_CONVERSATION_ONLY,
+    RETRY_ONLY,
+    RATE_LIMIT_ONLY,
+    RUNNING_FORK_ONLY,
+    COMPLETED_FORK_ONLY,
+    SIDE_CHAT_ONLY,
+    GOAL_IDLE_ONLY,
+    GOAL_RESTART_ONLY,
+    TURN_NAVIGATION_ONLY,
+    ATTACHMENT_ONLY,
+    PASTED_WORKSPACE_PATHS_ONLY,
+    DROPPED_WORKSPACE_PATHS_ONLY,
+    SYSTEM_DRAG_PANEL_ONLY,
+    MODEL_SWITCH_ONLY,
+    CLOUD_ONLY,
+    PLUGINS_ONLY,
+    AUTOMATION_ONLY,
+    MEMORY_ONLY,
+    QUEUE_NAVIGATION_ONLY,
+    GUIDANCE_BACKGROUND_ONLY,
+    GUIDANCE_SCROLL_ONLY,
+    MESSAGE_RESTORATION_ONLY,
+    QUEUE_MANAGEMENT_ONLY,
+    TASK_PLAN_ONLY,
+    DESKTOP_SCENARIO_ONLY,
+    MIXED_TOOL_TURNS_ONLY,
+  ].some(Boolean)
+  return !standaloneMode && shouldRunDesktopCheckpoint('rendering-extensions')
 }
 
 function shouldRunPluginSegment(segment) {
@@ -2826,132 +2862,102 @@ async function ensureTaskRowVisible(control, taskRowTestId) {
   })
 }
 
-async function seedToolBlockOrderTask(executorHome, workspacePath) {
-  const indexPath = join(executorHome, 'runtime-work', 'index.json')
-  await mkdir(dirname(indexPath), { recursive: true })
-  const runtimeIndex = await readFile(indexPath, 'utf8')
-    .then(content => JSON.parse(content))
-    .catch(error => {
-      if (error?.code !== 'ENOENT') throw error
-      return {
-        version: 1,
-        tasks: {},
-        workspaces: {},
-        deleted_archived_task_ids: {},
-      }
-    })
-  const messageCreatedAt = Date.now()
-  const earlierCreatedAt = messageCreatedAt + 1_000
-  const nodeReplCreatedAt = messageCreatedAt + 1_300
-  const genericMcpCreatedAt = messageCreatedAt + 1_600
-  const laterCreatedAt = messageCreatedAt + 2_000
-
-  runtimeIndex.tasks ??= {}
-  runtimeIndex.tasks[TOOL_BLOCK_ORDER_TASK_ID] = {
-    local_task_id: TOOL_BLOCK_ORDER_TASK_ID,
-    thread_id: null,
-    workspace_path: workspacePath,
-    title: TOOL_BLOCK_ORDER_TASK_TITLE,
-    runtime: 'claude_code',
-    status: 'done',
-    running: false,
-    continuable: true,
-    thread_status: 'idle',
-    turn_status: 'completed',
-    created_at: messageCreatedAt,
-    updated_at: laterCreatedAt,
-    completed_at: laterCreatedAt,
-    runtime_handle: {
-      messages: [
-        {
-          id: 'assistant-tool-block-order',
-          role: 'assistant',
-          subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-          turnId: TOOL_BLOCK_ORDER_TASK_ID,
-          content: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-          status: 'done',
-          createdAt: new Date(messageCreatedAt).toISOString(),
-          blocks: [
-            {
-              id: LATER_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'exec_command',
-              toolInput: { cmd: 'printf later-created-tool' },
-              toolOutput: 'later-created-tool',
-              status: 'done',
-              createdAt: laterCreatedAt,
-              completedAt: laterCreatedAt + 100,
-            },
-            {
-              id: EARLIER_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'exec_command',
-              toolInput: { cmd: 'printf earlier-created-tool' },
-              toolOutput: 'earlier-created-tool',
-              status: 'done',
-              createdAt: earlierCreatedAt,
-              completedAt: earlierCreatedAt + 100,
-            },
-            {
-              id: NODE_REPL_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'mcp__node_repl__js',
-              toolInput: { code: "nodeRepl.write({ status: 'ready', value: 42 })" },
-              toolOutput: "{ status: 'ready', value: 42 }",
-              status: 'done',
-              createdAt: nodeReplCreatedAt,
-              completedAt: nodeReplCreatedAt + 100,
-            },
-            {
-              id: GENERIC_MCP_TOOL_BLOCK_ID,
-              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
-              type: 'tool',
-              toolName: 'github__issues__get_issue_details',
-              toolInput: { owner: 'wecode-ai', repo: 'Wegent', issue_number: 123 },
-              toolOutput: {
-                title: 'Tool detail verification',
-                state: 'open',
-              },
-              status: 'done',
-              createdAt: genericMcpCreatedAt,
-              completedAt: genericMcpCreatedAt + 100,
-            },
-          ],
-        },
-      ],
-    },
-    parent: null,
-    ephemeral: false,
-    runtime_project_key: null,
-    runtime_workspace_roots: [],
-  }
-
-  await writeFile(indexPath, `${JSON.stringify(runtimeIndex, null, 2)}\n`, 'utf8')
-}
-
-async function verifyToolBlockChronologicalOrder({
-  control,
-  executorHome,
-  restartDesktopApp,
-  workspacePath,
-}) {
-  await restartDesktopApp({
-    afterStop: () => seedToolBlockOrderTask(executorHome, workspacePath),
-  })
-
-  const taskRowTestId = `runtime-local-task-row-${TOOL_BLOCK_ORDER_TASK_ID}`
-  await ensureTaskRowVisible(control, taskRowTestId)
-  await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
-    text: TOOL_BLOCK_ORDER_TASK_TITLE,
+async function verifyToolBlockChronologicalOrder({ composerSelector, control }) {
+  control.setScenario('tool_block_order')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  await selectE2EModel(control)
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    TOOL_BLOCK_ORDER_PROMPT,
+    'tool_block_order'
+  )
+
+  await withTimeout(
+    control.guard(control.toolBlockNodeOutputObserved),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The Node REPL output did not return to the real model request'
+  )
+  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
+  await control.command('waitFor', nodeReplSelector, {
+    text: '运行 JavaScript',
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
+  await control.command(
+    'waitFor',
+    `${nodeReplSelector} [data-testid="generic-tool-block-detail"]`,
+    {
+      text: 'node_repl.js',
+      visible: true,
+      stableMs: 500,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-input"]`, {
+    text: "nodeRepl.write({ status: 'ready', value: 42 })",
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-output"]`, {
+    text: "{ status: 'ready', value: 42 }",
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-details-02-node-repl-expanded.png',
+    nodeReplSelector
+  )
+  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
+  control.releaseToolBlockNode()
+
+  await withTimeout(
+    control.guard(control.toolBlockGenericOutputObserved),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The generic MCP output did not return to the real model request'
+  )
+  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
+  await control.command('waitFor', genericMcpSelector, {
+    text: '调用 get issue details',
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
+  await control.command(
+    'waitFor',
+    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`,
+    {
+      text: 'github__issues.get_issue_details',
+      visible: true,
+      stableMs: 500,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-input"]`, {
+    text: '"issue_number": 123',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-output"]`, {
+    text: '"title": "Tool detail verification"',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-details-03-generic-mcp-expanded.png',
+    genericMcpSelector
+  )
+  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
+  control.releaseToolBlockGeneric()
+
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: TOOL_BLOCK_ORDER_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2960,8 +2966,6 @@ async function verifyToolBlockChronologicalOrder({
   await control.command('click', '[data-testid="processing-summary-toggle"]')
 
   const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
-  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
-  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
   const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
   await control.command('waitFor', earlierSelector, {
     visible: true,
@@ -2986,77 +2990,22 @@ async function verifyToolBlockChronologicalOrder({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const [earlierMetrics] = JSON.parse(await control.command('getElementMetrics', earlierSelector))
+  const [nodeReplMetrics] = JSON.parse(await control.command('getElementMetrics', nodeReplSelector))
+  const [genericMcpMetrics] = JSON.parse(
+    await control.command('getElementMetrics', genericMcpSelector)
+  )
   const [laterMetrics] = JSON.parse(await control.command('getElementMetrics', laterSelector))
   assert.ok(
-    earlierMetrics.top < laterMetrics.top,
-    `The later-created tool appeared above the earlier tool (${laterMetrics.top} <= ${earlierMetrics.top})`
+    earlierMetrics.top < nodeReplMetrics.top &&
+      nodeReplMetrics.top < genericMcpMetrics.top &&
+      genericMcpMetrics.top < laterMetrics.top,
+    `Tool activities were not chronological (${earlierMetrics.top}, ${nodeReplMetrics.top}, ${genericMcpMetrics.top}, ${laterMetrics.top})`
   )
   await control.command('scrollIntoView', earlierSelector)
   await captureVerificationScreenshot(
     control,
     'tool-block-order-01-chronological.png',
     '[data-testid="processing-live-preview"]'
-  )
-
-  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
-  await control.command(
-    'waitFor',
-    `${nodeReplSelector} [data-testid="generic-tool-block-detail"]`,
-    {
-      text: 'mcp__node_repl__js',
-      visible: true,
-      stableMs: 500,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-input"]`, {
-    text: "nodeRepl.write({ status: 'ready', value: 42 })",
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-output"]`, {
-    text: "{ status: 'ready', value: 42 }",
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('scrollIntoView', nodeReplSelector)
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-details-02-node-repl-expanded.png',
-    nodeReplSelector
-  )
-
-  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
-  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
-  await control.command(
-    'waitFor',
-    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`,
-    {
-      text: 'github__issues__get_issue_details',
-      visible: true,
-      stableMs: 500,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-input"]`, {
-    text: '"issue_number": 123',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-output"]`, {
-    text: '"title": "Tool detail verification"',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('scrollIntoView', genericMcpSelector)
-  await control.command(
-    'clickIfPresent',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
-  )
-  await captureVerificationScreenshot(
-    control,
-    'tool-block-details-03-generic-mcp-expanded.png',
-    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`
   )
 }
 
@@ -6377,6 +6326,19 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
   return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
 }
 
+function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const namespace = tools.find(
+    candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
+  )
+  assert.ok(namespace, `Real Codex did not advertise MCP namespace ${namespaceName}`)
+  const tool = namespace.tools?.find(
+    candidate => candidate?.type === 'function' && candidate.name === toolName
+  )
+  assert.ok(tool, `MCP namespace ${namespaceName} did not advertise ${toolName}`)
+  return { namespace: namespace.name, name: tool.name, arguments: argumentsValue }
+}
+
 function selectShellTool(request, workspacePath) {
   return selectShellToolCommand(request, 'pwd', workspacePath)
 }
@@ -7197,6 +7159,18 @@ class DesktopE2EServer {
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
+    this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockNodeOutputObserved = resolvePromise
+    })
+    this.toolBlockNodeRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockNode = resolvePromise
+    })
+    this.toolBlockGenericOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockGenericOutputObserved = resolvePromise
+    })
+    this.toolBlockGenericRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockGeneric = resolvePromise
+    })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
     })
@@ -7379,6 +7353,7 @@ class DesktopE2EServer {
         'model_protocol_matrix',
         'provider_switch_retry',
         'view_image',
+        'tool_block_order',
         'official_plugin',
         'automation',
         'skill_mention_display',
@@ -8054,6 +8029,117 @@ class DesktopE2EServer {
     ) {
       this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order') {
+      this.recordScenarioRequest('tool_block_order', modelRequest)
+      const requestNumber = this.scenarioRequests.get('tool_block_order').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(TOOL_BLOCK_ORDER_PROMPT),
+          'The real Codex request did not contain the tool-block-order prompt'
+        )
+        const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(EARLIER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EARLIER_TOOL_BLOCK_ID),
+          true,
+          'The earlier command output did not return through the real Codex tool loop'
+        )
+        const tool = selectMcpTool(body, 'node_repl', 'js', {
+          code: "nodeRepl.write({ status: 'ready', value: 42 })",
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            NODE_REPL_TOOL_BLOCK_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
+        assert.equal(
+          requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
+          true,
+          'The Node REPL output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes("{ status: 'ready', value: 42 }"),
+          'The Node REPL MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockNodeOutputObserved()
+        await this.toolBlockNodeRelease
+        const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
+          owner: 'wecode-ai',
+          repo: 'Wegent',
+          issue_number: 123,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            GENERIC_MCP_TOOL_BLOCK_ID,
+            tool.namespace,
+            tool.name,
+            tool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
+        assert.equal(
+          requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
+          true,
+          'The generic MCP output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes('Tool detail verification'),
+          'The generic MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockGenericOutputObserved()
+        await this.toolBlockGenericRelease
+        const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...functionCall(LATER_TOOL_BLOCK_ID, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 5, `Unexpected tool-block-order request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
+        true,
+        'The later command output did not return through the real Codex tool loop'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(TOOL_BLOCK_ORDER_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -10182,6 +10268,23 @@ async function writeCodexConfig(
   )
 }
 
+function toolDetailsMcpConfigToml() {
+  const command = JSON.stringify(process.execPath)
+  const server = JSON.stringify(toolDetailsMcpServerPath)
+  return [
+    '[mcp_servers.node_repl]',
+    `command = ${command}`,
+    `args = [${server}, "node_repl"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+    '[mcp_servers."github__issues"]',
+    `command = ${command}`,
+    `args = [${server}, "github__issues"]`,
+    'default_tools_approval_mode = "approve"',
+    '',
+  ].join('\n')
+}
+
 function codexUpstreamApiFormat(protocol) {
   return protocol === 'responses'
     ? 'openai-responses'
@@ -11192,7 +11295,13 @@ async function main() {
       return
     }
     if (!RUNS_PLUGIN_E2E) {
-      await writeCodexConfig(codexHome, control.url, desktopScenario?.codexConfigToml)
+      await writeCodexConfig(
+        codexHome,
+        control.url,
+        `${desktopScenario?.codexConfigToml ?? ''}\n${
+          shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
+        }`
+      )
     }
 
     const appEnvironment = {
@@ -11432,10 +11541,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (TOOL_BLOCK_ORDER_ONLY) {
       phase = 'tool-block-chronological-order'
       await verifyToolBlockChronologicalOrder({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
-        executorHome,
-        restartDesktopApp,
-        workspacePath,
       })
       console.log(`Wework desktop tool-block-order E2E passed. Evidence: ${resultDir}`)
       return
@@ -13172,10 +13279,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('rendering-extensions')) {
       phase = 'tool-block-chronological-order'
       await verifyToolBlockChronologicalOrder({
+        composerSelector,
         control,
-        executorHome,
-        restartDesktopApp,
-        workspacePath,
       })
 
       phase = 'standalone-view-image'
