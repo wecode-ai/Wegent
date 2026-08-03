@@ -366,6 +366,32 @@ async function waitForBottom(control, description, timeoutMs) {
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
 }
 
+function activeAssistantContentLength(snapshot) {
+  const contentLength = snapshot?.pane?.messageSummary?.activeAssistantMessage?.contentLength
+  return typeof contentLength === 'number' ? contentLength : null
+}
+
+async function waitForRenderedAppend(control, previousContentLength, timeoutMs) {
+  const startedAt = Date.now()
+  let snapshot
+  while (Date.now() - startedAt < timeoutMs) {
+    snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if ((activeAssistantContentLength(snapshot) ?? 0) > previousContentLength) {
+      return getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The virtualized streaming conversation after the append rendered'
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `The rendered streaming append did not increase active assistant content from ${previousContentLength} characters; latest snapshot: ${JSON.stringify(
+      snapshot
+    )}`
+  )
+}
+
 async function waitForFolderPath(control, expectedPath, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -967,13 +993,20 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-11-user-scrolled-up.png')
 
+      const streamingBeforeAppend = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const previousContentLength = activeAssistantContentLength(streamingBeforeAppend)
+      assert.ok(
+        previousContentLength !== null,
+        'The streaming response disappeared before the later content arrived'
+      )
       releaseAppend()
       await appendWritten
-      await new Promise(resolve => setTimeout(resolve, 750))
-      const scrollerAfterAppend = await getSingleElementMetrics(
+      const scrollerAfterAppend = await waitForRenderedAppend(
         control,
-        SCROLLER_SELECTOR,
-        'The virtualized streaming conversation after later content'
+        previousContentLength,
+        uiTimeoutMs
       )
       const anchorAfterAppend = await getSingleElementMetrics(
         control,
@@ -996,16 +1029,16 @@ export function createDesktopScenario({
       await capture(control, 'streaming-text-12-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-        text: APPEND_MARKER,
-        stableMs: 750,
-        timeoutMs: uiTimeoutMs,
-      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
         'The streaming conversation before switching tasks',
         5_000
       )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.ok(
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
