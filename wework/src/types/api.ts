@@ -1821,12 +1821,25 @@ export interface InstalledPluginComponents {
   mcps: PluginMCPComponent[]
   connectors?: Array<{
     slug: string
-    authPolicy: 'on_install' | 'optional'
+    authPolicy: 'on_install' | 'on_use' | 'optional'
+    localAuth?: PluginLocalAuthDefinition | null
   }>
   lsps: PluginPathComponent[]
   monitors: PluginPathComponent[]
   bins: PluginPathComponent[]
   settings?: Record<string, unknown> | null
+}
+
+export interface PluginLocalAuthDefinition {
+  kind?: 'local_qr'
+  health: string[]
+  start: string[]
+  poll: string[]
+  logout?: string[]
+  qrField?: string
+  statusField?: string
+  okValues?: string[]
+  pollIntervalSeconds?: number
 }
 
 export interface InstalledPluginSource {

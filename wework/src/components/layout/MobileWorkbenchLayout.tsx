@@ -2,6 +2,8 @@ import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -134,6 +136,27 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     source: currentRuntimeTask,
     project: activePaneProject,
   })
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: async input => {
+      await paneSession.send(input)
+    },
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+  const submitPaneInput = useCallback(
+    async (value?: string) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          paneSession.setInput('')
+          return
+        }
+      }
+      return paneSession.send(value)
+    },
+    [connectorAuthGate, paneSession]
+  )
   const retryFailedMessage = paneSession.retryFailedMessage
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const paneMessages = paneSession.messages
@@ -412,7 +435,16 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     className="mb-2"
                   />
                 )}
-                {pendingRequestUserInput ? (
+                {connectorAuthGate.pending ? (
+                  <ConnectorAuthCard
+                    target={connectorAuthGate.pending.target}
+                    title={connectorAuthGate.pending.title}
+                    onSuccess={() => {
+                      void connectorAuthGate.completePending()
+                    }}
+                    onCancel={connectorAuthGate.clearPending}
+                  />
+                ) : pendingRequestUserInput ? (
                   <RequestUserInputCard
                     key={
                       requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
@@ -435,7 +467,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                   <BufferedChatInput
                     value={paneSession.input}
                     onChange={paneSession.setInput}
-                    onSubmit={paneSession.send}
+                    onSubmit={submitPaneInput}
                     disabled={composerDisabled}
                     submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
@@ -541,7 +573,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
-                onSubmit={paneSession.send}
+                onSubmit={submitPaneInput}
                 disabled={composerDisabled}
                 submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}

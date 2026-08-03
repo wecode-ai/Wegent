@@ -21,7 +21,13 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  isLocalQrConnector,
+  localConnectorAuthHealth,
+  type LocalConnectorAuthTarget,
+} from '@/api/local/localConnectorAuth'
 import { createSystemSkillApi } from '@/api/systemSkills'
+import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
@@ -1120,6 +1126,12 @@ export function PluginsWorkspace({
     id: string | number
     name: string
   } | null>(null)
+  const [pendingLocalConnectorAuth, setPendingLocalConnectorAuth] = useState<{
+    target: LocalConnectorAuthTarget
+    title: string
+    resolve: () => void
+    reject: (error: Error) => void
+  } | null>(null)
   const [customMcpForm, setCustomMcpForm] = useState<CustomMcpFormState>(emptyCustomMcpForm)
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
@@ -1972,15 +1984,20 @@ export function PluginsWorkspace({
       ...previous,
       error: null,
     }))
-    const request = ensureMarketplaceConnectors(item).then(() =>
-      installFromLocal
-        ? localPluginApi
-            .selectMarketplace(localMarketplaceId!)
-            .then(() => localPluginApi.installAvailablePlugin(item.id))
-        : pluginApi
-            .installMarketplacePlugin(item.id, currentDeviceId)
-            .then(response => response.plugin)
-    )
+    const request = ensureMarketplaceConnectors(item)
+      .then(() =>
+        installFromLocal
+          ? localPluginApi
+              .selectMarketplace(localMarketplaceId!)
+              .then(() => localPluginApi.installAvailablePlugin(item.id))
+          : pluginApi
+              .installMarketplacePlugin(item.id, currentDeviceId)
+              .then(response => response.plugin)
+      )
+      .then(async plugin => {
+        await ensureLocalQrConnectorsAfterInstall(item, plugin)
+        return plugin
+      })
 
     request
       .then(plugin => {
@@ -2065,18 +2082,29 @@ export function PluginsWorkspace({
     uninstallInstalledPlugin(id, name)
   }
 
+  const promptLocalConnectorAuth = (input: { target: LocalConnectorAuthTarget; title: string }) =>
+    new Promise<void>((resolve, reject) => {
+      setPendingLocalConnectorAuth({
+        target: input.target,
+        title: input.title,
+        resolve,
+        reject,
+      })
+    })
+
   const ensureMarketplaceConnectors = async (item: PluginMarketplaceItem) => {
     const required = (item.components.connectors ?? []).filter(
       connector => connector.authPolicy === 'on_install'
     )
-    if (required.length === 0) return
+    const oauthRequired = required.filter(connector => !isLocalQrConnector(connector))
+    if (oauthRequired.length === 0) return
     if (!cloudApiBaseUrl || !cloudToken) {
       throw new Error(
         t('workbench.plugins_connector_cloud_required', '请先连接 Wegent 账户再授权 GitHub')
       )
     }
     const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
-    for (const requirement of required) {
+    for (const requirement of oauthRequired) {
       const app = apps.find(candidate => candidate.slug === requirement.slug)
       if (!app) {
         throw new Error(t('workbench.plugins_connector_unavailable', '所需应用连接暂不可用'))
@@ -2109,7 +2137,109 @@ export function PluginsWorkspace({
     }
   }
 
-  const managePluginConnector = async (slug: string) => {
+  const ensureLocalQrConnectorsAfterInstall = async (
+    item: PluginMarketplaceItem,
+    plugin: InstalledPlugin
+  ) => {
+    const required = (item.components.connectors ?? plugin.spec.components.connectors ?? []).filter(
+      connector => connector.authPolicy === 'on_install' && isLocalQrConnector(connector)
+    )
+    if (required.length === 0) return
+
+    const pluginKey = plugin.spec.source.pluginKey || item.name
+    const displayName = plugin.spec.displayName || item.displayName || item.name
+
+    for (const connector of required) {
+      const target: LocalConnectorAuthTarget = {
+        pluginKey,
+        connectorSlug: connector.slug,
+        localAuth: connector.localAuth ?? null,
+      }
+      try {
+        const health = await localConnectorAuthHealth(target)
+        if (health.status === 'ok') continue
+      } catch {
+        // Fall through to QR login when health fails.
+      }
+      try {
+        await promptLocalConnectorAuth({
+          target,
+          title: t('workbench.plugins_local_qr_install_title', {
+            defaultValue: `扫码登录 ${displayName}`,
+            name: displayName,
+          }),
+        })
+      } catch (error) {
+        const pluginId =
+          typeof plugin.metadata.labels === 'object' && plugin.metadata.labels
+            ? (plugin.metadata.labels as Record<string, unknown>).id
+            : plugin.spec.pluginId
+        if (pluginId !== undefined && pluginId !== null && String(pluginId).length > 0) {
+          try {
+            await (localMarketplaceIdFromItem(item)
+              ? localPluginApi.uninstallInstalledPlugin(pluginId as string | number)
+              : pluginApi.uninstallInstalledPlugin(pluginId as string | number, currentDeviceId))
+          } catch {
+            // Keep original auth error if uninstall cleanup fails.
+          }
+        }
+        throw error instanceof Error
+          ? error
+          : new Error(t('workbench.plugins_local_qr_cancelled', '已取消扫码登录，安装已终止'))
+      }
+    }
+  }
+
+  const managePluginConnector = async (
+    slug: string,
+    plugin?: InstalledPluginItem | PluginMarketplaceItem | null
+  ) => {
+    const connectors =
+      plugin && 'raw' in plugin
+        ? (plugin.raw.spec.components.connectors ?? [])
+        : plugin && 'components' in plugin
+          ? (plugin.components.connectors ?? [])
+          : []
+    const localConnector = connectors.find(
+      connector => connector.slug === slug && isLocalQrConnector(connector)
+    )
+    if (localConnector) {
+      const pluginKey =
+        plugin && 'raw' in plugin
+          ? plugin.raw.spec.source.pluginKey
+          : plugin && 'name' in plugin
+            ? String(plugin.name)
+            : slug
+      const displayName =
+        plugin && 'raw' in plugin
+          ? plugin.raw.spec.displayName || pluginKey
+          : plugin && 'displayName' in plugin
+            ? String(plugin.displayName || plugin.name)
+            : pluginKey
+      try {
+        await promptLocalConnectorAuth({
+          target: {
+            pluginKey,
+            connectorSlug: slug,
+            localAuth: localConnector.localAuth ?? null,
+          },
+          title: t('workbench.plugins_local_qr_reauth_title', {
+            defaultValue: `重新登录 ${displayName}`,
+            name: displayName,
+          }),
+        })
+      } catch (error) {
+        setPluginMarketplaceState(previous => ({
+          ...previous,
+          error:
+            error instanceof Error
+              ? error.message
+              : t('workbench.plugins_local_qr_cancelled', '已取消扫码登录'),
+        }))
+      }
+      return
+    }
+
     if (!cloudApiBaseUrl || !cloudToken) {
       setPluginMarketplaceState(previous => ({
         ...previous,
@@ -2662,6 +2792,25 @@ export function PluginsWorkspace({
           onConfirm={confirmUninstallPlugin}
         />
       )}
+      {pendingLocalConnectorAuth ? (
+        <LocalConnectorAuthDialog
+          open
+          target={pendingLocalConnectorAuth.target}
+          title={pendingLocalConnectorAuth.title}
+          onSuccess={() => {
+            const pending = pendingLocalConnectorAuth
+            setPendingLocalConnectorAuth(null)
+            pending.resolve()
+          }}
+          onCancel={() => {
+            const pending = pendingLocalConnectorAuth
+            setPendingLocalConnectorAuth(null)
+            pending.reject(
+              new Error(t('workbench.plugins_local_qr_cancelled', '已取消扫码登录，安装已终止'))
+            )
+          }}
+        />
+      ) : null}
     </>
   )
 
@@ -2674,7 +2823,7 @@ export function PluginsWorkspace({
           hasConversationContext={hasConversationContext}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           actionError={pluginMarketplaceState.error}
-          primaryActionLabel={t('workbench.plugins_try_now', '立即试用')}
+          primaryActionLabel={t('workbench.plugins_try_now', '立即对话')}
           secondaryActionLabel={
             selectedPlugin.origin === 'created' && canPublish
               ? isUploadingPlugin
@@ -2727,13 +2876,15 @@ export function PluginsWorkspace({
             }
           }}
           onPromptSelect={prompt => {
-            if (queuePluginPromptTrial(selectedPlugin.raw, prompt)) navigateTo('/')
+            if (queuePluginPromptTrial(selectedPlugin.raw, prompt)) {
+              navigateTo('/')
+            }
           }}
           onComponentToggle={(componentKey, enabled) =>
             togglePluginComponent(selectedPlugin.id, componentKey, enabled)
           }
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
-          onManageConnector={slug => void managePluginConnector(slug)}
+          onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
         />
         {pluginShareDialog}
         {pluginOperationNoticeOverlay}
@@ -2819,7 +2970,7 @@ export function PluginsWorkspace({
               : canUpdate
                 ? t('workbench.plugins_update', '更新')
                 : isInstalled
-                  ? t('workbench.plugins_try_now', '立即试用')
+                  ? t('workbench.plugins_try_now', '立即对话')
                   : isFailed
                     ? t('workbench.plugins_retry_install', '重试安装')
                     : t('workbench.plugins_install_plugin', '安装插件')
@@ -2886,12 +3037,16 @@ export function PluginsWorkspace({
           }}
           onPromptSelect={prompt => {
             if (isInstalled && installedDetail) {
-              if (queuePluginPromptTrial(installedDetail.raw, prompt)) navigateTo('/')
+              if (queuePluginPromptTrial(installedDetail.raw, prompt)) {
+                navigateTo('/')
+              }
               return
             }
             installMarketplacePlugin(selectedMarketplacePlugin, prompt)
           }}
-          onManageConnector={slug => void managePluginConnector(slug)}
+          onManageConnector={slug =>
+            void managePluginConnector(slug, installedDetail ?? selectedMarketplacePlugin)
+          }
         />
         {pluginShareDialog}
         {pluginOperationNoticeOverlay}
@@ -3291,7 +3446,7 @@ export function PluginsWorkspace({
                       uninstallingLabel={t('workbench.plugins_uninstalling', '正在卸载')}
                       retryLabel={t('workbench.plugins_retry_install', '重试安装')}
                       syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
-                      tryLabel={t('workbench.plugins_try_now', '立即试用')}
+                      tryLabel={t('workbench.plugins_try_now', '立即对话')}
                       manageLabel={t('workbench.plugins_manage', '管理')}
                       uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
                       onOpen={() => setSelectedMarketplacePluginId(item.id)}

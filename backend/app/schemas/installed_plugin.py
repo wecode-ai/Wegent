@@ -41,11 +41,26 @@ class PluginMCPComponent(BaseModel):
     server: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PluginLocalAuthDefinition(BaseModel):
+    """Device-side QR/session authentication commands for a plugin connector."""
+
+    kind: Literal["local_qr"] = "local_qr"
+    health: List[str] = Field(default_factory=list)
+    start: List[str] = Field(default_factory=list)
+    poll: List[str] = Field(default_factory=list)
+    logout: List[str] = Field(default_factory=list)
+    qrField: str = "qr_path"
+    statusField: str = "status"
+    okValues: List[str] = Field(default_factory=lambda: ["ok"])
+    pollIntervalSeconds: int = 2
+
+
 class PluginConnectorComponent(BaseModel):
-    """Cloud connector required by a plugin."""
+    """Cloud or device connector required by a plugin."""
 
     slug: str
-    authPolicy: Literal["on_install", "optional"] = "optional"
+    authPolicy: Literal["on_install", "on_use", "optional"] = "optional"
+    localAuth: Optional[PluginLocalAuthDefinition] = None
 
 
 class InstalledPluginComponents(BaseModel):

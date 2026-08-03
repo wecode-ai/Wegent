@@ -37,7 +37,7 @@ ls ../wework-plugins/plugins/weibo-api-wiki/.codex-plugin/plugin.json
 # ls ../../wework-plugins/plugins/weibo-api-wiki/.codex-plugin/plugin.json
 ```
 
-当前版本见该文件中的 `"version"` 字段（例如 `0.1.0`）。
+当前版本见该文件中的 `"version"` 字段（例如 `0.2.0`）。
 
 ## 发布步骤
 
@@ -113,21 +113,24 @@ ORDER BY id DESC;
 
 ## 运行时注意
 
-Wiki 仅支持浏览器扫码登录。安装插件后，每位开发者需要：
+登录由 Wework **原生 `local_qr` Connector**（`weibo-wiki`）完成，不再使用内置
+浏览器，也不再由 LLM 编排扫码：
 
-1. 浏览器打开 `http://wiki.intra.weibo.com/` 并扫码。
-2. 导出 Cookie 到 `~/.wegent/weibo-wiki/cookies.txt`（可用 env `WEIBO_WIKI_COOKIE_PATH` 覆盖）。
-3. 对话中先用 `$check-weibo-wiki` 测会话，再用 `$weibo-api-wiki` 查文档。
+1. **安装时**：`authPolicy=on_install` 会弹出扫码窗；只有登录成功才完成安装。
+2. **聊天查询前**：宿主对插件执行 `health`；失效时在主对话区显示二维码卡片，
+   成功后自动发送原任务。
+3. **中途过期**：CLI 返回结构化 `connector_auth_required`；宿主显示同一卡片并
+   自动重试。
+4. 会话保存在本机系统凭据库（Keychain / DPAPI / Secret Service），不进入云端
+   Connector token。
 
-可选环境变量：
+手动清理本机会话：
 
 ```bash
-WEIBO_WIKI_BASE_URL=http://wiki.intra.weibo.com
-WEIBO_WIKI_COOKIE_PATH=~/.wegent/weibo-wiki/cookies.txt
-WEIBO_WIKI_CACHE_DIR=~/.wegent/weibo-wiki/cache
+sh scripts/run-weibo-wiki.sh auth logout
 ```
 
-Agent **不能**代替用户完成扫码。会话过期后重新导出 Cookie 即可；本地 Markdown 缓存可继续离线检索。
+不要导出或粘贴 Cookie。Agent 不能代替用户完成扫码或授权。
 
 ## 相关文档
 

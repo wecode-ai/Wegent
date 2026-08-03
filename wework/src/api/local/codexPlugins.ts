@@ -192,7 +192,18 @@ interface CodexPluginDetail {
   mcpServers?: string[]
   connectors?: Array<{
     slug: string
-    authPolicy?: 'on_install' | 'optional' | string | null
+    authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
+    localAuth?: {
+      kind?: 'local_qr'
+      health?: string[]
+      start?: string[]
+      poll?: string[]
+      logout?: string[]
+      qrField?: string
+      statusField?: string
+      okValues?: string[]
+      pollIntervalSeconds?: number
+    } | null
     description?: string | null
   }>
 }
@@ -401,13 +412,27 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     })),
   ]
   components.templates = components.commands
-  components.connectors = (detail.connectors ?? []).map(connector => ({
-    slug: connector.slug,
-    authPolicy:
-      connector.authPolicy === 'on_install' || connector.authPolicy === 'optional'
-        ? connector.authPolicy
-        : 'optional',
-  }))
+  components.connectors = (detail.connectors ?? []).map(connector => {
+    const localAuth = connector.localAuth
+    return {
+      slug: connector.slug,
+      authPolicy:
+        connector.authPolicy === 'on_install' ||
+        connector.authPolicy === 'on_use' ||
+        connector.authPolicy === 'optional'
+          ? connector.authPolicy
+          : 'optional',
+      localAuth:
+        localAuth?.health && localAuth.start && localAuth.poll
+          ? {
+              ...localAuth,
+              health: localAuth.health,
+              start: localAuth.start,
+              poll: localAuth.poll,
+            }
+          : null,
+    }
+  })
   components.agents = (detail.agents ?? []).map(agent => ({
     name: agent.name,
     path: agent.path ?? agent.name,

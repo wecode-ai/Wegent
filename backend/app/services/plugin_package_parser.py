@@ -16,6 +16,7 @@ from app.schemas.installed_plugin import (
     InstalledPluginComponents,
     PluginConnectorComponent,
     PluginInterface,
+    PluginLocalAuthDefinition,
     PluginMCPComponent,
     PluginPathComponent,
     PluginSkillComponent,
@@ -599,13 +600,72 @@ class PluginPackageParser:
             if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", slug) or slug in seen:
                 continue
             auth_policy = str(item.get("authPolicy") or "optional")
-            if auth_policy not in {"on_install", "optional"}:
+            if auth_policy not in {"on_install", "on_use", "optional"}:
                 continue
+            local_auth = self._parse_local_auth(item.get("localAuth"))
             seen.add(slug)
             connectors.append(
-                PluginConnectorComponent(slug=slug, authPolicy=auth_policy)
+                PluginConnectorComponent(
+                    slug=slug,
+                    authPolicy=auth_policy,
+                    localAuth=local_auth,
+                )
             )
         return connectors
+
+    def _parse_local_auth(self, raw: Any) -> PluginLocalAuthDefinition | None:
+        if not isinstance(raw, dict):
+            return None
+        kind = str(raw.get("kind") or "local_qr").strip()
+        if kind != "local_qr":
+            return None
+
+        def command_list(value: Any) -> list[str]:
+            if not isinstance(value, list):
+                return []
+            commands: list[str] = []
+            for item in value:
+                text = str(item or "").strip()
+                if not text:
+                    continue
+                # Only allow relative plugin-root paths / simple CLI args.
+                if (
+                    text.startswith("/")
+                    or text.startswith("~")
+                    or ".." in PurePosixPath(text).parts
+                    or re.search(r"^[A-Za-z]:[\\/]", text)
+                ):
+                    continue
+                commands.append(text)
+            return commands
+
+        health = command_list(raw.get("health"))
+        start = command_list(raw.get("start"))
+        poll = command_list(raw.get("poll"))
+        logout = command_list(raw.get("logout"))
+        if not health or not start or not poll:
+            return None
+        poll_interval = raw.get("pollIntervalSeconds", 2)
+        try:
+            poll_interval_seconds = max(1, min(int(poll_interval), 30))
+        except (TypeError, ValueError):
+            poll_interval_seconds = 2
+        ok_values = [
+            str(item).strip()
+            for item in (raw.get("okValues") or ["ok"])
+            if str(item).strip()
+        ] or ["ok"]
+        return PluginLocalAuthDefinition(
+            kind="local_qr",
+            health=health,
+            start=start,
+            poll=poll,
+            logout=logout,
+            qrField=str(raw.get("qrField") or "qr_path").strip() or "qr_path",
+            statusField=str(raw.get("statusField") or "status").strip() or "status",
+            okValues=ok_values,
+            pollIntervalSeconds=poll_interval_seconds,
+        )
 
     def _join_root_path(self, root: str, path: str) -> str:
         normalized = path[2:] if path.startswith("./") else path

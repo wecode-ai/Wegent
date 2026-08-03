@@ -4,6 +4,8 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -612,17 +614,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     []
   )
 
+  const connectorAuthGate = useLocalConnectorAuthGate({
+    messages: paneSession.messages,
+    onResumeSend: async input => {
+      await sendPaneInput(input, { additionalContext: cloudAdditionalContext })
+    },
+    onRetryMessage: message => paneSession.retryFailedMessage(message),
+  })
+
   const submitPaneInput = useCallback(
-    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) =>
-      sendPaneInput(value, {
+    async (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      const submitted = (value ?? paneSession.input).trim()
+      if (submitted) {
+        const gate = await connectorAuthGate.gateBeforeSend(submitted)
+        if (gate === 'blocked') {
+          paneSession.setInput('')
+          return
+        }
+      }
+      return sendPaneInput(value, {
         ...options,
         additionalContext: cloudAdditionalContext,
         onRuntimeTaskCreated: address => {
           if (!pendingTodoBinding) return
           pendingTodoBinding = { ...pendingTodoBinding, target: address }
         },
-      }),
-    [cloudAdditionalContext, sendPaneInput]
+      })
+    },
+    [cloudAdditionalContext, connectorAuthGate, paneSession, sendPaneInput]
   )
 
   useEffect(() => {
@@ -2542,7 +2561,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   className="mb-2"
                                 />
                               )}
-                              {pendingRequestUserInput ? (
+                              {connectorAuthGate.pending ? (
+                                <ConnectorAuthCard
+                                  target={connectorAuthGate.pending.target}
+                                  title={connectorAuthGate.pending.title}
+                                  onSuccess={() => {
+                                    void connectorAuthGate.completePending()
+                                  }}
+                                  onCancel={connectorAuthGate.clearPending}
+                                />
+                              ) : pendingRequestUserInput ? (
                                 <RequestUserInputCard
                                   key={
                                     requestUserInputPayloadKey(pendingRequestUserInput) ??
