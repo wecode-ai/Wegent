@@ -45,6 +45,14 @@ describe('createLocalAppServices', () => {
       catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: true },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -268,8 +276,16 @@ describe('createLocalAppServices', () => {
     await Promise.all([firstDevices, secondDevices])
   })
 
-  test('returns Codex provider models in local model list', async () => {
+  test('hides official Codex models without auth while keeping provider models', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: false },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -280,7 +296,7 @@ describe('createLocalAppServices', () => {
               current: false,
               available: true,
               error: null,
-              data: [],
+              data: OFFICIAL_CODEX_MODELS,
             },
             {
               id: 'wecode-openai',
@@ -323,7 +339,9 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'Doubao-Seed-2.0-pro-260215',
@@ -342,6 +360,9 @@ describe('createLocalAppServices', () => {
         }),
       ]),
     })
+    expect(models.data.some(model => model.config?.weworkModelKind === 'codex-official')).toBe(
+      false
+    )
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {

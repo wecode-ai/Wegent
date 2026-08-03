@@ -305,17 +305,25 @@ function localRuntimeModels(
   codexOfficialError: string | null = null,
   codexAuthConfigured = false
 ): UnifiedModel[] {
-  const officialModels =
-    codexOfficialError || codexOfficialModels.length === 0
+  const officialCatalogModels = codexOfficialModels.filter(
+    model => model.providerType === 'official'
+  )
+  const officialModels = !codexAuthConfigured
+    ? []
+    : codexOfficialError || officialCatalogModels.length === 0
       ? [
           unavailableCodexModel(
             codexOfficialError || 'Codex model list returned no available models'
           ),
         ]
-      : codexOfficialModels.map(model => localCodexModel(model, codexAuthConfigured))
+      : officialCatalogModels.map(model => localCodexModel(model, true))
+  const providerModels = codexOfficialModels
+    .filter(model => model.providerType === 'provider')
+    .map(model => localCodexModel(model, codexAuthConfigured))
 
   return [
     ...officialModels,
+    ...providerModels,
     ...listLocalModelConfigs()
       .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),

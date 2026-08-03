@@ -334,6 +334,7 @@ class UnifiedSkillResponse(BaseModel):
     is_active: bool
     is_public: bool
     user_id: int  # ID of the user who uploaded this skill
+    publication_status: Optional[str] = None
     availability: SkillAvailability = Field(default_factory=SkillAvailability)
     source: Optional[SkillSourceResponse] = (
         None  # Source information for git-imported skills
@@ -1303,6 +1304,7 @@ def list_unified_skills(
         if kind.name not in user_skill_names:
             user_skill_names.add(kind.name)
             spec = kind.json.get("spec", {})
+            capability = spec.get("capability") or {}
 
             # Extract source information if available
             source_data = spec.get("source")
@@ -1330,6 +1332,7 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": False,
                     "user_id": kind.user_id,
+                    "publication_status": capability.get("publishStatus"),
                     "availability": {
                         "in_my_default": kind.id in user_default_skill_ids,
                         "agent_builtin": False,
@@ -1357,6 +1360,7 @@ def list_unified_skills(
     for kind in public_skill_kinds:
         if kind.name not in user_skill_names:
             spec = kind.json.get("spec", {})
+            capability = spec.get("capability") or {}
             user_skills.append(
                 {
                     "id": kind.id,
@@ -1372,6 +1376,7 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": True,
                     "user_id": kind.user_id,
+                    "publication_status": capability.get("publishStatus"),
                     "availability": {
                         "in_my_default": kind.id in user_default_skill_ids,
                         "agent_builtin": False,

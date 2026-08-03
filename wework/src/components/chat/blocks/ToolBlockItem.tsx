@@ -197,7 +197,12 @@ export function ToolBlockItem({
             </svg>
           </button>
         ) : null}
-        <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{duration}</span>
+        <span
+          className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted"
+          data-testid="tool-block-duration"
+        >
+          {duration}
+        </span>
       </div>
       {expanded ? (
         <div className="mt-2 min-w-0 overflow-x-clip">

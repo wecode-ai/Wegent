@@ -21,8 +21,12 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : _key,
+    t: (key: string, fallback?: string | Record<string, unknown>) =>
+      key === 'common:teams.use_more_agents'
+        ? '查看全部智能体'
+        : typeof fallback === 'string'
+          ? fallback
+          : key,
   }),
 }))
 
@@ -372,13 +376,13 @@ describe('TeamSelectorButton', () => {
 
     expect(quickCreateButton).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('settings-button')).toHaveAttribute('role', 'button')
-    expect(useMoreButton).toHaveTextContent('common:teams.use_more_agents')
+    expect(useMoreButton).toHaveTextContent('查看全部智能体')
     expect(useMoreButton.compareDocumentPosition(quickCreateButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
 
     fireEvent.click(useMoreButton)
 
-    expect(mockPush).toHaveBeenCalledWith('/resource-library?tab=discover&type=agent&from=chat')
+    expect(mockPush).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&from=chat')
   })
 })

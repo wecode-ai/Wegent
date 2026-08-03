@@ -12,10 +12,12 @@ vi.mock('@/hooks/useTranslation', () => ({
     t: (key: string) =>
       ({
         'workbench.feedback_group_standard': '常规诊断',
+        'workbench.feedback_group_user_content': '用户提供内容（含隐私内容）',
         'workbench.feedback_group_full_task': '完整任务数据（含隐私内容）',
         'workbench.feedback_task_info': '任务信息',
         'workbench.feedback_screenshot': '页面截图',
         'workbench.feedback_runtime_logs': '运行日志',
+        'workbench.feedback_attachments': '用户附件',
         'workbench.feedback_preview': '预览导出内容',
         'workbench.feedback_confirm_export': '确认导出',
         'workbench.feedback_submit': '提交反馈',
@@ -89,7 +91,8 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).not.toBeChecked()
   })
 
-  test('disables preview when every information category is unchecked', () => {
+  test('allows user-authored feedback without diagnostic categories', async () => {
+    invokeMock.mockResolvedValue(previewResult)
     render(
       <TaskFeedbackDialog
         open
@@ -100,8 +103,110 @@ describe('TaskFeedbackDialog', () => {
     )
 
     fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
-
     expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The toolbar disappears after reconnecting' },
+    })
+
+    expect(screen.getByTestId('task-feedback-export-button')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          note: 'The toolbar disappears after reconnecting',
+          attachments: [],
+        }),
+      })
+    )
+  })
+
+  test('pastes files into the feedback and includes them in the preview bundle', async () => {
+    const previewWithAttachment = {
+      ...previewResult,
+      entries: [
+        ...previewResult.entries,
+        {
+          category: 'attachments',
+          archivePath: 'attachments/1-console.txt',
+          sizeBytes: 13,
+          previewable: true,
+          content: 'console output',
+          truncated: false,
+        },
+      ],
+    }
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewWithAttachment)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+    const attachment = new File(['console output'], 'console.txt', { type: 'text/plain' })
+
+    fireEvent.paste(screen.getByTestId('task-feedback-note'), {
+      clipboardData: { files: [attachment] },
+    })
+
+    expect(await screen.findByText('console.txt')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          attachments: [
+            {
+              name: 'console.txt',
+              mimeType: 'text/plain',
+              dataBase64: 'Y29uc29sZSBvdXRwdXQ=',
+            },
+          ],
+        }),
+      })
+    )
+    expect(screen.getByText('用户提供内容（含隐私内容）')).toBeInTheDocument()
+    expect(screen.getByText('用户附件')).toBeInTheDocument()
+  })
+
+  test('removes a pasted attachment before previewing', async () => {
+    invokeMock.mockResolvedValue(previewResult)
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+    const attachment = new File(['image'], 'screenshot.png', { type: 'image/png' })
+
+    fireEvent.paste(screen.getByTestId('task-feedback-note'), {
+      clipboardData: { files: [attachment] },
+    })
+    await screen.findByText('screenshot.png')
+    fireEvent.click(screen.getByTestId('task-feedback-remove-attachment-0'))
+
+    expect(screen.queryByText('screenshot.png')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({ attachments: [] }),
+      })
+    )
   })
 
   test('keeps standard diagnostics available in new-conversation state', () => {

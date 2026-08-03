@@ -2103,6 +2103,45 @@ mod tests {
     }
 
     #[test]
+    fn maps_completed_codex_reasoning_summaries_to_thinking_blocks() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "reasoning-1",
+                        "type": "reasoning",
+                        "summary": [
+                            {"type": "summary_text", "text": "Inspecting logs"},
+                            {"type": "summary_text", "text": "Running focused tests"}
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(event["payload"]["data"]["block"]["type"], "thinking");
+        assert_eq!(
+            event["payload"]["data"]["block"]["content"],
+            "Inspecting logsRunning focused tests"
+        );
+        assert_eq!(event["payload"]["data"]["block"]["status"], "done");
+    }
+
+    #[test]
     fn forwards_codex_token_usage_updates_to_response_stream() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {

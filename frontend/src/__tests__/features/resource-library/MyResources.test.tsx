@@ -341,6 +341,38 @@ describe('MyResources', () => {
     )
   })
 
+  it('keeps added skills out of the created-by-me skill source', async () => {
+    render(
+      <MyResources
+        allowedTypes={['skill']}
+        fixedSource="personal"
+        hideSourceControls
+        hideTypeControls
+      />
+    )
+
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-show-auto-enabled',
+      'false'
+    )
+  })
+
+  it('includes added skills in the internal aggregate source', async () => {
+    render(
+      <MyResources
+        allowedTypes={['skill']}
+        fixedSource="mine"
+        hideSourceControls
+        hideTypeControls
+      />
+    )
+
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-show-auto-enabled',
+      'true'
+    )
+  })
+
   it('passes the global model category filter without rendering a duplicate filter row', async () => {
     render(
       <MyResources

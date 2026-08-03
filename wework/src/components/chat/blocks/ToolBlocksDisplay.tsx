@@ -47,7 +47,7 @@ import { isImageViewToolName } from './toolBlockKinds'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
-import { getDurationText, getWholeSecondsDurationText } from './processingDuration'
+import { getDurationText } from './processingDuration'
 import { getFileInputPaths, isFileEditToolName } from './toolBlockKinds'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
@@ -267,9 +267,7 @@ export function ToolBlocksDisplay({
           })
         : t('tool_activity.summary', { count: toolCallCount })
     : t('thinking.completed')
-  const summaryDuration = hasToolActivity
-    ? getWholeSecondsDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
-    : duration.replace(/^已处理\s*/, '')
+  const summaryDuration = hasToolActivity ? '' : duration.replace(/^已处理\s*/, '')
   const processingContent = useMemo(
     () =>
       expanded ? (
@@ -334,7 +332,6 @@ export function ToolBlocksDisplay({
         <ProcessingSummaryHeader
           canToggle={canToggleSummary}
           duration={summaryDuration}
-          durationAriaLabel={duration}
           expanded={summaryExpanded}
           isRunning={isRunning && !hasClosedToolSegment}
           rows={rows}
@@ -382,7 +379,6 @@ type ToolActivityLabels = {
 function ProcessingSummaryHeader({
   canToggle,
   duration,
-  durationAriaLabel,
   expanded,
   isRunning,
   rows,
@@ -392,7 +388,6 @@ function ProcessingSummaryHeader({
 }: {
   canToggle: boolean
   duration: string
-  durationAriaLabel: string
   expanded: boolean
   isRunning: boolean
   rows: ProcessingDisplayRow[]
@@ -426,7 +421,7 @@ function ProcessingSummaryHeader({
           className="inline-flex shrink-0 items-center gap-1 hover:text-text-primary"
           onClick={onToggle}
           aria-expanded={expanded}
-          aria-label={durationAriaLabel ? `${title} ${durationAriaLabel}` : `${title} 已处理`}
+          aria-label={duration ? `${title} 已处理 ${duration}` : `${title} 已处理`}
         >
           {titleContent}
         </button>

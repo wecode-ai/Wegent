@@ -931,7 +931,9 @@ class ResourceLibraryService:
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_id == listing_id,
-                ResourceMember.resource_type.in_(REFERENCE_KINDS),
+                ResourceMember.resource_type.in_(
+                    REFERENCE_KINDS | {ResourceType.TEAM.value}
+                ),
                 ResourceMember.entity_type == entity_type,
                 ResourceMember.entity_id == entity_id,
                 ResourceMember.status == MemberStatus.APPROVED.value,

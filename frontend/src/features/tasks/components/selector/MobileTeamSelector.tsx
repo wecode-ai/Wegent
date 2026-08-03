@@ -256,7 +256,7 @@ export default function MobileTeamSelector({
               type="button"
               onClick={() => {
                 setIsOpen(false)
-                router.push(`${paths.resourceLibrary.getHref()}?tab=discover&type=agent&from=chat`)
+                router.push(`${paths.resourceLibrary.getHref()}?tab=mine&type=agent&from=chat`)
               }}
               data-testid="mobile-team-selector-use-more-agents"
               className="flex items-center gap-1.5 text-[#007aff] active:opacity-70"

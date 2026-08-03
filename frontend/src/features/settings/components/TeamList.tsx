@@ -69,7 +69,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
-import { ResourceCardFooter } from '@/components/common/ResourceCardFooter'
 import {
   ResourceCardIcon,
   getResourceCardActionsClassName,
@@ -107,10 +106,12 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { cn } from '@/lib/utils'
-import { useUser } from '@/features/common/UserContext'
+import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { paths } from '@/config/paths'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -132,6 +133,7 @@ interface TeamListProps {
   creationOnly?: boolean
   compact?: boolean
   hideCreateActions?: boolean
+  searchQuery?: string
 }
 
 function deduplicateResourcesById<T extends { id: number }>(items: T[]): T[] {
@@ -166,11 +168,12 @@ export default function TeamList({
   creationOnly = false,
   compact = false,
   hideCreateActions = false,
+  searchQuery = '',
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const { toast } = useToast()
-  const { user } = useUser()
   const [teams, setTeams] = useState<Team[]>([])
+  const [publishedTeamIds, setPublishedTeamIds] = useState<Set<number>>(new Set())
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
@@ -258,6 +261,28 @@ export default function TeamList({
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  useEffect(() => {
+    if (!compact) return
+
+    let isMounted = true
+    resourceLibraryApi
+      .listMyPublished({ resourceType: 'agent', page: 1, limit: 100 })
+      .then(response => {
+        if (isMounted) {
+          setPublishedTeamIds(
+            new Set(response.items.filter(item => item.status === 'published').map(item => item.id))
+          )
+        }
+      })
+      .catch(() => {
+        if (isMounted) setPublishedTeamIds(new Set())
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [compact])
 
   const handleTeamSaved = useCallback(
     async (team: Team) => {
@@ -472,19 +497,31 @@ export default function TeamList({
 
   // Filter teams based on mode filter
   const sourceFilteredTeams = useMemo(() => {
+    let filteredTeams = teams
     if (sourceFilter === 'personal') {
-      return teams.filter(team => !isPublicTeam(team) && !isGroupTeam(team) && !isSharedTeam(team))
-    }
-    if (sourceFilter === 'group') {
-      return teams.filter(
+      filteredTeams = teams.filter(
+        team => !isPublicTeam(team) && !isGroupTeam(team) && !isSharedTeam(team)
+      )
+    } else if (sourceFilter === 'group') {
+      filteredTeams = teams.filter(
         team => isGroupTeam(team) || isSharedTeam(team) || isNamespaceAuthorizedTeam(team)
       )
+    } else if (sourceFilter === 'system') {
+      filteredTeams = teams.filter(isPublicTeam)
+    } else if (sourceFilter === 'mine') {
+      filteredTeams = teams.filter(team => !isPublicTeam(team))
     }
-    if (sourceFilter === 'system') {
-      return teams.filter(isPublicTeam)
-    }
-    return teams
-  }, [teams, sourceFilter])
+
+    return filteredTeams.filter(team =>
+      matchesResourceSearch(
+        searchQuery,
+        team.name,
+        getTeamDisplayName(team),
+        team.description,
+        team.user?.user_name
+      )
+    )
+  }, [teams, sourceFilter, searchQuery])
 
   const groupFilteredTeams = useMemo(() => {
     const isFilteredByGroupApi = scope === 'group' && !groupName && groupFilter !== undefined
@@ -520,6 +557,12 @@ export default function TeamList({
       }),
     [filteredTeams, sortMode, groupDisplayNames, getTeamSource]
   )
+  const showAgentMarketEmptyAction =
+    compact &&
+    sourceFilter === 'all' &&
+    teams.length === 0 &&
+    searchQuery.trim().length === 0 &&
+    modeFilter === 'all'
 
   const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
     scope,
@@ -822,7 +865,8 @@ export default function TeamList({
               <div
                 className={cn(
                   'min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1',
-                  getResourceGridClassName(compact)
+                  getResourceGridClassName(compact),
+                  compact && 'pt-1'
                 )}
                 data-testid="team-list-items"
               >
@@ -859,6 +903,15 @@ export default function TeamList({
                                 />
                               )}
                             </ResourceCardIcon>
+                          }
+                          actions={
+                            compact &&
+                            (team.publication_status === 'published' ||
+                              publishedTeamIds.has(team.id)) ? (
+                              <PublishedResourceIndicator
+                                testId={`published-agent-${team.id}-indicator`}
+                              />
+                            ) : undefined
                           }
                           tags={[
                             {
@@ -934,28 +987,43 @@ export default function TeamList({
                           className={cn(
                             'flex flex-shrink-0 items-center gap-0.5 sm:gap-1',
                             getResourceCardActionsClassName(compact),
-                            compact &&
-                              'absolute right-4 top-4 z-20 mt-0 w-auto gap-1 border-0 pt-0 opacity-100 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100'
+                            compact && 'flex-nowrap gap-2'
                           )}
                         >
+                          {compact && shouldShowEdit(team) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleEditTeam(team)}
+                              title={t('teams.edit')}
+                              className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                              data-testid={`edit-team-button-${team.id}`}
+                            >
+                              <PencilIcon className="h-4 w-4" />
+                              <span>{t('actions.edit')}</span>
+                            </Button>
+                          )}
                           <Button
-                            variant={compact ? 'primary' : 'ghost'}
+                            variant={compact ? 'outline' : 'ghost'}
                             size={compact ? 'default' : 'icon'}
                             onClick={() => handleChatTeam(team)}
                             title={getActionTitle(getTeamTargetPage(team, modeFilter))}
                             className={cn(
-                              compact ? 'h-8 min-w-0 px-2.5 text-xs' : 'h-7 w-7 sm:h-8 sm:w-8'
+                              compact
+                                ? 'h-11 min-w-0 flex-1 gap-2 border-primary/[0.15] bg-primary/[0.08] px-3 text-xs text-primary hover:border-primary/20 hover:bg-primary/[0.15] md:h-8'
+                                : 'h-7 w-7 sm:h-8 sm:w-8'
                             )}
                             data-testid={`use-team-button-${team.id}`}
                           >
-                            {!compact &&
-                              (getTeamTargetPage(team, modeFilter) === 'code' ? (
-                                <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
-                                <CpuChipIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              ) : (
-                                <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              ))}
+                            {getTeamTargetPage(team, modeFilter) === 'code' ? (
+                              <CodeBracketIcon className="h-4 w-4" />
+                            ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
+                              <CpuChipIcon className="h-4 w-4" />
+                            ) : compact ? (
+                              <ChatBubbleLeftEllipsisIcon className="h-4 w-4" />
+                            ) : (
+                              <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            )}
                             {compact && (
                               <span>{getActionTitle(getTeamTargetPage(team, modeFilter))}</span>
                             )}
@@ -970,7 +1038,7 @@ export default function TeamList({
                                 writableGroups={writableGroups}
                                 copying={copyingTeamId === team.id}
                                 checkingTasks={isCheckingTasks}
-                                canEdit={shouldShowEdit(team)}
+                                canEdit={false}
                                 canAuthorizeChildren={shouldShowChildAuthorization(team)}
                                 canCopy={shouldShowCopy(team)}
                                 canShare={shouldShowShare(team)}
@@ -1117,23 +1185,25 @@ export default function TeamList({
                           )}
                         </div>
                       </div>
-                      {compact && (
-                        <ResourceCardFooter
-                          owner={
-                            team.user_id === 0
-                              ? t('resource-library:fields.official_publisher')
-                              : team.user?.user_name ||
-                                (user?.id === team.user_id ? user.user_name : null)
-                          }
-                          updatedAt={team.updated_at}
-                          testId={`team-card-footer-${team.id}`}
-                        />
-                      )}
                     </Card>
                   ))
                 ) : (
-                  <div className="text-center text-text-muted py-8" data-testid="team-empty-state">
+                  <div
+                    className="flex flex-col items-center gap-3 py-8 text-center text-text-muted"
+                    data-testid="team-empty-state"
+                  >
                     <p className="text-sm">{t('teams.no_teams')}</p>
+                    {showAgentMarketEmptyAction && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 min-w-[44px] rounded-xl px-4"
+                        onClick={() => router.push(`${paths.resourceLibrary.getHref()}?type=agent`)}
+                        data-testid="team-empty-browse-market-button"
+                      >
+                        {t('resource-library:actions.browse_agent_market')}
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>

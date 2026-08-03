@@ -90,6 +90,18 @@ pub(crate) fn map_text_chunk(
             }
         }
         "item/completed" => {
+            let item = params.get("item").unwrap_or(params);
+            if item_type(item).as_str() == "reasoning" {
+                let text = reasoning_content(item)
+                    .filter(|content| !content.is_empty())
+                    .ok_or("missing_reasoning_content")?;
+                return Ok(Some(TextChunkMapping::ProcessCompleted {
+                    process_kind: "reasoning",
+                    block_type: "thinking",
+                    item_id: notification_item_id(params),
+                    text,
+                }));
+            }
             let Some(kind) = completed_assistant_text_kind(params, resolved_phase) else {
                 return Ok(None);
             };
@@ -388,7 +400,12 @@ fn truncate_log_text(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{codex_stream_debug_enabled, env_bool, set_codex_stream_debug_enabled};
+    use serde_json::json;
+
+    use super::{
+        codex_stream_debug_enabled, env_bool, map_text_chunk, set_codex_stream_debug_enabled,
+        TextChunkMapping,
+    };
 
     #[test]
     fn stream_debug_env_defaults_to_off_for_missing_values() {
@@ -404,5 +421,34 @@ mod tests {
 
         set_codex_stream_debug_enabled(false);
         assert!(!codex_stream_debug_enabled());
+    }
+
+    #[test]
+    fn maps_completed_reasoning_summary_to_thinking_block() {
+        let mapping = map_text_chunk(
+            "item/completed",
+            &json!({
+                "item": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Inspecting logs"},
+                        {"type": "summary_text", "text": "Running focused tests"}
+                    ]
+                }
+            }),
+            None,
+        )
+        .expect("reasoning summary should map");
+
+        assert_eq!(
+            mapping,
+            Some(TextChunkMapping::ProcessCompleted {
+                process_kind: "reasoning",
+                block_type: "thinking",
+                item_id: Some("reasoning-1".to_owned()),
+                text: "Inspecting logsRunning focused tests".to_owned(),
+            })
+        );
     }
 }

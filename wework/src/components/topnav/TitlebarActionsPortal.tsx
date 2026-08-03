@@ -1,5 +1,9 @@
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import {
+  getActiveWorkspaceTabPortalOwner,
+  syncWorkspaceTabPortalOwnerElement,
+} from './workspaceTabPortalOwnership'
 
 export const TITLEBAR_ACTIONS_PORTAL_ID = 'titlebar-actions-portal'
 export const TITLEBAR_FEEDBACK_PORTAL_ID = 'titlebar-feedback-portal'
@@ -10,10 +14,26 @@ interface TitlebarActionsPortalProps {
   children: ReactNode
 }
 
+const WorkspaceTabPortalOwnerContext = createContext<string | null>(null)
+
+export function WorkspaceTabPortalOwner({
+  children,
+  ownerId,
+}: {
+  children: ReactNode
+  ownerId: string
+}) {
+  return (
+    <WorkspaceTabPortalOwnerContext.Provider value={ownerId}>
+      {children}
+    </WorkspaceTabPortalOwnerContext.Provider>
+  )
+}
+
 export function TitlebarActionsPortal({ children }: TitlebarActionsPortalProps) {
   const portalTarget = useSyncExternalStore(subscribeToPortalTarget, getPortalTarget, () => null)
 
-  return portalTarget ? createPortal(children, portalTarget) : null
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
 }
 
 export function TitlebarFeedbackPortal({ children }: TitlebarActionsPortalProps) {
@@ -23,7 +43,7 @@ export function TitlebarFeedbackPortal({ children }: TitlebarActionsPortalProps)
     () => null
   )
 
-  return portalTarget ? createPortal(children, portalTarget) : null
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
 }
 
 export function TitlebarRightPanelPortal({ children }: TitlebarActionsPortalProps) {
@@ -33,7 +53,7 @@ export function TitlebarRightPanelPortal({ children }: TitlebarActionsPortalProp
     () => null
   )
 
-  return portalTarget ? createPortal(children, portalTarget) : null
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
 }
 
 export function WorkbenchMainHeaderPortal({ children }: TitlebarActionsPortalProps) {
@@ -43,11 +63,40 @@ export function WorkbenchMainHeaderPortal({ children }: TitlebarActionsPortalPro
     () => null
   )
 
-  return portalTarget ? createPortal(children, portalTarget) : null
+  return portalTarget ? createOwnedPortal(children, portalTarget) : null
 }
 
 function getPortalTarget() {
   return document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)
+}
+
+function createOwnedPortal(children: ReactNode, portalTarget: HTMLElement) {
+  return createPortal(<WorkspaceTabOwnedPortal>{children}</WorkspaceTabOwnedPortal>, portalTarget)
+}
+
+function WorkspaceTabOwnedPortal({ children }: { children: ReactNode }) {
+  const ownerId = useContext(WorkspaceTabPortalOwnerContext)
+  const syncVisibility = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (!element || !ownerId) return
+      syncWorkspaceTabPortalOwnerElement(element, ownerId)
+    },
+    [ownerId]
+  )
+
+  if (!ownerId) return children
+
+  const active = ownerId === getActiveWorkspaceTabPortalOwner()
+  return (
+    <div
+      ref={syncVisibility}
+      data-workspace-tab-portal-owner={ownerId}
+      hidden={!active}
+      style={{ display: active ? 'contents' : 'none' }}
+    >
+      {children}
+    </div>
+  )
 }
 
 function subscribeToPortalTarget(onStoreChange: () => void) {

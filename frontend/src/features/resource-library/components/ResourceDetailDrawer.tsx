@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type { ResourceLibraryListing } from '../types'
 
 interface ResourceDetailDrawerProps {
@@ -44,6 +45,7 @@ export function ResourceDetailDrawer({
   const { t } = useTranslation('resource-library')
   const title = listing ? getListingTitle(listing) : ''
   const isAgent = listing?.resource_type === 'agent'
+  const isSkill = listing?.resource_type === 'skill'
   const isDirectlyUsableSystemCapability =
     !!listing &&
     ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
@@ -53,11 +55,11 @@ export function ResourceDetailDrawer({
     !listing || isLoading || (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
   const actionLabel = isAgent
     ? isPersonalTarget
-      ? t('actions.use')
+      ? t('actions.use_now')
       : t('actions.add')
     : listing?.is_installed && isPersonalTarget
       ? t('actions.added')
-      : t('actions.add')
+      : t(isSkill ? 'actions.install' : 'actions.add')
   const ActionIcon = isAgent && isPersonalTarget ? Sparkles : Plus
   const publisher = listing
     ? listing.publisher_user_id === 0
@@ -72,7 +74,7 @@ export function ResourceDetailDrawer({
         data-testid="resource-detail-dialog"
       >
         <DialogHeader className="border-b border-border px-6 py-5 text-left">
-          <div className="min-w-0 pr-8">
+          <div className={cn('min-w-0 pr-8', isSkill && 'md:pr-32')}>
             <DialogTitle className="truncate text-xl">{title || t('actions.details')}</DialogTitle>
             {listing && (
               <DialogDescription className="mt-2 flex flex-wrap items-center gap-2">
@@ -81,9 +83,6 @@ export function ResourceDetailDrawer({
                   <span className="text-xs text-text-muted">
                     v{listing.current_version.version}
                   </span>
-                )}
-                {isDirectlyUsableSystemCapability && (
-                  <Badge variant="secondary">{t('actions.system_available')}</Badge>
                 )}
                 <span className="text-xs text-text-muted">
                   {t('fields.publisher')} · {publisher}
@@ -120,17 +119,23 @@ export function ResourceDetailDrawer({
         </div>
 
         {!isDirectlyUsableSystemCapability && (
-          <DialogFooter className="border-t border-border px-6 py-4">
+          <DialogFooter
+            className={cn(
+              'border-t border-border px-6 py-4',
+              isSkill && 'md:absolute md:right-12 md:top-4 md:z-10 md:border-0 md:p-0'
+            )}
+            data-testid="resource-detail-actions"
+          >
             <Button
               type="button"
               variant={installDisabled ? 'secondary' : 'primary'}
-              className="h-11 min-w-[44px]"
+              className={cn('h-11 min-w-[44px]', isSkill && 'md:h-9')}
               disabled={installDisabled}
               onClick={() => listing && onInstall(listing)}
               aria-label={`${actionLabel} ${title}`}
               data-testid="resource-detail-install-button"
             >
-              <ActionIcon className="h-4 w-4" aria-hidden="true" />
+              {!isSkill && <ActionIcon className="h-4 w-4" aria-hidden="true" />}
               {actionLabel}
             </Button>
           </DialogFooter>

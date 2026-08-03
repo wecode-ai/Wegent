@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
 import TeamList from '@/features/settings/components/TeamList'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import { fetchTeamsList } from '@/features/settings/services/teams'
 import type { Team } from '@/types/api'
@@ -35,6 +36,7 @@ const mockT = (key: string, options?: Record<string, unknown>) =>
     'teams.more_actions': 'More actions',
     'teams.api_call.action': 'Call via API',
     'teams.unbind': 'Unbind',
+    'publication.published_to_library': 'Published to Resource Library',
     'settings:team.list.runOnDevice': 'Run on Device',
     'teams.new_team': 'New Team',
     'bots.manage_bots': 'Manage Bots',
@@ -51,6 +53,8 @@ const mockT = (key: string, options?: Record<string, unknown>) =>
     'targets.select': 'Select',
     'search.groups_placeholder': 'Search teams',
     'search.groups_empty': 'No matching teams',
+    'teams.no_teams': 'No agents available',
+    'resource-library:actions.browse_agent_market': 'Browse Agent Marketplace',
   })[key] || key
 
 jest.mock('next/navigation', () => ({
@@ -87,6 +91,14 @@ jest.mock('@/features/settings/services/bots', () => ({
 jest.mock('@/apis/groups', () => ({
   listGroups: jest.fn().mockResolvedValue({ items: [] }),
 }))
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    listMyPublished: jest.fn(),
+  },
+}))
+
+const mockListMyPublished = resourceLibraryApi.listMyPublished as jest.Mock
 
 jest.mock('@/features/settings/components/TeamEditDialog', () => ({
   __esModule: true,
@@ -214,6 +226,7 @@ describe('TeamList mode filter', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     ;(fetchBotsList as jest.Mock).mockResolvedValue([])
+    mockListMyPublished.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 })
   })
 
   it('shows device teams when the device filter is selected', async () => {
@@ -248,6 +261,30 @@ describe('TeamList mode filter', () => {
     expect(screen.getByText('platform')).toHaveClass('text-text-muted')
   })
 
+  it('keeps personal and group agents in mine while excluding system agents', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([
+      {
+        ...makeTeam(10, 'personal-mine-agent', ['chat']),
+        namespace: 'default',
+      },
+      {
+        ...makeTeam(11, 'group-mine-agent', ['chat']),
+        namespace: 'platform',
+      },
+      {
+        ...makeTeam(12, 'system-agent', ['chat']),
+        namespace: 'default',
+        user_id: 0,
+      },
+    ])
+
+    render(<TeamList scope="all" sourceFilter="mine" />)
+
+    expect(await screen.findByText('personal-mine-agent')).toBeInTheDocument()
+    expect(screen.getByText('group-mine-agent')).toBeInTheDocument()
+    expect(screen.queryByText('system-agent')).not.toBeInTheDocument()
+  })
+
   it('uses the marketplace-style card grid in compact capability views', async () => {
     ;(fetchTeamsList as jest.Mock).mockResolvedValue([
       {
@@ -256,12 +293,19 @@ describe('TeamList mode filter', () => {
         bots: [{ bot_id: 1, bot_prompt: '' }],
       },
     ])
+    mockListMyPublished.mockResolvedValue({
+      items: [{ id: 8, status: 'published' }],
+      total: 1,
+      page: 1,
+      limit: 100,
+    })
 
     render(<TeamList scope="group" sourceFilter="group" compact />)
 
     const card = await screen.findByTestId('team-card-8')
     expect(screen.getByTestId('team-list-items')).toHaveClass(
       'grid',
+      'pt-1',
       'sm:grid-cols-2',
       'lg:grid-cols-3',
       'xl:grid-cols-4'
@@ -274,10 +318,16 @@ describe('TeamList mode filter', () => {
       'border'
     )
     expect(within(card).getByTestId('use-team-button-8')).toHaveTextContent('Go to Chat')
-    expect(within(card).getByTestId('use-team-button-8')).toHaveClass('h-8', 'px-2.5', 'text-xs')
-    expect(
-      within(card).getByTestId('use-team-button-8').querySelector('svg')
-    ).not.toBeInTheDocument()
+    expect(within(card).getByTestId('use-team-button-8')).toHaveClass(
+      'h-11',
+      'flex-1',
+      'border-primary/[0.15]',
+      'bg-primary/[0.08]',
+      'text-primary',
+      'md:h-8'
+    )
+    expect(within(card).getByTestId('use-team-button-8').querySelector('svg')).toBeInTheDocument()
+    expect(within(card).queryByTestId('edit-team-button-8')).not.toBeInTheDocument()
     expect(within(card).getByTestId('team-more-actions-button-8')).toHaveAccessibleName(
       'More actions'
     )
@@ -287,11 +337,29 @@ describe('TeamList mode filter', () => {
       'md:h-8',
       'md:w-8'
     )
-    expect(within(card).getByTestId('team-card-footer-8')).toHaveTextContent('yansheng32026-07-29')
+    expect(within(card).queryByTestId('team-card-footer-8')).not.toBeInTheDocument()
+    expect(within(card).queryByText('yansheng3')).not.toBeInTheDocument()
+    expect(within(card).queryByText('2026-07-29')).not.toBeInTheDocument()
     expect(within(card).queryByTestId('team-api-call-button-8')).not.toBeInTheDocument()
     expect(within(card).getByTestId('team-api-call-menu-item-8')).toHaveTextContent('Call via API')
     expect(within(card).getByText('Active')).toBeInTheDocument()
     expect(within(card).getByText('1 Bot')).toBeInTheDocument()
+    expect(within(card).getByTestId('published-agent-8-indicator')).toHaveAccessibleName(
+      'Published to Resource Library'
+    )
+  })
+
+  it('links an empty all-agents capability view to the agent marketplace', async () => {
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([])
+
+    render(<TeamList scope="all" sourceFilter="all" compact />)
+
+    const marketButton = await screen.findByTestId('team-empty-browse-market-button')
+    expect(marketButton).toHaveTextContent('Browse Agent Marketplace')
+
+    await userEvent.click(marketButton)
+
+    expect(mockPush).toHaveBeenCalledWith('/resource-library?type=agent')
   })
 
   it('keeps a parent-group agent authorized through the selected child group', async () => {

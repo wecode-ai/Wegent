@@ -1632,6 +1632,37 @@ def test_agent_reference_binding_does_not_copy_the_agent_graph(test_db, test_use
     } == graph_counts_before
 
 
+def test_uninstall_personal_agent_reference_keeps_source_agent(test_db, test_user):
+    source = _create_published_agent(test_db)
+    install = resource_library_service.install(
+        test_db,
+        listing_id=source.id,
+        target_namespace="default",
+        current_user=test_user,
+    )
+
+    resource_library_service.uninstall_kind_reference(
+        test_db,
+        listing_id=source.id,
+        target_namespace="default",
+        current_user=test_user,
+    )
+
+    assert test_db.get(ResourceMember, install.id) is None
+    assert test_db.get(Kind, source.id) is source
+    assert source.is_active is True
+    assert (
+        resource_library_service.list_installs(
+            test_db,
+            current_user=test_user,
+            resource_type="agent",
+            page=1,
+            limit=20,
+        ).items
+        == []
+    )
+
+
 def test_agent_reference_binding_keeps_dependencies_on_the_source(test_db, test_user):
     source = _create_published_agent(test_db)
     graph_ids_before = {

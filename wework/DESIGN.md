@@ -389,6 +389,11 @@ may reveal on hover/focus but must remain keyboard accessible.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Sortable sidebar rows must keep the sortable container separate from the
+  pointer activator. Only the primary icon-and-label or label region may start
+  pointer sorting, after at least `6px` of movement; trailing actions, metadata,
+  and unused row space must remain click-only. Preserve keyboard sorting on the
+  sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - On macOS light theme, use the captured warm translucent/off-white sidebar
   material and keep the main canvas pure white. Preserve the traffic-light safe

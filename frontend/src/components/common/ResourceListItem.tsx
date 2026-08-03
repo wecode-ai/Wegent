@@ -39,6 +39,8 @@ export interface ResourceListItemProps {
   icon?: React.ReactNode
   /** Optional children (e.g., status indicator for bots) */
   children?: React.ReactNode
+  /** Optional actions rendered at the right side of the title row */
+  actions?: React.ReactNode
   /** Public resource label translation */
   publicLabel?: string
   /** Use the resource-library card hierarchy */
@@ -60,6 +62,7 @@ export function ResourceListItem({
   tags = [],
   icon,
   children,
+  actions,
   publicLabel = 'Public',
   cardLayout = false,
 }: ResourceListItemProps) {
@@ -76,11 +79,12 @@ export function ResourceListItem({
       {/* Content column */}
       <div className="flex min-w-0 flex-1 flex-col justify-center">
         {/* Name row */}
-        <div className="flex min-w-0 items-center space-x-2">
+        <div className="flex min-w-0 items-center gap-2">
           <h3
             className={cn(
-              'mb-0 truncate text-base text-text-primary',
-              cardLayout ? 'font-semibold' : 'font-medium'
+              'mb-0 min-w-0 truncate text-base text-text-primary',
+              cardLayout ? 'font-semibold' : 'font-medium',
+              actions && 'flex-1'
             )}
             title={finalDisplayName}
           >
@@ -93,6 +97,14 @@ export function ResourceListItem({
           )}
           {/* Optional children (e.g., status indicator) */}
           {children}
+          {actions && (
+            <div
+              className="ml-auto flex shrink-0 items-center gap-1"
+              data-testid="resource-list-item-actions"
+            >
+              {actions}
+            </div>
+          )}
         </div>
 
         {/* ID row (optional) */}

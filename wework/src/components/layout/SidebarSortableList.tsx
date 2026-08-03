@@ -3,7 +3,6 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -19,6 +18,9 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { SidebarPointerSensor } from './sidebarDragActivator'
+
+const SIDEBAR_SORTABLE_POINTER_DISTANCE = 6
 
 interface SidebarSortableListProps<T> {
   items: T[]
@@ -86,7 +88,9 @@ export function SidebarSortableList<T>({
     [getId, items]
   )
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(SidebarPointerSensor, {
+      activationConstraint: { distance: SIDEBAR_SORTABLE_POINTER_DISTANCE },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 

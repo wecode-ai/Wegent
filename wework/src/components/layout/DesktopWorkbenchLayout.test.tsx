@@ -869,7 +869,9 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout?: () => void
   }
 
-  function DesktopWorkbenchLayout(props: LegacyDesktopWorkbenchLayoutProps) {
+  function DesktopWorkbenchLayout(
+    props: LegacyDesktopWorkbenchLayoutProps & { routeActive?: boolean }
+  ) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
     const lifecycleTaskRunning =
@@ -893,7 +895,7 @@ describe('DesktopWorkbenchLayout', () => {
           <AuthContext.Provider value={authValue}>
             <WorkbenchContext.Provider value={workbenchValue}>
               <WorkbenchPaneContext.Provider value={paneValue}>
-                <ActualDesktopWorkbenchLayout />
+                <ActualDesktopWorkbenchLayout routeActive={props.routeActive} />
               </WorkbenchPaneContext.Provider>
             </WorkbenchContext.Provider>
           </AuthContext.Provider>
@@ -2086,6 +2088,28 @@ describe('DesktopWorkbenchLayout', () => {
           value: previousTauriInternals,
         })
       }
+    }
+  })
+
+  test('does not publish titlebar actions from an inactive workspace document tab', () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
+
+      expect(screen.getByTestId('workbench-main-header')).toBeEmptyDOMElement()
+      expect(screen.queryByTestId('titlebar-main-actions')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        configurable: true,
+        value: previousTauriInternals,
+      })
     }
   })
 

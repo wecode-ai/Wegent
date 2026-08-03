@@ -37,6 +37,8 @@ async function openCreateModelDialog(page: Page) {
   await expect(page.locator('[data-testid="new-capability-menu"]')).toBeVisible({
     timeout: 10000,
   })
+  await page.locator('[data-testid="new-capability-advanced"]').click()
+  await expect(page.locator('[data-testid="new-capability-advanced-content"]')).toBeVisible()
   await page.locator('[data-testid="new-capability-type-model"]').click()
 
   const dialog = page.locator('[role="dialog"]')

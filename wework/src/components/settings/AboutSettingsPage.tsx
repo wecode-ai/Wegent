@@ -3,7 +3,7 @@ import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
-import { SettingsPage } from './settings-ui'
+import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './settings-ui'
 
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
@@ -78,6 +78,7 @@ export function AboutSettingsPage() {
   const { t } = useTranslation('common')
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
+  const updateChannel = appUpdate?.updateChannel ?? 'stable'
   const updateStatus = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
@@ -132,7 +133,33 @@ export function AboutSettingsPage() {
         {t('workbench.about_settings_description', '面向办公和编码场景的 AI 工作台。')}
       </p>
 
-      <div className="mt-7 flex flex-col items-center gap-2">
+      <SettingsGroup className="mt-7 w-full text-left">
+        <SettingsRow
+          label={t('workbench.app_update_beta_channel', {
+            defaultValue: '接收 Beta 版本更新',
+          })}
+          description={t('workbench.app_update_beta_channel_description', {
+            defaultValue: '同时接收 Beta 和正式版本，并优先更新到版本号更高的版本。',
+          })}
+          control={
+            <SettingsSwitch
+              data-testid="about-beta-update-switch"
+              aria-label={t('workbench.app_update_beta_channel', {
+                defaultValue: '接收 Beta 版本更新',
+              })}
+              checked={updateChannel === 'beta'}
+              disabled={!appUpdate || isUpdateBusy}
+              onCheckedChange={checked => {
+                if (appUpdate) {
+                  void appUpdate.setUpdateChannel(checked ? 'beta' : 'stable')
+                }
+              }}
+            />
+          }
+        />
+      </SettingsGroup>
+
+      <div className="mt-4 flex flex-col items-center gap-2">
         <AboutActionButton
           testId="about-check-update-button"
           icon={isUpdateBusy ? Loader2 : Download}

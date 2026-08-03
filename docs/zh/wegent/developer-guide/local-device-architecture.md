@@ -103,7 +103,7 @@ Codex 同一回合可以交错产生推理、助手文本和工具调用。execu
 
 助手文本只有在 Codex 明确提供 `final` 或 `final_answer` phase 时才会在流式阶段进入 final content。phase 缺失或无法识别的文本必须先作为过程文本发送，避免第三方模型在文本与工具调用交错时让 Wework 在 final content 和过程块之间反复切换。executor 会保留最后一段未确定文本；回合成功结束且没有明确 final 文本时，才将它提升为最终结果。若同一回合随后产生明确 final 文本，则明确 final 始终优先。
 
-推理内容仍可保留在 runtime transcript 中用于诊断和恢复，但 Wework 不展示推理字符或字符数。回合仍在执行时，界面只显示统一的“正在思考”状态；产生正常助手文本、工具状态或回合终态后，由任务状态机和可见消息内容决定该提示的显示与消失。
+Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示；完成后的摘要默认折叠，并显示字符数，用户可按需展开。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
 ### 后端设备对话任务 REST 入口
 

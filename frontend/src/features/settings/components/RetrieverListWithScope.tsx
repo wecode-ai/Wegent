@@ -29,6 +29,7 @@ interface RetrieverListWithScopeProps {
   creationOnly?: boolean
   hideCreateActions?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 export function RetrieverListWithScope({
@@ -46,6 +47,7 @@ export function RetrieverListWithScope({
   creationOnly = false,
   hideCreateActions = false,
   compact = false,
+  searchQuery = '',
 }: RetrieverListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -104,6 +106,7 @@ export function RetrieverListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -124,6 +127,7 @@ export function RetrieverListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -154,6 +158,7 @@ export function RetrieverListWithScope({
         creationOnly={creationOnly}
         hideCreateActions={hideCreateActions}
         compact={compact}
+        searchQuery={searchQuery}
       />
     </div>
   )
