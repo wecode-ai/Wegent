@@ -109,6 +109,34 @@ function makeFakeDocument(index: number): ExternalKbNode {
   }
 }
 
+function renderStatefulContextSelector(onChange: (contexts: ContextItem[]) => void) {
+  function StatefulSelector() {
+    const [contexts, setContexts] = useState<ContextItem[]>([])
+    const updateContexts = (next: ContextItem[]) => {
+      onChange(next)
+      setContexts(next)
+    }
+
+    return (
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={contexts}
+        onSelect={context => updateContexts([...contexts, context])}
+        onDeselect={id => updateContexts(contexts.filter(context => context.id !== id))}
+        onReplaceContexts={(idsToRemove, contextsToAdd) => {
+          const idSet = new Set(idsToRemove)
+          updateContexts([...contexts.filter(context => !idSet.has(context.id)), ...contextsToAdd])
+        }}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+  }
+
+  return render(<StatefulSelector />)
+}
+
 beforeEach(() => {
   jest.clearAllMocks()
   registerExternalKnowledgeSource(FAKE_PROVIDER, {
@@ -361,34 +389,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
       items: [makeFakeDocument(1), makeFakeDocument(2)],
     })
 
-    function StatefulSelector() {
-      const [contexts, setContexts] = useState<ContextItem[]>([])
-      const updateContexts = (next: ContextItem[]) => {
-        onChange(next)
-        setContexts(next)
-      }
-
-      return (
-        <ContextSelector
-          open={true}
-          onOpenChange={jest.fn()}
-          selectedContexts={contexts}
-          onSelect={context => updateContexts([...contexts, context])}
-          onDeselect={id => updateContexts(contexts.filter(context => context.id !== id))}
-          onReplaceContexts={(idsToRemove, contextsToAdd) => {
-            const idSet = new Set(idsToRemove)
-            updateContexts([
-              ...contexts.filter(context => !idSet.has(context.id)),
-              ...contextsToAdd,
-            ])
-          }}
-        >
-          <button>trigger</button>
-        </ContextSelector>
-      )
-    }
-
-    render(<StatefulSelector />)
+    renderStatefulContextSelector(onChange)
 
     await waitFor(() =>
       expect(
@@ -472,37 +473,25 @@ describe('external knowledge source registry — ContextSelector (conversation)'
           children: [makeFakeDocument(1), makeFakeDocument(2)],
         },
         makeFakeDocument(3),
+        {
+          node_id: 'folder:empty-parent',
+          raw_id: 'empty-parent',
+          name: 'Empty Parent',
+          node_type: 'folder',
+          children: [
+            {
+              node_id: 'folder:empty-child',
+              raw_id: 'empty-child',
+              name: 'Empty Child',
+              node_type: 'folder',
+              children: [],
+            },
+          ],
+        },
       ],
     })
 
-    function StatefulSelector() {
-      const [contexts, setContexts] = useState<ContextItem[]>([])
-      const updateContexts = (next: ContextItem[]) => {
-        onChange(next)
-        setContexts(next)
-      }
-
-      return (
-        <ContextSelector
-          open={true}
-          onOpenChange={jest.fn()}
-          selectedContexts={contexts}
-          onSelect={context => updateContexts([...contexts, context])}
-          onDeselect={id => updateContexts(contexts.filter(context => context.id !== id))}
-          onReplaceContexts={(idsToRemove, contextsToAdd) => {
-            const idSet = new Set(idsToRemove)
-            updateContexts([
-              ...contexts.filter(context => !idSet.has(context.id)),
-              ...contextsToAdd,
-            ])
-          }}
-        >
-          <button>trigger</button>
-        </ContextSelector>
-      )
-    }
-
-    render(<StatefulSelector />)
+    renderStatefulContextSelector(onChange)
     await waitFor(() =>
       expect(
         screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
@@ -517,6 +506,9 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     const folderSelection = await screen.findByTestId(
       'knowledge-picker-external-folder-scope-folder:guides'
     )
+    expect(
+      screen.getByTestId('knowledge-picker-external-folder-scope-folder:empty-parent')
+    ).toBeDisabled()
 
     fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     fireEvent.click(folderSelection)

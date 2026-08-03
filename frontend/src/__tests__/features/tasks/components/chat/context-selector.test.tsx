@@ -883,7 +883,11 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-search-folder-10')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByTestId('knowledge-picker-search-folder-10'))
+    const searchFolder = screen.getByTestId('knowledge-picker-search-folder-10')
+    expect(searchFolder).toHaveAttribute('role', 'checkbox')
+    expect(searchFolder).toHaveAttribute('aria-checked', 'false')
+    expect(searchFolder).not.toHaveAttribute('aria-pressed')
+    fireEvent.click(searchFolder)
 
     await waitFor(() => {
       expect(contextChanges).toHaveBeenLastCalledWith([
@@ -896,6 +900,7 @@ describe('ContextSelector organization grouping', () => {
           include_subfolders: true,
         }),
       ])
+      expect(searchFolder).toHaveAttribute('aria-checked', 'true')
     })
   })
 
@@ -1111,6 +1116,21 @@ describe('ContextSelector organization grouping', () => {
             },
           ],
         },
+        {
+          dingtalk_node_id: 'empty-parent',
+          name: '空目录',
+          node_type: 'folder',
+          source: 'docs',
+          children: [
+            {
+              dingtalk_node_id: 'empty-child',
+              name: '空子目录',
+              node_type: 'folder',
+              source: 'docs',
+              children: [],
+            },
+          ],
+        },
       ],
     })
 
@@ -1140,6 +1160,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-all-docs')).toBeInTheDocument()
       expect(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1')).toBeInTheDocument()
     })
+    expect(
+      screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-empty-parent')
+    ).toBeDisabled()
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
     expect(onSelect).not.toHaveBeenCalled()

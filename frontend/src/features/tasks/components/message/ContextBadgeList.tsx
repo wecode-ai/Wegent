@@ -8,6 +8,7 @@ import React, { ReactNode } from 'react'
 import { Cloud, Database, Table2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
+import { getExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import { useTranslation } from '@/hooks/useTranslation'
 
 /**
@@ -37,12 +38,11 @@ function ContextPreviewBase({
   return (
     <div
       className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
-      title={sourceLabel ? `${sourceLabel} · ${title}` : undefined}
-      aria-label={sourceLabel ? `${sourceLabel} · ${title}` : title}
     >
       <div className="text-2xl flex-shrink-0">{icon}</div>
       <div className="flex-1 min-w-0 overflow-hidden">
         <div className="font-medium text-sm truncate" title={title}>
+          {sourceLabel ? <span className="sr-only">{sourceLabel} · </span> : null}
           {title}
         </div>
         {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
@@ -212,7 +212,10 @@ function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
       : context.external_target_type === 'folder'
         ? t('picker.scopeFoldersCompact', { count: 1 })
         : t('picker.scopeAll')
-  const sourceLabel = context.external_provider === 'ap' ? 'WeiboAP' : context.external_provider
+  const source = context.external_provider
+    ? getExternalKnowledgeSource(context.external_provider)
+    : undefined
+  const sourceLabel = source?.shortLabel ?? source?.label ?? context.external_provider ?? undefined
 
   return (
     <div>

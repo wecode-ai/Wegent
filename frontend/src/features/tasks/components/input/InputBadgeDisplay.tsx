@@ -26,6 +26,55 @@ interface ComposerContextGroup {
   contextIds: Array<number | string>
 }
 
+function getComposerGroupKey(context: ContextItem) {
+  if (context.type === 'external_knowledge') {
+    const external = context as ExternalKnowledgeContext
+    return `external:${external.ref.provider}:${external.ref.mode}:${external.ref.id ?? 'all'}`
+  }
+  if (context.type === 'dingtalk_doc') {
+    const dingtalk = context as DingTalkDocContext
+    const containerId = dingtalk.container_id ?? `${dingtalk.source}:root`
+    return `dingtalk:${dingtalk.source}:${containerId}`
+  }
+  return `context:${context.type}:${context.id}`
+}
+
+function normalizeComposerGroup(
+  group: ComposerContextGroup,
+  contexts: ContextItem[]
+): ComposerContextGroup {
+  if (
+    group.context.type === 'external_knowledge' &&
+    (group.context as ExternalKnowledgeContext).ref.target_type === 'document'
+  ) {
+    const external = group.context as ExternalKnowledgeContext
+    return {
+      ...group,
+      context: {
+        ...external,
+        name: external.ref.name ?? external.name,
+        selected_document_count: group.contextIds.length,
+      },
+    }
+  }
+  if (group.context.type === 'dingtalk_doc') {
+    const selected = contexts.filter(
+      context => context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
+    ) as DingTalkDocContext[]
+    const first = group.context as DingTalkDocContext
+    return {
+      ...group,
+      context: {
+        ...first,
+        name: first.container_name ?? first.name,
+        selected_document_count: selected.filter(item => item.node_type !== 'folder').length,
+        selected_folder_count: selected.filter(item => item.node_type === 'folder').length,
+      },
+    }
+  }
+  return group
+}
+
 export function groupComposerContexts(contexts: ContextItem[]): ComposerContextGroup[] {
   const groups: ComposerContextGroup[] = []
   const groupIndexes = new Map<string, number>()
@@ -41,53 +90,10 @@ export function groupComposerContexts(contexts: ContextItem[]): ComposerContextG
   }
 
   contexts.forEach(context => {
-    if (context.type === 'external_knowledge') {
-      const external = context as ExternalKnowledgeContext
-      const key = `external:${external.ref.provider}:${external.ref.mode}:${external.ref.id ?? 'all'}`
-      appendToGroup(key, external)
-      return
-    }
-    if (context.type === 'dingtalk_doc') {
-      const dingtalk = context as DingTalkDocContext
-      const containerId = dingtalk.container_id ?? `${dingtalk.source}:root`
-      appendToGroup(`dingtalk:${dingtalk.source}:${containerId}`, dingtalk)
-      return
-    }
-    appendToGroup(`context:${context.type}:${context.id}`, context)
+    appendToGroup(getComposerGroupKey(context), context)
   })
 
-  return groups.map(group => {
-    if (
-      group.context.type === 'external_knowledge' &&
-      (group.context as ExternalKnowledgeContext).ref.target_type === 'document'
-    ) {
-      const external = group.context as ExternalKnowledgeContext
-      return {
-        ...group,
-        context: {
-          ...external,
-          name: external.ref.name ?? external.name,
-          selected_document_count: group.contextIds.length,
-        },
-      }
-    }
-    if (group.context.type === 'dingtalk_doc') {
-      const selected = contexts.filter(
-        context => context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
-      ) as DingTalkDocContext[]
-      const first = group.context as DingTalkDocContext
-      return {
-        ...group,
-        context: {
-          ...first,
-          name: first.container_name ?? first.name,
-          selected_document_count: selected.filter(item => item.node_type !== 'folder').length,
-          selected_folder_count: selected.filter(item => item.node_type === 'folder').length,
-        },
-      }
-    }
-    return group
-  })
+  return groups.map(group => normalizeComposerGroup(group, contexts))
 }
 
 interface InputBadgeDisplayProps {

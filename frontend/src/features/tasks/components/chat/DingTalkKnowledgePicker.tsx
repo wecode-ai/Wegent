@@ -5,8 +5,9 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Check, ChevronRight, Database, FileText, Folder, FolderOpen } from 'lucide-react'
+import { ChevronRight, Database, FileText, Folder, FolderOpen } from 'lucide-react'
 
+import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ContextItem } from '@/types/context'
 import { cn } from '@/lib/utils'
@@ -38,30 +39,6 @@ function filterDingTalkNodes(nodes: DingtalkDocNode[], query: string): DingtalkD
     }
     return result
   }, [])
-}
-
-function SelectionIndicator({
-  selected,
-  indeterminate = false,
-}: {
-  selected: boolean
-  indeterminate?: boolean
-}) {
-  return (
-    <span
-      className={cn(
-        'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border border-border bg-base text-transparent transition-colors group-hover:border-primary/70',
-        selected && !indeterminate ? 'border-primary bg-primary text-white shadow-sm' : '',
-        indeterminate ? 'border-primary bg-primary/10 text-primary' : ''
-      )}
-    >
-      {indeterminate ? (
-        <span className="h-0.5 w-2.5 rounded bg-current" />
-      ) : selected ? (
-        <Check className="h-3 w-3 stroke-[2.5]" />
-      ) : null}
-    </span>
-  )
 }
 
 function collectSelectableDingTalkNodes(node: DingtalkDocNode): DingtalkDocNode[] {
@@ -415,12 +392,16 @@ function DingTalkDocumentNode({
           role="checkbox"
           aria-checked={partiallySelected ? 'mixed' : selected}
           aria-label={node.name}
-          disabled={isFolder && !hasChildren}
+          disabled={isFolder && selectableDescendants.length === 0}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary md:h-9 md:w-9"
           onClick={() => onToggle(node)}
           data-testid={`knowledge-picker-dingtalk-node-select-${node.source}-${node.dingtalk_node_id}`}
         >
-          <SelectionIndicator selected={selected} indeterminate={partiallySelected} />
+          <SelectionIndicator
+            checked={selected}
+            indeterminate={partiallySelected}
+            mixedIcon="bar"
+          />
         </button>
       </div>
       {isFolder && open

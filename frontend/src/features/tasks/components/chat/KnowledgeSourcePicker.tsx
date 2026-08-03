@@ -7,7 +7,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
-  Check,
   ChevronRight,
   Cloud,
   Database,
@@ -16,7 +15,6 @@ import {
   FolderOpen,
   Loader2,
   MessageSquareText,
-  Minus,
   RotateCw,
   Users,
   User,
@@ -24,6 +22,7 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
@@ -243,34 +242,8 @@ function ScopeSelectionControl({
       onClick={onToggle}
       data-testid={testId}
     >
-      <ScopeSelectionIndicator checked={checked} indeterminate={indeterminate} />
+      <SelectionIndicator checked={checked} indeterminate={indeterminate} />
     </button>
-  )
-}
-
-function ScopeSelectionIndicator({
-  checked,
-  indeterminate = false,
-}: {
-  checked: boolean
-  indeterminate?: boolean
-}) {
-  return (
-    <span
-      className={cn(
-        'flex h-[18px] w-[18px] items-center justify-center rounded border border-border bg-base text-transparent transition-colors group-hover:border-primary/70',
-        checked && !indeterminate
-          ? 'border-primary bg-primary text-primary-contrast shadow-sm'
-          : '',
-        indeterminate ? 'border-primary bg-primary/10 text-primary' : ''
-      )}
-    >
-      {indeterminate ? (
-        <Minus className="h-3 w-3 stroke-[2.5]" />
-      ) : checked ? (
-        <Check className="h-3 w-3 stroke-[2.5]" />
-      ) : null}
-    </span>
   )
 }
 
@@ -436,10 +409,6 @@ function flattenExternalDocuments(nodes: ExternalKbNode[]) {
 function collectExternalDocuments(node: ExternalKbNode): ExternalKbNode[] {
   if (node.node_type !== 'folder') return [node]
   return (node.children ?? []).flatMap(collectExternalDocuments)
-}
-
-function collectAllExternalDocuments(nodes: ExternalKbNode[]): ExternalKbNode[] {
-  return nodes.flatMap(collectExternalDocuments)
 }
 
 function countExternalDocuments(node: ExternalKbNode): number {
@@ -1009,7 +978,8 @@ export function KnowledgeSourcePicker({
 
     if (wholeKb) {
       const treeState = externalNodesByKb.get(`${source.providerId}:${kb.knowledge_base_id}`)
-      const contexts = collectAllExternalDocuments(treeState?.items ?? [])
+      const contexts = flattenExternalDocuments(treeState?.items ?? [])
+        .map(item => item.node)
         .filter(documentNode => documentNode.node_id !== node.node_id)
         .map(documentNode => toExternalDocumentContext(source, kb, documentNode))
       if (
@@ -1044,6 +1014,7 @@ export function KnowledgeSourcePicker({
       kb.knowledge_base_id
     )
     const descendants = collectExternalDocuments(node)
+    if (descendants.length === 0) return
     const descendantIds = new Set(descendants.map(document => document.node_id))
     const selectedDescendants = childContexts.filter(
       context => context.ref.node_id && descendantIds.has(context.ref.node_id)
@@ -1051,7 +1022,8 @@ export function KnowledgeSourcePicker({
 
     if (wholeKb) {
       const treeState = externalNodesByKb.get(`${source.providerId}:${kb.knowledge_base_id}`)
-      const contexts = collectAllExternalDocuments(treeState?.items ?? [])
+      const contexts = flattenExternalDocuments(treeState?.items ?? [])
+        .map(item => item.node)
         .filter(document => !descendantIds.has(document.node_id))
         .map(document => toExternalDocumentContext(source, kb, document))
       if (
@@ -1942,12 +1914,21 @@ function InternalDocumentSearchResults({
           isFolder && node.folderId !== undefined
             ? inheritedSelected || selectedFolderIds.has(node.folderId)
             : inheritedSelected || Boolean(document && selectedDocIds.has(document.id))
+        const folderPartiallySelected =
+          isFolder && selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
+        const folderSelected =
+          isFolder &&
+          (selected || (selectedDocumentCount === node.documentCount && node.documentCount > 0))
         const Icon = isFolder ? Folder : FileText
         return (
           <button
             key={node.id}
             type="button"
-            aria-pressed={selected}
+            role={isFolder ? 'checkbox' : undefined}
+            aria-checked={
+              isFolder ? (folderPartiallySelected ? 'mixed' : folderSelected) : undefined
+            }
+            aria-pressed={!isFolder ? selected : undefined}
             className={cn(
               'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
               selected ? 'bg-primary/10 text-primary' : ''
@@ -1977,18 +1958,13 @@ function InternalDocumentSearchResults({
                 <Badge variant="secondary" size="sm">
                   {node.documentCount}
                 </Badge>
-                <ScopeSelectionIndicator
-                  checked={
-                    selected ||
-                    (selectedDocumentCount === node.documentCount && node.documentCount > 0)
-                  }
-                  indeterminate={
-                    selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
-                  }
+                <SelectionIndicator
+                  checked={folderSelected}
+                  indeterminate={folderPartiallySelected}
                 />
               </span>
             ) : (
-              <ScopeSelectionIndicator checked={selected} />
+              <SelectionIndicator checked={selected} />
             )}
           </button>
         )
@@ -2041,7 +2017,7 @@ function ExternalDocumentSearchResults({
                 <PathLabel path={path} />
               </span>
             </span>
-            <ScopeSelectionIndicator checked={selected} />
+            <SelectionIndicator checked={selected} />
           </button>
         )
       })}
@@ -2165,7 +2141,7 @@ function InternalDocumentNode({
               <PathLabel path={node.path} />
             </span>
           </span>
-          <ScopeSelectionIndicator checked={selected} />
+          <SelectionIndicator checked={selected} />
         </button>
       )}
       {isFolder && open
@@ -2269,14 +2245,14 @@ function ExternalDocumentNode({
             <ScopeSelectionControl
               checked={folderSelected}
               indeterminate={folderPartiallySelected}
-              disabled={disabled}
+              disabled={disabled || descendantDocuments.length === 0}
               label={node.name}
               testId={`knowledge-picker-external-folder-scope-${node.node_id}`}
               onToggle={() => onToggleFolder(node)}
             />
           </span>
         ) : (
-          <ScopeSelectionIndicator checked={selected} />
+          <SelectionIndicator checked={selected} />
         )}
       </div>
       {isFolder && open
