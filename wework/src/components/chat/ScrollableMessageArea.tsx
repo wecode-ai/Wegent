@@ -763,6 +763,29 @@ function ScrollableMessagePaneContent({
     scheduleStableScrollToBottom,
     scrollToBottom,
     setScrollToBottom,
+  ])
+
+  useLayoutEffect(() => {
+    const turnNavigationSettled = !turnNavigationLoading && turnNavigationTargetMessageId === null
+    if (
+      !pendingAssistantResponseStartRef.current ||
+      messages.length === 0 ||
+      autoScrollSuspended ||
+      !turnNavigationSettled ||
+      isTurnNavigationAutoScrollSuspended()
+    ) {
+      return
+    }
+
+    pendingAssistantResponseStartRef.current = false
+    setScrollToBottom('auto', { saveSnapshot: false })
+    scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+  }, [
+    autoScrollSuspended,
+    isTurnNavigationAutoScrollSuspended,
+    messages.length,
+    scheduleStableScrollToBottom,
+    setScrollToBottom,
     turnNavigationLoading,
     turnNavigationTargetMessageId,
   ])
