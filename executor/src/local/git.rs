@@ -16,13 +16,13 @@
 //! argv arguments and a PATH that has been pre-filled with common installation directories on
 //! Windows.
 
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     process::{Command, Stdio},
     time::Instant,
 };
-#[cfg(windows)]
-use std::path::PathBuf;
 
 use crate::local::command::build_env;
 
@@ -51,7 +51,10 @@ impl GitOutput {
         self.exit_code == Some(0)
     }
 
-    pub fn into_command_result(self, stdout_on_success: bool) -> crate::local::command::CommandResult {
+    pub fn into_command_result(
+        self,
+        stdout_on_success: bool,
+    ) -> crate::local::command::CommandResult {
         use crate::local::command::CommandResult;
         if self.success() {
             CommandResult::ok(if stdout_on_success {
@@ -142,11 +145,17 @@ pub fn resolve_merge_base(cwd: &str, extra_env: &HashMap<String, String>) -> Opt
     // Try the remote default branch symbolic ref first.
     if let Some(remote_default) = git_stdout(
         cwd,
-        &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
         extra_env,
     ) {
         if git_rev_parse_verify(cwd, &format!("{remote_default}^{{commit}}"), extra_env) {
-            if let Some(base) = git_stdout(cwd, &["merge-base", &remote_default, "HEAD"], extra_env) {
+            if let Some(base) = git_stdout(cwd, &["merge-base", &remote_default, "HEAD"], extra_env)
+            {
                 return Some(base);
             }
         }
@@ -164,7 +173,12 @@ pub fn resolve_merge_base(cwd: &str, extra_env: &HashMap<String, String>) -> Opt
 }
 
 fn git_rev_parse_verify(cwd: &str, reference: &str, extra_env: &HashMap<String, String>) -> bool {
-    run_git(cwd, &["rev-parse", "--verify", "--quiet", reference], extra_env).success()
+    run_git(
+        cwd,
+        &["rev-parse", "--verify", "--quiet", reference],
+        extra_env,
+    )
+    .success()
 }
 
 #[cfg(windows)]
