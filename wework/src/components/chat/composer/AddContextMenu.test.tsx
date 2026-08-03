@@ -22,6 +22,58 @@ describe('AddContextMenu', () => {
     expect(screen.queryByTestId('add-context-menu')).not.toBeInTheDocument()
   })
 
+  test('opens supervisor configuration from the add menu', () => {
+    const onConfigureSupervisor = vi.fn()
+    render(
+      <AddContextMenu
+        disabled={false}
+        onFileSelect={vi.fn()}
+        onConfigureSupervisor={onConfigureSupervisor}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('add-context-button'))
+    fireEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
+
+    expect(onConfigureSupervisor).toHaveBeenCalledOnce()
+    expect(screen.queryByTestId('add-context-menu')).not.toBeInTheDocument()
+  })
+
+  test('keeps the supervisor entry after supervision is enabled', () => {
+    render(
+      <AddContextMenu
+        disabled={false}
+        onFileSelect={vi.fn()}
+        onConfigureSupervisor={vi.fn()}
+        supervisorEnabled
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
+      'workbench.supervisor_configure'
+    )
+  })
+
+  test('explains that pending supervision starts with the task', () => {
+    render(
+      <AddContextMenu
+        disabled={false}
+        onFileSelect={vi.fn()}
+        onConfigureSupervisor={vi.fn()}
+        supervisorEnabled
+        supervisorPending
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
+      'workbench.supervisor_pending_menu'
+    )
+  })
+
   test('moves focus into the portal and restores it after Escape', async () => {
     render(<AddContextMenu disabled={false} onFileSelect={vi.fn()} />)
 

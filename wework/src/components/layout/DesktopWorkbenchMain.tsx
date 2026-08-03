@@ -114,7 +114,11 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
-import { SupervisorSuggestionCards, TaskSupervisorControl } from './TaskSupervisorControl'
+import {
+  SupervisorSuggestionCards,
+  TaskSupervisorControl,
+  type TaskSupervisorConfig,
+} from './TaskSupervisorControl'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type {
   RuntimeAdditionalContext,
@@ -547,6 +551,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false)
   const [todoBindingPickerOpen, setTodoBindingPickerOpen] = useState(false)
   const [deliverAfterBinding, setDeliverAfterBinding] = useState(false)
+  const [pendingSupervisorConfig, setPendingSupervisorConfig] =
+    useState<TaskSupervisorConfig | null>(null)
+  const supervisorTaskKey = currentRuntimeTask
+    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
+    : null
+  const supervisorDialogScopeKey = supervisorTaskKey ?? `${paneKey}:new`
+  const [supervisorDialogTaskKey, setSupervisorDialogTaskKey] = useState<string | null>(null)
+  const supervisorDialogOpen = supervisorDialogTaskKey === supervisorDialogScopeKey
   const [pendingTodoItem, setPendingTodoItemState] = useState<CloudLoopItem | null>(() =>
     pendingTodoForTask(currentRuntimeTask)
   )
@@ -566,6 +578,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const supervisor = runtimeTaskSummary?.supervisor ?? null
   const currentRuntimeTaskSupportsSupervisor =
     runtimeTaskSummary?.runtime?.toLowerCase() === 'codex'
+  const supervisorFeatureAvailable = Boolean(
+    experimentalFeaturesEnabled &&
+    services?.runtimeWorkApi &&
+    (!currentRuntimeTask || currentRuntimeTaskSupportsSupervisor)
+  )
+  const supervisorModels = projectChat.models.filter(
+    model => model.isActive !== false && !model.compatibilityDisabled
+  )
   const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
   const composerTodoItem = currentRuntimeTask ? boundCloudItem : pendingTodoItem
   const cloudAdditionalContext = useMemo<RuntimeAdditionalContext | undefined>(() => {
@@ -606,20 +626,47 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     []
   )
 
-  const submitPaneInput = useCallback(
-    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) =>
-      sendPaneInput(value, {
-        ...options,
-        additionalContext: cloudAdditionalContext,
-        onRuntimeTaskCreated: address => {
-          if (!pendingTodoBinding) return
-          pendingTodoBinding = { ...pendingTodoBinding, target: address }
-        },
-      }),
-    [cloudAdditionalContext, sendPaneInput]
+  const runtimeWorkApi = services?.runtimeWorkApi
+  const setSupervisorForAddress = useCallback(
+    async (address: RuntimeTaskAddress, config: TaskSupervisorConfig) => {
+      if (!runtimeWorkApi) return null
+      const response = await runtimeWorkApi.setRuntimeSupervisor({
+        address,
+        mode: config.mode,
+        instructions: config.instructions,
+        modelId: config.modelId,
+        intervalSeconds: config.intervalSeconds,
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.supervisor_set_failed'))
+      }
+      return response.supervisor
+    },
+    [runtimeWorkApi, t]
   )
 
-  const runtimeWorkApi = services?.runtimeWorkApi
+  const submitPaneInput = useCallback(
+    (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
+      const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
+      return sendPaneInput(value, {
+        ...options,
+        additionalContext: cloudAdditionalContext,
+        initialSupervisor: supervisorConfig,
+        onRuntimeTaskCreated: address => {
+          if (pendingTodoBinding) {
+            pendingTodoBinding = { ...pendingTodoBinding, target: address }
+          }
+        },
+        onRuntimeTaskReady: () => {
+          if (supervisorConfig) {
+            setPendingSupervisorConfig(null)
+          }
+        },
+      })
+    },
+    [cloudAdditionalContext, currentRuntimeTask, pendingSupervisorConfig, sendPaneInput]
+  )
+
   const setTaskSupervisor = useCallback(
     async (
       mode: RuntimeSupervisorMode,
@@ -627,24 +674,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       modelId: string | null,
       intervalSeconds: number
     ) => {
-      if (!currentRuntimeTask || !runtimeWorkApi) return null
-      const response = await runtimeWorkApi.setRuntimeSupervisor({
-        address: currentRuntimeTask,
+      const config = {
         mode,
         instructions,
         modelId,
         intervalSeconds,
-      })
-      if (!response.accepted) {
-        throw new Error(response.error || t('workbench.supervisor_set_failed'))
       }
-      return response.supervisor
+      if (!currentRuntimeTask) {
+        setPendingSupervisorConfig(config)
+        return null
+      }
+      return setSupervisorForAddress(currentRuntimeTask, config)
     },
-    [currentRuntimeTask, runtimeWorkApi, t]
+    [currentRuntimeTask, setSupervisorForAddress]
   )
 
   const clearTaskSupervisor = useCallback(async () => {
-    if (!currentRuntimeTask || !runtimeWorkApi) return
+    if (!currentRuntimeTask) {
+      setPendingSupervisorConfig(null)
+      return
+    }
+    if (!runtimeWorkApi) return
     const response = await runtimeWorkApi.clearRuntimeSupervisor({
       address: currentRuntimeTask,
     })
@@ -1167,11 +1217,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setEnvironmentInfoOpen = environmentInfoDocked
     ? onEnvironmentInfoPinnedChange
     : onEnvironmentInfoOverlayOpenChange
+  const openSupervisorDialog = useCallback(() => {
+    setSupervisorDialogTaskKey(supervisorDialogScopeKey)
+    if (!environmentInfoDocked) {
+      onEnvironmentInfoOverlayOpenChange(false)
+    }
+  }, [environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, supervisorDialogScopeKey])
 
   useEffect(() => {
     if (currentRuntimeTask && !environmentInfoDocked) return
     onEnvironmentInfoOverlayOpenChange(false)
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange])
+
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen
     ? rightPanelExpanded
@@ -2092,6 +2149,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             }
           : undefined
       }
+      supervisor={supervisorFeatureAvailable ? supervisor : null}
+      onConfigureSupervisor={
+        supervisorFeatureAvailable && supervisor ? openSupervisorDialog : undefined
+      }
       rightPanelOpen={rightPanelOpen}
       rightPanelExpanded={rightPanelExpanded}
       bottomPanelOpen={bottomPanelOpen}
@@ -2491,28 +2552,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 />
                               ) : (
                                 <>
-                                  {experimentalFeaturesEnabled &&
-                                    currentRuntimeTaskSupportsSupervisor &&
-                                    services?.runtimeWorkApi && (
-                                      <div
-                                        data-testid="task-supervisor-composer-control"
-                                        className="mb-2 flex justify-end"
-                                      >
-                                        <TaskSupervisorControl
-                                          supervisor={supervisor}
-                                          defaultInstructions={
-                                            appPreferences?.preferences.supervisorPrinciples ?? ''
-                                          }
-                                          models={projectChat.models.filter(
-                                            model =>
-                                              model.isActive !== false &&
-                                              !model.compatibilityDisabled
-                                          )}
-                                          onSet={setTaskSupervisor}
-                                          onClear={clearTaskSupervisor}
-                                        />
-                                      </div>
-                                    )}
                                   {experimentalFeaturesEnabled && supervisor && (
                                     <SupervisorSuggestionCards
                                       suggestions={supervisor.suggestions}
@@ -2558,6 +2597,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                     taskPlan={paneSession.taskPlan}
                                     goalDraftActive={paneSession.goalDraftActive}
                                     onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                                    onConfigureSupervisor={
+                                      supervisorFeatureAvailable ? openSupervisorDialog : undefined
+                                    }
+                                    supervisorEnabled={Boolean(
+                                      supervisor || pendingSupervisorConfig
+                                    )}
+                                    supervisorPending={Boolean(
+                                      !currentRuntimeTask && pendingSupervisorConfig
+                                    )}
                                     onCancelGoalDraft={paneSession.cancelGoalDraft}
                                     onEditGoal={paneSession.editCurrentGoal}
                                     onPauseGoal={pauseCurrentGoal}
@@ -2710,6 +2758,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       taskPlan={paneSession.taskPlan}
                       goalDraftActive={paneSession.goalDraftActive}
                       onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                      onConfigureSupervisor={
+                        supervisorFeatureAvailable ? openSupervisorDialog : undefined
+                      }
+                      supervisorEnabled={Boolean(supervisor || pendingSupervisorConfig)}
+                      supervisorPending={Boolean(!currentRuntimeTask && pendingSupervisorConfig)}
                       onCancelGoalDraft={paneSession.cancelGoalDraft}
                       onEditGoal={paneSession.editCurrentGoal}
                       onPauseGoal={pauseCurrentGoal}
@@ -2920,6 +2973,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               },
             }
           }}
+        />
+        <TaskSupervisorControl
+          open={supervisorDialogOpen}
+          supervisor={supervisor}
+          initialConfig={pendingSupervisorConfig}
+          defaultInstructions={appPreferences?.preferences.supervisorPrinciples ?? ''}
+          models={supervisorModels}
+          onOpenChange={open => setSupervisorDialogTaskKey(open ? supervisorDialogScopeKey : null)}
+          onSet={setTaskSupervisor}
+          onClear={clearTaskSupervisor}
         />
         <TransientNotice
           message={continueInIm.notice?.message ?? null}
