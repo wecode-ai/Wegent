@@ -6,6 +6,7 @@ import {
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { track } from '@/telemetry/client'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
@@ -110,6 +111,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
     setMessage(null)
     setError(null)
+    track('app_update_install_started', {})
 
     try {
       await installPendingWeworkUpdate(setDownloadProgress)

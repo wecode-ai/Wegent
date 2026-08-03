@@ -49,6 +49,7 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 import { AITableView } from '@/features/todo/AITableView'
 import type { ProjectWithTasks, User as UserProfile } from '@/types/api'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
@@ -378,8 +379,10 @@ function ProjectDialog({
         provider_config: providerConfig,
         ...(location === 'cloud' ? { visibility } : {}),
       })
+      track('feature_action_completed', { domain: 'project_space', action: 'create' })
       onCreated(project, location)
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setError(cloudProjectRequestError(cause))
     } finally {
       setSaving(false)
@@ -878,6 +881,7 @@ export function CloudTodoWorkspace({
     [availableProjectSpaceApis, projectSpaceApis, projects, services.deliveryApi]
   )
   const selectedProjectApi = selectedProject ? apiForProjectId(selectedProject.id) : undefined
+  const selectedProjectLocation = selectedProject?.location
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
@@ -888,6 +892,14 @@ export function CloudTodoWorkspace({
   const personalGroupKey = selectedProject
     ? `wework-board-group:${user.id}:${selectedProject.id}`
     : null
+
+  useEffect(() => {
+    if (!selectedProjectId || !selectedProjectLocation) return
+    track('board_view_opened', {
+      source: selectedProjectLocation,
+      view: projectView,
+    })
+  }, [projectView, selectedProjectId, selectedProjectLocation])
   const nativeStatuses =
     selectedProject?.board_config?.statuses ??
     columns.map(column => ({
@@ -1119,8 +1131,10 @@ export function CloudTodoWorkspace({
           project.id === updated.id ? { ...updated, location: project.location } : project
         )
       )
+      track('feature_action_completed', { domain: 'project_space', action: 'rename' })
       setRenameProject(null)
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setRenameError(cause instanceof Error ? cause.message : '修改项目名称失败')
     } finally {
       setRenameBusy(false)
@@ -1142,8 +1156,10 @@ export function CloudTodoWorkspace({
         return next
       })
       if (selectedProjectId === archiveProject.id) selectProject(null)
+      track('feature_action_completed', { domain: 'project_space', action: 'delete' })
       setArchiveProject(null)
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setArchiveError(cause instanceof Error ? cause.message : '归档项目失败')
     } finally {
       setArchiveBusy(false)
@@ -1189,8 +1205,10 @@ export function CloudTodoWorkspace({
       }))
       if (boardParentId && archivedIds.has(boardParentId)) setBoardParentId(null)
       if (selectedItem && archivedIds.has(selectedItem.id)) setSelectedItem(null)
+      track('feature_action_completed', { domain: 'board_item', action: 'delete' })
       setArchiveItem(null)
     } catch (cause) {
+      track('operation_failed', { operation: 'board_item_action' })
       setArchiveError(cause instanceof Error ? cause.message : '归档任务失败')
     } finally {
       setArchiveBusy(false)
@@ -1395,9 +1413,16 @@ export function CloudTodoWorkspace({
           item_ids: reordered.laneIds,
         })
       }
+      track('board_item_moved', {
+        group_by: nativeGroupBy,
+        reordered: beforeItemId !== null,
+        source:
+          projects.find(project => project.id === item.cloud_project_id)?.location ?? 'unknown',
+      })
     } catch (cause) {
       setItems(previousItems)
       setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
+      track('operation_failed', { operation: 'board_item_move' })
     }
   }
 
@@ -1458,7 +1483,9 @@ export function CloudTodoWorkspace({
           project.id === updated.id ? { ...updated, location: project.location } : project
         )
       )
+      track('feature_action_completed', { domain: 'project_space', action: 'save_grouping' })
     } catch (cause) {
+      track('operation_failed', { operation: 'project_space_action' })
       setBoardError(cause instanceof Error ? cause.message : '保存全局分组失败')
     } finally {
       setGroupScopeBusy(false)
@@ -2289,6 +2316,7 @@ export function CloudTodoWorkspace({
               current.map(entry => (entry.id === updated.id ? { ...entry, ...updated } : entry))
             )
             setSelectedItem(updated)
+            track('feature_action_completed', { domain: 'board_item', action: 'update' })
           }}
         />
       )}
@@ -2338,6 +2366,10 @@ export function CloudTodoWorkspace({
             }))
             setCreateTodoOpen(false)
             setCreateTodoParent(null)
+            track('board_item_created', {
+              has_parent: item.parent_id !== null,
+              source: createTodoProject.location,
+            })
           }}
         />
       )}

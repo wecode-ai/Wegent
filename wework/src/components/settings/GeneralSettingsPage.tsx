@@ -96,7 +96,11 @@ export function GeneralSettingsPage() {
     setSaving(true)
     setError(null)
     try {
-      const nextPreferences = await updateAppPreferences({ [key]: value })
+      const patch: AppPreferencesPatch =
+        key === 'telemetryEnabled'
+          ? { telemetryConsentAsked: true, telemetryEnabled: value }
+          : { [key]: value }
+      const nextPreferences = await updateAppPreferences(patch)
       setPreferences(nextPreferences)
     } catch (saveError) {
       console.error('[Wework] Failed to update app preferences', saveError)
@@ -369,6 +373,20 @@ export function GeneralSettingsPage() {
               </div>
             }
           />
+        </SettingsGroup>
+      </section>
+
+      <section data-testid="general-settings-privacy-section" className="mt-12">
+        <div className="mb-2 px-0.5 text-sm font-semibold text-text-primary">
+          {t('workbench.general_settings_privacy_title')}
+        </div>
+        <SettingsGroup className="rounded-xl !bg-background">
+          {renderSwitchRow({
+            preferenceKey: 'telemetryEnabled',
+            testId: 'general-telemetry-toggle',
+            label: t('workbench.general_settings_telemetry'),
+            description: t('workbench.general_settings_telemetry_description'),
+          })}
         </SettingsGroup>
       </section>
 

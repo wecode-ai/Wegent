@@ -38,6 +38,7 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
+import { track } from '@/telemetry/client'
 
 interface UseWorkbenchProjectActionsOptions {
   user: User
@@ -79,6 +80,7 @@ export function useWorkbenchProjectActions({
       }
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
+      track('project_created', { kind: 'standard' })
       return project
     },
     [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
@@ -98,6 +100,7 @@ export function useWorkbenchProjectActions({
       await refreshWorkLists()
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
+      track('project_created', { kind: 'git' })
       return project
     },
     [dispatch, refreshWorkLists, rememberExecutionDevice, services.projectApi, user.id]
@@ -256,6 +259,7 @@ export function useWorkbenchProjectActions({
           startFreshChat: true,
         })
       }
+      track('project_removed', { source: 'local' })
       return true
     },
     [
@@ -309,6 +313,7 @@ export function useWorkbenchProjectActions({
         standaloneWorkspacePath: null,
         startFreshChat: true,
       })
+      track('project_removed', { source: 'local' })
       return true
     },
     [
@@ -336,6 +341,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
       dispatch({ type: 'project_removed', projectId })
+      track('project_removed', { source: 'cloud' })
     },
     [dispatch, services.projectApi, state.projects]
   )
@@ -428,20 +434,62 @@ export function useWorkbenchProjectActions({
   )
 
   const commitEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
-      commitProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    async (
+      project: ProjectWithTasks | null,
+      message: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => {
+      try {
+        const result = await commitProjectChanges(
+          executorClient.commands,
+          project,
+          message,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'commit' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const commitAndPushEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
-      commitAndPushProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    async (
+      project: ProjectWithTasks | null,
+      message: string,
+      workspaceTarget?: WorkspaceTarget | null
+    ) => {
+      try {
+        const result = await commitAndPushProjectChanges(
+          executorClient.commands,
+          project,
+          message,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'commit_push' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const pushEnvironmentChanges = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      pushProjectChanges(executorClient.commands, project, workspaceTarget),
+    async (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
+      try {
+        const result = await pushProjectChanges(executorClient.commands, project, workspaceTarget)
+        track('feature_action_completed', { domain: 'git', action: 'push' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
@@ -452,21 +500,48 @@ export function useWorkbenchProjectActions({
   )
 
   const checkoutEnvironmentBranch = useCallback(
-    (
+    async (
       project: ProjectWithTasks | null,
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
-    ) => checkoutProjectBranch(executorClient.commands, project, branchName, workspaceTarget),
+    ) => {
+      try {
+        const result = await checkoutProjectBranch(
+          executorClient.commands,
+          project,
+          branchName,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'checkout' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 
   const createEnvironmentBranch = useCallback(
-    (
+    async (
       project: ProjectWithTasks | null,
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
-    ) =>
-      createAndCheckoutProjectBranch(executorClient.commands, project, branchName, workspaceTarget),
+    ) => {
+      try {
+        const result = await createAndCheckoutProjectBranch(
+          executorClient.commands,
+          project,
+          branchName,
+          workspaceTarget
+        )
+        track('feature_action_completed', { domain: 'git', action: 'branch_create' })
+        return result
+      } catch (error) {
+        track('operation_failed', { operation: 'git_action' })
+        throw error
+      }
+    },
     [executorClient]
   )
 

@@ -15,6 +15,7 @@ import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { track } from '@/telemetry/client'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
 import { SiteActionsMenu } from './SiteActionsMenu'
 
@@ -282,6 +283,7 @@ export function SitesWorkspace({
     try {
       const published = await api.publishSite(site.siteid)
       setSites(current => current.map(item => (item.siteid === site.siteid ? published : item)))
+      track('feature_action_completed', { action: 'publish', domain: 'site' })
     } catch (error) {
       setSites(current =>
         current.map(item =>
@@ -294,6 +296,7 @@ export function SitesWorkspace({
             : item
         )
       )
+      track('operation_failed', { operation: 'site_action' })
     } finally {
       setPublishingIds(current => {
         const next = new Set(current)
@@ -323,8 +326,10 @@ export function SitesWorkspace({
       setSites(current => current.filter(item => item.siteid !== pendingDeleteSite.siteid))
       setTotal(current => Math.max(0, current - 1))
       setPendingDeleteSite(null)
+      track('feature_action_completed', { action: 'delete', domain: 'site' })
     } catch (error) {
       setDeleteError(errorMessage(error, t('delete_failed', '站点删除失败')))
+      track('operation_failed', { operation: 'site_action' })
     } finally {
       setDeletingSiteId(null)
     }

@@ -31,6 +31,7 @@ import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import { track } from '@/telemetry/client'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import {
   isWegentCloudMarketplace,
@@ -869,12 +870,14 @@ export function PluginsWorkspace({
 
       try {
         await systemSkillApi.uninstallInstalledSystemSkill(item.installedSkillId)
+        track('feature_action_completed', { action: 'uninstall', domain: 'skill' })
       } catch (error) {
         setPersonalSkillState(previous => ({
           ...previous,
           items: previous.items.map(skill => (skill.id === item.id ? item : skill)),
           error: error instanceof Error ? error.message : 'Failed to uninstall personal skill',
         }))
+        track('operation_failed', { operation: 'skill_action' })
       }
       return
     }
@@ -889,6 +892,7 @@ export function PluginsWorkspace({
 
     try {
       await systemSkillApi.uninstallInstalledSystemSkill(item.installedSkillId)
+      track('feature_action_completed', { action: 'uninstall', domain: 'skill' })
     } catch (error) {
       updateCatalogItem(item.id, {
         installState: item.installState,
@@ -899,6 +903,7 @@ export function PluginsWorkspace({
         ...previous,
         error: error instanceof Error ? error.message : 'Failed to uninstall system skill',
       }))
+      track('operation_failed', { operation: 'skill_action' })
     }
   }
 
@@ -956,24 +961,30 @@ export function PluginsWorkspace({
   const uninstallProviderServer = (provider: MCPProviderInfo, server: MCPServer) => {
     if (!server.installedMcpId) return
 
-    mcpApi.uninstallInstalledMcp(server.installedMcpId).then(() => {
-      setMcpMarketplaceState(previous => ({
-        ...previous,
-        providerServers: {
-          ...previous.providerServers,
-          [provider.key]: (previous.providerServers[provider.key] ?? []).map(candidate =>
-            candidate.id === server.id
-              ? {
-                  ...candidate,
-                  installState: 'not_installed',
-                  installedMcpId: null,
-                  enabled: false,
-                }
-              : candidate
-          ),
-        },
-      }))
-    })
+    mcpApi
+      .uninstallInstalledMcp(server.installedMcpId)
+      .then(() => {
+        setMcpMarketplaceState(previous => ({
+          ...previous,
+          providerServers: {
+            ...previous.providerServers,
+            [provider.key]: (previous.providerServers[provider.key] ?? []).map(candidate =>
+              candidate.id === server.id
+                ? {
+                    ...candidate,
+                    installState: 'not_installed',
+                    installedMcpId: null,
+                    enabled: false,
+                  }
+                : candidate
+            ),
+          },
+        }))
+        track('feature_action_completed', { action: 'uninstall', domain: 'mcp' })
+      })
+      .catch(() => {
+        track('operation_failed', { operation: 'mcp_action' })
+      })
   }
 
   const createCustomMcp = (event: FormEvent<HTMLFormElement>) => {
@@ -994,6 +1005,10 @@ export function PluginsWorkspace({
       .then(() => {
         setCustomMcpForm(emptyCustomMcpForm)
         setShowCustomMcpDialog(false)
+        track('feature_action_completed', { action: 'create', domain: 'mcp' })
+      })
+      .catch(() => {
+        track('operation_failed', { operation: 'mcp_action' })
       })
       .finally(() => setIsCreatingCustomMcp(false))
   }
@@ -1016,11 +1031,13 @@ export function PluginsWorkspace({
         error: null,
       }))
       setShowSkillUploadDialog(false)
+      track('feature_action_completed', { action: 'upload', domain: 'skill' })
     } catch (error) {
       setPersonalSkillState(previous => ({
         ...previous,
         error: error instanceof Error ? error.message : 'Failed to upload personal skill',
       }))
+      track('operation_failed', { operation: 'skill_action' })
       throw error
     } finally {
       setIsUploadingSkill(false)
@@ -1076,9 +1093,15 @@ export function PluginsWorkspace({
       .then(updated => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        track('plugin_enabled_changed', {
+          enabled,
+          scope: 'component',
+          source: 'local',
+        })
       })
       .catch(() => {
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+        track('operation_failed', { operation: 'plugin_toggle' })
       })
   }
 
@@ -1103,7 +1126,10 @@ export function PluginsWorkspace({
     }))
     localPluginApi
       .uninstallInstalledPlugin(id)
-      .then(() => notifyLocalPluginSkillsChanged())
+      .then(() => {
+        notifyLocalPluginSkillsChanged()
+        track('plugin_uninstalled', { source: 'local' })
+      })
       .catch(() => {
         setInstalledPlugins(previous => [...previous, plugin])
         setPluginMarketplaceState(previous => ({
@@ -1119,6 +1145,7 @@ export function PluginsWorkspace({
               : item
           ),
         }))
+        track('operation_failed', { operation: 'plugin_uninstall' })
       })
   }
 
@@ -1209,6 +1236,9 @@ export function PluginsWorkspace({
           ),
           error: null,
         }))
+        track('plugin_installed', {
+          source: isLocalRuntimeMarketplace(selectedMarketplace) ? 'local' : 'cloud',
+        })
       })
       .catch((error: Error) => {
         console.error('[Wework plugins] install failed', {
@@ -1223,6 +1253,7 @@ export function PluginsWorkspace({
           items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
           error: error.message,
         }))
+        track('operation_failed', { operation: 'plugin_install' })
       })
       .finally(() => {
         setInstallingMarketplacePluginIds(previous => {

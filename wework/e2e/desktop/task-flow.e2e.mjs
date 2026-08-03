@@ -289,6 +289,29 @@ const PROVIDER_SWITCH_PROMPT =
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
 const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_SOL_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const TELEMETRY_CAPTURE_PATH = '/e/'
+const TELEMETRY_TEST_PROJECT_KEY = 'wework-desktop-e2e'
+const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
+  '$device_id',
+  '$geoip_disable',
+  '$lib',
+  '$lib_version',
+  '$process_person_profile',
+  '$session_id',
+  '$window_id',
+  'app_version',
+  'arch',
+  'distinct_id',
+  'locale',
+  'os',
+  'release_channel',
+  'runtime_mode',
+  'surface',
+  'telemetry_session_id',
+  'token',
+])
+const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
+  /(authorization|code|content|credential|email|file|message|name|path|prompt|repository|response|secret|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
@@ -366,6 +389,8 @@ const DESKTOP_FROM_SEGMENT = readCommandLineOption('--from-segment')
 const SELECTED_DESKTOP_SEGMENT = DESKTOP_SEGMENT ?? DESKTOP_FROM_SEGMENT
 const RUNS_PLUGIN_E2E =
   PLUGINS_ONLY || (SELECTED_DESKTOP_SEGMENT && PLUGIN_SEGMENTS.includes(SELECTED_DESKTOP_SEGMENT))
+const VERIFIES_INITIAL_TELEMETRY_CONSENT =
+  !SELECTED_DESKTOP_SEGMENT || SELECTED_DESKTOP_SEGMENT === 'telemetry-consent'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -4127,6 +4152,146 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
+async function verifyTelemetryPreference(control) {
+  const toggleSelector = '[data-testid="general-telemetry-toggle"]'
+  await control.command('click', '[data-testid="settings-button"]')
+  await control.command('click', '[data-testid="settings-menu-button"]')
+  await control.command('waitFor', toggleSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', toggleSelector, { value: 'aria-checked' }),
+    'true',
+    'Accepting the first-run telemetry prompt was not persisted'
+  )
+  await control.command('click', toggleSelector)
+  await waitForAttribute(
+    control,
+    toggleSelector,
+    'aria-checked',
+    'false',
+    'Disabling telemetry was not persisted'
+  )
+  control.telemetryRequestCountAfterRevocation = control.telemetryRequestCount()
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 3_500))
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'PostHog flushed telemetry after the user revoked consent'
+  )
+}
+
+function verifyTelemetryRemainsDisabled(control) {
+  assert.notEqual(
+    control.telemetryRequestCountAfterRevocation,
+    undefined,
+    'The telemetry revocation checkpoint did not record its request boundary'
+  )
+  assert.equal(
+    control.telemetryRequestCount(),
+    control.telemetryRequestCountAfterRevocation,
+    'Telemetry was sent after the user revoked consent'
+  )
+}
+
+async function verifyInitialTelemetryConsent(control, sensitiveValues) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 750))
+  assert.equal(
+    control.telemetryRequestCount(),
+    0,
+    'Telemetry was sent before the user made an explicit consent choice'
+  )
+
+  await control.command('click', '[data-testid="telemetry-consent-accept"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after accepting'
+  )
+
+  await control.awaitTelemetryEvent('app_started')
+  const requests = control.telemetryRequests
+  const events = requests.flatMap(request => telemetryEvents(request.payload))
+  assert.ok(events.length > 0, 'The telemetry request did not contain an event')
+  const appStarted = events.find(event => event.event === 'app_started')
+  assert.ok(appStarted, 'The first telemetry request did not include app_started')
+  assert.equal(appStarted.properties?.surface, 'main')
+
+  for (const event of events) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        {
+          app_started: true,
+          feature_opened: true,
+          telemetry_preference_changed: true,
+        },
+        event.event
+      ),
+      true,
+      `The initial telemetry request contained an unexpected event: ${event.event}`
+    )
+    assert.ok(event.properties && typeof event.properties === 'object')
+    for (const propertyName of Object.keys(event.properties)) {
+      assert.equal(
+        TELEMETRY_SAFE_PROPERTY_KEYS.has(propertyName),
+        true,
+        `Telemetry sent a property outside the privacy allowlist: ${propertyName}`
+      )
+      if (propertyName === 'token') {
+        assert.equal(
+          event.properties[propertyName],
+          TELEMETRY_TEST_PROJECT_KEY,
+          'Telemetry sent an unexpected PostHog project key'
+        )
+      } else if (propertyName === '$process_person_profile') {
+        assert.equal(
+          event.properties[propertyName],
+          false,
+          'Telemetry attempted to create or update a PostHog person profile'
+        )
+      } else {
+        assert.equal(
+          TELEMETRY_FORBIDDEN_PROPERTY_PATTERN.test(propertyName),
+          false,
+          `Telemetry sent a potentially sensitive property: ${propertyName}`
+        )
+      }
+    }
+    assert.equal(event.$set, undefined, 'Telemetry sent person profile properties')
+    assert.equal(event.$set_once, undefined, 'Telemetry sent persistent person properties')
+  }
+
+  for (const sensitiveValue of sensitiveValues.filter(Boolean)) {
+    assert.equal(
+      requests.some(request => request.rawBody.includes(String(sensitiveValue))),
+      false,
+      `Telemetry leaked a sensitive runtime value: ${String(sensitiveValue).slice(0, 24)}`
+    )
+  }
+}
+
+async function declineInitialTelemetryConsent(control) {
+  const overlaySelector = '[data-testid="telemetry-consent-overlay"]'
+  await control.command('waitFor', overlaySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="telemetry-consent-decline"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
+    'The first-run telemetry consent prompt did not close after declining'
+  )
+}
+
 async function verifyAutomationLifecycle(control, workspacePath) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
@@ -6188,6 +6353,33 @@ function readRequestBody(request) {
   })
 }
 
+function readRawRequestBody(request) {
+  return new Promise((resolvePromise, reject) => {
+    const chunks = []
+    request.on('data', chunk => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    })
+    request.once('end', () => resolvePromise(Buffer.concat(chunks).toString('utf8')))
+    request.once('error', reject)
+  })
+}
+
+function parseTelemetryPayload(rawBody) {
+  try {
+    return JSON.parse(rawBody)
+  } catch {
+    const encoded = new URLSearchParams(rawBody).get('data')
+    assert.ok(encoded, 'The PostHog telemetry request did not contain a JSON payload')
+    return JSON.parse(encoded)
+  }
+}
+
+function telemetryEvents(payload) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.batch)) return payload.batch
+  return payload?.event ? [payload] : []
+}
+
 function json(response, statusCode, value) {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Origin': '*',
@@ -6994,6 +7186,8 @@ class DesktopE2EServer {
     this.commandHistory = []
     this.modelRequests = []
     this.catalogRequests = []
+    this.httpRequests = []
+    this.telemetryRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
@@ -7169,6 +7363,26 @@ class DesktopE2EServer {
         this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
       })
     )
+  }
+
+  async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      const request = this.telemetryRequests.find(candidate =>
+        telemetryEvents(candidate.payload).some(event => event.event === eventName)
+      )
+      if (request) return request
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    }
+    throw new Error(`The desktop app did not send the ${eventName} telemetry event`)
+  }
+
+  telemetryRequestCount() {
+    return this.telemetryRequests.length
+  }
+
+  recordTelemetryRequest(request) {
+    this.telemetryRequests.push(request)
   }
 
   fail(error, response) {
@@ -7505,8 +7719,23 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
+    this.httpRequests.push({
+      method: request.method ?? 'UNKNOWN',
+      pathname: url.pathname,
+    })
     if (await this.handleControlRoute(request, response, url)) return
     if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+
+    if (request.method === 'POST' && url.pathname === TELEMETRY_CAPTURE_PATH) {
+      const rawBody = await readRawRequestBody(request)
+      this.recordTelemetryRequest({
+        contentType: request.headers['content-type'] ?? null,
+        payload: parseTelemetryPayload(rawBody),
+        rawBody,
+      })
+      json(response, 200, { status: 1 })
+      return
+    }
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -10294,6 +10523,8 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE: '49',
         VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: RUNS_PLUGIN_E2E ? 'true' : 'false',
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
+        VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
+        VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -11206,6 +11437,18 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
+    if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
+      await verifyInitialTelemetryConsent(control, [
+        workspacePath,
+        homePath,
+        cloudEnvironment?.authToken,
+        desktopScenario?.authToken,
+        MODEL_API_KEY,
+        'desktop-e2e@wework.local',
+      ])
+    } else {
+      await declineInitialTelemetryConsent(control)
+    }
     if (process.platform === 'darwin') {
       assert.notEqual(
         macosFrontmostProcessId(),
@@ -11559,6 +11802,16 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('telemetry-consent')) {
+      phase = 'telemetry-preference'
+      await verifyTelemetryPreference(control)
+      verifyTelemetryRemainsDisabled(control)
+      if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
+        console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
@@ -13122,6 +13375,7 @@ last_updated = "2026-07-30T00:00:00Z"`
               requests.length,
             ])
           ),
+          httpRequests: control.httpRequests,
           commandHistory: control.commandHistory,
         },
         null,

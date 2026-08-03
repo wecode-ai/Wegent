@@ -115,6 +115,7 @@ import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
+import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -253,6 +254,11 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  useWorkbenchTelemetry({
+    currentProject: state.currentProject,
+    devices: state.devices,
+    lifecycle: lifecycleSnapshot,
+  })
   const projectChatScopeKey = getProjectChatScopeKey({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,

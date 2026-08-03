@@ -3,6 +3,7 @@ import { Download, File, Folder, FolderPlus, Pencil, Trash2, Upload } from 'luci
 import type { CloudProject, CloudProjectFile, ProjectDeliveryFile } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
+import { track } from '@/telemetry/client'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -33,8 +34,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       await Promise.all(selected.map(file => api.uploadCloudFile(project.id, file)))
       refresh()
+      track('feature_action_completed', { action: 'upload', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '上传失败，请重试')
+      track('operation_failed', { operation: 'project_space_file_action' })
     } finally {
       setUploadingCount(0)
       if (inputRef.current) inputRef.current.value = ''
@@ -50,8 +53,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       setFolderName('')
       setCreatingFolder(false)
       refresh()
+      track('feature_action_completed', { action: 'create', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '创建文件夹失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -61,8 +66,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       const access = await api.accessCloudFile(entry.id)
       await openExternalUrl(access.url, { target: 'wework' })
+      track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '打开文件失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -71,8 +78,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
     try {
       const access = await api.accessDeliveryFile(entry.asset_id)
       await openExternalUrl(access.url, { target: 'wework' })
+      track('feature_action_completed', { action: 'open', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '打开交付文件失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -84,8 +93,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       setFiles(current =>
         current.filter(file => file.id !== entry.id && !file.path.startsWith(`${entry.path}/`))
       )
+      track('feature_action_completed', { action: 'delete', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '删除失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
@@ -100,8 +111,10 @@ export function CloudFilesView({ api, project }: { api: DeliveryApi; project: Cl
       await api.moveCloudFile(entry.id, path, entry.version)
       setEditingFileId(null)
       refresh()
+      track('feature_action_completed', { action: 'move', domain: 'project_space_file' })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '重命名或移动失败')
+      track('operation_failed', { operation: 'project_space_file_action' })
     }
   }
 
