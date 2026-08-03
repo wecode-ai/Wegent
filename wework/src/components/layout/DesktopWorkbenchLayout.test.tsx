@@ -1708,12 +1708,22 @@ describe('DesktopWorkbenchLayout', () => {
     const desktopContent = screen.getByTestId('desktop-workbench-content')
     expect(desktopContent).toHaveClass('h-full', 'overflow-x-hidden', 'overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
+    expect(screen.getByTestId('desktop-chat-scroll').parentElement?.parentElement).toHaveClass(
+      'flex',
+      'min-h-full',
+      'shrink-0',
+      'flex-col'
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
+      'min-h-full',
       'overflow-visible',
-      'scrollbar-none',
       'flex',
       'flex-col'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
+      'overflow-y-auto',
+      'scrollbar-none'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'

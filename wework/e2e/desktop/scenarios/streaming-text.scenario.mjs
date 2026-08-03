@@ -26,6 +26,7 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -327,6 +328,20 @@ function toolDurationSeconds(text) {
   return Number(text.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0)
 }
 
+async function assertComposerDocked(control, scrollerMetrics, description) {
+  const composerMetrics = await getSingleElementMetrics(
+    control,
+    COMPOSER_CARD_SELECTOR,
+    description
+  )
+  assertElementFullyVisible(composerMetrics, scrollerMetrics, description)
+  const bottomGap = scrollerMetrics.bottom - composerMetrics.bottom
+  assert.ok(
+    bottomGap >= 0 && bottomGap <= 32,
+    `${description} drifted ${bottomGap}px above the conversation viewport bottom`
+  )
+}
+
 async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   const startedAt = Date.now()
   let text = ''
@@ -372,16 +387,29 @@ async function waitForBottom(control, description, timeoutMs) {
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
 }
 
-async function waitForScrollHeightIncrease(control, previousHeight, description, timeoutMs) {
+function activeAssistantContentLength(snapshot) {
+  const contentLength = snapshot?.pane?.messageSummary?.activeAssistantMessage?.contentLength
+  return typeof contentLength === 'number' ? contentLength : null
+}
+
+async function waitForRenderedAppend(control, previousContentLength, timeoutMs) {
   const startedAt = Date.now()
-  let metrics
+  let snapshot
   while (Date.now() - startedAt < timeoutMs) {
-    metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
-    if (metrics.scrollHeight > previousHeight + 8) return metrics
-    await new Promise(resolve => setTimeout(resolve, 100))
+    snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if ((activeAssistantContentLength(snapshot) ?? 0) > previousContentLength) {
+      return getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The virtualized streaming conversation after the append rendered'
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
   }
   throw new Error(
-    `${description} remained at ${metrics?.scrollHeight ?? previousHeight}px after content was appended`
+    `The rendered streaming append did not increase active assistant content from ${previousContentLength} characters; latest snapshot: ${JSON.stringify(
+      snapshot
+    )}`
   )
 }
 
@@ -480,6 +508,7 @@ export function createDesktopScenario({
   let releaseStart
   let releaseToolCompletion
   let releaseToolFinalCompletion
+  let resolveAppendWritten
   let resolveRequest
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -492,6 +521,9 @@ export function createDesktopScenario({
   })
   const startRelease = new Promise(resolve => {
     releaseStart = resolve
+  })
+  const appendWritten = new Promise(resolve => {
+    resolveAppendWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -662,6 +694,7 @@ export function createDesktopScenario({
           response,
           textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
         )
+        resolveAppendWritten()
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -800,6 +833,17 @@ export function createDesktopScenario({
         'The completed response retained its reasoning summary'
       )
       await capture(control, 'streaming-text-03-reasoning-removed.png')
+      const shortConversationScroller = await waitForBottom(
+        control,
+        'The short control conversation',
+        uiTimeoutMs
+      )
+      await assertComposerDocked(
+        control,
+        shortConversationScroller,
+        'The composer in the short control conversation'
+      )
+      await capture(control, 'streaming-text-04-short-control-composer-docked.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -823,7 +867,7 @@ export function createDesktopScenario({
         0,
         `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
       )
-      await capture(control, 'streaming-text-03-running-tool.png')
+      await capture(control, 'streaming-text-05-running-tool.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
@@ -840,13 +884,13 @@ export function createDesktopScenario({
         0,
         `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
       )
-      await capture(control, 'streaming-text-04-running-tool-restored.png')
+      await capture(control, 'streaming-text-06-running-tool-restored.png')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TIMER_COMPLETION,
         timeoutMs: 25_000,
       })
       const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
-      await capture(control, 'streaming-text-05-tool-completed.png')
+      await capture(control, 'streaming-text-07-tool-completed.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
@@ -863,7 +907,7 @@ export function createDesktopScenario({
         completedDurationBeforeSwitch,
         `The completed tool duration changed from ${completedDurationBeforeSwitch}s to ${completedDurationAfterSwitch}s after switching conversations`
       )
-      await capture(control, 'streaming-text-06-tool-duration-restored.png')
+      await capture(control, 'streaming-text-08-tool-duration-restored.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1019,6 +1063,11 @@ export function createDesktopScenario({
         Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
         `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
       )
+      await assertComposerDocked(
+        control,
+        stableUserScrollPosition,
+        'The composer after the user scrolled the streaming conversation'
+      )
 
       await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
       await new Promise(resolve => setTimeout(resolve, 250))
@@ -1043,14 +1092,21 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-11-user-scrolled-up.png')
 
+      const streamingBeforeAppend = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const previousContentLength = activeAssistantContentLength(streamingBeforeAppend)
+      assert.ok(
+        previousContentLength !== null,
+        'The streaming response disappeared before the later content arrived'
+      )
       releaseAppend()
-      const scrollerAfterAppend = await waitForScrollHeightIncrease(
+      await appendWritten
+      const scrollerAfterAppend = await waitForRenderedAppend(
         control,
-        scrollerBeforeAppend.scrollHeight,
-        'The virtualized streaming conversation after later content',
+        previousContentLength,
         uiTimeoutMs
       )
-      await new Promise(resolve => setTimeout(resolve, 750))
       const anchorAfterAppend = await getSingleElementMetrics(
         control,
         VIEWPORT_ANCHOR_SELECTOR,
@@ -1064,19 +1120,24 @@ export function createDesktopScenario({
         Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
         `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
       )
+      await assertComposerDocked(
+        control,
+        scrollerAfterAppend,
+        'The composer after streamed content changed the virtualized conversation height'
+      )
       await capture(control, 'streaming-text-12-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
-      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-        text: APPEND_MARKER,
-        stableMs: 750,
-        timeoutMs: uiTimeoutMs,
-      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
         'The streaming conversation before switching tasks',
         5_000
       )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.ok(
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
@@ -1101,6 +1162,11 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
+      await assertComposerDocked(
+        control,
+        pinnedAfterSwitch,
+        'The composer after reopening the long virtualized conversation'
+      )
       await capture(control, 'streaming-text-13-bottom-restored-after-task-switch.png')
 
       for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
@@ -1115,6 +1181,17 @@ export function createDesktopScenario({
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+      const remountedScroller = await waitForBottom(
+        control,
+        'The remounted long virtualized conversation',
+        uiTimeoutMs
+      )
+      await assertComposerDocked(
+        control,
+        remountedScroller,
+        'The composer after remounting the long virtualized conversation'
+      )
+      await capture(control, 'streaming-text-14-composer-docked-after-pane-remount.png')
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
@@ -1153,7 +1230,7 @@ export function createDesktopScenario({
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, 'streaming-text-14-thinking-below-partial-response.png')
+      await capture(control, 'streaming-text-15-thinking-below-partial-response.png')
 
       releaseResponse()
       await control.command(
@@ -1185,7 +1262,7 @@ export function createDesktopScenario({
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, 'streaming-text-15-response-completed.png')
+      await capture(control, 'streaming-text-16-response-completed.png')
       await verifyStoppedTurnOrder(control)
       active = false
     },
