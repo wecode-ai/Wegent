@@ -16,7 +16,9 @@
     "im_channels": "IM 渠道",
     "connector_apps": "应用连接",
     "monitor": "订阅监控",
-    "device_monitor": "设备监控"
+    "device_monitor": "设备监控",
+    "knowledge_stats": "知识库统计",
+    "knowledge_stat_runs": "统计任务"
   },
   "stats": {
     "total_users": "总用户数",

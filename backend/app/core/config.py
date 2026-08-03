@@ -284,6 +284,41 @@ class Settings(BaseSettings):
     # When False, Celery must be started separately (for production)
     EMBEDDED_CELERY_ENABLED: bool = True
 
+    # KB statistics feature switches.
+    # KB_STAT_ENABLED is the master switch — when false, the stat API
+    # endpoints return 503 (kb_stat_disabled) and beat entries for
+    # kb_stat.collect_all / kb_stat.prune_old_runs are removed.
+    # Defaults to false so a fresh deployment ships the feature off; set to
+    # true (e.g. in backend/.env) to enable the KB statistics feature.
+    KB_STAT_ENABLED: bool = False
+    # KB_STAT_PRUNE_ENABLED controls the weekly prune task independently.
+    # When false, beat entry "kb-stat-prune-weekly" is removed so that
+    # historical stat data is retained forever (compliance archive /
+    # long-term trend analysis). The collect task still runs.
+    # Defaults to false; set to true to enable weekly pruning.
+    # Note: KNOWLEDGE_STAT_RETENTION_DAYS<=0 also short-circuits prune at
+    # runtime (see knowledge_engine.stat.runner.prune_old_runs); this
+    # switch is the recommended way to disable pruning.
+    KB_STAT_PRUNE_ENABLED: bool = False
+    # KB_STAT_ADVANCED_ENABLED controls the metric tier. When false (default)
+    # only the 17 basic collectors run and /metrics/list returns only the 18
+    # basic metrics; set true to enable all 71. MUST match knowledge_runtime's
+    # KB_STAT_ADVANCED_ENABLED (same env var name) so beat-injected runs and
+    # the worker agree on which tier to collect.
+    KB_STAT_ADVANCED_ENABLED: bool = False
+
+    # KB-stat beat schedules (crontab values, interpreted in UTC because
+    # celery timezone="UTC"). Defaults preserve the prior hardcoded times;
+    # override to shift collection/pruning to a different wall-clock slot.
+    # day_of_week follows celery: 0=Sunday .. 6=Saturday.
+    # collect daily: UTC 19:07 = Beijing 03:07
+    KB_STAT_COLLECT_HOUR: int = 19
+    KB_STAT_COLLECT_MINUTE: int = 7
+    # prune weekly: UTC Sunday 20:13 = Beijing Monday 04:13
+    KB_STAT_PRUNE_DAY_OF_WEEK: int = 0
+    KB_STAT_PRUNE_HOUR: int = 20
+    KB_STAT_PRUNE_MINUTE: int = 13
+
     @field_validator(
         "CELERY_BROKER_URL",
         "CELERY_RESULT_BACKEND",

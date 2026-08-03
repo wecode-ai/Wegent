@@ -7,8 +7,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-
-from knowledge_runtime.api.endpoints import admin, health, index, query
+from knowledge_runtime.api.endpoints import admin, health, index, kb_stat, query
 from knowledge_runtime.middleware.auth import verify_internal_token
 
 router = APIRouter()
@@ -33,5 +32,13 @@ router.include_router(
     admin.router,
     prefix="/internal/rag",
     tags=["admin"],
+    dependencies=[Depends(verify_internal_token)],
+)
+
+# KB stat endpoints (auth required)
+router.include_router(
+    kb_stat.router,
+    prefix="/internal/kb-stat",
+    tags=["kb-stat"],
     dependencies=[Depends(verify_internal_token)],
 )

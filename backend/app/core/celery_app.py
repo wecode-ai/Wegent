@@ -26,6 +26,7 @@ Beat Scheduler Storage:
 import logging
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
@@ -84,12 +85,57 @@ celery_app.conf.update(
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes
         },
+        "kb-stat-collect-daily": {
+            "task": "kb_stat.collect_all",
+            # crontab is UTC (celery timezone="UTC"). Defaults: UTC 19:07
+            # = Beijing 03:07. Override via KB_STAT_COLLECT_HOUR/MINUTE.
+            "schedule": crontab(
+                hour=settings.KB_STAT_COLLECT_HOUR,
+                minute=settings.KB_STAT_COLLECT_MINUTE,
+            ),
+            "kwargs": {
+                "lookback_days": 1,
+                # Tier switch: false (default) → only basic collectors run.
+                # Read at beat schedule build time; flip requires a backend
+                # restart, matching KB_STAT_ENABLED/PRUNE_ENABLED behaviour.
+                "advanced_enabled": settings.KB_STAT_ADVANCED_ENABLED,
+            },
+            "options": {"queue": "kb_stat"},
+        },
+        "kb-stat-prune-weekly": {
+            "task": "kb_stat.prune_old_runs",
+            # crontab is UTC (celery timezone="UTC"). Defaults: UTC Sunday
+            # 20:13 = Beijing Monday 04:13. celery day_of_week: 0=Sunday.
+            # Override via KB_STAT_PRUNE_DAY_OF_WEEK/HOUR/MINUTE.
+            "schedule": crontab(
+                day_of_week=settings.KB_STAT_PRUNE_DAY_OF_WEEK,
+                hour=settings.KB_STAT_PRUNE_HOUR,
+                minute=settings.KB_STAT_PRUNE_MINUTE,
+            ),
+            "options": {"queue": "kb_stat"},
+        },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)
     # Note: Only run ONE Celery Beat instance in production
     # Application-level distributed lock in check_due_subscriptions prevents duplicate execution
     beat_scheduler="celery.beat:PersistentScheduler",
 )
+
+
+# Feature-switch gating for KB-stat beat entries.
+#
+# KB_STAT_ENABLED=false        → drop both collect and prune beats (the
+#                                runtime will also 503 on the HTTP layer).
+# KB_STAT_PRUNE_ENABLED=false  → drop only the prune beat so historical
+#                                stat data is retained forever (compliance
+#                                archive / long-term trend). The runtime
+#                                also short-circuits prune_old_runs when
+#                                retention_days<=0 as a defense-in-depth.
+if not settings.KB_STAT_ENABLED:
+    celery_app.conf.beat_schedule.pop("kb-stat-collect-daily", None)
+    celery_app.conf.beat_schedule.pop("kb-stat-prune-weekly", None)
+elif not settings.KB_STAT_PRUNE_ENABLED:
+    celery_app.conf.beat_schedule.pop("kb-stat-prune-weekly", None)
 
 
 # Configure Celery logging to use the same format as backend (with request_id)

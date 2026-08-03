@@ -157,33 +157,40 @@ class APIClient {
     }
   }
 
-  async get<T>(endpoint: string, requestOptions?: RequestOptions): Promise<T> {
-    return this.request<T>(endpoint, { method: 'GET' }, requestOptions)
+  async get<T>(
+    endpoint: string,
+    requestOptions?: RequestOptions,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.request<T>(endpoint, { method: 'GET', signal }, requestOptions)
   }
 
-  async post<T>(endpoint: string, data?: unknown): Promise<T> {
+  async post<T>(endpoint: string, data?: unknown, signal?: AbortSignal): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,
+      signal,
     })
   }
 
-  async put<T>(endpoint: string, data?: unknown): Promise<T> {
+  async put<T>(endpoint: string, data?: unknown, signal?: AbortSignal): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PUT',
       body: data ? JSON.stringify(data) : undefined,
+      signal,
     })
   }
 
-  async patch<T>(endpoint: string, data?: unknown): Promise<T> {
+  async patch<T>(endpoint: string, data?: unknown, signal?: AbortSignal): Promise<T> {
     return this.request<T>(endpoint, {
       method: 'PATCH',
       body: data ? JSON.stringify(data) : undefined,
+      signal,
     })
   }
 
-  async delete<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE' })
+  async delete<T>(endpoint: string, signal?: AbortSignal): Promise<T> {
+    return this.request<T>(endpoint, { method: 'DELETE', signal })
   }
 }
 

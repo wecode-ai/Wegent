@@ -165,3 +165,34 @@ def setup_logging(log_file_enabled: bool, log_dir: str, log_level: str) -> None:
         f"Logging configured: level={log_level}, file_enabled={log_file_enabled}, "
         f"log_dir={log_dir if log_file_enabled else 'N/A'}"
     )
+
+
+def setup_kb_stat_worker_logging(log_dir: str, log_level: str = "INFO") -> None:
+    """Attach a dedicated FileHandler writing kb_stat collection logs to
+    ``kb_stat_worker.log``.
+
+    Stat collection runs inside the Celery worker. Routing the
+    ``knowledge_engine.stat`` + ``knowledge_runtime.tasks.stat_tasks``
+    loggers to their own file (in addition to info.log) makes it easy to
+    follow collection progress without grepping the combined log. Safe to
+    call multiple times — the init guard in the caller prevents duplicate
+    handlers, and a second call would just append another handler.
+    """
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    log_format = (
+        "%(asctime)s %(levelname)-4s [%(request_id)s] "
+        "%(pathname)s:%(lineno)d : %(message)s"
+    )
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    handler = _create_file_handler(
+        log_dir, "kb_stat_worker.log", level, log_format, datefmt
+    )
+    # The stat collectors and the Celery task wrapper both log under these
+    # namespaces; attach the dedicated handler to each.
+    for name in ("knowledge_engine.stat", "knowledge_runtime.tasks.stat_tasks"):
+        lg = logging.getLogger(name)
+        lg.addHandler(handler)
+        # Don't raise the level above what the caller asked for; never lower
+        # it below the root setting either.
+        if lg.level == logging.NOTSET or lg.level > level:
+            lg.setLevel(level)

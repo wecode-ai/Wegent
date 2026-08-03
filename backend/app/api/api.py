@@ -25,6 +25,7 @@ from app.api.endpoints import (
     knowledge,
     knowledge_artifacts,
     knowledge_open,
+    knowledge_stats,
     knowledge_transfer,
     knowledge_video_upload,
     local_executor,
@@ -251,6 +252,12 @@ api_router.include_router(
     knowledge_open.router,
     prefix="/knowledge",
     tags=["knowledge-open"],
+)
+# Single KB statistics endpoints
+api_router.include_router(
+    knowledge_stats.router,
+    prefix="/knowledge-bases",
+    tags=["knowledge-stats"],
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])

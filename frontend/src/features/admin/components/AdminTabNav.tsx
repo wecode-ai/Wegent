@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { isKbStatEnabled } from '@/features/knowledge-stat'
 import {
   Users,
   Cpu,
@@ -30,6 +31,7 @@ import {
   MessageSquare,
   Monitor,
   LayoutTemplate,
+  BarChart3,
   Cable,
 } from 'lucide-react'
 
@@ -49,6 +51,7 @@ export type AdminTabId =
   | 'connector-apps'
   | 'monitor'
   | 'device-monitor'
+  | 'knowledge-stats'
 
 interface AdminTabNavProps {
   activeTab: AdminTabId
@@ -86,7 +89,12 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'connector-apps', label: t('admin:tabs.connector_apps'), icon: Cable },
     { id: 'monitor', label: t('admin:tabs.monitor'), icon: Activity },
     { id: 'device-monitor', label: t('admin:tabs.device_monitor'), icon: Monitor },
+    { id: 'knowledge-stats', label: t('admin:tabs.knowledge_stats'), icon: BarChart3 },
   ]
+  // Hide the KB-stat tab when the feature flag is off so users never see
+  // a dead end. The backend/runtime still 503s the API endpoints when
+  // KB_STAT_ENABLED=false; this just keeps the UI consistent.
+  const visibleTabs = isKbStatEnabled() ? tabs : tabs.filter(t => t.id !== 'knowledge-stats')
   // Update the indicator position when the active tab changes
   useEffect(() => {
     const updateIndicator = () => {
@@ -126,7 +134,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              {tabs.map(tab => (
+              {visibleTabs.map(tab => (
                 <SelectItem key={tab.id} value={tab.id}>
                   <div className="flex items-center gap-2">
                     <tab.icon className="w-4 h-4" />
@@ -159,7 +167,7 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
       />
 
       {/* Tab buttons */}
-      {tabs.map(tab => (
+      {visibleTabs.map(tab => (
         <button
           key={tab.id}
           type="button"

@@ -14,7 +14,15 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Files, Library, FileText, MessageSquare, Shield, WandSparkles } from 'lucide-react'
+import {
+  BarChart3,
+  Files,
+  Library,
+  FileText,
+  MessageSquare,
+  Shield,
+  WandSparkles,
+} from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -27,6 +35,8 @@ import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
 import { ArtifactWorkspacePanel } from '@/features/knowledge/artifact/components/ArtifactWorkspacePanel'
 import { ArtifactSourceDialog } from '@/features/knowledge/artifact/components/ArtifactSourceDialog'
 import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
+import { KbStatView } from './KbStatView'
+import { isKbStatEnabled } from '@/features/knowledge-stat'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import {
@@ -83,7 +93,9 @@ export function KnowledgeDetailPanel({
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Tab state for documents/permissions (classic mode)
-  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
+  const [activeTab, setActiveTab] = useState<'documents' | 'permissions' | 'statistics'>(
+    'documents'
+  )
 
   // State for selected document IDs (for notebook mode context injection)
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([])
@@ -373,11 +385,11 @@ export function KnowledgeDetailPanel({
   // In documents view, show document list.
   // Tabs are passed as headerActions to DocumentList so they appear in the same row as the title
   if (selectedKb) {
-    // Build header actions (tabs) for permission management
-    const headerActions = canManagePermissions ? (
+    // Build header actions (tabs) for permission management and statistics
+    const headerActions = (
       <Tabs
         value={activeTab}
-        onValueChange={value => setActiveTab(value as 'documents' | 'permissions')}
+        onValueChange={value => setActiveTab(value as 'documents' | 'permissions' | 'statistics')}
         className="flex-shrink-0"
       >
         <TabsList className="h-8">
@@ -385,13 +397,21 @@ export function KnowledgeDetailPanel({
             <FileText className="w-3.5 h-3.5" />
             {t('chatPage.documents')}
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs">
-            <Shield className="w-3.5 h-3.5" />
-            {t('document.permission.management')}
-          </TabsTrigger>
+          {canManagePermissions && (
+            <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs">
+              <Shield className="w-3.5 h-3.5" />
+              {t('document.permission.management')}
+            </TabsTrigger>
+          )}
+          {isKbStatEnabled() && (
+            <TabsTrigger value="statistics" className="gap-1 h-7 px-2 text-xs">
+              <BarChart3 className="w-3.5 h-3.5" />
+              {t('statistics')}
+            </TabsTrigger>
+          )}
         </TabsList>
       </Tabs>
-    ) : null
+    )
 
     return (
       <div
@@ -412,6 +432,12 @@ export function KnowledgeDetailPanel({
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
               initialDocumentId={initialDocumentId}
+            />
+          ) : activeTab === 'statistics' && isKbStatEnabled() ? (
+            <KbStatView
+              kbId={selectedKb.id}
+              headerActions={headerActions}
+              kbName={selectedKb.name}
             />
           ) : (
             <>
