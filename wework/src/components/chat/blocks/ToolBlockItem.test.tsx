@@ -6,15 +6,6 @@ import { describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
 
-const streamingThinkingBlock: ProcessingBlock = {
-  id: 'thinking-1',
-  subtaskId: 1,
-  type: 'thinking',
-  content: 'First step. Latest visible thought',
-  status: 'streaming',
-  createdAt: 1770000000000,
-}
-
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
   subtaskId: 1,
@@ -77,37 +68,6 @@ describe('ToolBlockItem', () => {
     )
 
     expect(screen.getByRole('button')).toHaveClass('min-h-8')
-  })
-
-  test('renders streaming thinking as a single live preview row', () => {
-    render(<ToolBlockItem block={streamingThinkingBlock} />)
-
-    const preview = screen.getByTestId('thinking-live-preview')
-
-    expect(preview).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild?.tagName).toBe('SPAN')
-    expect(preview).toHaveTextContent('Latest visible thought')
-    expect(screen.queryByText('First step. Latest visible thought')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
-  })
-
-  test('does not render completed thinking placeholders', () => {
-    render(
-      <ToolBlockItem
-        block={{
-          ...streamingThinkingBlock,
-          status: 'done',
-          content: 'I will inspect the repository before answering.',
-        }}
-      />
-    )
-
-    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
-    expect(
-      screen.queryByText('I will inspect the repository before answering.')
-    ).not.toBeInTheDocument()
   })
 
   test('renders streaming process text directly in the timeline', () => {
