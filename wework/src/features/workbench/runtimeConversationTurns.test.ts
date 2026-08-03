@@ -144,6 +144,100 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('promotes authoritative terminal content after unphased process blocks', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'process-before-tool',
+              type: 'block',
+              block: {
+                id: 'process-before-tool',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: 'Inspecting the failure.',
+                status: 'done',
+                createdAt: Date.parse('2026-08-03T00:00:00.000Z'),
+              },
+            },
+            {
+              id: 'tool-1',
+              type: 'block',
+              block: requestBlock('tool-1', 'turn-1'),
+            },
+            {
+              id: 'process-after-tool',
+              type: 'block',
+              block: {
+                id: 'process-after-tool',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: 'Found the mismatch.',
+                status: 'done',
+                createdAt: Date.parse('2026-08-03T00:00:01.000Z'),
+              },
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        content: 'The final answer.',
+      }
+    )
+
+    expect(turns[0].items.at(-1)).toMatchObject({
+      id: 'runtime-final:turn-1',
+      type: 'assistant_text',
+      content: 'The final answer.',
+    })
+    expect(projectRuntimeConversationTurns(turns)[0]).toMatchObject({
+      content: 'The final answer.',
+      status: 'done',
+      blocks: [
+        expect.objectContaining({ id: 'process-before-tool' }),
+        expect.objectContaining({ id: 'tool-1' }),
+        expect.objectContaining({ id: 'process-after-tool' }),
+      ],
+    })
+  })
+
+  test('keeps streamed final text when terminal content is already present', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'streamed-final',
+              type: 'assistant_text',
+              content: 'Partial final',
+              createdAt: '2026-08-03T00:00:00.000Z',
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        content: 'Complete final',
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({
+        id: 'streamed-final',
+        type: 'assistant_text',
+        content: 'Partial final',
+      }),
+    ])
+  })
+
   test('clears terminal metadata when the same Codex turn starts again', () => {
     const turns = reduceRuntimeConversationTurns(
       [
