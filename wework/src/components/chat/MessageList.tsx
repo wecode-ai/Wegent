@@ -861,9 +861,8 @@ function getProcessingSummaryStartMs(
     .filter((createdAt): createdAt is number => Number.isFinite(createdAt))
   const earliestBlockStart = blockStartTimes.length > 0 ? Math.min(...blockStartTimes) : undefined
 
-  if (!isStreaming || blocks.length > 0) {
-    return turnStartedAt ?? earliestBlockStart
-  }
+  if (blocks.length > 0) return earliestBlockStart ?? turnStartedAt
+  if (!isStreaming) return turnStartedAt
 
   return undefined
 }
@@ -1843,7 +1842,6 @@ function getDisplayProcessingBlocks(
 
   return blocks
     .filter(block => {
-      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
