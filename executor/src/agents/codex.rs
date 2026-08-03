@@ -1278,19 +1278,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if !request.ephemeral {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    sync_goal_status_from_response(&mut state, &goal_response);
-                }
-            }
-
             if let Some(name) = initial_thread_name
                 .as_deref()
                 .map(str::trim)
@@ -1303,12 +1290,23 @@ async fn run_codex_app_server_turn_on_shared_client(
                     )
                     .await?;
             }
+
+            if let Some(goal) = initial_thread_goal.as_ref() {
+                let goal_params = thread_goal_set_params(&thread_id, goal)?;
+                let goal_response = client.request("thread/goal/set", goal_params).await?;
+                sync_goal_status_from_response(&mut state, &goal_response);
+            } else if resuming_thread {
+                if let Ok(goal_response) = client
+                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                    .await
+                {
+                    sync_goal_status_from_response(&mut state, &goal_response);
+                }
+            }
         }
 
-        let turn_input = turn_input(&request.prompt);
         let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
@@ -1316,31 +1314,38 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
-        log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let turn_start_response = match timeout_at(
-            startup_deadline,
-            client.request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(recover_stalled_shared_turn(
-                    client,
-                    &thread_id,
-                    startup_timeout_seconds,
-                )
-                .await);
-            }
+        let active_turn_id = if initial_thread_goal.is_some() && !request.ephemeral {
+            log_executor_event("codex shared goal turn awaiting", &turn_fields);
+            None
+        } else {
+            let turn_input = turn_input(&request.prompt);
+            turn_fields.push(("input_items", turn_input.len().to_string()));
+            log_executor_event("codex shared turn request started", &turn_fields);
+            let turn_start_response = match timeout_at(
+                startup_deadline,
+                client.request(
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        &thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
+            };
+            turn_start_response_id(&turn_start_response)
         };
-        let active_turn_id = turn_start_response_id(&turn_start_response);
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());

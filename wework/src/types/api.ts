@@ -610,6 +610,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null

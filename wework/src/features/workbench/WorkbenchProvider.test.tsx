@@ -7700,16 +7700,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set follow-up'))
     await userEvent.click(screen.getByText('send follow-up'))
 
-    await waitFor(() => expect(setRuntimeGoal).toHaveBeenCalledTimes(1))
-    expect(setRuntimeGoal).toHaveBeenCalledWith({
-      address: {
-        deviceId: 'device-1',
-        workspacePath: '/workspace/project-alpha',
-        taskId: 'runtime-a',
-      },
-      objective: '继续修',
-      status: 'active',
-    })
+    expect(setRuntimeGoal).not.toHaveBeenCalled()
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
     expect(sendRuntimeMessage).toHaveBeenCalledWith({
       address: {
@@ -7718,6 +7709,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
       },
       clientUserMessageId: expect.any(String),
+      initialGoal: {
+        objective: '继续修',
+        status: 'active',
+        tokenBudget: null,
+      },
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -8812,16 +8808,18 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set edited runtime goal'))
     await userEvent.click(screen.getByText('send runtime goal'))
 
+    expect(setRuntimeGoal).not.toHaveBeenCalled()
     await waitFor(() =>
-      expect(setRuntimeGoal).toHaveBeenCalledWith({
-        address: {
-          deviceId: 'device-1',
-          workspacePath: '/workspace/project-alpha',
-          taskId: 'runtime-a',
-        },
-        objective: '更新后的目标',
-        status: 'active',
-      })
+      expect(runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialGoal: {
+            objective: '更新后的目标',
+            status: 'active',
+            tokenBudget: null,
+          },
+          message: '更新后的目标',
+        })
+      )
     )
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
