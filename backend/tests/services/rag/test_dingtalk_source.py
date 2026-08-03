@@ -2,13 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from app.schemas.external_knowledge import ExternalKnowledgeRef
 from app.services.rag.sources.dingtalk import DingTalkKnowledgeProvider
-from app.services.rag.sources.models import ExternalRefValidationError
+from app.services.rag.sources.models import ExternalRefValidationError, RetrievalContext
 
 
 def _result(payload):
@@ -139,6 +140,58 @@ async def test_retrieve_all_scope_excludes_folder_descendants():
     records = await provider._retrieve_ref(session, "plan", ref)
 
     assert [record.title for record in records] == ["Included"]
+
+
+@pytest.mark.asyncio
+async def test_list_documents_returns_documents_from_whole_workspace(monkeypatch):
+    provider = DingTalkKnowledgeProvider()
+    session = FakeSession(
+        {
+            "list_nodes": lambda arguments: (
+                {"items": [{"nodeId": "doc-2", "name": "Design.md"}]}
+                if arguments.get("folderId") == "folder-1"
+                else {
+                    "items": [
+                        {"nodeId": "doc-1", "name": "Plan.docx"},
+                        {
+                            "nodeId": "folder-1",
+                            "name": "Design",
+                            "nodeType": "folder",
+                        },
+                    ]
+                }
+            ),
+        }
+    )
+
+    @asynccontextmanager
+    async def fake_session(_url):
+        yield session
+
+    monkeypatch.setattr(provider, "_get_mcp_url", lambda _user_id: "mcp-url")
+    monkeypatch.setattr(provider, "_session", fake_session)
+    ref = ExternalKnowledgeRef(
+        provider="dingtalk",
+        mode="explicit",
+        id="space-1",
+        name="研发空间",
+        scope="wikispace",
+        scope_mode="all",
+    )
+
+    result = await provider.list_documents(
+        [ref],
+        RetrievalContext(user_id=7),
+        limit=50,
+        offset=0,
+    )
+
+    assert [document.title for document in result.documents] == [
+        "Plan.docx",
+        "Design.md",
+    ]
+    assert result.documents[1].parent_id == "folder-1"
+    assert all(document.source_id == "space-1" for document in result.documents)
 
 
 def test_validate_rejects_empty_custom_scope():

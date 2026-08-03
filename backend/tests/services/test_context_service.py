@@ -110,6 +110,44 @@ class TestSubtaskContextBrief:
         assert brief.document_id == 456
         assert brief.source_config == {"url": "https://example.com/table"}
 
+    def test_subtask_brief_preserves_external_knowledge_scope(self) -> None:
+        """External context briefs preserve the selected dynamic scope."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+            name="研发空间",
+            status=ContextStatus.READY.value,
+            type_data={
+                "provider": "dingtalk",
+                "mode": "explicit",
+                "id": "space-1",
+                "scope": "wikispace",
+                "scope_mode": "custom",
+                "folder_ids": ["folder-1"],
+                "document_ids": ["doc-1"],
+                "excluded_node_ids": ["doc-2"],
+                "include_descendants": True,
+            },
+        )
+        context.id = 1001
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.external_provider == "dingtalk"
+        assert brief.external_scope_mode == "custom"
+        assert brief.external_folder_ids == ["folder-1"]
+        assert brief.external_document_ids == ["doc-1"]
+        assert brief.external_excluded_node_ids == ["doc-2"]
+        assert brief.external_include_descendants is True
+
 
 class TestContextServiceAttachmentCopy:
     """Test trusted attachment copy operations."""

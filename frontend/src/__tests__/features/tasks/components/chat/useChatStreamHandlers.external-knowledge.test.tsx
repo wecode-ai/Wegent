@@ -255,6 +255,24 @@ describe('useChatStreamHandlers external knowledge contexts', () => {
         },
       },
     ])
+    expect(mockContextSendMessage.mock.calls[0][1].pendingContexts).toEqual([
+      {
+        id: -1,
+        context_type: 'external_knowledge',
+        name: '研发空间',
+        status: 'ready',
+        external_provider: 'dingtalk',
+        external_mode: 'explicit',
+        external_id: 'space-1',
+        external_scope: 'wikispace',
+        external_target_type: 'knowledge_base',
+        external_scope_mode: 'custom',
+        external_folder_ids: ['folder-1'],
+        external_document_ids: ['document-1'],
+        external_excluded_node_ids: ['document-2'],
+        external_include_descendants: true,
+      },
+    ])
   })
 
   it('sends a strict current-KB scope with selected notebook documents', async () => {

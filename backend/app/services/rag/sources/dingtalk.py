@@ -21,6 +21,8 @@ from app.schemas.external_knowledge import (
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 from app.services.rag.sources.models import (
+    ExternalKnowledgeDocument,
+    ExternalKnowledgeDocumentListResult,
     ExternalRefValidationError,
     RetrievalContext,
     RetrievalSourceResult,
@@ -128,6 +130,89 @@ class DingTalkKnowledgeProvider:
             ),
             warnings=warnings,
         )
+
+    async def list_documents(
+        self,
+        refs: list[ExternalKnowledgeRef],
+        ctx: RetrievalContext,
+        *,
+        limit: int,
+        offset: int,
+    ) -> ExternalKnowledgeDocumentListResult:
+        """List documents visible through the selected DingTalk scopes."""
+        self.validate_refs(refs, binding_level="conversation")
+        mcp_url = self._get_mcp_url(ctx.user_id)
+        if not mcp_url:
+            raise RuntimeError("DingTalk Docs MCP is not configured")
+
+        documents: list[ExternalKnowledgeDocument] = []
+        warnings: list[str] = []
+        async with self._session(mcp_url) as session:
+            for ref in refs:
+                try:
+                    nodes = await self._list_ref_documents(session, ref)
+                except Exception:
+                    logger.warning(
+                        "Failed to list DingTalk scope %s", ref.id, exc_info=True
+                    )
+                    warnings.append(f"{ref.name or ref.id}: document listing failed")
+                    continue
+                documents.extend(self._to_document(ref, node) for node in nodes)
+
+        return ExternalKnowledgeDocumentListResult(
+            documents=documents[offset : offset + limit],
+            warnings=warnings,
+        )
+
+    async def _list_ref_documents(
+        self,
+        session: Any,
+        ref: ExternalKnowledgeRef,
+    ) -> list[dict[str, Any]]:
+        """Resolve a dynamic DingTalk scope to its currently visible documents."""
+        workspace_id = None if ref.id == PERSONAL_ROOT_ID else ref.id
+        nodes: list[dict[str, Any]] = []
+        if ref.scope_mode == "all":
+            nodes.extend(
+                await self._list_document_nodes(
+                    session,
+                    folder_id=None,
+                    workspace_id=workspace_id,
+                )
+            )
+        else:
+            for folder_id in ref.folder_ids or []:
+                nodes.extend(
+                    await self._list_document_nodes(
+                        session,
+                        folder_id=folder_id,
+                        workspace_id=workspace_id,
+                        include_descendants=ref.include_descendants is not False,
+                    )
+                )
+            nodes.extend(
+                {"nodeId": node_id, "name": node_id, "nodeType": "document"}
+                for node_id in ref.document_ids or []
+            )
+
+        excluded_ids = set(ref.excluded_node_ids or [])
+        for node_id in ref.excluded_node_ids or []:
+            excluded_ids.update(
+                self._node_id(node)
+                for node in await self._list_document_nodes(
+                    session,
+                    folder_id=node_id,
+                    workspace_id=workspace_id,
+                    tolerate_non_folder=True,
+                )
+            )
+
+        unique_nodes: dict[str, dict[str, Any]] = {}
+        for node in nodes:
+            node_id = self._node_id(node)
+            if node_id and node_id not in excluded_ids:
+                unique_nodes.setdefault(node_id, node)
+        return list(unique_nodes.values())
 
     async def _retrieve_ref(
         self, session: Any, query: str, ref: ExternalKnowledgeRef
@@ -244,7 +329,29 @@ class DingTalkKnowledgeProvider:
         include_descendants: bool = True,
         tolerate_non_folder: bool = False,
     ) -> set[str]:
-        document_ids: set[str] = set()
+        return {
+            self._node_id(node)
+            for node in await self._list_document_nodes(
+                session,
+                folder_id=folder_id,
+                workspace_id=workspace_id,
+                include_descendants=include_descendants,
+                tolerate_non_folder=tolerate_non_folder,
+            )
+            if self._node_id(node)
+        }
+
+    async def _list_document_nodes(
+        self,
+        session: Any,
+        *,
+        folder_id: str | None,
+        workspace_id: str | None,
+        include_descendants: bool = True,
+        tolerate_non_folder: bool = False,
+    ) -> list[dict[str, Any]]:
+        """List document nodes below a folder while preserving display metadata."""
+        document_nodes: list[dict[str, Any]] = []
         pending: list[tuple[str | None, int]] = [(folder_id, 0)]
         visited_folders: set[str] = set()
         while pending:
@@ -255,7 +362,7 @@ class DingTalkKnowledgeProvider:
                 continue
             if current_folder:
                 visited_folders.add(current_folder)
-                if len(visited_folders) + len(document_ids) > MAX_SCOPED_NODES:
+                if len(visited_folders) + len(document_nodes) > MAX_SCOPED_NODES:
                     raise RuntimeError(
                         "DingTalk scope exceeds the supported node limit"
                     )
@@ -274,7 +381,7 @@ class DingTalkKnowledgeProvider:
                     )
                 except Exception:
                     if tolerate_non_folder and current_folder == folder_id:
-                        return document_ids
+                        return document_nodes
                     raise
                 for item in self._extract_items(payload):
                     node_id = self._node_id(item)
@@ -284,15 +391,17 @@ class DingTalkKnowledgeProvider:
                         if include_descendants:
                             pending.append((node_id, depth + 1))
                         continue
-                    document_ids.add(node_id)
-                    if len(visited_folders) + len(document_ids) > MAX_SCOPED_NODES:
+                    if current_folder and not item.get("parentId"):
+                        item = {**item, "parentId": current_folder}
+                    document_nodes.append(item)
+                    if len(visited_folders) + len(document_nodes) > MAX_SCOPED_NODES:
                         raise RuntimeError(
                             "DingTalk scope exceeds the supported node limit"
                         )
                 page_token = self._next_token(payload)
                 if not page_token:
                     break
-        return document_ids
+        return document_nodes
 
     async def _get_document_content(self, session: Any, node_id: str) -> str:
         payload = self._parse_payload(
@@ -434,6 +543,36 @@ class DingTalkKnowledgeProvider:
                 or f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
             ),
             source_name=ref.name,
+        )
+
+    @classmethod
+    def _to_document(
+        cls,
+        ref: ExternalKnowledgeRef,
+        node: dict[str, Any],
+    ) -> ExternalKnowledgeDocument:
+        node_id = cls._node_id(node)
+        title = str(node.get("name") or node.get("title") or node_id)
+        file_extension = None
+        if "." in title and not title.endswith("."):
+            file_extension = title.rsplit(".", 1)[1].lower()
+        return ExternalKnowledgeDocument(
+            provider=PROVIDER_NAME,
+            source_id=ref.id or PERSONAL_ROOT_ID,
+            source_name=ref.name,
+            document_id=node_id,
+            title=title,
+            node_id=node_id,
+            parent_id=(str(node.get("parentId")) if node.get("parentId") else None),
+            mime_type=(
+                str(node.get("mimeType") or node.get("contentType"))
+                if node.get("mimeType") or node.get("contentType")
+                else None
+            ),
+            file_extension=file_extension,
+            source_uri=str(
+                node.get("url") or f"https://alidocs.dingtalk.com/i/nodes/{node_id}"
+            ),
         )
 
     @staticmethod

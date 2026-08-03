@@ -127,6 +127,11 @@ class SubtaskContextBrief(BaseModel):
     external_node_id: Optional[str] = None
     external_document_id: Optional[str] = None
     external_parent_id: Optional[str] = None
+    external_scope_mode: Optional[str] = None
+    external_folder_ids: Optional[list[str]] = None
+    external_document_ids: Optional[list[str]] = None
+    external_excluded_node_ids: Optional[list[str]] = None
+    external_include_descendants: Optional[bool] = None
     # External web content fields
     video_count: Optional[int] = None
     site: Optional[str] = None

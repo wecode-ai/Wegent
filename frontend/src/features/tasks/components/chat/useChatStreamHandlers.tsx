@@ -40,7 +40,12 @@ import type {
   TaskType,
   InteractiveFormAnswerPayload,
 } from '@/types/api'
-import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
+import type {
+  ContextItem,
+  DingTalkDocContext,
+  ExternalKnowledgeContext,
+  ExternalKnowledgeRef,
+} from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 
@@ -51,6 +56,25 @@ export interface SendMessageOptions {
 
 function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
+}
+
+function buildDingTalkExternalRef(scope: DingTalkDocContext): ExternalKnowledgeRef {
+  const containerId =
+    scope.container_id ?? (scope.source === 'docs' ? 'docs-root' : scope.dingtalk_node_id)
+  return {
+    provider: 'dingtalk',
+    mode: 'explicit',
+    id: containerId,
+    name: scope.container_name ?? scope.name,
+    scope: scope.source,
+    target_type: 'knowledge_base',
+    scope_mode: scope.scope_mode ?? 'custom',
+    folder_ids: scope.folder_ids ?? (scope.node_type === 'folder' ? [scope.dingtalk_node_id] : []),
+    document_ids:
+      scope.document_ids ?? (scope.node_type === 'folder' ? [] : [scope.dingtalk_node_id]),
+    excluded_node_ids: scope.excluded_node_ids ?? [],
+    include_descendants: scope.include_descendants ?? true,
+  }
 }
 
 export interface UseChatStreamHandlersOptions {
@@ -545,27 +569,12 @@ export function useChatStreamHandlers({
 
       snapshotContexts
         .filter(ctx => ctx.type === 'dingtalk_doc')
-        .map(ctx => ctx as import('@/types/context').DingTalkDocContext)
+        .map(ctx => buildDingTalkExternalRef(ctx as DingTalkDocContext))
         .forEach(scope => {
-          const containerId =
-            scope.container_id ?? (scope.source === 'docs' ? 'docs-root' : scope.dingtalk_node_id)
           contextItems.push({
             type: 'external_knowledge',
             data: {
-              provider: 'dingtalk',
-              mode: 'explicit',
-              id: containerId,
-              name: scope.container_name ?? scope.name,
-              scope: scope.source,
-              target_type: 'knowledge_base',
-              scope_mode: scope.scope_mode ?? 'custom',
-              folder_ids:
-                scope.folder_ids ?? (scope.node_type === 'folder' ? [scope.dingtalk_node_id] : []),
-              document_ids:
-                scope.document_ids ??
-                (scope.node_type === 'folder' ? [] : [scope.dingtalk_node_id]),
-              excluded_node_ids: scope.excluded_node_ids ?? [],
-              include_descendants: scope.include_descendants ?? true,
+              ...scope,
             },
           })
         })
@@ -621,6 +630,11 @@ export function useChatStreamHandlers({
         external_node_id?: string
         external_document_id?: string
         external_parent_id?: string
+        external_scope_mode?: 'all' | 'custom'
+        external_folder_ids?: string[]
+        external_document_ids?: string[]
+        external_excluded_node_ids?: string[]
+        external_include_descendants?: boolean
         video_count?: number
         site?: string | null
         source_url?: string
@@ -702,6 +716,29 @@ export function useChatStreamHandlers({
             external_node_id: externalContext.ref.node_id,
             external_document_id: externalContext.ref.document_id,
             external_parent_id: externalContext.ref.parent_id,
+            external_scope_mode: externalContext.ref.scope_mode,
+            external_folder_ids: externalContext.ref.folder_ids,
+            external_document_ids: externalContext.ref.document_ids,
+            external_excluded_node_ids: externalContext.ref.excluded_node_ids,
+            external_include_descendants: externalContext.ref.include_descendants,
+          })
+        } else if (ctx.type === 'dingtalk_doc') {
+          const ref = buildDingTalkExternalRef(ctx as DingTalkDocContext)
+          pendingContexts.push({
+            id: -(pendingContexts.length + 1),
+            context_type: 'external_knowledge',
+            name: ref.name ?? ctx.name,
+            status: 'ready',
+            external_provider: ref.provider,
+            external_mode: ref.mode,
+            external_id: ref.id,
+            external_scope: ref.scope,
+            external_target_type: ref.target_type,
+            external_scope_mode: ref.scope_mode,
+            external_folder_ids: ref.folder_ids,
+            external_document_ids: ref.document_ids,
+            external_excluded_node_ids: ref.excluded_node_ids,
+            external_include_descendants: ref.include_descendants,
           })
         }
       }
@@ -1403,6 +1440,11 @@ export function useChatStreamHandlers({
                   node_id: ctx.external_node_id,
                   document_id: ctx.external_document_id,
                   parent_id: ctx.external_parent_id,
+                  scope_mode: ctx.external_scope_mode,
+                  folder_ids: ctx.external_folder_ids,
+                  document_ids: ctx.external_document_ids,
+                  excluded_node_ids: ctx.external_excluded_node_ids,
+                  include_descendants: ctx.external_include_descendants,
                 },
               })
             }
