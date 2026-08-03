@@ -42,6 +42,28 @@ describe('useBufferedStreamingText', () => {
     expect(result.current).toBe('Partial response with the appended text')
   })
 
+  test('cancels a pending fallback timer for a completed replacement', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'Partial response', streaming: true } }
+    )
+
+    rerender({
+      content: 'Partial response with the appended text',
+      streaming: true,
+    })
+    rerender({ content: 'Authoritative completed response', streaming: false })
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Authoritative completed response')
+  })
+
   test('shows the authoritative completed snapshot immediately', () => {
     const complete = `A${'b'.repeat(80)}`
     const { result, rerender } = renderHook(
