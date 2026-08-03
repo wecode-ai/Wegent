@@ -2951,6 +2951,14 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${nodeReplSelector} [data-tool-detail-toggle][aria-expanded="true"]`,
+    {
+      stableMs: 250,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await captureVerificationScreenshot(
     control,
     'tool-block-details-02-node-repl-expanded.png',
@@ -2992,6 +3000,14 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command(
+    'waitFor',
+    `${genericMcpSelector} [data-tool-detail-toggle][aria-expanded="true"]`,
+    {
+      stableMs: 250,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
   await captureVerificationScreenshot(
     control,
     'tool-block-details-03-generic-mcp-expanded.png',
