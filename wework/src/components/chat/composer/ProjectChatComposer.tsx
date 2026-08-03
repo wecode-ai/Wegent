@@ -8,13 +8,25 @@ import type {
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { Eye } from 'lucide-react'
-import { useMemo, useState, type DragEventHandler, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEventHandler,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
-import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
+import {
+  ComposerTextarea,
+  type ComposerSubmitOptions,
+  type ComposerTextareaHandle,
+} from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
@@ -34,6 +46,8 @@ import { applyWorkspacePathTransfer } from './composerPathTransfer'
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   submitDisabled?: boolean
@@ -94,6 +108,8 @@ function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
 export function ProjectChatComposer({
   value,
   onChange,
+  onBlur,
+  onCompositionEnd,
   onSubmit,
   disabled,
   submitDisabled = false,
@@ -148,15 +164,30 @@ export function ProjectChatComposer({
 }: ProjectChatComposerProps) {
   const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const composerRef = useRef<ComposerTextareaHandle>(null)
+  const [hasText, setHasText] = useState(value.trim().length > 0)
   const workspaceMenuProjects = useMemo(
     () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
     [projectWork.projects, projectWork.runtimeWork]
   )
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
-    !disabled &&
-    !submitDisabled
+    (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
+
+  useEffect(() => {
+    // Sync local hasText with external value changes (e.g. clear after submit).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasText(value.trim().length > 0)
+  }, [value])
+
+  const handleComposerChange = useCallback(
+    (nextValue: string) => {
+      setHasText(nextValue.trim().length > 0)
+      onChange(nextValue)
+    },
+    [onChange]
+  )
+
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
@@ -175,13 +206,16 @@ export function ProjectChatComposer({
       event.dataTransfer,
       'drop',
       workspaceTarget?.workspaceSource
-    ).then(transfer => applyWorkspacePathTransfer(value, transfer, onChange, onFileSelect))
+    ).then(transfer =>
+      applyWorkspacePathTransfer(value, transfer, handleComposerChange, onFileSelect)
+    )
   }
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
     if (!text) return
 
-    onChange(value ? `${value}\n${text}` : text)
+    const nextValue = value ? `${value}\n${text}` : text
+    handleComposerChange(nextValue)
     onRemoveAttachment(attachment.id)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -191,12 +225,14 @@ export function ProjectChatComposer({
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
     const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
-    onChange(phraseValue)
+    handleComposerChange(phraseValue)
     if (phrase.attachmentPaths?.length) {
       void resolveStoredWorkspacePaths(
         phrase.attachmentPaths,
         workspaceTarget?.workspaceSource === 'remote'
-      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
+      ).then(transfer =>
+        applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
+      )
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -297,9 +333,12 @@ export function ProjectChatComposer({
           </button>
         ) : null}
         <ComposerTextarea
+          ref={composerRef}
           textareaRef={textareaRef}
           value={value}
-          onChange={onChange}
+          onChange={handleComposerChange}
+          onBlur={onBlur}
+          onCompositionEnd={onCompositionEnd}
           onSubmit={onSubmit}
           canSend={canSend}
           disabled={disabled}
@@ -375,7 +414,7 @@ export function ProjectChatComposer({
               : undefined
           }
           onQuickPhraseSelect={handleQuickPhraseSelect}
-          onSubmit={options => onSubmit(value, options)}
+          onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
           leadingContext={toolbarLeadingContext}
           cloudProjectCandidates={cloudProjectCandidates}
           selectedCloudProjectId={selectedCloudProjectId}

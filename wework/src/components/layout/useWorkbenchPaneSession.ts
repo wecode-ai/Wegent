@@ -2171,31 +2171,44 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'
 
   useEffect(() => {
-    updateRuntimePaneDebugSnapshot({
-      currentRuntimeTask,
-      status: paneStatus,
-      messageSummary: summarizeMessages(messages),
-      messageStyleComparison: compareMessageStyles(messages),
-      memory: summarizeRuntimePaneMemory({
-        messages,
-        currentRuntimeTask,
-        loadedRanges: loadedTranscriptRanges,
-      }),
-      queuedMessages,
-      guidanceMessages,
-      codeCommentContextCount: codeCommentContexts.length,
-      inputLength: input.length,
-      transcript: {
-        loading: transcriptLoading,
-        hasMoreBefore: transcriptHasMoreBefore,
-        loadingMoreBefore: transcriptLoadingMoreBefore,
-        turnNavigationCount: turnNavigation.length,
-        loadedRanges: loadedTranscriptRanges,
-      },
-      subagentStatuses,
-      goal,
-      goalDraftActive,
-    })
+    let timeout: number | null = null
+    const schedule = () => {
+      if (timeout !== null) return
+      timeout = window.setTimeout(() => {
+        timeout = null
+        updateRuntimePaneDebugSnapshot({
+          currentRuntimeTask,
+          status: paneStatus,
+          messageSummary: summarizeMessages(messages),
+          messageStyleComparison: compareMessageStyles(messages),
+          memory: summarizeRuntimePaneMemory({
+            messages,
+            currentRuntimeTask,
+            loadedRanges: loadedTranscriptRanges,
+          }),
+          queuedMessages,
+          guidanceMessages,
+          codeCommentContextCount: codeCommentContexts.length,
+          inputLength: input.length,
+          transcript: {
+            loading: transcriptLoading,
+            hasMoreBefore: transcriptHasMoreBefore,
+            loadingMoreBefore: transcriptLoadingMoreBefore,
+            turnNavigationCount: turnNavigation.length,
+            loadedRanges: loadedTranscriptRanges,
+          },
+          subagentStatuses,
+          goal,
+          goalDraftActive,
+        })
+      }, 100)
+    }
+    schedule()
+    return () => {
+      if (timeout !== null) {
+        clearTimeout(timeout)
+      }
+    }
   }, [
     codeCommentContexts.length,
     currentRuntimeTask,

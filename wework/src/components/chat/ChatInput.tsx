@@ -101,6 +101,8 @@ export interface ProjectWorkControls {
 export interface ChatInputProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
   disabled: boolean
   submitDisabled?: boolean
@@ -227,6 +229,8 @@ function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponen
 export function ChatInput({
   value,
   onChange,
+  onBlur,
+  onCompositionEnd,
   onSubmit,
   disabled,
   submitDisabled = false,
@@ -399,6 +403,8 @@ export function ChatInput({
   const composerProps = {
     value,
     onChange,
+    onBlur,
+    onCompositionEnd,
     onSubmit: handleSubmit,
     disabled,
     submitDisabled,

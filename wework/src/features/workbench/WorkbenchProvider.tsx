@@ -612,24 +612,37 @@ export function WorkbenchProvider({
   }, [executorClient, localRuntimeStateDeviceId, state.currentProject?.id, state.runtimeWork])
 
   useEffect(() => {
-    updateWorkbenchDebugSnapshot({
-      state,
-      lifecycle: lifecycleSnapshot,
-      cloudWorkStatus,
-      composer: {
-        scopeKey: projectChatScopeKey,
-        standaloneChatKey: state.standaloneChatKey,
-        availableModelNames: modelSelection.models.map(model => model.name),
-        currentInputLength: draftInput.length,
-        scopedInputLengths: Object.fromEntries(
-          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-        ),
-        attachmentCount: attachmentSelection.attachments.length,
-        contextUsagePercent: currentContextUsage
-          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
-          : undefined,
-      },
-    })
+    let timeout: number | null = null
+    const schedule = () => {
+      if (timeout !== null) return
+      timeout = window.setTimeout(() => {
+        timeout = null
+        updateWorkbenchDebugSnapshot({
+          state,
+          lifecycle: lifecycleSnapshot,
+          cloudWorkStatus,
+          composer: {
+            scopeKey: projectChatScopeKey,
+            standaloneChatKey: state.standaloneChatKey,
+            availableModelNames: modelSelection.models.map(model => model.name),
+            currentInputLength: draftInput.length,
+            scopedInputLengths: Object.fromEntries(
+              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+            ),
+            attachmentCount: attachmentSelection.attachments.length,
+            contextUsagePercent: currentContextUsage
+              ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+              : undefined,
+          },
+        })
+      }, 100)
+    }
+    schedule()
+    return () => {
+      if (timeout !== null) {
+        clearTimeout(timeout)
+      }
+    }
   }, [
     attachmentSelection.attachments.length,
     cloudWorkStatus,

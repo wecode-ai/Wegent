@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ChangeEvent } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
@@ -26,7 +26,11 @@ import type {
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
-import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
+import {
+  ComposerTextarea,
+  type ComposerSubmitOptions,
+  type ComposerTextareaHandle,
+} from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
@@ -43,6 +47,8 @@ import { applyWorkspacePathTransfer } from './composerPathTransfer'
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   submitDisabled?: boolean
@@ -85,6 +91,8 @@ interface CompactChatComposerProps {
 export function CompactChatComposer({
   value,
   onChange,
+  onBlur,
+  onCompositionEnd,
   onSubmit,
   disabled,
   submitDisabled = false,
@@ -126,11 +134,13 @@ export function CompactChatComposer({
   const { t } = useTranslation('common')
   const imageInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const composerRef = useRef<ComposerTextareaHandle>(null)
   const textareaRef = useAutoResizeTextarea(value, 128)
   const fullscreenInputRef = useRef<HTMLElement>(null)
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
+  const [hasText, setHasText] = useState(value.trim().length > 0)
   const modelChangePending = Boolean(
     activeModel &&
     (!selectedModel ||
@@ -141,15 +151,29 @@ export function CompactChatComposer({
   const selectedModelLabel =
     selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
-    !disabled &&
-    !submitDisabled
+    (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
   const explicitLineCount = value.split('\n').length
+
+  useEffect(() => {
+    // Sync local hasText with external value changes (e.g. clear after submit).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasText(value.trim().length > 0)
+  }, [value])
+
+  const handleComposerChange = useCallback(
+    (nextValue: string) => {
+      setHasText(nextValue.trim().length > 0)
+      onChange(nextValue)
+    },
+    [onChange]
+  )
+
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
     if (!text) return
 
-    onChange(value ? `${value}\n${text}` : text)
+    const nextValue = value ? `${value}\n${text}` : text
+    handleComposerChange(nextValue)
     onRemoveAttachment(attachment.id)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -159,12 +183,14 @@ export function CompactChatComposer({
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
     const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
-    onChange(phraseValue)
+    handleComposerChange(phraseValue)
     if (phrase.attachmentPaths?.length && onFileSelect) {
       void resolveStoredWorkspacePaths(
         phrase.attachmentPaths,
         workspaceTarget?.workspaceSource === 'remote'
-      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
+      ).then(transfer =>
+        applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
+      )
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
@@ -251,15 +277,16 @@ export function CompactChatComposer({
         className="flex w-full items-end gap-2"
         onSubmit={event => {
           event.preventDefault()
+          const submittedValue = composerRef.current?.getValue() ?? value
           debugComposerEvent('compact-form-submit', {
             canSend,
             propValue: textMetrics(value),
-            submittedValue: textMetrics(value),
+            submittedValue: textMetrics(submittedValue),
             attachmentsCount: attachments.length,
             codeCommentsCount: codeComments.length,
             disabled,
           })
-          if (canSend) onSubmit(value)
+          if (canSend) onSubmit(submittedValue)
         }}
       >
         <button
@@ -283,9 +310,12 @@ export function CompactChatComposer({
           ].join(' ')}
         >
           <ComposerTextarea
+            ref={composerRef}
             textareaRef={textareaRef}
             value={value}
-            onChange={onChange}
+            onChange={handleComposerChange}
+            onBlur={onBlur}
+            onCompositionEnd={onCompositionEnd}
             onSubmit={onSubmit}
             canSend={canSend}
             placeholder={placeholder}
@@ -357,7 +387,7 @@ export function CompactChatComposer({
                     label: t('workbench.send_after_turn', '当前回复结束后发送'),
                     icon: Clock3,
                     testId: 'send-after-turn-option',
-                    onSelect: () => onSubmit(value),
+                    onSelect: () => onSubmit(composerRef.current?.getValue() ?? value),
                     shortcut: 'Enter',
                   },
                   {
@@ -371,7 +401,8 @@ export function CompactChatComposer({
                         : t('workbench.guide_current_turn', '引导当前回复'),
                     icon: CornerDownRight,
                     testId: 'guide-current-turn-option',
-                    onSelect: () => onSubmit(value, { guideWhenBusy: true }),
+                    onSelect: () =>
+                      onSubmit(composerRef.current?.getValue() ?? value, { guideWhenBusy: true }),
                     shortcut: 'Command+Enter',
                   },
                   {
@@ -475,10 +506,13 @@ export function CompactChatComposer({
               <Minimize2 className="h-5 w-5" />
             </button>
             <ComposerTextarea
+              ref={composerRef}
               testId="fullscreen-message-input"
               textareaRef={fullscreenInputRef}
               value={value}
-              onChange={onChange}
+              onChange={handleComposerChange}
+              onBlur={onBlur}
+              onCompositionEnd={onCompositionEnd}
               onSubmit={onSubmit}
               canSend={canSend}
               placeholder={placeholder}
