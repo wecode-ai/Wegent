@@ -755,6 +755,24 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
 }
 
 #[test]
+fn transcript_canonical_turns_accept_snake_case_message_indexes() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "message_index": 8,
+            "turn_id": "turn-1",
+            "client_user_message_id": "client-user-1",
+            "role": "user",
+            "content": "First prompt"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["messageIndex"], 8);
+}
+
+#[test]
 fn transcript_canonical_turns_preserve_status_from_user_only_turns() {
     let turns = transcript_canonical_turns(
         &[json!({

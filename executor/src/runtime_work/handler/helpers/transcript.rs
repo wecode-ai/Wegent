@@ -98,7 +98,10 @@ fn transcript_canonical_turns(
     let mut turn_indexes = std::collections::HashMap::<String, usize>::new();
 
     for message in messages {
-        let message_index = message.get("messageIndex").and_then(Value::as_u64);
+        let message_index = message
+            .get("messageIndex")
+            .or_else(|| message.get("message_index"))
+            .and_then(Value::as_u64);
         let Some(turn_id) = string_field(message, "turnId")
             .or_else(|| string_field(message, "turn_id"))
             .or_else(|| string_field(message, "subtaskId"))
