@@ -3,6 +3,7 @@ import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
   APP_UPDATE_SIMULATE_EVENT,
@@ -52,7 +53,127 @@ describe('AppUpdateProvider', () => {
     await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('stable')
     expect(localStorage.getItem(APP_UPDATE_LAST_AUTO_CHECK_KEY)).toBe(String(Date.now()))
+  })
+
+  test('persists the Beta channel and checks it immediately', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.setUpdateChannel('beta')
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_CHANNEL_KEY)).toBe('beta')
+    expect(appUpdate?.updateChannel).toBe('beta')
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+  })
+
+  test('restores the persisted Beta channel for automatic checks', async () => {
+    localStorage.setItem(APP_UPDATE_CHANNEL_KEY, 'beta')
+
+    render(
+      <AppUpdateProvider>
+        <div />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+
+    expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+    expect(localStorage.getItem(`${APP_UPDATE_LAST_AUTO_CHECK_KEY}:beta`)).toBe(String(Date.now()))
+  })
+
+  test('finishes a Beta check after an overlapping stable automatic check', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishStableCheck: (() => void) | undefined
+    vi.mocked(checkForWeworkUpdate).mockImplementation(channel =>
+      channel === 'stable'
+        ? new Promise(resolve => {
+            finishStableCheck = () => resolve(null)
+          })
+        : Promise.resolve({
+            currentVersion: '0.1.0',
+            version: '0.2.0-beta.1',
+          })
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    const channelChange = appUpdate?.setUpdateChannel('beta')
+    finishStableCheck?.()
+    await act(async () => {
+      await channelChange
+    })
+
+    expect(checkForWeworkUpdate).toHaveBeenNthCalledWith(1, 'stable')
+    expect(checkForWeworkUpdate).toHaveBeenNthCalledWith(2, 'beta')
+    expect(appUpdate?.updateChannel).toBe('beta')
+    expect(appUpdate?.availableUpdate?.version).toBe('0.2.0-beta.1')
+  })
+
+  test('shows manual feedback when reusing an in-flight automatic check', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishCheck: (() => void) | undefined
+    vi.mocked(checkForWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishCheck = () => resolve(null)
+        })
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    let manualCheck: Promise<unknown> | undefined
+    await act(async () => {
+      manualCheck = appUpdate?.checkNow()
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.status).toBe('checking')
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    if (!finishCheck) {
+      throw new Error('Automatic update check resolver was not initialized')
+    }
+    finishCheck()
+    await act(async () => {
+      await manualCheck
+    })
+
+    expect(appUpdate?.status).toBe('upToDate')
+    expect(appUpdate?.message).toBe('upToDate')
   })
 
   test('wakes hourly but only checks the update source after 24 hours', async () => {
