@@ -46,14 +46,30 @@ interface ActivityStats {
 
 const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set([
-  'rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack',
+  'rg',
+  'grep',
+  'find',
+  'fd',
+  'ls',
+  'tree',
+  'ag',
+  'ack',
   // PowerShell equivalents
-  'select-string', 'sls',
+  'select-string',
+  'sls',
 ])
 const FILE_COMMANDS = new Set([
-  'cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'file',
+  'cat',
+  'sed',
+  'head',
+  'tail',
+  'wc',
+  'nl',
+  'stat',
+  'file',
   // PowerShell equivalents
-  'get-content', 'gc',
+  'get-content',
+  'gc',
 ])
 const HIDDEN_ACTIVITY_TOOLS = new Set(['write_stdin', 'functions.write_stdin'])
 const RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
@@ -335,16 +351,18 @@ export function getCommandActivityKind(command?: string): ToolActivityKind {
   if (FILE_COMMANDS.has(executable)) return 'file'
   if (executable === 'git' && command?.includes(' grep ')) return 'search'
   if (executable === 'git' && command?.includes(' ls-files')) return 'search'
-  // PowerShell Get-ChildItem used with -File / -Recurse is commonly a file list/search.
+  // PowerShell Get-ChildItem with -File or -Recurse is commonly a file list/search.
   if (executable === 'get-childitem' || executable === 'gci') {
-    const unwrapped = unwrapShellCommand(command ?? '').toLowerCase()
-    if (unwrapped.includes(' -file ') || unwrapped.includes(' -recurse ')) return 'search'
+    const args = splitShellWords(getInnerShellCommand(command)).slice(1)
+    if (args.some(arg => arg.toLowerCase() === '-file' || arg.toLowerCase() === '-recurse')) {
+      return 'search'
+    }
   }
   return 'command'
 }
 
 function getReadCommandFilePaths(command?: string): string[] {
-  const words = splitShellWords(stripShellPrefix(unwrapShellCommand(command ?? '')))
+  const words = splitShellWords(getInnerShellCommand(command))
   const executableIndex = getExecutableWordIndex(words)
   const executable = words[executableIndex]?.split('/').pop()?.toLowerCase()
   if (!executable || !FILE_COMMANDS.has(executable)) return []
@@ -358,7 +376,7 @@ function getSearchCommandSummary(
   command: string | undefined,
   cwd: string | undefined
 ): { query: string; scope?: string } | undefined {
-  const words = splitShellWords(stripShellPrefix(unwrapShellCommand(command ?? '')))
+  const words = splitShellWords(getInnerShellCommand(command))
   const executableIndex = getExecutableWordIndex(words)
   const executable = words[executableIndex]?.split('/').pop()?.toLowerCase()
   if (!executable) return undefined
@@ -375,9 +393,14 @@ function getSearchCommandSummary(
 }
 
 const PATTERN_SEARCH_COMMANDS = new Set([
-  'rg', 'grep', 'ag', 'ack', 'fd',
+  'rg',
+  'grep',
+  'ag',
+  'ack',
+  'fd',
   // PowerShell equivalents
-  'select-string', 'sls',
+  'select-string',
+  'sls',
 ])
 const SEARCH_PATTERN_OPTIONS = new Set(['-e', '--regexp', '--pattern', '-Pattern'])
 const SEARCH_COMMAND_OPTIONS_WITH_VALUES = new Set([
@@ -461,7 +484,12 @@ function getPatternSearchArguments(args: string[]):
       if (optionName.toLowerCase() === '-path') {
         const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[index + 1]
         if (value) {
-          scopes.push(...value.split(',').map(p => p.trim()).filter(Boolean))
+          scopes.push(
+            ...value
+              .split(',')
+              .map(p => p.trim())
+              .filter(Boolean)
+          )
         }
         if (!arg.includes('=')) index += 1
         continue
@@ -556,7 +584,12 @@ function getPathArguments(args: string[], optionsWithValues: ReadonlySet<string>
       if (optionName.toLowerCase() === '-path') {
         const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : args[index + 1]
         if (value) {
-          paths.push(...value.split(',').map(p => p.trim()).filter(isLikelyPathArgument))
+          paths.push(
+            ...value
+              .split(',')
+              .map(p => p.trim())
+              .filter(isLikelyPathArgument)
+          )
         }
         if (!arg.includes('=')) index += 1
         continue
@@ -664,12 +697,16 @@ export function splitShellWords(command: string): string[] {
 }
 
 export function getCommandExecutable(command?: string): string {
-  const innerCommand = stripShellPrefix(unwrapShellCommand(command ?? ''))
+  const innerCommand = getInnerShellCommand(command)
   const match = innerCommand.match(
     /^(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:sudo\s+)?([^\s]+)/
   )
   const executable = match?.[1]?.split('/').pop()
   return executable?.toLowerCase() ?? ''
+}
+
+export function getInnerShellCommand(command?: string): string {
+  return stripShellPrefix(unwrapShellCommand(command ?? ''))
 }
 
 export function stripShellPrefix(command: string): string {
@@ -678,24 +715,31 @@ export function stripShellPrefix(command: string): string {
   return command.replace(/^\s*cd\s+\S+\s*(?:&&|;|\r?\n)\s*/, '')
 }
 
+const SHELL_EXECUTABLE_RE =
+  /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+/i
+const SHELL_FLAG_RE = /(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+/i
+
 export function unwrapShellCommand(command: string): string {
   // Strip an optional leading shell prompt such as "$ " shown in some UIs.
   const stripped = command.replace(/^\$\s+/, '')
   // Codex on macOS wraps shell commands as: /bin/zsh -lc "..."
-  const lcMatch = stripped.match(/(?:^|\s)-lc\s+(['"])([\s\S]*)\1\s*$/i)
+  const lcMatch = stripped.match(/(?:^|\s)-lc\s+(['"])([\s\S]*?)\1\s*$/i)
   if (lcMatch) return lcMatch[2].trim()
   // Codex on Windows wraps shell commands as:
   //   pwsh -c "..." or powershell /c "..."
   //   "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "..."
   const shellMatch = stripped.match(
-    /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+(['"])([\s\S]*)\1\s*$/i
+    new RegExp(
+      SHELL_EXECUTABLE_RE.source + SHELL_FLAG_RE.source + '([\'"])([\\s\\S]*?)\\1\\s*$',
+      'i'
+    )
   )
   if (shellMatch) return shellMatch[2].trim()
   // Some Windows wrappers quote the inner command with the opposite quote or
   // the command is truncated before the closing quote. Try a best-effort
   // extraction that returns everything after the -Command/-c flag.
   const fallbackMatch = stripped.match(
-    /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+(['"])(.*)$/i
+    new RegExp(SHELL_EXECUTABLE_RE.source + SHELL_FLAG_RE.source + '([\'"])(.*)$', 'i')
   )
   if (fallbackMatch) return fallbackMatch[2].trim()
   return stripped.trim()

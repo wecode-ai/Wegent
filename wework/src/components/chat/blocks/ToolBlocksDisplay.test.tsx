@@ -1431,7 +1431,7 @@ describe('ToolBlocksDisplay', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock, latestBlock]} isStreaming={true} />)
 
     expect(screen.getByText('运行 pwd')).not.toHaveClass('tool-activity-shimmer')
-    expect(screen.getByText('运行 git status --short')).not.toHaveClass('tool-activity-shimmer')
+    expect(screen.getByText('运行 git status')).not.toHaveClass('tool-activity-shimmer')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 

@@ -131,7 +131,6 @@ describe('toolBlockActivity', () => {
     ).toBe('search')
   })
 
-
   test('strips cd prefix before identifying command executable', () => {
     expect(stripShellPrefix('cd D:\\Wegent && rg pattern .')).toBe('rg pattern .')
     expect(stripShellPrefix('cd /tmp; cat file.txt')).toBe('cat file.txt')
@@ -142,7 +141,7 @@ describe('toolBlockActivity', () => {
       getToolActivityKind(
         tool(
           'pwsh-select-string',
-          '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "cd D:\\Wegent && Select-String -Path src/cli.ts -Pattern \"foo\""'
+          '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "cd D:\\Wegent && Select-String -Path src/cli.ts -Pattern "foo""'
         )
       )
     ).toBe('search')
@@ -170,27 +169,24 @@ describe('toolBlockActivity', () => {
     ).toBe('search')
   })
 
-
   test('falls back to extracting unbalanced PowerShell -Command contents', () => {
     expect(
       unwrapShellCommand(
-        "$ \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch \"\\\\"
+        '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command \'Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch "\\\\'
       )
-    ).toBe('Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch \"\\\\')
+    ).toBe('Get-ChildItem -Recurse -File -Force | Where-Object { $_.FullName -notmatch "\\\\')
 
     expect(
-      unwrapShellCommand(
-        'pwsh -c "rg -n pattern -g !.git -g !node_modules --no-ignore"'
-      )
+      unwrapShellCommand('pwsh -c "rg -n pattern -g !.git -g !node_modules --no-ignore"')
     ).toBe('rg -n pattern -g !.git -g !node_modules --no-ignore')
   })
 
   test('unwraps quoted pwsh.exe -Command wrappers', () => {
     expect(
       unwrapShellCommand(
-        '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n \"pattern\" src"'
+        '$ "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n "pattern" src"'
       )
-    ).toBe('rg -n \"pattern\" src')
+    ).toBe('rg -n "pattern" src')
 
     expect(
       unwrapShellCommand(
