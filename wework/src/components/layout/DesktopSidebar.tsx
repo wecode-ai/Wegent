@@ -1600,7 +1600,13 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
-          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+          <span
+            data-sidebar-drag-activator
+            data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
+            className="min-w-0 flex-1 truncate"
+          >
+            {task.title}
+          </span>
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className="relative ml-1 flex h-[30px] min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]"
@@ -2136,6 +2142,7 @@ function ProjectItem({
           <button
             type="button"
             data-testid="project-item-button"
+            data-sidebar-drag-activator
             onClick={() => {
               onToggleProject(project.id)
             }}

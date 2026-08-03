@@ -20,6 +20,7 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import { isSidebarDragActivatorTarget } from './sidebarDragActivator'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -323,7 +324,9 @@ describe('DesktopSidebar', () => {
     ) as HTMLElement
     expect(remoteSortable).toHaveAttribute('tabindex', '0')
     expect(remoteSortable).toHaveAttribute('role', 'button')
-    expect(remoteSortable).toHaveClass('touch-none')
+    expect(remoteSortable.querySelector('[data-testid="project-item-button"]')).toHaveAttribute(
+      'data-sidebar-drag-activator'
+    )
   })
 
   test('shows an interactive Codex-style project hover card', async () => {
@@ -1556,6 +1559,7 @@ describe('DesktopSidebar', () => {
 
   test('exposes pointer and keyboard sorting affordances in the task section', () => {
     const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
+    const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
     renderSidebar({
       runtimeWork: {
@@ -1589,6 +1593,7 @@ describe('DesktopSidebar', () => {
         totalTasks: 2,
       },
       onReorderRuntimeProjectTasks,
+      onOpenRuntimeTask,
     })
 
     const firstSortable = document.querySelector(
@@ -1600,8 +1605,23 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-task-sortable-list')).toContainElement(firstSortable)
     expect(firstSortable).toHaveAttribute('tabindex', '0')
     expect(firstSortable).toHaveAttribute('role', 'button')
-    expect(firstSortable).toHaveClass('touch-none')
     expect(secondSortable).toHaveAttribute('tabindex', '0')
+
+    const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
+    const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
+    expect(firstSortable).toContainElement(firstActivator)
+    expect(firstActivator).not.toContainElement(firstActions)
+    expect(firstActivator).toHaveAttribute('data-sidebar-drag-activator')
+    expect(isSidebarDragActivatorTarget(firstActivator)).toBe(true)
+    expect(isSidebarDragActivatorTarget(firstActions)).toBe(false)
+    expect(isSidebarDragActivatorTarget(screen.getByTestId('runtime-local-task-row-chat-1'))).toBe(
+      false
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
+    fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(2)
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
   })
 
   test('refreshes relative runtime task time while the sidebar stays mounted', () => {
