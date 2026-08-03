@@ -5,11 +5,17 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
+const telemetryMocks = vi.hoisted(() => ({
+  track: vi.fn(),
+}))
+
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
+
+vi.mock('@/telemetry/client', () => telemetryMocks)
 
 type CodexMarketplaceMock = {
   name: string
@@ -727,6 +733,7 @@ function mockSystemSkillsFetch(
 
 describe('PluginsWorkspace', () => {
   beforeEach(() => {
+    telemetryMocks.track.mockClear()
     vi.mocked(convertFileSrc).mockClear()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
@@ -821,6 +828,7 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/marketplace/101/install',
       expect.objectContaining({ method: 'POST' })
     )
+    expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the row menu', async () => {
@@ -853,6 +861,9 @@ describe('PluginsWorkspace', () => {
     expectCodexAppServerRequest('plugin/uninstall', { pluginId: '101' })
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
+    )
   })
 
   test('reads local plugin detail when trying an installed marketplace plugin in chat', async () => {

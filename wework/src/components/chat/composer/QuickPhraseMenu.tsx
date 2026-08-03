@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { track } from '@/telemetry/client'
 import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
@@ -188,6 +189,7 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
 
   const choose = (phrase: QuickPhrase) => {
     onSelect(phrase)
+    track('quick_phrase_used', { mode: phrase.mode })
     setOpen(false)
     setQuery('')
     setSelectedIndex(0)

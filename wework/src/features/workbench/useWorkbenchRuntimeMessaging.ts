@@ -76,6 +76,18 @@ import {
   selectedModelExecutionFields,
 } from './runtimeModelSelection'
 import type { WorkbenchServices } from './workbenchServices'
+import { track } from '@/telemetry/client'
+import type { ExecutionTarget } from '@/telemetry/events'
+
+function telemetryExecutionTarget(
+  deviceId: string,
+  devices: WorkbenchState['devices']
+): ExecutionTarget {
+  const device = devices.find(item => item.device_id === deviceId)
+  if (device?.device_type === 'local' || device?.device_type === 'app') return 'local'
+  if (device?.device_type === 'cloud' || device?.device_type === 'remote') return 'cloud'
+  return deviceId === 'local-device' ? 'local' : 'unknown'
+}
 
 interface RuntimeMessagingAttachmentSelection {
   attachments: Attachment[]
@@ -822,6 +834,9 @@ export function useWorkbenchRuntimeMessaging({
           }
         }
         lifecycleStore.sendAccepted(address)
+        track('conversation_created', {
+          execution_target: telemetryExecutionTarget(address.deviceId, state.devices),
+        })
         if (!options?.ephemeral) {
           void notifyMainRuntimeWorkChanged({
             deviceId: address.deviceId,

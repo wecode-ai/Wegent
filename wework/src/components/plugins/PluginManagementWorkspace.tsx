@@ -8,6 +8,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import { track } from '@/telemetry/client'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import {
@@ -377,11 +378,20 @@ export function PluginManagementWorkspace({
       previous.map(skill => (skill.id === id ? { ...skill, enabled: !skill.enabled } : skill))
     )
 
-    systemSkillApi.updateInstalledSystemSkill(id, !skill.enabled).catch(() => {
-      setInstalledSkills(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: skill.enabled } : item))
-      )
-    })
+    systemSkillApi
+      .updateInstalledSystemSkill(id, !skill.enabled)
+      .then(() => {
+        track('feature_action_completed', {
+          action: skill.enabled ? 'disable' : 'enable',
+          domain: 'skill',
+        })
+      })
+      .catch(() => {
+        setInstalledSkills(previous =>
+          previous.map(item => (item.id === id ? { ...item, enabled: skill.enabled } : item))
+        )
+        track('operation_failed', { operation: 'skill_action' })
+      })
   }
 
   const uninstallInstalledSkill = (id: number) => {
@@ -391,7 +401,13 @@ export function PluginManagementWorkspace({
     setInstalledSkills(previous => previous.filter(item => item.id !== id))
     systemSkillApi
       .uninstallInstalledSystemSkill(id)
-      .catch(() => setInstalledSkills(previous => [...previous, skill]))
+      .then(() => {
+        track('feature_action_completed', { action: 'uninstall', domain: 'skill' })
+      })
+      .catch(() => {
+        setInstalledSkills(previous => [...previous, skill])
+        track('operation_failed', { operation: 'skill_action' })
+      })
   }
 
   const toggleInstalledMcp = (id: number) => {
@@ -401,11 +417,20 @@ export function PluginManagementWorkspace({
     const mcp = installedMcps.find(item => item.id === id)
     if (!mcp) return
 
-    mcpApi.updateInstalledMcp(id, { enabled: !mcp.enabled }).catch(() => {
-      setInstalledMcps(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: mcp.enabled } : item))
-      )
-    })
+    mcpApi
+      .updateInstalledMcp(id, { enabled: !mcp.enabled })
+      .then(() => {
+        track('feature_action_completed', {
+          action: mcp.enabled ? 'disable' : 'enable',
+          domain: 'mcp',
+        })
+      })
+      .catch(() => {
+        setInstalledMcps(previous =>
+          previous.map(item => (item.id === id ? { ...item, enabled: mcp.enabled } : item))
+        )
+        track('operation_failed', { operation: 'mcp_action' })
+      })
   }
 
   const uninstallInstalledMcp = (id: number) => {
@@ -413,9 +438,15 @@ export function PluginManagementWorkspace({
     if (!mcp) return
 
     setInstalledMcps(previous => previous.filter(item => item.id !== id))
-    mcpApi.uninstallInstalledMcp(id).catch(() => {
-      setInstalledMcps(previous => [...previous, mcp])
-    })
+    mcpApi
+      .uninstallInstalledMcp(id)
+      .then(() => {
+        track('feature_action_completed', { action: 'uninstall', domain: 'mcp' })
+      })
+      .catch(() => {
+        setInstalledMcps(previous => [...previous, mcp])
+        track('operation_failed', { operation: 'mcp_action' })
+      })
   }
 
   const toggleInstalledPlugin = (id: string | number) => {
@@ -425,11 +456,21 @@ export function PluginManagementWorkspace({
     setInstalledPlugins(previous =>
       previous.map(item => (item.id === id ? { ...item, enabled: !item.enabled } : item))
     )
-    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
-      setInstalledPlugins(previous =>
-        previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
-      )
-    })
+    pluginApi
+      .updateInstalledPlugin(id, { enabled: !plugin.enabled })
+      .then(() => {
+        track('plugin_enabled_changed', {
+          enabled: !plugin.enabled,
+          scope: 'plugin',
+          source: 'cloud',
+        })
+      })
+      .catch(() => {
+        setInstalledPlugins(previous =>
+          previous.map(item => (item.id === id ? { ...item, enabled: plugin.enabled } : item))
+        )
+        track('operation_failed', { operation: 'plugin_toggle' })
+      })
   }
 
   const togglePluginComponent = (id: string | number, componentKey: string, enabled: boolean) => {
@@ -459,9 +500,15 @@ export function PluginManagementWorkspace({
       .then(updated => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        track('plugin_enabled_changed', {
+          enabled,
+          scope: 'component',
+          source: 'cloud',
+        })
       })
       .catch(() => {
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+        track('operation_failed', { operation: 'plugin_toggle' })
       })
   }
 
@@ -473,9 +520,13 @@ export function PluginManagementWorkspace({
     setSelectedPluginId(current => (current === id ? null : current))
     pluginApi
       .uninstallInstalledPlugin(id)
-      .then(() => notifyLocalPluginSkillsChanged())
+      .then(() => {
+        notifyLocalPluginSkillsChanged()
+        track('plugin_uninstalled', { source: 'cloud' })
+      })
       .catch(() => {
         setInstalledPlugins(previous => [...previous, plugin])
+        track('operation_failed', { operation: 'plugin_uninstall' })
       })
   }
 
@@ -498,6 +549,10 @@ export function PluginManagementWorkspace({
         setInstalledMcps(previous => [toInstalledMcpItem(item), ...previous])
         setCustomMcpForm(emptyCustomMcpForm)
         setShowCustomMcpDialog(false)
+        track('feature_action_completed', { action: 'create', domain: 'mcp' })
+      })
+      .catch(() => {
+        track('operation_failed', { operation: 'mcp_action' })
       })
       .finally(() => setIsCreatingCustomMcp(false))
   }
@@ -517,6 +572,10 @@ export function PluginManagementWorkspace({
       setInstalledSkills(previous => [item, ...previous.filter(skill => skill.id !== item.id)])
       setActiveTab('skills')
       setShowSkillUploadDialog(false)
+      track('feature_action_completed', { action: 'upload', domain: 'skill' })
+    } catch (error) {
+      track('operation_failed', { operation: 'skill_action' })
+      throw error
     } finally {
       setIsUploadingSkill(false)
     }
@@ -572,6 +631,10 @@ export function PluginManagementWorkspace({
           [provider.key]: '',
         }))
         loadProviderServers(provider.key)
+        track('feature_action_completed', { action: 'configure', domain: 'mcp' })
+      })
+      .catch(() => {
+        track('operation_failed', { operation: 'mcp_action' })
       })
       .finally(() => {
         setProviderSavingByKey(previous => ({
@@ -611,6 +674,10 @@ export function PluginManagementWorkspace({
               : candidate
           ),
         }))
+        track('feature_action_completed', { action: 'install', domain: 'mcp' })
+      })
+      .catch(() => {
+        track('operation_failed', { operation: 'mcp_action' })
       })
   }
 

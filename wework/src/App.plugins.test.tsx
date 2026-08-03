@@ -1465,7 +1465,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-create-skill-option'))
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: '上传技能' })).toBeInTheDocument()
     const upload = screen.getByTestId('skill-upload-file-input')
     const file = createSkillZipFile('zip-helper', true)
     await userEvent.upload(upload, file)

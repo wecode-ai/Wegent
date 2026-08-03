@@ -13,6 +13,8 @@ const defaultPreferences: AppPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   experimentalFeaturesEnabled: false,
+  telemetryConsentAsked: true,
+  telemetryEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -49,6 +51,8 @@ vi.mock('@/tauri/appPreferences', () => ({
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
     experimentalFeaturesEnabled: false,
+    telemetryConsentAsked: true,
+    telemetryEnabled: true,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -180,14 +184,33 @@ describe('GeneralSettingsPage', () => {
     })
   })
 
+  test('persists telemetry changes as an explicit consent decision', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-telemetry-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        telemetryConsentAsked: true,
+        telemetryEnabled: false,
+      })
+    })
+  })
+
   test('groups task runtime controls separately and spaces later sections', async () => {
     render(<GeneralSettingsPage />)
 
     const basicSection = screen.getByTestId('general-settings-basic-section')
     const runtimeSection = screen.getByTestId('general-settings-runtime-section')
+    const privacySection = screen.getByTestId('general-settings-privacy-section')
     const popoutSection = screen.getByTestId('general-settings-popout-section')
 
     expect(runtimeSection).toHaveClass('mt-12')
+    expect(privacySection).toHaveClass('mt-12')
     expect(popoutSection).toHaveClass('mt-12')
     expect(within(runtimeSection).getByTestId('general-close-to-tray-toggle')).toBeInTheDocument()
     expect(
@@ -202,6 +225,7 @@ describe('GeneralSettingsPage', () => {
     ).not.toBeInTheDocument()
     expect(within(basicSection).queryByTestId('general-system-drag-toggle')).not.toBeInTheDocument()
     expect(within(popoutSection).getByTestId('general-system-drag-toggle')).toBeInTheDocument()
+    expect(within(privacySection).getByTestId('general-telemetry-toggle')).toBeInTheDocument()
     expect(
       within(popoutSection).getByTestId('general-popout-shortcut-record-button')
     ).toBeInTheDocument()

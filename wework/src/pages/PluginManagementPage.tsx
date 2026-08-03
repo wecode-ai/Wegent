@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -14,6 +14,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { track } from '@/telemetry/client'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
@@ -57,6 +58,10 @@ export function PluginManagementPage() {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
+
+  useEffect(() => {
+    track('plugin_center_opened', { surface: 'management' })
+  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')

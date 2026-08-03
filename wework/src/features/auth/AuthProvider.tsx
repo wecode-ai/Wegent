@@ -5,6 +5,7 @@ import { ApiError, createHttpClient } from '@/api/http'
 import { getLocalUser } from '@/api/local/localSession'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { track } from '@/telemetry/client'
 import type { User } from '@/types/api'
 import {
   getAdminUsernameFromSetupError,
@@ -143,8 +144,10 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
         const loggedInUser = await resolvedAuthApi.login(data)
         setUser(loggedInUser)
         clearAdminPasswordSetupState()
+        track('authentication_completed', { method: 'password', result: 'success' })
         return loggedInUser
       } catch (error) {
+        track('authentication_completed', { method: 'password', result: 'failure' })
         if (isAdminPasswordSetupRequiredError(error)) {
           applyAdminPasswordSetupError(error)
         }
@@ -172,8 +175,14 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
 
   const loginWithOidcToken = useCallback(
     async (accessToken: string) => {
-      await resolvedAuthApi.loginWithOidcToken(accessToken)
-      clearAdminPasswordSetupState()
+      try {
+        await resolvedAuthApi.loginWithOidcToken(accessToken)
+        clearAdminPasswordSetupState()
+        track('authentication_completed', { method: 'oidc', result: 'success' })
+      } catch (error) {
+        track('authentication_completed', { method: 'oidc', result: 'failure' })
+        throw error
+      }
     },
     [clearAdminPasswordSetupState, resolvedAuthApi]
   )
@@ -185,7 +194,11 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
         const adminUser = await resolvedAuthApi.setupAdminPassword(password)
         setUser(adminUser)
         clearAdminPasswordSetupState()
+        track('authentication_completed', { method: 'admin_setup', result: 'success' })
         return adminUser
+      } catch (error) {
+        track('authentication_completed', { method: 'admin_setup', result: 'failure' })
+        throw error
       } finally {
         setIsLoading(false)
       }
