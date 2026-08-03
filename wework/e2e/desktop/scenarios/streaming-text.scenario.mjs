@@ -14,6 +14,7 @@ const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
 const ORDER_FOLLOW_UP_COUNT = 26
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const REASONING_SUMMARY = 'WEWORK_DESKTOP_E2E_REASONING_SUMMARY'
+const REASONING_PREVIEW = REASONING_SUMMARY.replaceAll('_', ' ')
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
@@ -169,7 +170,7 @@ function reasoningEvents(itemId, text) {
   ]
 }
 
-function streamingEvents(id) {
+function streamingEvents(id, completionText = COMPLETION_TEXT) {
   const itemId = `${id}-message`
   return {
     itemId,
@@ -200,7 +201,7 @@ function streamingEvents(id) {
         item_id: itemId,
         output_index: 0,
         content_index: 0,
-        text: COMPLETION_TEXT,
+        text: completionText,
       },
       {
         type: 'response.output_item.done',
@@ -210,7 +211,7 @@ function streamingEvents(id) {
           type: 'message',
           status: 'completed',
           role: 'assistant',
-          content: [{ type: 'output_text', text: COMPLETION_TEXT, annotations: [] }],
+          content: [{ type: 'output_text', text: completionText, annotations: [] }],
         },
       },
       responseCompleted(id),
@@ -355,6 +356,26 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   throw new Error(`The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`)
 }
 
+async function completedToolDuration(control, timeoutMs) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+  if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
+    await control.command('click', finalToggle)
+  }
+  const summaryToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-toggle"]`
+  await control.command('waitFor', summaryToggle, { timeoutMs })
+  if (
+    (await control.command('getAttribute', summaryToggle, { value: 'aria-expanded' })) !== 'true'
+  ) {
+    await control.command('click', summaryToggle)
+  }
+  await control.command('waitFor', selector, { timeoutMs })
+  const text = await control.command('getText', selector)
+  const duration = toolDurationSeconds(text)
+  assert.ok(duration > 0, `The completed tool duration was missing: ${text}`)
+  return duration
+}
+
 async function waitForBottom(control, description, timeoutMs) {
   const startedAt = Date.now()
   let metrics
@@ -485,8 +506,12 @@ export function createDesktopScenario({
   let releaseAppend
   let releaseResponse
   let releaseStart
+  let releaseToolCompletion
+  let releaseToolFinalCompletion
   let resolveAppendWritten
   let resolveRequest
+  let resolveToolFinalTextStarted
+  let resolveToolFollowUp
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
@@ -502,6 +527,18 @@ export function createDesktopScenario({
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
+  })
+  const toolCompletionRelease = new Promise(resolve => {
+    releaseToolCompletion = resolve
+  })
+  const toolFollowUpReceived = new Promise(resolve => {
+    resolveToolFollowUp = resolve
+  })
+  const toolFinalTextStarted = new Promise(resolve => {
+    resolveToolFinalTextStarted = resolve
+  })
+  const toolFinalCompletionRelease = new Promise(resolve => {
+    releaseToolFinalCompletion = resolve
   })
 
   const verifyStoppedTurnOrder = async control => {
@@ -603,15 +640,22 @@ export function createDesktopScenario({
         return true
       }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        toolRegressionStage = 'awaiting-completion-release'
+        resolveToolFollowUp()
+        await toolCompletionRelease
+        const stream = streamingEvents(responseId, TOOL_COMPLETION)
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse(stream.start))
+        await writeSseEvents(response, textDeltaEvents(stream.itemId, TOOL_COMPLETION))
+        resolveToolFinalTextStarted()
+        await toolFinalCompletionRelease
         toolRegressionStage = 'complete'
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(TOOL_COMPLETION),
-            responseCompleted(responseId),
-          ])
-        )
+        response.end(sse(stream.finish))
         return true
       }
 
@@ -720,10 +764,47 @@ export function createDesktopScenario({
       }
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      try {
+        await Promise.race([
+          toolFollowUpReceived,
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('The tool-output follow-up request was not received')),
+              uiTimeoutMs
+            )
+          ),
+        ])
+      } catch (error) {
+        releaseToolCompletion()
+        releaseToolFinalCompletion()
+        throw error
+      }
+      await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
+        text: `正在思考 · ${REASONING_PREVIEW}`,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'streaming-text-00-live-reasoning-summary.png')
+      releaseToolCompletion()
+      await toolFinalTextStarted
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TOOL_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const liveFinalTextSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        liveFinalTextSnapshot.text.includes(REASONING_PREVIEW),
+        false,
+        'The stale reasoning summary remained visible after assistant text started streaming'
+      )
+      await capture(control, 'streaming-text-01-reasoning-hidden-during-text.png')
+      releaseToolFinalCompletion()
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       const toolRegressionSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -736,7 +817,7 @@ export function createDesktopScenario({
         false,
         'The collapsed reasoning disclosure exposed its full summary'
       )
-      await capture(control, 'streaming-text-00-processing-collapsed.png')
+      await capture(control, 'streaming-text-02-processing-collapsed.png')
       await control.command('click', '[data-testid="final-processing-toggle"]')
       const expandedProcessingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -751,7 +832,7 @@ export function createDesktopScenario({
         false,
         'The completed response retained its reasoning summary'
       )
-      await capture(control, 'streaming-text-01-reasoning-removed.png')
+      await capture(control, 'streaming-text-03-reasoning-removed.png')
       const shortConversationScroller = await waitForBottom(
         control,
         'The short control conversation',
@@ -762,7 +843,7 @@ export function createDesktopScenario({
         shortConversationScroller,
         'The composer in the short control conversation'
       )
-      await capture(control, 'streaming-text-06-short-control-composer-docked.png')
+      await capture(control, 'streaming-text-04-short-control-composer-docked.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -786,7 +867,7 @@ export function createDesktopScenario({
         0,
         `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
       )
-      await capture(control, 'streaming-text-03-running-tool.png')
+      await capture(control, 'streaming-text-05-running-tool.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
@@ -803,12 +884,30 @@ export function createDesktopScenario({
         0,
         `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
       )
-      await capture(control, 'streaming-text-04-running-tool-restored.png')
+      await capture(control, 'streaming-text-06-running-tool-restored.png')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TIMER_COMPLETION,
         timeoutMs: 25_000,
       })
-      await capture(control, 'streaming-text-05-tool-completed.png')
+      const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
+      await capture(control, 'streaming-text-07-tool-completed.png')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TIMER_COMPLETION,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      const completedDurationAfterSwitch = await completedToolDuration(control, uiTimeoutMs)
+      assert.equal(
+        completedDurationAfterSwitch,
+        completedDurationBeforeSwitch,
+        `The completed tool duration changed from ${completedDurationBeforeSwitch}s to ${completedDurationAfterSwitch}s after switching conversations`
+      )
+      await capture(control, 'streaming-text-08-tool-duration-restored.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

@@ -1,4 +1,5 @@
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
+import { getLatestThinkingContent, resolveStreamingThinkingContent } from '@wegent/chat-core'
 import type {
   ProcessingBlock,
   RuntimeConversationItem,
@@ -84,19 +85,26 @@ export function reduceRuntimeConversationTurns(
             })
           }
         }
-        return { ...turn, items, status: 'streaming' }
+        return {
+          ...turn,
+          items,
+          status: 'streaming',
+          streamingThinkingContent: resolveRuntimeStreamingThinkingContent(turn, action, items),
+        }
       })
     case 'assistant_cached':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         items: upsertBlocks(turn.items, action.blocks),
         status: 'streaming',
+        streamingThinkingContent: undefined,
       }))
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         items: upsertBlocks(turn.items, action.blocks),
         status: 'done',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         fileChanges: action.fileChanges ?? turn.fileChanges,
         error: undefined,
@@ -106,6 +114,7 @@ export function reduceRuntimeConversationTurns(
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'cancelled',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         stoppedNotice: true,
       }))
@@ -113,6 +122,7 @@ export function reduceRuntimeConversationTurns(
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
         status: 'failed',
+        streamingThinkingContent: undefined,
         completedAt: new Date().toISOString(),
         error: action.error,
         errorType: action.errorType,
@@ -123,22 +133,44 @@ export function reduceRuntimeConversationTurns(
         fileChanges: action.fileChanges,
       }))
     case 'block_created':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: upsertBlocks(turn.items, [action.block]),
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        const items = upsertBlocks(turn.items, [action.block])
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            action.block.type === 'thinking' || action.block.type === 'tool'
+              ? getLatestThinkingContent(processingBlocks(items))
+              : action.block.type === 'text' || action.block.type === 'plan'
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
     case 'block_updated':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: turn.items.map(item =>
+      return updateTurn(turns, action.subtaskId, turn => {
+        const previousBlock = turn.items.find(
+          item => item.type === 'block' && item.id === action.blockId
+        )
+        const items = turn.items.map(item =>
           item.type === 'block' && item.id === action.blockId
             ? {
                 ...item,
                 block: mergeProcessingBlockUpdate(item.block, action.updates),
               }
             : item
-        ),
-      }))
+        )
+        return {
+          ...turn,
+          items,
+          streamingThinkingContent:
+            previousBlock?.type === 'block' && previousBlock.block.type === 'thinking'
+              ? getLatestThinkingContent(processingBlocks(items))
+              : previousBlock?.type === 'block' &&
+                  (previousBlock.block.type === 'text' || previousBlock.block.type === 'plan')
+                ? undefined
+                : turn.streamingThinkingContent,
+        }
+      })
   }
 }
 
@@ -205,6 +237,9 @@ function mergeRuntimeConversationTurn(
 ): RuntimeConversationTurn {
   const items = mergeRuntimeConversationItems(local.items, snapshot.items)
   const preserveLocalFailure = local.status === 'failed' && Boolean(local.error) && !snapshot.error
+  const preserveStreamingThinking =
+    snapshot.status === 'streaming' &&
+    assistantTextContent(local.items) === assistantTextContent(snapshot.items)
   return {
     ...local,
     ...snapshot,
@@ -215,6 +250,9 @@ function mergeRuntimeConversationTurn(
     completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
     error: preserveLocalFailure ? local.error : snapshot.error,
     errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
+    streamingThinkingContent: preserveStreamingThinking
+      ? getLatestThinkingContent(processingBlocks(items))
+      : snapshot.streamingThinkingContent,
   }
 }
 
@@ -271,12 +309,16 @@ function mergeRuntimeConversationItems(
   localItems: RuntimeConversationItem[],
   snapshotItems: RuntimeConversationItem[]
 ): RuntimeConversationItem[] {
-  if (localItems.length <= snapshotItems.length) return snapshotItems
+  const localById = new Map(localItems.map(item => [item.id, item]))
+  const mergedSnapshotItems = snapshotItems.map(item =>
+    mergeRuntimeConversationItem(localById.get(item.id), item)
+  )
+  if (localItems.length <= snapshotItems.length) return mergedSnapshotItems
 
-  const snapshotById = new Map(snapshotItems.map(item => [item.id, item]))
+  const snapshotById = new Map(mergedSnapshotItems.map(item => [item.id, item]))
   const mergedLocalItems = localItems.map(item => snapshotById.get(item.id) ?? item)
-  for (let index = snapshotItems.length - 1; index >= 0; index -= 1) {
-    const snapshotItem = snapshotItems[index]
+  for (let index = mergedSnapshotItems.length - 1; index >= 0; index -= 1) {
+    const snapshotItem = mergedSnapshotItems[index]
     if (snapshotItem?.type !== 'assistant_text') continue
     const localMatch = mergedLocalItems.find(
       item =>
@@ -289,6 +331,23 @@ function mergeRuntimeConversationItems(
     )
   }
   return mergedLocalItems
+}
+
+function mergeRuntimeConversationItem(
+  local: RuntimeConversationItem | undefined,
+  snapshot: RuntimeConversationItem
+): RuntimeConversationItem {
+  if (local?.type !== 'block' || snapshot.type !== 'block') return snapshot
+  const localComplete = local.block.status === 'done' || local.block.status === 'error'
+  const snapshotComplete = snapshot.block.status === 'done' || snapshot.block.status === 'error'
+  if (!localComplete || !snapshotComplete || local.block.completedAt === undefined) {
+    return snapshot
+  }
+
+  return {
+    ...snapshot,
+    block: preserveCompletedProcessingBlockTiming(local.block, snapshot.block),
+  }
 }
 
 function seedRuntimeConversationTurns(
@@ -494,7 +553,10 @@ function upsertBlocks(
     const canonicalItem: RuntimeConversationItem = {
       id: block.id,
       type: 'block',
-      block,
+      block:
+        index >= 0 && next[index]?.type === 'block'
+          ? preserveCompletedProcessingBlockTiming(next[index].block, block)
+          : block,
     }
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
   }
@@ -511,7 +573,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       return
     }
     const textItems = assistantItems.filter(item => item.type === 'assistant_text')
-    const blocks = assistantItems.flatMap(item => (item.type === 'block' ? [item.block] : []))
+    const blocks = processingBlocks(assistantItems)
     const firstItem = assistantItems[0]
     const createdAt =
       textItems[0]?.createdAt ??
@@ -532,6 +594,7 @@ function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): Workbenc
       errorType: isLast ? turn.errorType : undefined,
       completedAt: isLast ? turn.completedAt : undefined,
       stoppedNotice: isLast ? turn.stoppedNotice : undefined,
+      streamingThinkingContent: isLast ? turn.streamingThinkingContent : undefined,
       references: isLast ? turn.references : undefined,
       memoryCitations: isLast ? turn.memoryCitations : undefined,
       runtimeGuidanceSplitBefore: splitBefore || undefined,
@@ -581,15 +644,63 @@ function turnStatus(turn: RuntimeConversationTurn): WorkbenchMessage['status'] {
   return turn.status
 }
 
+function resolveRuntimeStreamingThinkingContent(
+  turn: RuntimeConversationTurn,
+  action: Extract<RuntimePaneMessageAction, { type: 'assistant_chunk' }>,
+  items: RuntimeConversationItem[]
+): string | undefined {
+  return resolveStreamingThinkingContent({
+    previousContent: turn.streamingThinkingContent,
+    reasoningChunk: action.reasoningChunk,
+    content: action.content,
+    incomingBlocks: action.blocks,
+    blocks: processingBlocks(items),
+  })
+}
+
+function processingBlocks(items: RuntimeConversationItem[]): ProcessingBlock[] {
+  return items.flatMap(item => (item.type === 'block' ? [item.block] : []))
+}
+
+function assistantTextContent(items: RuntimeConversationItem[]): string {
+  return items.flatMap(item => (item.type === 'assistant_text' ? [item.content] : [])).join('\n\n')
+}
+
 function mergeProcessingBlockUpdate(
   block: ProcessingBlock,
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
 ): ProcessingBlock {
-  const merged = { ...block, ...updates } as ProcessingBlock
+  let merged = { ...block, ...updates } as ProcessingBlock
   if (merged.type === 'tool' && block.type === 'tool') {
     merged.toolInput = updates.toolInput ?? block.toolInput
   }
+  const wasActive = block.status !== 'done' && block.status !== 'error'
+  const isComplete = merged.status === 'done' || merged.status === 'error'
+  if (wasActive && isComplete && merged.completedAt === undefined) {
+    merged = { ...merged, completedAt: Date.now() } as ProcessingBlock
+  }
   return merged
+}
+
+function preserveCompletedProcessingBlockTiming(
+  previous: ProcessingBlock,
+  next: ProcessingBlock
+): ProcessingBlock {
+  const previousComplete = previous.status === 'done' || previous.status === 'error'
+  const nextComplete = next.status === 'done' || next.status === 'error'
+  if (
+    !previousComplete ||
+    !nextComplete ||
+    previous.completedAt === undefined ||
+    next.completedAt !== undefined
+  ) {
+    return next
+  }
+  return {
+    ...next,
+    createdAt: previous.createdAt,
+    completedAt: previous.completedAt,
+  } as ProcessingBlock
 }
 
 function replaceAt<T>(items: T[], index: number, item: T): T[] {

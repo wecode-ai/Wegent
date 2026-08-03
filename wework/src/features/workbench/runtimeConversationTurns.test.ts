@@ -755,6 +755,92 @@ describe('runtimeConversationTurns', () => {
     expect(merged[0].status).toBe('done')
   })
 
+  test('preserves completed tool timing when a conversation snapshot is restored', () => {
+    const localBlock: ProcessingBlock = {
+      id: 'tool-1',
+      subtaskId: 'turn-1',
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: 'pwd' },
+      status: 'done',
+      createdAt: 1_770_000_000_000,
+      completedAt: 1_770_000_004_250,
+    }
+    const snapshotBlock: ProcessingBlock = {
+      ...localBlock,
+      createdAt: 1_770_000_005_000,
+      completedAt: undefined,
+    }
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: localBlock.id, type: 'block', block: localBlock }],
+        status: 'done',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [{ id: snapshotBlock.id, type: 'block', block: snapshotBlock }],
+        status: 'done',
+      },
+    ]
+
+    const mergedBlock = mergeRuntimeConversationTurns(local, snapshot)[0].items[0]
+
+    expect(mergedBlock).toEqual({
+      id: localBlock.id,
+      type: 'block',
+      block: {
+        ...snapshotBlock,
+        createdAt: localBlock.createdAt,
+        completedAt: localBlock.completedAt,
+      },
+    })
+  })
+
+  test('records tool completion time in runtime conversation state', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-03T13:00:04.250Z'))
+      const createdAt = new Date('2026-08-03T13:00:00.000Z').getTime()
+      let turns = reduceRuntimeConversationTurns(
+        [{ id: 'turn-1', items: [], status: 'streaming' }],
+        {
+          type: 'block_created',
+          subtaskId: 'turn-1',
+          block: {
+            id: 'tool-1',
+            subtaskId: 'turn-1',
+            type: 'tool',
+            toolName: 'bash',
+            toolInput: { command: 'pwd' },
+            status: 'streaming',
+            createdAt,
+          },
+        }
+      )
+
+      turns = reduceRuntimeConversationTurns(turns, {
+        type: 'block_updated',
+        subtaskId: 'turn-1',
+        blockId: 'tool-1',
+        updates: { status: 'done' },
+      })
+
+      expect(turns[0].items[0]).toMatchObject({
+        type: 'block',
+        block: {
+          createdAt,
+          completedAt: new Date('2026-08-03T13:00:04.250Z').getTime(),
+          status: 'done',
+        },
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('keeps a live Codex turn failure when the provider snapshot omits the failure', () => {
     const local = reduceRuntimeConversationTurns(
       [
@@ -878,6 +964,149 @@ describe('runtimeConversationTurns', () => {
         }),
       }),
     ])
+    expect(turns[0].streamingThinkingContent).toBe('Reading files and checking tests')
+    expect(projectRuntimeConversationTurns(turns)[0].streamingThinkingContent).toBe(
+      'Reading files and checking tests'
+    )
+  })
+
+  test('clears the active reasoning summary when final text starts streaming', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'Checking the implementation',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'The fix is ready.',
+    })
+
+    expect(turns[0].streamingThinkingContent).toBeUndefined()
+    expect(projectRuntimeConversationTurns(turns)[0].streamingThinkingContent).toBeUndefined()
+  })
+
+  test('clears stale reasoning when cached assistant content is applied', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'streaming',
+          streamingThinkingContent: 'Old reasoning',
+        },
+      ],
+      {
+        type: 'assistant_cached',
+        subtaskId: 'turn-1',
+        content: 'Cached answer',
+        blocks: [],
+      }
+    )
+
+    expect(turns[0].streamingThinkingContent).toBeUndefined()
+  })
+
+  test('keeps the active reasoning summary across a tool continuation', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'Checking the implementation',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'I will inspect the files.',
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      blocks: [
+        {
+          id: 'tool-1',
+          subtaskId: 'turn-1',
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'pwd' },
+          status: 'pending',
+          createdAt: 1770000000000,
+        },
+      ],
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_started',
+      subtaskId: 'turn-1',
+    })
+
+    expect(turns[0].streamingThinkingContent).toBe('Checking the implementation')
+  })
+
+  test('recomputes the reasoning summary from merged streaming items', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'thinking-1',
+            type: 'block',
+            block: {
+              id: 'thinking-1',
+              subtaskId: 'turn-1',
+              type: 'thinking',
+              content: 'Old reasoning',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+          {
+            id: 'tool-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              subtaskId: 'turn-1',
+              type: 'tool',
+              toolName: 'bash',
+              toolInput: { command: 'pwd' },
+              status: 'streaming',
+              createdAt: 2,
+            },
+          },
+        ],
+        status: 'streaming',
+        streamingThinkingContent: 'Old reasoning',
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [
+          {
+            id: 'thinking-1',
+            type: 'block',
+            block: {
+              id: 'thinking-1',
+              subtaskId: 'turn-1',
+              type: 'thinking',
+              content: 'Updated reasoning',
+              status: 'streaming',
+              createdAt: 1,
+            },
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(local, snapshot)[0].streamingThinkingContent).toBe(
+      'Updated reasoning'
+    )
   })
 
   test('uses UTF-16 code-unit offsets when replacing streamed text', () => {
