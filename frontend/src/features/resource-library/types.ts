@@ -22,7 +22,7 @@ export type ResourceLibraryTypeFilter = 'all' | ManagedResourceType
 
 export type MarketplaceResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
 
-export type ManagedResourceSourceFilter = 'all' | 'personal' | 'group' | 'system'
+export type ManagedResourceSourceFilter = 'all' | 'mine' | 'personal' | 'group' | 'system'
 
 export type ResourceLibraryListingStatus = 'published' | 'archived'
 
