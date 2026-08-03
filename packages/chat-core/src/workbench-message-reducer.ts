@@ -294,10 +294,13 @@ export function reduceWorkbenchMessages<
             ...message,
             streamTextOffset: contentMerge.streamTextOffset,
             blocks: getChunkBlocks(message, action),
-            streamingThinkingContent: getStreamingThinkingContent(
-              message,
-              action
-            )
+            streamingThinkingContent: resolveStreamingThinkingContent({
+              previousContent: message.streamingThinkingContent,
+              reasoningChunk: action.reasoningChunk,
+              content: action.content,
+              incomingBlocks: action.blocks,
+              blocks: getChunkBlocks(message, action)
+            })
           })
         ]
       }
@@ -318,11 +321,13 @@ export function reduceWorkbenchMessages<
                   ),
                   status: 'streaming' as const,
                   blocks,
-                  streamingThinkingContent: getStreamingThinkingContent(
-                    message,
-                    action,
+                  streamingThinkingContent: resolveStreamingThinkingContent({
+                    previousContent: message.streamingThinkingContent,
+                    reasoningChunk: action.reasoningChunk,
+                    content: action.content,
+                    incomingBlocks: action.blocks,
                     blocks
-                  )
+                  })
                 })
               })()
           : message
@@ -497,7 +502,7 @@ export function reduceWorkbenchMessages<
           blocks,
           streamingThinkingContent:
             previousBlock?.type === 'thinking'
-              ? latestThinkingContent(blocks)
+              ? getLatestThinkingContent(blocks)
               : previousBlock?.type === 'text' || previousBlock?.type === 'plan'
                 ? undefined
                 : message.streamingThinkingContent
@@ -962,7 +967,7 @@ function createBlockCreatedMessage<TAttachment, TFileChanges>(
     blocks,
     streamingThinkingContent:
       action.block.type === 'thinking' || action.block.type === 'tool'
-        ? latestThinkingContent(blocks)
+        ? getLatestThinkingContent(blocks)
         : action.block.type === 'text' || action.block.type === 'plan'
           ? undefined
           : message.streamingThinkingContent
@@ -1017,23 +1022,28 @@ function getChunkBlocks<TAttachment, TFileChanges>(
   return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
 }
 
-function getStreamingThinkingContent<TAttachment, TFileChanges>(
-  message: WorkbenchMessage<TAttachment, TFileChanges>,
-  action: Extract<
-    WorkbenchMessageAction<TAttachment, TFileChanges>,
-    { type: 'assistant_chunk' }
-  >,
-  blocks = getChunkBlocks(message, action)
-): string | undefined {
-  if (action.reasoningChunk) return latestThinkingContent(blocks)
-  if (action.content) return undefined
-  if (action.blocks?.some(block => block.type === 'tool')) {
-    return latestThinkingContent(blocks)
+export function resolveStreamingThinkingContent<TFileChanges>({
+  previousContent,
+  reasoningChunk,
+  content,
+  incomingBlocks,
+  blocks
+}: {
+  previousContent?: string
+  reasoningChunk?: string
+  content?: string
+  incomingBlocks?: WorkbenchProcessingBlock<TFileChanges>[]
+  blocks?: WorkbenchProcessingBlock<TFileChanges>[]
+}): string | undefined {
+  if (reasoningChunk) return getLatestThinkingContent(blocks)
+  if (content) return undefined
+  if (incomingBlocks?.some(block => block.type === 'tool')) {
+    return getLatestThinkingContent(blocks)
   }
-  return message.streamingThinkingContent
+  return previousContent
 }
 
-function latestThinkingContent<TFileChanges>(
+export function getLatestThinkingContent<TFileChanges>(
   blocks: WorkbenchProcessingBlock<TFileChanges>[] | undefined
 ): string | undefined {
   if (!blocks?.length) return undefined

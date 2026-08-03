@@ -341,6 +341,26 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   throw new Error(`The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`)
 }
 
+async function completedToolDuration(control, timeoutMs) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+  if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
+    await control.command('click', finalToggle)
+  }
+  const summaryToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-toggle"]`
+  await control.command('waitFor', summaryToggle, { timeoutMs })
+  if (
+    (await control.command('getAttribute', summaryToggle, { value: 'aria-expanded' })) !== 'true'
+  ) {
+    await control.command('click', summaryToggle)
+  }
+  await control.command('waitFor', selector, { timeoutMs })
+  const text = await control.command('getText', selector)
+  const duration = toolDurationSeconds(text)
+  assert.ok(duration > 0, `The completed tool duration was missing: ${text}`)
+  return duration
+}
+
 async function waitForBottom(control, description, timeoutMs) {
   const startedAt = Date.now()
   let metrics
@@ -825,7 +845,25 @@ export function createDesktopScenario({
         text: TIMER_COMPLETION,
         timeoutMs: 25_000,
       })
+      const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
       await capture(control, 'streaming-text-05-tool-completed.png')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TIMER_COMPLETION,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      const completedDurationAfterSwitch = await completedToolDuration(control, uiTimeoutMs)
+      assert.equal(
+        completedDurationAfterSwitch,
+        completedDurationBeforeSwitch,
+        `The completed tool duration changed from ${completedDurationBeforeSwitch}s to ${completedDurationAfterSwitch}s after switching conversations`
+      )
+      await capture(control, 'streaming-text-06-tool-duration-restored.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
