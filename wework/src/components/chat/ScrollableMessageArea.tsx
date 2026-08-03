@@ -651,6 +651,11 @@ function ScrollableMessagePaneContent({
       previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
     const waitingForAssistantStarted =
       !conversationChanged && !previousWaitingForAssistantRef.current && isWaitingForAssistant
+    const assistantResponseStarted =
+      !conversationChanged &&
+      lastMessageChanged &&
+      lastMessage?.role === 'assistant' &&
+      !userScrollPausedAutoFollowRef.current
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -664,6 +669,7 @@ function ScrollableMessagePaneContent({
         guidanceMessageApplied ||
         waitingForAssistantStarted ||
         latestUserMessageChanged ||
+        assistantResponseStarted ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey

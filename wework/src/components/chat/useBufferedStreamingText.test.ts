@@ -5,6 +5,7 @@ import { useBufferedStreamingText } from './useBufferedStreamingText'
 describe('useBufferedStreamingText', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   test('coalesces streaming updates into the next animation frame', () => {
@@ -20,6 +21,25 @@ describe('useBufferedStreamingText', () => {
 
     act(() => vi.advanceTimersToNextFrame())
     expect(result.current).toBe('Hello world again')
+  })
+
+  test('flushes the latest content when an animation frame is unavailable', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Partial response' } }
+    )
+
+    rerender({ content: 'Partial response with the appended text' })
+    expect(result.current).toBe('Partial response')
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Partial response with the appended text')
   })
 
   test('shows the authoritative completed snapshot immediately', () => {
