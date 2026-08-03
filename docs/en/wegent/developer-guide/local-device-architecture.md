@@ -103,7 +103,7 @@ A Codex turn may interleave reasoning, assistant text, and tool calls. The execu
 
 Assistant text enters final content during streaming only when Codex explicitly provides a `final` or `final_answer` phase. Text with a missing or unrecognized phase must first be emitted as process text, preventing third-party models from making Wework alternate between final content and process blocks when text and tool calls are interleaved. The executor retains the latest unresolved text and promotes it to the final result only when the turn succeeds without explicit final text. If explicit final text appears later in the same turn, it always takes precedence.
 
-Reasoning content may remain in the runtime transcript for diagnostics and restoration, but Wework does not display reasoning characters or character counts. While the turn is active, the UI shows only the generic “Thinking” status. The task state machine and visible message or tool content determine when that indicator appears and disappears.
+Reasoning summaries supplied by Codex enter Wework as `thinking` processing blocks. A streaming summary appears as a single “Thinking · summary” row. After completion, the summary is collapsed by default, shows its character count, and can be expanded by the user. The executor must map both reasoning deltas and `item/completed` notifications that carry only the complete summary; otherwise a long reasoning phase degrades to a generic waiting state with no visible progress. Internal reasoning that the provider does not include in its summary is not displayed.
 
 ### Backend Device Chat Task REST Entrypoint
 
