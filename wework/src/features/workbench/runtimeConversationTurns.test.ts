@@ -646,6 +646,90 @@ describe('runtimeConversationTurns', () => {
     ])
   })
 
+  test('keeps an older stopped local turn before a newer snapshot turn', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-stopped',
+        runtimeMessageIndex: 10,
+        items: [
+          {
+            id: 'client-user-stopped',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-stopped', 'Stopped prompt'),
+              createdAt: '2026-07-30T00:00:10.000Z',
+            },
+          },
+        ],
+        status: 'cancelled',
+        stoppedNotice: true,
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-new',
+        runtimeMessageIndex: 12,
+        items: [
+          {
+            id: 'assistant-new',
+            type: 'assistant_text',
+            content: 'New response',
+            createdAt: '2026-07-30T00:00:12.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    const merged = mergeRuntimeConversationTurns(local, snapshot)
+
+    expect(merged.map(turn => turn.id)).toEqual(['turn-stopped', 'turn-new'])
+    expect(projectRuntimeConversationTurns(merged).at(-1)).toMatchObject({
+      content: 'New response',
+      status: 'streaming',
+    })
+  })
+
+  test('uses turn timestamps when only one side has a transcript message index', () => {
+    const local: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-stopped',
+        items: [
+          {
+            id: 'client-user-stopped',
+            type: 'user_message',
+            message: {
+              ...userMessage('client-user-stopped', 'Stopped prompt'),
+              createdAt: '2026-07-30T00:00:10.000Z',
+            },
+          },
+        ],
+        status: 'cancelled',
+        stoppedNotice: true,
+      },
+    ]
+    const snapshot: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-new',
+        runtimeMessageIndex: 12,
+        items: [
+          {
+            id: 'assistant-new',
+            type: 'assistant_text',
+            content: 'New response',
+            createdAt: '2026-07-30T00:00:12.000Z',
+          },
+        ],
+        status: 'streaming',
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurns(local, snapshot).map(turn => turn.id)).toEqual([
+      'turn-stopped',
+      'turn-new',
+    ])
+  })
+
   test('converges a local item in place when the snapshot contains the same item id', () => {
     const localBlock = requestBlock('request-1', 'turn-1')
     const snapshotBlock = { ...localBlock, status: 'done' as const }
