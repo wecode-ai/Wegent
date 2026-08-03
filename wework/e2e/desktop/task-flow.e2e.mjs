@@ -4232,10 +4232,11 @@ async function ensureExperimentalFeaturesEnabled(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+  return initialSnapshot
 }
 
 async function verifyAutomationLifecycle(control, workspacePath) {
-  await ensureExperimentalFeaturesEnabled(control)
+  const initialSnapshot = await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
