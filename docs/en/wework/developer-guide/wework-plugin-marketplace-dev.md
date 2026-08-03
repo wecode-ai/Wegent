@@ -100,7 +100,7 @@ description: Review a merge request and summarize risks
 ### Option A: Create inside Wework
 
 1. Open the desktop **Plugins** page.
-2. Use the create flow to generate a plugin under `wegent-personal`.
+2. Use the create flow to generate a plugin under `wework-personal`.
 3. After install, try it from the detail page or marketplace row; the composer inserts a `plugin://...` mention.
 4. Edit the local directory, refresh the marketplace/management views, and re-test in chat.
 
@@ -347,7 +347,7 @@ Publishing rules:
 ## 8. FAQ
 
 **I changed a repo directory, but the marketplace did not change.**  
-Runtime does not read the repo directory. Dry-run or publish a new version, or edit a local creation under `wegent-personal`.
+Runtime does not read the repo directory. Dry-run or publish a new version, or edit a local creation under `wework-personal`.
 
 **What is the difference between Skill and Plugin?**  
 Skills are lighter for users; the install unit remains a Plugin. Single-skill plugins use `listing_type=skill`.

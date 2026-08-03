@@ -10,7 +10,7 @@ For plugin development, open-source migration, and local integration, start with
 
 Marketplace V2 uses a Wework cloud control plane with a local Codex runtime. MySQL stores catalog metadata, immutable releases, selected upstreams, submissions, account install intent, and per-device materialization. Private S3-compatible storage holds packages. Codex App Server remains the source of truth for the current device.
 
-The regular user sees only the Wework cloud catalog. Codex plugins are mirrored only after an administrator selects them. Local creations live in the `wegent-personal` marketplace and are uploaded only after an explicit publish or owner-initiated restricted share. A Skill is represented as a Codex plugin containing exactly one Skill.
+The regular user sees only the Wework cloud catalog. Codex plugins are mirrored only after an administrator selects them. Local creations live in the `wework-personal` marketplace and are uploaded only after an explicit publish or owner-initiated restricted share. A Skill is represented as a Codex plugin containing exactly one Skill.
 
 ## Storage model
 
@@ -21,7 +21,7 @@ The regular user sees only the Wework cloud catalog. Codex plugins are mirrored 
 | Account desired state                     | Existing `kinds/InstalledPlugin`                                  |
 | Device actual state                       | `plugin_device_installations`                                     |
 | Local creations and registry              | Wework Codex Home / Codex App Server                              |
-| Personal-copy provenance                  | Local `wegent-personal/.wegent/plugin-copy-sources.json` registry |
+| Personal-copy provenance                  | Local `wework-personal/.wegent/plugin-copy-sources.json` registry |
 | Tokens and MCP secrets                    | Local secure storage                                              |
 
 New tables are `plugins`, `plugin_releases`, `plugin_upstreams`, `plugin_submissions`, and `plugin_device_installations`. `skill_binaries` is retained only for legacy Skills and migration history. Published Release package fields and manifests are immutable.
@@ -38,7 +38,7 @@ Publishing a local creation does not require a manually selected ZIP. Tauri loca
 
 The first restricted share uploads the local package with `purpose=restricted_share` through the same object-storage and security-scanning pipeline. A successful scan creates a `visibility=personal` cloud Plugin and Release without public-market review. User and Namespace grants atomically replace existing `resource_members`; selecting owner-only access clears all grants and disables copying.
 
-Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Tauri verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wegent-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
+Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Tauri verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wework-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
 
 The Executor owns managed package caching, integrity checks, sync events, and device-result reporting. Codex App Server remains the installation and uninstallation authority. Device results are exposed through `InstalledPlugin.status.devices`; an API request must never report the current device as installed when App Server rejected the operation. Server-side scanning rejects path traversal, duplicate paths, symlinks, encrypted members, sensitive files, oversized expansion, checksum mismatches, and missing manifests.
 

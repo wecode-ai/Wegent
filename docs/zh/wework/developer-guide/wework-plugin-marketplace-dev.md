@@ -100,7 +100,7 @@ description: Review a merge request and summarize risks
 ### 方式 A：在 Wework 里创建
 
 1. 打开桌面 **插件** 页。
-2. 使用创建入口，按 Codex plugin creator 流程生成插件到 `wegent-personal`。
+2. 使用创建入口，按 Codex plugin creator 流程生成插件到 `wework-personal`。
 3. 安装后，在插件详情或市场行点击试用；对话输入框会插入 `plugin://...` mention。
 4. 修改本地目录后刷新市场/管理页，再在对话中验证。
 
@@ -335,7 +335,7 @@ Wework 安装该插件时会先打开 GitHub OAuth 授权窗口；成功后，Ba
 ## 8. 常见问题
 
 **为什么我改了仓库目录，市场里没变化？**  
-因为运行时不读仓库目录。需要 dry-run / 发布新版本，或在本机 `wegent-personal` 中直接改本地创建物。
+因为运行时不读仓库目录。需要 dry-run / 发布新版本，或在本机 `wework-personal` 中直接改本地创建物。
 
 **Skill 和 Plugin 有什么区别？**  
 对用户来说 Skill 更轻；对系统来说安装单位仍是 Plugin。单 Skill 插件用 `listing_type=skill` 展示。

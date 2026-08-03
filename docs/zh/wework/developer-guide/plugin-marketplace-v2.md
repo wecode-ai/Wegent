@@ -15,7 +15,7 @@ sidebar_position: 20
 - 普通用户只能浏览 Wework 云端市场，不能直接添加任意 GitHub 或 Codex Marketplace。
 - Codex 官方插件按管理员白名单选择性镜像，不做全量同步。
 - 市场展示最新已发布版本，历史 Release 保留；已安装插件默认手动更新。
-- 本地创建内容位于 `wegent-personal`，不自动上传；只有“发布到市场”或所有者主动定向分享时才会上传并进入相同安全扫描。
+- 本地创建内容位于 `wework-personal`，不自动上传；只有“发布到市场”或所有者主动定向分享时才会上传并进入相同安全扫描。
 - Skill 是展示类型，安装单位始终是 Codex Plugin；单 Skill 插件包含一个 `SKILL.md`。
 - `kinds/InstalledPlugin` 是账号安装意图，`plugin_device_installations` 是设备执行结果，本机 Codex App Server 是运行事实源。
 
@@ -28,9 +28,9 @@ sidebar_position: 20
 | 账号安装意图                | `kinds/InstalledPlugin`                            | 期望状态                            |
 | 人员/部门可见范围           | `resource_members` + `ResourceType.PLUGIN`         | 授权状态                            |
 | 设备安装结果                | `plugin_device_installations`                      | 每设备物化状态                      |
-| 本地创建插件                | Wework Codex Home / `wegent-personal`              | 当前设备私有内容                    |
+| 本地创建插件                | Wework Codex Home / `wework-personal`              | 当前设备私有内容                    |
 | 本地安装注册表              | Codex App Server                                   | 当前设备运行事实                    |
-| 个人副本来源映射            | `wegent-personal/.wegent/plugin-copy-sources.json` | 仅本机保存的来源与云端 Release 映射 |
+| 个人副本来源映射            | `wework-personal/.wegent/plugin-copy-sources.json` | 仅本机保存的来源与云端 Release 映射 |
 | Token、MCP 密钥             | 系统安全存储                                       | 永不进入插件包和日志                |
 
 `skill_binaries` 不再接收 V2 Release。迁移工具把旧 Marketplace ZIP 搬到对象存储，并把旧安装记录改成 `pluginId/releaseId` 引用。
@@ -152,7 +152,7 @@ Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的
 
 ```mermaid
 flowchart LR
-  A[创建插件或 Skill] --> B[wegent-personal]
+  A[创建插件或 Skill] --> B[wework-personal]
   B --> C[Codex App Server 本地安装]
   C --> D[我创建的]
   D -->|显式发布| E[本地校验与 SHA256]
@@ -171,7 +171,7 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 所有者首次分享本地插件时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
 
-接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Tauri 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wegent-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
+接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Tauri 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
 
 ### 精选 Codex 镜像
 
