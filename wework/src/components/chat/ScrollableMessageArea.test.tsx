@@ -338,6 +338,7 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = 1000
       fireEvent.scroll(scroller)
       scroller.scrollTop = 300
+      fireEvent.wheel(scroller)
       fireEvent.scroll(scroller)
       ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -388,6 +389,7 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = Number(top)
     })
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(
       <div ref={externalScrollRef}>
@@ -540,6 +542,7 @@ describe('ScrollableMessageArea', () => {
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
     scroller.scrollTop = 350
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     flushScheduledTimers()
 
@@ -2461,6 +2464,7 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = Number(top)
     })
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(<ScrollableMessageArea conversationKey="transient-layout-b" messages={[messageB]} />)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
@@ -2663,6 +2667,7 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = Number(top)
     })
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea conversationKey="conversation-loading-b" messages={[messageB]} />
@@ -2743,6 +2748,7 @@ describe('ScrollableMessageArea', () => {
     mockRect(screen.getByText('会话 A 当前阅读内容').closest('[data-message-id]')!, 80, 220)
     mockRect(screen.getByText('会话 A 后续内容').closest('[data-message-id]')!, 240, 360)
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea conversationKey="conversation-anchor-b" messages={[messageB]} />
@@ -2827,6 +2833,7 @@ describe('ScrollableMessageArea', () => {
     mockRect(screen.getByText('Node').closest('[data-scroll-anchor]')!, 92, 124)
     mockRect(screen.getByText('Pod').closest('[data-scroll-anchor]')!, 140, 172)
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea
@@ -2901,6 +2908,7 @@ describe('ScrollableMessageArea', () => {
       scroller.scrollTop = Number(top)
     })
 
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     rerender(
       <ScrollableMessageArea conversationKey="conversation-growth-b" messages={[messageB]} />
@@ -3224,6 +3232,7 @@ describe('ScrollableMessageArea', () => {
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     scroller.scrollTop = 360
+    fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     Object.defineProperty(scroller, 'scrollHeight', {
       value: 800,

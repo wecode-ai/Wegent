@@ -119,6 +119,7 @@ interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onVirtualLayoutChange?: () => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -210,6 +211,7 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onVirtualLayoutChange,
   renderGapAfterMessage,
 }: MessageListProps) {
   const { t } = useTranslation('common')
@@ -318,6 +320,12 @@ export const MessageList = memo(function MessageList({
     },
     initialMeasurementsCache,
   })
+  const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
+
+  useLayoutEffect(() => {
+    if (!virtualMessages) return
+    onVirtualLayoutChange?.()
+  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
 
   useLayoutEffect(() => {
     if (
@@ -497,8 +505,7 @@ export const MessageList = memo(function MessageList({
         virtualMessages
           ? {
               height:
-                messageVirtualizer.getTotalSize() +
-                (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
+                virtualTotalSize + (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
             }
           : undefined
       }
@@ -750,6 +757,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
       ? 'onAskSelectionInSidebar'
       : null,
+    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
