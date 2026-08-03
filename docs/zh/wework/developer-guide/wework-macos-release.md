@@ -91,15 +91,32 @@ python3 -m http.server 8787 --directory src-tauri/target/release/local-update-se
 
 ## GitHub Release 自动更新
 
-仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS DMG、Tauri updater archive、签名文件和 `latest.json`。客户端内置的 updater endpoint 指向 GitHub Release latest asset：
+仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS DMG、Windows installer、Tauri updater archive、签名文件和 updater manifest。客户端内置的 updater endpoint 指向固定的 `wework-updater` Release，并通过 Tauri 的 `target` 和 `arch` 占位符选择更新渠道与平台：
 
 ```text
-https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+https://github.com/<owner>/<repo>/releases/download/wework-updater/{{target}}-{{arch}}.json
 ```
 
 macOS CI job 不调用 `release-mac-app.sh`，但两条发布路径共享 `wework/scripts/generate-release-config.mjs`。该生成器从 `src-tauri/tauri.conf.json` 复制完整的 `bundle.resources`，确保 Codex、hooks、bundled plugins 及隐藏的 marketplace manifests 都进入正式发布包。修改桌面资源清单时应更新基础 Tauri 配置，不要在 workflow 中重新复制资源列表。
 
-workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。正式发布会创建或更新 `wework-v<version>` draft release；两个架构构建完成后，workflow 生成 `latest.json`，上传到同一个 Release，最后把 Release 发布为 GitHub latest。客户端启动后的自动检查或标题栏手动更新都会读取这个 manifest。禁止 tag push 自动触发可以避免 workflow 发布 Release 时创建的 tag 再次启动同版本构建并覆盖已签名产物。
+workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。启动 workflow 时选择发布渠道：
+
+- `stable`：发布正式版。`version` 可以留空并自动增加最新正式版的 patch，也可以填写 `X.Y.Z` 覆盖。
+- `beta`：发布 Beta 版。不要填写版本；workflow 总是根据现有正式版和 Beta tag 自动生成下一个 `X.Y.Z-beta.N`。
+- `publish_release=false`：只生成测试 artifacts，不提交版本文件或发布 Release。
+- `publish_release=true`：同步版本文件、构建签名产物并发布 GitHub Release。
+
+例如最新正式版是 `1.2.3` 时，第一次 Beta 发布得到 `1.2.4-beta.1`，后续依次得到 `1.2.4-beta.2`、`1.2.4-beta.3`。正式发布 `1.2.4` 后，下一个自动 Beta 是 `1.2.5-beta.1`。
+
+正式发布会创建或更新 `wework-v<version>` draft release。构建完成后，workflow 生成该版本自己的 `latest.json` 并上传到同一个 Release，再发布 Release。正式版设置为 GitHub latest；Beta 设置为 prerelease，不改变 GitHub latest。禁止 tag push 自动触发可以避免 workflow 创建 tag 时再次启动同版本构建并覆盖已签名产物。
+
+发布完成后，workflow 更新固定 `wework-updater` Release 中的滚动 manifest：
+
+- `stable-*` 只指向最新正式版。
+- `beta-*` 指向 Beta 和正式版中 SemVer 更高的版本，因此选择 Beta 的用户也会收到更新的正式版。
+- 新版本只有在 SemVer 高于当前渠道版本时才覆盖滚动 manifest，历史发布或较低版本不会让用户降级。
+
+用户可以在 Wework 的“设置 → 关于”中打开“接收 Beta 版本更新”。默认关闭时客户端使用 `stable` target；打开后使用 `beta` target。切换后立即检查更新，并把选择保存在本机。
 
 GitHub Actions 需要配置这些 repository secrets：
 
@@ -119,11 +136,11 @@ workflow 分别上传这些 Release assets：
 - `WeWork_<version>_macos_x64.app.tar.gz.sig`
 - `latest.json`
 
-从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。手动触发 workflow 且未填写版本号时，release tag 会自动基于最新的 `wework-vX.Y.Z` tag 增加 patch 版本。
+从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。正式渠道未填写版本时，会基于最新正式版 `wework-vX.Y.Z` tag 增加 patch；Beta 渠道始终自动生成版本，不读取 `version` 输入。
 
 正式发布时，workflow 会在构建前把 `wework/package.json`、`wework/src-tauri/tauri.conf.json`、`wework/src-tauri/Cargo.toml` 和 `wework/src-tauri/Cargo.lock` 同步到本次 release version，并直接提交回触发 workflow 的 `main` 分支。后续 macOS 构建和 GitHub Release 都会使用这个版本提交，确保关于页版本、Tauri 包版本和源码版本一致。
 
-手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。也可以在 GitHub Actions 中选择已有的 `wework-vX.Y.Z` tag 后手动运行 workflow；此时 tag 已经指向固定提交，workflow 不会改写源码。如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。仅推送 tag 不会启动发布。
+手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。也可以在 GitHub Actions 中选择已有的正式版或 Beta `wework-v<version>` tag 后手动运行 workflow；workflow 会从 tag 自动识别版本和渠道，此时不会改写源码。如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。仅推送 tag 不会启动发布。
 
 ## 无 Apple Developer 账号的 CI DMG
 

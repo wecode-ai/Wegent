@@ -91,15 +91,32 @@ python3 -m http.server 8787 --directory src-tauri/target/release/local-update-se
 
 ## GitHub Release Auto Update
 
-The repository includes `.github/workflows/wework-app.yml` for producing macOS DMGs, Tauri updater archives, signature files, and `latest.json` on GitHub Actions. The updater endpoint embedded in the client points to the GitHub Release latest asset:
+The repository includes `.github/workflows/wework-app.yml` for producing macOS DMGs, Windows installers, Tauri updater archives, signatures, and updater manifests on GitHub Actions. The updater endpoint embedded in the client points to the fixed `wework-updater` Release and uses Tauri `target` and `arch` placeholders to select the update channel and platform:
 
 ```text
-https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+https://github.com/<owner>/<repo>/releases/download/wework-updater/{{target}}-{{arch}}.json
 ```
 
 The macOS CI job does not invoke `release-mac-app.sh`, but both release paths share `wework/scripts/generate-release-config.mjs`. The generator copies the complete `bundle.resources` list from `src-tauri/tauri.conf.json`, ensuring that Codex, hooks, bundled plugins, and hidden marketplace manifests are included in formal release packages. Update the base Tauri config when desktop resources change instead of duplicating the list in the workflow.
 
-The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. A formal run creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used. Preventing tag-push triggers ensures that the tag created while publishing the release cannot start a second build of the same version and overwrite signed artifacts.
+The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. Select a release channel when starting it:
+
+- `stable`: publishes a stable release. Leave `version` empty to increment the latest stable patch, or enter an `X.Y.Z` override.
+- `beta`: publishes a Beta release. Do not enter a version; the workflow always derives the next `X.Y.Z-beta.N` from existing stable and Beta tags.
+- `publish_release=false`: produces test artifacts only and does not commit version files or publish a Release.
+- `publish_release=true`: synchronizes version files, builds signed artifacts, and publishes a GitHub Release.
+
+For example, when the latest stable version is `1.2.3`, the first Beta is `1.2.4-beta.1`, followed by `1.2.4-beta.2` and `1.2.4-beta.3`. After publishing stable `1.2.4`, the next automatic Beta is `1.2.5-beta.1`.
+
+A formal run creates or updates a `wework-v<version>` draft release. After the builds finish, the workflow generates that version's `latest.json`, uploads it to the same Release, and publishes the Release. Stable releases become GitHub latest. Beta releases are marked as prereleases and do not replace GitHub latest. Preventing tag-push triggers ensures that a tag created by the workflow cannot start another build of the same version and overwrite signed artifacts.
+
+After publishing the versioned Release, the workflow updates rolling manifests in the fixed `wework-updater` Release:
+
+- `stable-*` points only to the latest stable release.
+- `beta-*` points to whichever Beta or stable release has the higher SemVer, so Beta users also receive newer stable releases.
+- A release only replaces a rolling manifest when its SemVer is higher; historical or lower releases cannot downgrade users.
+
+Users opt into Beta updates under Wework **Settings → About** by enabling **Receive Beta updates**. The client uses the `stable` target by default and the `beta` target after opt-in. Changing the setting immediately checks for updates and persists locally.
 
 Configure these repository secrets in GitHub Actions:
 
@@ -119,11 +136,11 @@ The workflow uploads these release assets:
 - `WeWork_<version>_macos_x64.app.tar.gz.sig`
 - `latest.json`
 
-When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag auto-increments the patch version from the latest `wework-vX.Y.Z` tag.
+When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. With the stable channel, leaving `version` empty increments the latest stable `wework-vX.Y.Z` tag. The Beta channel always derives its version automatically and ignores the `version` input.
 
 For a formal release, the workflow syncs `wework/package.json`, `wework/src-tauri/tauri.conf.json`, `wework/src-tauri/Cargo.toml`, and `wework/src-tauri/Cargo.lock` to the release version before building, then commits those files directly back to the triggering `main` branch. The macOS build jobs and GitHub Release target use that version commit, keeping the About page version, Tauri bundle version, and source version aligned.
 
-Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. An existing `wework-vX.Y.Z` tag can also be selected explicitly when manually starting the workflow; the tag then points to an immutable commit, so the workflow does not rewrite source files. If the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again. Pushing a tag alone does not start a release.
+Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. An existing stable or Beta `wework-v<version>` tag can also be selected explicitly when manually starting the workflow. The workflow derives the version and channel from the tag, which points to an immutable commit, so it does not rewrite source files. If the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again. Pushing a tag alone does not start a release.
 
 ## CI DMG Without Apple Developer
 

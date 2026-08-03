@@ -3,8 +3,16 @@ name: Wework App
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Release channel. Beta users receive both Beta and stable updates."
+        type: choice
+        options:
+          - stable
+          - beta
+        required: true
+        default: stable
       version:
-        description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
+        description: "Optional stable version override, for example 1.2.3. Beta versions are always generated automatically."
         type: string
         required: false
       publish_release:
@@ -27,6 +35,8 @@ jobs:
       release_tag: ${{ steps.version.outputs.release_tag }}
       release_sha: ${{ steps.version-files.outputs.release_sha }}
       version: ${{ steps.version.outputs.value }}
+      channel: ${{ steps.version.outputs.channel }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
@@ -49,57 +59,9 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
           PUBLISH_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.publish_release == 'true' }}
-        run: |
-          set -euo pipefail
-
-          validate_version() {
-            local version="$1"
-            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "Error: Invalid Wework version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
-              exit 1
-            fi
-          }
-
-          bump_patch() {
-            local version="$1"
-            IFS='.' read -r major minor patch <<< "$version"
-            echo "${major}.${minor}.$((patch + 1))"
-          }
-
-          if [ -n "${INPUT_VERSION:-}" ]; then
-            version="${INPUT_VERSION#v}"
-            validate_version "$version"
-          elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            version="${GITHUB_REF_NAME#wework-v}"
-            validate_version "$version"
-          else
-            latest_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
-            if [ -z "$latest_tag" ]; then
-              version="0.0.1"
-            else
-              latest_version="${latest_tag#wework-v}"
-              validate_version "$latest_version"
-              version="$(bump_patch "$latest_version")"
-            fi
-          fi
-
-          publish_release="${PUBLISH_RELEASE:-false}"
-          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            publish_release="true"
-          fi
-
-          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            release_tag="$GITHUB_REF_NAME"
-          else
-            release_tag="wework-v$version"
-          fi
-
-          {
-            echo "value=$version"
-            echo "release_tag=$release_tag"
-            echo "publish_release=$publish_release"
-          } >> "$GITHUB_OUTPUT"
+        run: node wework/scripts/resolve-release-version.mjs
 
       - name: Commit Wework version files
         id: version-files
@@ -202,9 +164,13 @@ jobs:
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: |
           set -euo pipefail
           release_title="Wework $RELEASE_VERSION"
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            release_title="$release_title Beta"
+          fi
           release_notes="$(mktemp)"
           generated_notes="$(mktemp)"
           previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
@@ -412,7 +378,7 @@ jobs:
           CONFIG_OVERRIDE="$config_override" \
           BASE_CONFIG="$PWD/src-tauri/tauri.conf.json" \
           VERSION="${{ needs.prepare-release.outputs.version }}" \
-          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
+          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json" \
           UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
           SIGNING_IDENTITY="-" \
           ENABLE_INSECURE_TRANSPORT="false" \
@@ -624,7 +590,7 @@ jobs:
             bundle = @{ createUpdaterArtifacts = $true }
             plugins = @{
               updater = @{
-                endpoints = @("https://github.com/$env:GH_REPO/releases/latest/download/latest.json")
+                endpoints = @("https://github.com/$env:GH_REPO/releases/download/wework-updater/{{target}}-{{arch}}.json")
                 pubkey = $env:TAURI_UPDATER_PUBKEY
               }
             }
@@ -771,7 +737,7 @@ jobs:
           {
             echo "### Wework updater manifest"
             echo ""
-            echo "- Endpoint: https://github.com/${GH_REPO}/releases/latest/download/latest.json"
+            echo "- Version release manifest: https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/latest.json"
             echo "- Version: ${RELEASE_VERSION}"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -800,14 +766,112 @@ jobs:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
         run: |
           set -euo pipefail
           release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          make_latest="true"
+          if [ "$RELEASE_CHANNEL" = "beta" ]; then
+            make_latest="false"
+          fi
           gh api \
             --method PATCH \
             "repos/${GH_REPO}/releases/${release_id}" \
             --field draft=false \
-            --field prerelease=false \
-            --raw-field make_latest=true >/dev/null
+            --field prerelease="$PRERELEASE" \
+            --raw-field make_latest="$make_latest" >/dev/null
           release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-          echo "Published Wework release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published Wework ${RELEASE_CHANNEL} release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
+
+  publish-channel-manifests:
+    name: Publish channel manifests
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
+    needs:
+      - prepare-release
+      - publish-release
+
+    steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Publish rolling update manifests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
+            --pattern latest.json \
+            --dir "$work_dir"
+
+          if ! gh release view wework-updater >/dev/null 2>&1; then
+            gh release create wework-updater \
+              --target "$RELEASE_SHA" \
+              --title "Wework updater manifests" \
+              --notes "Rolling manifests for the stable and Beta update channels." \
+              --prerelease
+          fi
+
+          is_newer_than_channel() {
+            local channel="$1"
+            local current_manifest="$work_dir/current-${channel}.json"
+            if ! gh release download wework-updater \
+              --pattern "${channel}-darwin-aarch64.json" \
+              --output "$current_manifest" 2>/dev/null; then
+              return 0
+            fi
+
+            current_version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$current_manifest")"
+            node wework/scripts/update-channel-manifests.mjs \
+              is-newer "$RELEASE_VERSION" "$current_version"
+          }
+
+          publish_channel() {
+            local channel="$1"
+            if ! is_newer_than_channel "$channel"; then
+              echo "Keeping newer ${channel} channel manifest."
+              return
+            fi
+
+            node wework/scripts/update-channel-manifests.mjs \
+              generate "$work_dir/latest.json" "$work_dir" "$channel"
+
+            gh release upload wework-updater \
+              "$work_dir/${channel}-darwin-aarch64.json" \
+              "$work_dir/${channel}-darwin-x86_64.json" \
+              "$work_dir/${channel}-windows-x86_64.json" \
+              --clobber
+          }
+
+          publish_channel "$RELEASE_CHANNEL"
+          if [ "$RELEASE_CHANNEL" = "stable" ]; then
+            publish_channel beta
+          fi
+
+          {
+            echo "### Wework update channels"
+            echo ""
+            echo "- Published release channel: ${RELEASE_CHANNEL}"
+            echo "- Rolling endpoint: https://github.com/${GH_REPO}/releases/download/wework-updater/{{target}}-{{arch}}.json"
+            if [ "$RELEASE_CHANNEL" = "stable" ]; then
+              echo "- Stable releases also advance the Beta channel when they are newer."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

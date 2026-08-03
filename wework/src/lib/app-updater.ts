@@ -1,4 +1,7 @@
 import { isTauriRuntime } from './runtime-environment'
+import { getPlatform } from './platform'
+
+export type WeworkUpdateChannel = 'stable' | 'beta'
 
 export interface WeworkUpdateInfo {
   currentVersion: string
@@ -28,14 +31,24 @@ function errorMessage(error: unknown): string {
   return 'Unknown updater error'
 }
 
-export async function checkForWeworkUpdate(): Promise<WeworkUpdateInfo | null> {
+export function getWeworkUpdateTarget(channel: WeworkUpdateChannel): string {
+  const platform = getPlatform()
+  if (platform === 'linux') {
+    throw new Error('Wework updater is not available on Linux.')
+  }
+  return `${channel}-${platform === 'mac' ? 'darwin' : 'windows'}`
+}
+
+export async function checkForWeworkUpdate(
+  channel: WeworkUpdateChannel
+): Promise<WeworkUpdateInfo | null> {
   if (!isTauriRuntime()) {
-    throw new Error('Wework updater is only available in the macOS app.')
+    throw new Error('Wework updater is only available in the desktop app.')
   }
 
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check()
+    const update = await check({ target: getWeworkUpdateTarget(channel) })
     if (!update) {
       pendingUpdate = null
       return null

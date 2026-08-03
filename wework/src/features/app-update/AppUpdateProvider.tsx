@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   checkForWeworkUpdate,
   installPendingWeworkUpdate,
+  type WeworkUpdateChannel,
   type WeworkUpdateDownloadProgress,
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
   APP_UPDATE_SIMULATE_EVENT,
@@ -22,18 +24,28 @@ const SIMULATED_DOWNLOAD_TOTAL_BYTES = 10_000_000
 const SIMULATED_DOWNLOAD_STEP_BYTES = 1_000_000
 const SIMULATED_DOWNLOAD_INTERVAL_MS = 250
 
-function readLastAutoCheckAt(): number {
-  const raw = window.localStorage.getItem(APP_UPDATE_LAST_AUTO_CHECK_KEY)
+function readUpdateChannel(): WeworkUpdateChannel {
+  return window.localStorage.getItem(APP_UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable'
+}
+
+function lastAutoCheckKey(channel: WeworkUpdateChannel): string {
+  return channel === 'stable'
+    ? APP_UPDATE_LAST_AUTO_CHECK_KEY
+    : `${APP_UPDATE_LAST_AUTO_CHECK_KEY}:${channel}`
+}
+
+function readLastAutoCheckAt(channel: WeworkUpdateChannel): number {
+  const raw = window.localStorage.getItem(lastAutoCheckKey(channel))
   const value = Number(raw)
   return Number.isFinite(value) ? value : 0
 }
 
-function writeLastAutoCheckAt(value: number) {
-  window.localStorage.setItem(APP_UPDATE_LAST_AUTO_CHECK_KEY, String(value))
+function writeLastAutoCheckAt(channel: WeworkUpdateChannel, value: number) {
+  window.localStorage.setItem(lastAutoCheckKey(channel), String(value))
 }
 
-function shouldAutoCheck(now: number): boolean {
-  return now - readLastAutoCheckAt() >= APP_UPDATE_AUTO_CHECK_MIN_AGE_MS
+function shouldAutoCheck(channel: WeworkUpdateChannel, now: number): boolean {
+  return now - readLastAutoCheckAt(channel) >= APP_UPDATE_AUTO_CHECK_MIN_AGE_MS
 }
 
 function messageFor(error: unknown): string {
@@ -43,6 +55,7 @@ function messageFor(error: unknown): string {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
+  const [updateChannel, setUpdateChannelState] = useState<WeworkUpdateChannel>(readUpdateChannel)
   const [availableUpdate, setAvailableUpdate] = useState<WeworkUpdateInfo | null>(null)
   const [status, setStatus] = useState<AppUpdateStatus>('idle')
   const [downloadProgress, setDownloadProgress] = useState<WeworkUpdateDownloadProgress | null>(
@@ -50,7 +63,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const checkInFlightRef = useRef(false)
+  const updateChannelRef = useRef(updateChannel)
+  const activeCheckRef = useRef<{
+    channel: WeworkUpdateChannel
+    promise: Promise<WeworkUpdateInfo | null>
+  } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
 
   const clearSimulationTimer = useCallback(() => {
@@ -60,45 +77,67 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const runCheck = useCallback(
-    async ({ silent }: { silent: boolean }): Promise<WeworkUpdateInfo | null> => {
-      if (checkInFlightRef.current || status === 'installing') {
+    async ({
+      silent,
+      channel = updateChannel,
+    }: {
+      silent: boolean
+      channel?: WeworkUpdateChannel
+    }): Promise<WeworkUpdateInfo | null> => {
+      if (status === 'installing') {
         return availableUpdate
       }
 
-      checkInFlightRef.current = true
-      if (!silent) {
-        setStatus('checking')
-        setMessage(null)
-        setError(null)
+      const activeCheck = activeCheckRef.current
+      if (activeCheck) {
+        const activeResult = await activeCheck.promise
+        if (activeCheck.channel === channel) return activeResult
       }
 
+      const promise = (async () => {
+        if (!silent && channel === updateChannelRef.current) {
+          setStatus('checking')
+          setMessage(null)
+          setError(null)
+        }
+
+        try {
+          const update = await checkForWeworkUpdate(channel)
+          if (channel !== updateChannelRef.current) return update
+
+          setAvailableUpdate(update)
+
+          if (update) {
+            setStatus('available')
+            setMessage(null)
+            setError(null)
+          } else if (!silent) {
+            setStatus('upToDate')
+            setMessage('upToDate')
+            setError(null)
+          }
+
+          return update
+        } catch (caughtError) {
+          if (!silent && channel === updateChannelRef.current) {
+            setStatus('error')
+            setMessage(null)
+            setError(messageFor(caughtError))
+          }
+          return null
+        }
+      })()
+
+      activeCheckRef.current = { channel, promise }
       try {
-        const update = await checkForWeworkUpdate()
-        setAvailableUpdate(update)
-
-        if (update) {
-          setStatus('available')
-          setMessage(null)
-          setError(null)
-        } else if (!silent) {
-          setStatus('upToDate')
-          setMessage('upToDate')
-          setError(null)
-        }
-
-        return update
-      } catch (caughtError) {
-        if (!silent) {
-          setStatus('error')
-          setMessage(null)
-          setError(messageFor(caughtError))
-        }
-        return null
+        return await promise
       } finally {
-        checkInFlightRef.current = false
+        if (activeCheckRef.current?.promise === promise) {
+          activeCheckRef.current = null
+        }
       }
     },
-    [availableUpdate, status]
+    [availableUpdate, status, updateChannel]
   )
 
   const checkNow = useCallback(() => runCheck({ silent: false }), [runCheck])
@@ -119,14 +158,30 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setError(installError)
 
       try {
-        const refreshedUpdate = await checkForWeworkUpdate()
+        const refreshedUpdate = await checkForWeworkUpdate(updateChannel)
         setAvailableUpdate(refreshedUpdate)
         setStatus(refreshedUpdate ? 'available' : 'error')
       } catch {
         setStatus('error')
       }
     }
-  }, [availableUpdate, status])
+  }, [availableUpdate, status, updateChannel])
+
+  const setUpdateChannel = useCallback(
+    async (channel: WeworkUpdateChannel) => {
+      if (channel === updateChannel || status === 'installing') return
+
+      window.localStorage.setItem(APP_UPDATE_CHANNEL_KEY, channel)
+      updateChannelRef.current = channel
+      setUpdateChannelState(channel)
+      setAvailableUpdate(null)
+      setDownloadProgress(null)
+      setMessage(null)
+      setError(null)
+      await runCheck({ silent: false, channel })
+    },
+    [runCheck, status, updateChannel]
+  )
 
   const simulateUpdate = useCallback(() => {
     clearSimulationTimer()
@@ -168,9 +223,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     const maybeAutoCheck = () => {
       const now = Date.now()
-      if (!shouldAutoCheck(now)) return
+      if (!shouldAutoCheck(updateChannel, now)) return
 
-      writeLastAutoCheckAt(now)
+      writeLastAutoCheckAt(updateChannel, now)
       void runCheck({ silent: true })
     }
 
@@ -181,10 +236,11 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(initialTimer)
       window.clearInterval(intervalTimer)
     }
-  }, [runCheck])
+  }, [runCheck, updateChannel])
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
+      updateChannel,
       availableUpdate,
       status,
       downloadProgress,
@@ -192,8 +248,19 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       error,
       checkNow,
       installUpdate,
+      setUpdateChannel,
     }),
-    [availableUpdate, checkNow, downloadProgress, error, installUpdate, message, status]
+    [
+      availableUpdate,
+      checkNow,
+      downloadProgress,
+      error,
+      installUpdate,
+      message,
+      setUpdateChannel,
+      status,
+      updateChannel,
+    ]
   )
 
   return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>
