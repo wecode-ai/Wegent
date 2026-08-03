@@ -226,11 +226,123 @@ describe('telemetry client', () => {
     })
     expect(sanitized?.exception?.values?.[0]?.type).toBe('Error')
     expect(sanitized?.exception?.values?.[0]?.value).toBe('Wework error')
-    expect(sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]).toEqual({
+    const privateFrame = sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]
+    expect(privateFrame).toMatchObject({
+      filename: '<redacted>',
       function: 'openWorkspace',
       lineno: 42,
       colno: 7,
     })
+    expect(privateFrame?.abs_path).toBeUndefined()
+    expect(privateFrame?.module).toBeUndefined()
+    expect(privateFrame).not.toHaveProperty('context_line')
+    expect(privateFrame).not.toHaveProperty('vars')
+  })
+
+  test('preserves trusted Wework stack locations and matching source map metadata', async () => {
+    const { installTelemetry } = await import('./client')
+    await installTelemetry(true)
+
+    const debugId = '12345678-1234-4234-8234-123456789abc'
+    const productionResource = 'tauri://localhost/assets/index-public.js?workspace=private#fragment'
+    const developmentResource =
+      'http://localhost:1420/node_modules/.vite/deps/tauri-event.js?v=private'
+    const sentryConfig = sentryMocks.init.mock.calls[0]?.[0]
+    const sanitized = sentryConfig?.beforeSend?.(
+      {
+        debug_meta: {
+          images: [
+            {
+              type: 'sourcemap',
+              code_file: productionResource,
+              debug_id: debugId,
+              future_private_field: 'private-value',
+            },
+            {
+              type: 'sourcemap',
+              code_file: 'tauri://localhost/Users/private/repository/secret.js',
+              debug_id: debugId,
+            },
+            {
+              type: 'wasm',
+              code_file: productionResource,
+              debug_id: debugId,
+            },
+          ],
+        },
+        exception: {
+          values: [
+            {
+              stacktrace: {
+                frames: [
+                  {
+                    abs_path: productionResource,
+                    filename: productionResource,
+                    function: '__unlisten',
+                    module: '@tauri-apps/api/event',
+                    lineno: 42,
+                    colno: 7,
+                    in_app: true,
+                    debug_id: debugId,
+                    context_line: 'const workspace = "private"',
+                    vars: { token: 'private' },
+                  },
+                  {
+                    filename: developmentResource,
+                    function: 'listen',
+                    lineno: 21,
+                    colno: 3,
+                  },
+                  {
+                    filename: 'tauri://localhost/Users/private/repository/secret.js',
+                    function: 'runUserFile',
+                    lineno: 9,
+                    colno: 1,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      {}
+    )
+
+    const frames = sanitized?.exception?.values?.[0]?.stacktrace?.frames
+    expect(frames?.[0]).toEqual({
+      abs_path: 'tauri://localhost/assets/index-public.js',
+      colno: 7,
+      debug_id: debugId,
+      filename: 'tauri://localhost/assets/index-public.js',
+      function: '__unlisten',
+      in_app: true,
+      lineno: 42,
+      module: '@tauri-apps/api/event',
+    })
+    expect(frames?.[1]).toMatchObject({
+      filename: 'http://localhost:1420/node_modules/.vite/deps/tauri-event.js',
+      function: 'listen',
+      lineno: 21,
+      colno: 3,
+    })
+    expect(frames?.[2]).toMatchObject({
+      filename: '<redacted>',
+      function: 'runUserFile',
+      lineno: 9,
+      colno: 1,
+    })
+    expect(sanitized?.debug_meta).toEqual({
+      images: [
+        {
+          type: 'sourcemap',
+          code_file: 'tauri://localhost/assets/index-public.js',
+          debug_id: debugId,
+        },
+      ],
+    })
+    expect(JSON.stringify(sanitized)).not.toMatch(
+      /workspace=private|future_private_field|secret\.js/
+    )
   })
 
   test('removes routes, URLs and span attributes from Sentry performance events', async () => {

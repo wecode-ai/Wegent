@@ -41,6 +41,8 @@ type SentryTransaction = Parameters<
   NonNullable<Parameters<SentryModule['init']>[0]['beforeSendTransaction']>
 >[0]
 type SentrySpan = Parameters<NonNullable<Parameters<SentryModule['init']>[0]['beforeSendSpan']>>[0]
+type SentryExceptionValue = NonNullable<NonNullable<SentryEvent['exception']>['values']>[number]
+type SentryFrame = NonNullable<NonNullable<SentryExceptionValue['stacktrace']>['frames']>[number]
 
 let enabled = false
 let initialized = false
@@ -111,6 +113,95 @@ function sanitizeSentryTags(tags: SentryEvent['tags']): SentryEvent['tags'] {
   return Object.fromEntries(Object.entries(tags ?? {}).filter(([key]) => allowedKeys.has(key)))
 }
 
+const SENTRY_DEBUG_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const TRUSTED_SENTRY_APP_PATHS = new Set([
+  '/',
+  '/extension-page.html',
+  '/index.html',
+  '/runtime-config.js',
+])
+const TRUSTED_SENTRY_APP_PATH_PREFIXES = [
+  '/@id/',
+  '/@vite/',
+  '/assets/',
+  '/node_modules/',
+  '/src/',
+] as const
+
+function isTrustedSentryAppPath(pathname: string): boolean {
+  return (
+    TRUSTED_SENTRY_APP_PATHS.has(pathname) ||
+    TRUSTED_SENTRY_APP_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix))
+  )
+}
+
+function sanitizeSentryResourceUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  try {
+    const relativeBase = 'wework-relative://localhost'
+    const url = new URL(value, relativeBase)
+    const isRelativeAppPath = url.protocol === 'wework-relative:' && url.hostname === 'localhost'
+    const isProductionAppUrl =
+      (url.protocol === 'tauri:' && url.hostname === 'localhost') ||
+      ((url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.hostname === 'tauri.localhost')
+    const isDevelopmentAppUrl =
+      url.protocol === 'http:' && url.hostname === 'localhost' && url.port === '1420'
+    if (
+      (!isRelativeAppPath && !isProductionAppUrl && !isDevelopmentAppUrl) ||
+      !isTrustedSentryAppPath(url.pathname)
+    ) {
+      return undefined
+    }
+    if (isRelativeAppPath) {
+      return value.startsWith('/') ? url.pathname : url.pathname.slice(1)
+    }
+    url.username = ''
+    url.password = ''
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return undefined
+  }
+}
+
+function sanitizeSentryFrame(frame: SentryFrame): SentryFrame {
+  const filename = sanitizeSentryResourceUrl(frame.filename)
+  const absPath = sanitizeSentryResourceUrl(frame.abs_path)
+  const trustedResource = absPath ?? filename
+  return {
+    abs_path: absPath,
+    colno: frame.colno,
+    debug_id:
+      trustedResource && frame.debug_id && SENTRY_DEBUG_ID_PATTERN.test(frame.debug_id)
+        ? frame.debug_id
+        : undefined,
+    filename: trustedResource ? filename : frame.filename ? '<redacted>' : undefined,
+    function: frame.function,
+    in_app: frame.in_app,
+    lineno: frame.lineno,
+    module: trustedResource ? frame.module : undefined,
+  }
+}
+
+function sanitizeSentryDebugMeta(debugMeta: SentryEvent['debug_meta']): SentryEvent['debug_meta'] {
+  const images = debugMeta?.images?.flatMap(image => {
+    if (image.type !== 'sourcemap' || !SENTRY_DEBUG_ID_PATTERN.test(image.debug_id)) return []
+    const codeFile = sanitizeSentryResourceUrl(image.code_file)
+    return codeFile
+      ? [
+          {
+            code_file: codeFile,
+            debug_id: image.debug_id,
+            type: 'sourcemap' as const,
+          },
+        ]
+      : []
+  })
+  return images?.length ? { images } : undefined
+}
+
 function sanitizeSentrySpan(span: SentrySpan): SentrySpan {
   return {
     data: {},
@@ -127,6 +218,7 @@ function sanitizeSentrySpan(span: SentrySpan): SentrySpan {
 
 function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
   return {
+    debug_meta: sanitizeSentryDebugMeta(event.debug_meta),
     environment: event.environment,
     event_id: event.event_id,
     exception: event.exception?.values
@@ -141,12 +233,7 @@ function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
               : undefined,
             stacktrace: value.stacktrace
               ? {
-                  frames: value.stacktrace.frames?.map(frame => ({
-                    colno: frame.colno,
-                    function: frame.function,
-                    in_app: frame.in_app,
-                    lineno: frame.lineno,
-                  })),
+                  frames: value.stacktrace.frames?.map(sanitizeSentryFrame),
                 }
               : undefined,
             type: 'Error',
