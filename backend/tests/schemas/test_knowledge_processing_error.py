@@ -3,7 +3,10 @@
 from datetime import datetime, timezone
 
 from app.schemas.knowledge import KnowledgeDocumentResponse
-from app.services.knowledge.processing_errors import map_legacy_conversion_error
+from app.services.knowledge.processing_errors import (
+    build_conversion_callback_error,
+    map_legacy_conversion_error,
+)
 
 
 def test_document_response_derives_error_and_hides_storage_key() -> None:
@@ -129,3 +132,18 @@ def test_legacy_read_error_maps_to_conversion_service_unavailable() -> None:
 
     assert error.code == "conversion_service_unavailable"
     assert error.retryable is True
+
+
+def test_oversized_structured_callback_error_uses_safe_fallback() -> None:
+    error = build_conversion_callback_error(
+        error_code="x" * 65,
+        user_message="x" * 1001,
+        retryable=False,
+        generation=4,
+        error_message="quota exhausted",
+        provider="x" * 65,
+    )
+
+    assert error.code == "model_quota_exhausted"
+    assert error.generation == 4
+    assert error.provider is None

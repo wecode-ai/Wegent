@@ -2513,8 +2513,8 @@ class KnowledgeOrchestrator:
                 "description": result.description,
             }
         )
-        source_config.pop("processing_error", None)
         document.source_config = source_config
+        document.clear_processing_error_payload()
         # Reset is_active to False, will be set to True after re-indexing
         document.is_active = False
 

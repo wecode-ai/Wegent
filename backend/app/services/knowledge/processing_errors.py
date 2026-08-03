@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
+
+from pydantic import ValidationError
 
 from app.schemas.knowledge import (
     DocumentProcessingError,
     DocumentProcessingStage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def build_processing_error(
@@ -108,6 +113,41 @@ def map_legacy_conversion_error(
         retryable=True,
         generation=generation,
     )
+
+
+def build_conversion_callback_error(
+    *,
+    error_code: Optional[str],
+    user_message: Optional[str],
+    retryable: Optional[bool],
+    generation: int,
+    error_message: Optional[str],
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> DocumentProcessingError:
+    """Build a callback error without letting malformed metadata block failure."""
+    if error_code and user_message:
+        try:
+            return build_processing_error(
+                stage=DocumentProcessingStage.CONVERSION,
+                code=error_code,
+                message=user_message,
+                retryable=bool(retryable),
+                generation=generation,
+                provider=provider,
+                model=model,
+                request_id=request_id,
+            )
+        except (TypeError, ValidationError):
+            logger.warning(
+                "Invalid structured conversion error; using legacy fallback "
+                "generation=%s code_length=%s message_length=%s",
+                generation,
+                len(error_code),
+                len(user_message),
+            )
+    return map_legacy_conversion_error(error_message, generation=generation)
 
 
 def map_indexing_exception(

@@ -27,8 +27,8 @@ from app.services.knowledge.index_state_machine import (
     mark_document_index_failed,
 )
 from app.services.knowledge.processing_errors import (
+    build_conversion_callback_error,
     build_processing_error,
-    map_legacy_conversion_error,
 )
 from app.tasks.knowledge_tasks import index_document_task
 from shared.telemetry.decorators import trace_sync
@@ -77,22 +77,16 @@ def conversion_status_callback(
             .first()
         )
         if doc:
-            if request.error_code and request.user_message:
-                error = build_processing_error(
-                    stage=DocumentProcessingStage.CONVERSION,
-                    code=request.error_code,
-                    message=request.user_message,
-                    retryable=bool(request.retryable),
-                    generation=request.generation,
-                    provider=request.provider,
-                    model=request.model,
-                    request_id=request.request_id,
-                )
-            else:
-                error = map_legacy_conversion_error(
-                    request.error_message,
-                    generation=request.generation,
-                )
+            error = build_conversion_callback_error(
+                error_code=request.error_code,
+                user_message=request.user_message,
+                retryable=request.retryable,
+                generation=request.generation,
+                error_message=request.error_message,
+                provider=request.provider,
+                model=request.model,
+                request_id=request.request_id,
+            )
             mark_document_index_failed(
                 db=db,
                 document_id=request.document_id,
