@@ -417,6 +417,74 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps following the external scroller when a virtualized response grows after render', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    const completedMessage = {
+      id: 'completed-message',
+      role: 'assistant' as const,
+      content: '已完成的长会话',
+      status: 'done' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-growing-stream"
+          externalScrollRef={externalScrollRef}
+          messages={[completedMessage]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    let scrollHeight = 1000
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    rerender(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-growing-stream"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            completedMessage,
+            {
+              id: 'late-measured-streaming-message',
+              role: 'assistant',
+              content: '刚开始流式输出',
+              status: 'streaming',
+              createdAt: '2026-05-29T00:00:01.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    scrollHeight = 3000
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 3000,
+      behavior: 'auto',
+    })
+    expect(scroller.scrollTop).toBe(3000)
+  })
+
   test('stops external bottom following when the scroll position leaves the bottom', () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const streamingMessage = {

@@ -702,7 +702,7 @@ function ScrollableMessagePaneContent({
     }
 
     if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
-      scrollToBottom('auto', { saveSnapshot: false })
+      scheduleStableScrollToBottom('auto', { saveSnapshot: false })
     }
   }, [
     conversationKey,
@@ -719,7 +719,6 @@ function ScrollableMessagePaneContent({
     messages.length,
     scheduleStableRestoreSavedScrollPosition,
     scheduleStableScrollToBottom,
-    scrollToBottom,
     setScrollToBottom,
   ])
 

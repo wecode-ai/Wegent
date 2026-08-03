@@ -2313,7 +2313,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
           ) : hasConversation ? (
-            <div className="relative min-h-0 min-w-0 flex-1">
+            <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
               <ScrollableMessageArea
                 messages={paneMessages}
                 loading={paneSession.transcriptLoading}
@@ -2332,11 +2332,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                     : null
                 }
-                className="h-full"
+                className="min-h-full"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
-                scrollerClassName="overflow-visible scrollbar-none"
+                scrollerClassName="min-h-full overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,
