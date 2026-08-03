@@ -983,7 +983,7 @@ fn normalize_etag_hash(value: &str) -> String {
     value.trim().trim_matches('"').to_owned()
 }
 
-async fn resolve_skill(
+pub(super) async fn resolve_skill(
     client: &reqwest::Client,
     plan: &SkillDeploymentPlan,
     skill_name: &str,

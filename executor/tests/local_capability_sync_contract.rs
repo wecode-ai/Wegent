@@ -402,6 +402,89 @@ async fn plugin_sync_accepts_claude_package_and_installs_both_runtimes() {
 }
 
 #[tokio::test]
+async fn plugin_sync_migrates_codex_runtime_home_without_removing_the_previous_home() {
+    let temp = TempRoot::new("capability-sync-plugin-codex-home");
+    let skills_dir = temp.path().join(".claude/skills");
+    let plugins_dir = temp.path().join(".claude/plugins");
+    let codex_plugins_dir = temp.path().join("wework-codex/plugins");
+    let previous_codex_link = temp
+        .path()
+        .join("native-codex/plugins/cache/wegent/sites/1.0.0");
+    let store_dir = temp.path().join("store");
+    let manifest_path = temp.path().join("capabilities.json");
+    let store_plugin_path = store_dir.join("plugins/9-wegent-sites-1.0.0");
+    fs::create_dir_all(store_plugin_path.join(".codex-plugin")).unwrap();
+    fs::write(
+        store_plugin_path.join(".codex-plugin/plugin.json"),
+        r#"{"name":"sites","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(&previous_codex_link).unwrap();
+    fs::write(previous_codex_link.join("previous.txt"), "keep").unwrap();
+    fs::write(
+        &manifest_path,
+        json!({
+            "version": 1,
+            "revision": 1,
+            "skills": {},
+            "plugins": {
+                "sites@wegent": {
+                    "managed": true,
+                    "name": "sites",
+                    "key": "sites@wegent",
+                    "installed_plugin_id": 9,
+                    "marketplace": "wegent",
+                    "version": "1.0.0",
+                    "store_path": store_plugin_path.display().to_string(),
+                    "runtime": {
+                        "claude_link": plugins_dir.join("cache/wegent/sites/1.0.0").display().to_string(),
+                        "codex_link": previous_codex_link.display().to_string()
+                    }
+                }
+            },
+            "mcps": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let store = GlobalCapabilityStore::new(manifest_path.clone(), skills_dir)
+        .with_plugins_dir(plugins_dir)
+        .with_codex_plugins_dir(codex_plugins_dir.clone())
+        .with_store_dir(store_dir);
+    let handler = CapabilitySyncHandler::new("token", store);
+
+    let result = handler
+        .apply_sync(json!({
+            "mode": "merge",
+            "skills": [],
+            "plugins": [{
+                "installed_plugin_id": 9,
+                "name": "sites",
+                "marketplace": "wegent",
+                "version": "1.0.0"
+            }],
+            "mcps": []
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["success"], true);
+    assert!(previous_codex_link.join("previous.txt").is_file());
+    let codex_runtime = codex_plugins_dir.join("cache/wegent/sites/1.0.0");
+    assert!(codex_runtime.join(".codex-plugin/plugin.json").is_file());
+    let codex_config = read_toml(codex_plugins_dir.parent().unwrap().join("config.toml"));
+    assert_eq!(
+        codex_config["plugins"]["sites@wegent"]["enabled"].as_bool(),
+        Some(true)
+    );
+    let manifest = read_json(manifest_path);
+    assert_eq!(
+        manifest["plugins"]["sites@wegent"]["runtime"]["codex_link"],
+        codex_runtime.display().to_string()
+    );
+}
+
+#[tokio::test]
 async fn plugin_sync_links_existing_package_and_downloads_uploaded_plugin_to_wegent_store() {
     let temp = TempRoot::new("capability-sync-uploaded-plugin");
     let skills_dir = temp.path().join("skills");

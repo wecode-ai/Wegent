@@ -644,7 +644,7 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     const TEST_GIT_DOMAIN: &str = "github.com";
 
@@ -792,7 +792,7 @@ mod tests {
             values: &[(&'static str, &str)],
             unset_keys: &[&'static str],
         ) -> Self {
-            let guard = env_lock().lock().unwrap();
+            let guard = crate::test_env::lock();
             let set_previous = values.iter().map(|(key, value)| {
                 let previous = env::var(key).ok();
                 env::set_var(key, value);
@@ -824,10 +824,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
     }
 }

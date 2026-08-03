@@ -65,7 +65,7 @@ describe('localModelSettings', () => {
     ).toThrow('Model ID is required')
   })
 
-  test('saves optional API key without requiring one', () => {
+  test('saves optional API key with a durable browser fallback', () => {
     const withoutKey = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -97,6 +97,27 @@ describe('localModelSettings', () => {
     expect(withoutKey.apiKey).toBeUndefined()
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+  })
+
+  test('preserves legacy persisted API keys when the native credential store is unavailable', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'legacy-secret',
+          displayName: 'Legacy secret',
+          modelId: 'legacy-model',
+          baseUrl: 'https://models.local/v1',
+          apiKey: 'legacy-api-key',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('legacy-api-key')
   })
 
   test('normalizes full responses endpoint to model base URL', () => {
@@ -241,6 +262,42 @@ describe('localModelSettings', () => {
         contextWindow: 262_144,
         codexCatalogModelId: 'wework-kimi-k3',
         catalogReady: true,
+      }),
+    ])
+  })
+
+  test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-deepseek',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4 Flash',
+          modelId: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-chat-completions',
+          toolProfile: 'function',
+          requestPath: '/chat/completions',
+          contextWindow: 1_000_000,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-deepseek',
+        apiFormat: 'openai-responses',
+        toolProfile: 'custom',
+        requestPath: '/responses',
+        contextWindow: 1_048_576,
+        codexCatalogModelId: 'wework-deepseek-v4-flash',
+        catalogReady: true,
+        webSearchMode: 'live',
       }),
     ])
   })

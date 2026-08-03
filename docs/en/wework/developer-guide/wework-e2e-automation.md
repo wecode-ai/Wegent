@@ -38,6 +38,12 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+Run only the embedded-browser Agent operation regression:
+
+```bash
+pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
@@ -96,27 +102,39 @@ The test does not simulate Wework, Executor, or Codex. To keep regression result
 The model protocol matrix defines 18 combinations across execution location, model source, and protocol:
 
 - Local execution covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
-- Cloud execution covers built-in Codex models and cloud Model CRDs across all three protocols, for 6 complete text and tool lifecycles.
-- Local custom models cannot run in cloud execution. The remaining 3 combinations assert that those models are absent from the cloud project's model selector.
+- Cloud execution also covers local custom models, built-in Codex models, and cloud Model CRDs across all three protocols, for 9 complete text and tool lifecycles.
+- The first local-custom-model-to-cloud-device combination verifies the synchronization confirmation, target Executor catalog write, and cloud Codex restart. All three local-model protocols must then complete their text and `apply_patch` tool lifecycles.
 
 Matrix submissions use a 10-second timeout. If the composer already displays a submission error, the runner throws that exact error immediately. Otherwise, a stalled protocol stage reports its current stage and captured requests instead of waiting through the general UI timeout.
 
-`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario builds a long multi-turn conversation beyond the virtualization threshold. It first verifies that “Thinking” appears below the visible reply, then scrolls to completed history so the active response remains offscreen while it continues growing. The test waits for the list's total height to grow and asserts that the visible text anchor and `scrollTop` stay stable during streaming, after completion, and after reopening the task. It also verifies that “Thinking” disappears after the response is released. The scenario retains screenshots for its ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The scenario first verifies that a completed reasoning summary can be collapsed and expanded. It then starts a long-running command and confirms that the tool-row duration continues increasing after switching tasks while the tool-group header does not show a turn-wide aggregate duration. The scenario next builds a long multi-turn conversation beyond the virtualization threshold and verifies the “Thinking” position, user scroll anchor, streaming growth, and viewport stability after reopening the task. It also verifies that the waiting state disappears after completion. The scenario retains screenshots for reasoning, tool timing, ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
+
+`e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Tauri WebView, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the current WKWebView bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. Results are written to `embedded-browser-agent-result.json`.
 
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
-The checkpoints are `core-task-flow`, `window-lifecycle`, `goal-lifecycle`,
-`resilience`, `conversation-state`, `workspace-attachments`, and
-`rendering-extensions`. `--segment <checkpoint>` performs common startup and
-project initialization, then runs only the selected checkpoint.
+The checkpoints are `workspace-tabs`, `core-task-flow`, `window-lifecycle`,
+`goal-lifecycle`, `resilience`, `conversation-state`, `workspace-attachments`,
+and `rendering-extensions`. `--segment <checkpoint>` performs common startup
+and project initialization, then runs only the selected checkpoint.
 `--from-segment <checkpoint>` starts there and continues through every later
 checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
-feature paths. Shared desktop infrastructure, main, merge queue, scheduled
-runs, and `ci:all` still run the complete desktop suites. The mapping lives in
-`.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
+feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
+`ci:all` still run the complete desktop suites. The complete Core suite expands
+every checkpoint into an independent GitHub Actions matrix job so the
+checkpoints run in parallel instead of serially inside one
+`Wework Desktop E2E (Core)` job. CI first builds one Core Tauri application,
+Executor, and Codex artifact with fixed test ports. Each checkpoint installs
+only desktop runtime dependencies and reuses that artifact instead of
+reinstalling pnpm, Rust, Python, or uv and rebuilding Vite, Tauri, and Executor.
+The plugin and cloud suites require different build-time configuration, so they
+remain independent jobs that run alongside the Core build. Merge queue validates
+the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
+do not repeat the same validation after the merge through a `push main` trigger. The
+mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
 feature coverage is registered. Segment commands are also useful for focused
 local iteration:
 
@@ -365,6 +383,11 @@ Home, ports, and diagnostic artifact. This preserves the existing real Tauri,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
+The three scenarios inject different build-time Vite environment variables, so
+their Tauri/Cargo build caches must be isolated by E2E command. The plugins
+scenario must not restore an application binary built by the core or cloud
+scenario, because that binary may contain a different Codex Home initialization
+setting.
 
 The Linux desktop scenarios cache the downloaded `.deb` files for Tauri system
 dependencies in the runner user's home directory. Cache keys rotate weekly and
@@ -382,9 +405,11 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Regular draft PRs do not run browser or Linux desktop E2E. The macOS memory gate
-runs by default only on `main`, scheduled runs, and manual runs. Add the
-`ci:memory` label when a PR must validate the memory boundary. Applying that
+Regular draft PRs do not run browser or Linux desktop E2E. Merge queue runs the
+complete browser and Linux desktop suites before a commit enters `main`; `main`
+does not repeat checks that already passed for the merge group. The macOS memory
+gate runs by default only on scheduled and manual runs. Add the `ci:memory`
+label when a PR must validate the memory boundary. Applying that
 label starts only the memory gate and does not repeat browser or Linux desktop
 E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
 when the PR's changed paths would not normally select Wework E2E. The workflow

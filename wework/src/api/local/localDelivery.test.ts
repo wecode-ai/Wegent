@@ -180,6 +180,7 @@ describe('local delivery API', () => {
       if (method === 'projects.update') {
         return { ...projectRecord, name: 'Renamed board', version: 2 }
       }
+      if (method === 'projects.archive') return {}
       if (method === 'todos.list') return [taskRecord]
       if (method === 'todos.create') return taskRecord
       throw new Error(`Unexpected method: ${method}`)
@@ -212,6 +213,12 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       project: { name: 'Renamed board', version: 1 },
     })
+
+    await api.archiveCloudProject('project-1', 2)
+    expect(request).toHaveBeenCalledWith('projects.archive', {
+      project_id: 'project-1',
+      version: 2,
+    })
   })
 
   test('does not expose cached backend projects as local project spaces', async () => {
@@ -242,6 +249,7 @@ describe('local delivery API', () => {
       if (method === 'todos.list') return [taskRecord]
       if (method === 'todos.update') return updatedRecord
       if (method === 'todos.reorder') return [updatedRecord]
+      if (method === 'todos.archive') return {}
       throw new Error(`Unexpected method: ${method}`)
     })
     const api = createLocalDeliveryApi(request)
@@ -257,6 +265,7 @@ describe('local delivery API', () => {
         item_ids: ['LOCAL-1'],
       })
     ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
+    await api.archiveLoopItem('LOCAL-1')
 
     expect(request).toHaveBeenCalledWith('todos.update', {
       project_id: 'project-1',
@@ -270,6 +279,10 @@ describe('local delivery API', () => {
         status: 'inbox',
         item_ids: ['LOCAL-1'],
       },
+    })
+    expect(request).toHaveBeenCalledWith('todos.archive', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
     })
   })
 

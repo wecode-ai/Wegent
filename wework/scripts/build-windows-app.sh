@@ -38,6 +38,7 @@ Environment:
   WEWORK_TAURI_BUNDLES      Default bundle list when --bundles is not provided.
   WEWORK_RELEASE_DEVTOOLS   Set to 1 to compile Tauri devtools into release builds.
   WEWORK_BRAND_CONFIG       Default brand identity JSON.
+  VITE_WEWORK_FEEDBACK_URL  Optional feedback submission endpoint. Disabled when empty.
 
 Examples:
   bash wework/scripts/build-windows-app.sh --profile dev
@@ -151,6 +152,7 @@ echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "  VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
@@ -206,7 +208,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
   TAURI_ARGS+=(--bundles "$TAURI_BUNDLES")
 fi
 
-WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
 WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 

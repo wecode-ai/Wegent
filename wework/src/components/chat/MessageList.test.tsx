@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
-import type { ProcessingBlock } from '@/types/workbench'
+import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import '@/i18n'
 
@@ -1642,7 +1642,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('hides completed assistant turns that only contain reasoning text', () => {
+  test('shows completed assistant reasoning and expands its summary', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -1669,17 +1669,23 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('message-assistant')).not.toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
+    const toggle = screen.getByTestId('thinking-toggle-button')
+    expect(toggle).toHaveTextContent('思考过程')
     expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
   })
 
-  test('shows only the generic thinking indicator while reasoning is streaming', () => {
+  test('shows the live reasoning summary while reasoning is streaming', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
         subtaskId: 11,
         type: 'thinking',
-        content: '不应展示的模型思考字符',
+        content: '检查运行日志并定位事件边界',
         status: 'streaming',
         createdAt: 1770000000000,
       },
@@ -1700,9 +1706,10 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
-    expect(screen.queryByText('不应展示的模型思考字符')).not.toBeInTheDocument()
-    expect(screen.queryByText('思考过程')).not.toBeInTheDocument()
+    const preview = screen.getByTestId('thinking-live-preview')
+    expect(preview).toHaveTextContent('正在思考')
+    expect(preview).toHaveTextContent('检查运行日志并定位事件边界')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('keeps completed process text inside the message-level processing group', () => {
@@ -1812,6 +1819,43 @@ describe('MessageList', () => {
     expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
+  test('does not show the turn-wide elapsed time as a tool duration after remount', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
+
+      const restoredMessages: WorkbenchMessage[] = [
+        {
+          id: 'assistant-remounted-with-process',
+          role: 'assistant',
+          content: '',
+          status: 'streaming',
+          blocks: [
+            {
+              id: 'tool-remounted',
+              type: 'tool',
+              toolName: 'Bash',
+              toolInput: { command: 'long-running-command' },
+              status: 'streaming',
+              createdAt: Date.parse('2026-06-24T08:09:59.000Z'),
+            },
+          ],
+          createdAt: '2026-06-24T08:00:00.000Z',
+        },
+      ]
+      const { unmount } = render(<MessageList messages={restoredMessages} />)
+      unmount()
+      render(<MessageList messages={restoredMessages} />)
+
+      const header = screen.getByTestId('processing-summary-header')
+      expect(header).toHaveTextContent('调用 1 个工具')
+      expect(header).not.toHaveTextContent('10 分')
+      expect(screen.getByText('1.0s')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('keeps narrative visible but collapses tools before runtime guidance', () => {
     const blocks: ProcessingBlock[] = [
       {
@@ -1860,6 +1904,42 @@ describe('MessageList', () => {
       'aria-expanded',
       'false'
     )
+  })
+
+  test('keeps the final processing shell for a processing-only segment before guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-processing-before-guidance',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            runtimeGuidanceSplitBefore: true,
+            blocks: [
+              {
+                id: 'tool-1',
+                subtaskId: 11,
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                toolOutput: '/workspace/project\n',
+                status: 'done',
+                createdAt: 1770000001000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const finalProcessingToggle = screen.getByTestId('final-processing-toggle')
+    expect(finalProcessingToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
+
+    fireEvent.click(finalProcessingToggle)
+    expect(screen.getByTestId('processing-summary-toggle')).toBeInTheDocument()
   })
 
   test('keeps processing expanded for the assistant continuation after runtime guidance', () => {

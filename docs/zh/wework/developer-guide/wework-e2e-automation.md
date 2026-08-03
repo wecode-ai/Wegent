@@ -38,6 +38,12 @@ pnpm --filter wework e2e:desktop:cloud
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+仅运行内置浏览器 Agent 操作回归：
+
+```bash
+pnpm --filter wework e2e:desktop:embedded-browser
+```
+
 在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
 
 ```bash
@@ -96,24 +102,35 @@ node e2e/utils/mock-connector-upstream-server.mjs
 模型协议矩阵按“执行位置 × 模型来源 × 协议”定义 18 个组合：
 
 - 本机执行覆盖本机自定义模型、Codex 内置模型和云端 Model CRD，每种模型来源分别覆盖三种协议，共 9 个完整文本与工具链路。
-- 云端执行覆盖 Codex 内置模型和云端 Model CRD 的三种协议，共 6 个完整文本与工具链路。
-- 本机自定义模型不能用于云端执行；对应三种协议的 3 个组合断言模型不会出现在云端项目的选择器中。
+- 云端执行同样覆盖本机自定义模型、Codex 内置模型和云端 Model CRD 的三种协议，共 9 个完整文本与工具链路。
+- 第一个“本机自定义模型 → 云端设备”组合会验证同步确认框、目标 Executor 模型目录写入和云端 Codex 重启；随后三个本机模型协议都必须完成文本与 `apply_patch` 工具链路。
 
 矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
-`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景会构造超过虚拟化阈值的多轮长对话，先验证“正在思考”位于可见回复下方，再滚动到已完成的历史消息，使活动响应位于屏幕外并继续增长。测试等待列表总高度真实增长，并断言当前可见文本锚点和 `scrollTop` 在流式过程、完成以及重新打开任务后都保持稳定；释放响应后还会验证“正在思考”消失。该场景会保存就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先验证完成的推理摘要可以收起和展开，再启动长命令，确认工具行耗时在切换任务后连续递增，同时工具分组标题不显示整轮累计耗时。随后场景构造超过虚拟化阈值的多轮长对话，验证“正在思考”位置、用户滚动锚点、流式增长和任务重开后的视口稳定性，并在响应完成后确认等待状态消失。该场景会保存推理、工具计时、就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+
+`e2e:desktop:embedded-browser` 通过场景模块运行内置浏览器 Agent 操作回归。它使用真实 Tauri WebView、Executor、Codex app-server 和 browser MCP server，打开本地 fixture 页面并通过当前 WKWebView bridge 验证浏览器控制链路。场景覆盖 bridge identity 读取、认证 bridge 请求、打开页面、结构化 `inspect`、`fill`、`click`、`wait`、`scroll`、`screenshot`、`capabilities`、高风险动作确认，以及 MCP 组合工具 `open_and_inspect` 和 `wait_and_inspect`。它还会启动一个长时间 `waitFor`，再验证独立 `click` 不会被阻塞，用于防止 bridge 并发退化。测试结果会写入 `embedded-browser-agent-result.json`。
 
 主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
-`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、`resilience`、
-`conversation-state`、`workspace-attachments` 和 `rendering-extensions`。
+`workspace-tabs`、`core-task-flow`、`window-lifecycle`、`goal-lifecycle`、
+`resilience`、`conversation-state`、`workspace-attachments` 和
+`rendering-extensions`。
 `--segment <checkpoint>` 在公共启动和项目初始化后只运行指定 checkpoint；
 `--from-segment <checkpoint>` 从指定 checkpoint 开始并继续执行所有后续
 checkpoint。跳过上游时，每个 checkpoint 会自行建立最小前置 fixture，不依赖只有
 完整流程才创建的任务或 UI 状态。PR CI 会根据改动的功能路径组合最小 segment
-矩阵；共享桌面基础设施、主分支、merge queue、定时任务和 `ci:all` 仍运行完整桌面
-套件。映射规则位于 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
+矩阵；共享桌面基础设施、merge queue、定时任务和 `ci:all` 仍运行完整桌面套件。
+完整 Core 套件会把每个 checkpoint 展开为独立的 GitHub Actions matrix job 并行
+执行，而不是在单个 `Wework Desktop E2E (Core)` job 中串行运行。CI 会先构建一次
+带固定测试端口的 Core Tauri 应用、Executor 和 Codex artifact；各 checkpoint
+只安装桌面运行时依赖并下载复用该 artifact，不再重复安装 pnpm、Rust、Python 或
+uv，也不重复执行 Vite、Tauri 和 Executor 构建。插件与云端套件需要不同的构建时
+配置，仍作为独立 job 与 Core 构建并行。
+merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
+重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
+`.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
 必须同步登记对应 segment。分段命令也可用于本地快速迭代：
 
 ```bash
@@ -355,6 +372,9 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 每个场景使用独立 runner、HOME、Executor Home、端口和诊断 artifact，保留原有
 真实 Tauri、Executor 与 Codex 验证语义，同时避免三个场景在同一个 job 中串行等待。
 矩阵关闭 fail-fast，使一个场景失败时其他场景仍能完成并上传各自诊断。
+三类场景会注入不同的构建期 Vite 环境变量，因此 Tauri/Cargo 编译缓存必须按
+E2E 命令隔离。plugins 场景不得恢复 core 或 cloud 场景生成的应用二进制，否则
+编译进应用的 Codex Home 初始化开关可能不匹配当前测试。
 
 Linux 桌面场景会把 Tauri 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存
@@ -370,8 +390,10 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
-普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。macOS 内存门禁默认只在 `main`、
-定时任务和手动任务中运行；需要在 PR 中验证内存边界时，添加 `ci:memory` 标签。
+普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。merge queue 会在提交进入 `main`
+之前运行完整浏览器和 Linux 桌面套件；`main` 不再重复运行已经通过的合并队列
+检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证内存
+边界时，添加 `ci:memory` 标签。
 添加该标签只触发内存门禁，不会重复运行浏览器或 Linux 桌面 E2E。workflow 每天
 UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、Linux 桌面和
 macOS 内存 E2E，即使 PR 的改动路径通常不会触发 Wework E2E。

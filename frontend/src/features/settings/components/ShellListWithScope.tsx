@@ -12,6 +12,7 @@ import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import type { ResourceLibrarySortMode } from '@/features/resource-library/resourceSorting'
+import type { ResourceCreateRequest } from '@/features/resource-library/components/ResourceCreateButton'
 
 interface ShellListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -21,7 +22,14 @@ interface ShellListWithScopeProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  createRequest?: ResourceCreateRequest
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  hideCreateActions?: boolean
+  compact?: boolean
+  searchQuery?: string
 }
 
 export function ShellListWithScope({
@@ -32,7 +40,14 @@ export function ShellListWithScope({
   sortControls,
   sourceFilter,
   groups: externalGroups,
+  groupFilter,
   sortMode = 'default',
+  createRequest,
+  onCreateRequestClose,
+  creationOnly = false,
+  hideCreateActions = false,
+  compact = false,
+  searchQuery = '',
 }: ShellListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -84,7 +99,14 @@ export function ShellListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -98,7 +120,14 @@ export function ShellListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -122,7 +151,14 @@ export function ShellListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        createRequest={createRequest}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        hideCreateActions={hideCreateActions}
+        compact={compact}
+        searchQuery={searchQuery}
       />
     </div>
   )

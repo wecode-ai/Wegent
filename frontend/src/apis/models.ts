@@ -183,6 +183,8 @@ export interface UnifiedModel {
   modelCapabilities?: ModelCapabilities | null
   created_at?: string | null
   updated_at?: string | null
+  isReference?: boolean
+  listingId?: number | null
 }
 
 export interface UnifiedModelListResponse {

@@ -2,15 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type ResourceLibraryResourceType = 'agent' | 'skill' | 'mcp'
+export type ResourceLibraryResourceType =
+  | 'agent'
+  | 'skill'
+  | 'model'
+  | 'shell'
+  | 'retriever'
+  | 'mcp'
 
 export type VisibleResourceLibraryResourceType = Exclude<ResourceLibraryResourceType, 'mcp'>
 
-export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
-
 export type ManagedResourceType = 'agent' | 'model' | 'shell' | 'skill' | 'retriever'
 
-export type ManagedResourceSourceFilter = 'all' | 'personal' | 'group' | 'system'
+export type ResourceLibraryTab = 'discover' | 'mine' | 'team' | 'system' | 'published'
+
+export type ResourceLibraryModelCategoryFilter = 'all' | 'llm' | 'embedding' | 'rerank'
+
+export type ResourceLibraryTypeFilter = 'all' | ManagedResourceType
+
+export type MarketplaceResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
+
+export type ManagedResourceSourceFilter = 'all' | 'mine' | 'personal' | 'group' | 'system'
 
 export type ResourceLibraryListingStatus = 'published' | 'archived'
 
@@ -35,22 +47,59 @@ export interface ResourceLibraryListing {
   icon?: string | null
   tags: string[]
   publisher_user_id: number
+  publisher_user_name?: string | null
+  publisher_namespace?: string
   status: ResourceLibraryListingStatus | string
   current_version_id?: number | null
   current_version?: ResourceLibraryVersion | null
   install_count: number
   is_installed: boolean
+  bind_modes: string[]
+  allow_personal_install?: boolean
+  allow_group_install?: boolean
+  target_groups?: string[]
   created_at: string
   updated_at: string
 }
 
+export interface ResourceLibraryPublicationUpdateRequest {
+  display_name?: string
+  description?: string | null
+  tags?: string[]
+  version?: string
+  status?: ResourceLibraryListingStatus
+  allow_personal_install?: boolean
+  allow_group_install?: boolean
+  target_groups?: string[]
+}
+
+export interface ResourceLibraryReferenceConsumer {
+  id: number
+  name: string
+  namespace: string
+}
+
+export interface ResourceLibraryReferenceUsage {
+  referenced_bots: ResourceLibraryReferenceConsumer[]
+  referenced_knowledge_bases: ResourceLibraryReferenceConsumer[]
+}
+
 export interface ResourceLibraryListListingsParams {
-  resourceType?: ResourceLibraryTypeFilter
+  resourceType?: MarketplaceResourceLibraryTypeFilter
   keyword?: string
   tags?: string[]
   status?: ResourceLibraryListingStatus | string
+  targetNamespace?: string
+  cursor?: string
   page?: number
   limit?: number
+}
+
+export interface ResourceLibraryDiscoveryResponse<T> {
+  items: T[]
+  has_more: boolean
+  next_cursor: string | null
+  limit: number
 }
 
 export interface ResourceLibraryListResponse<T> {
@@ -62,13 +111,19 @@ export interface ResourceLibraryListResponse<T> {
 
 export interface ResourceLibraryCreateListingRequest {
   resource_type: ResourceLibraryResourceType
-  source_id: number
+  source_id?: number
+  source_name?: string
+  source_namespace?: string
   name: string
   display_name: string
   description?: string | null
   icon?: string | null
   tags: string[]
   version: string
+  status?: ResourceLibraryListingStatus
+  target_groups?: string[]
+  allow_personal_install?: boolean
+  allow_group_install?: boolean
   manifest_options?: Record<string, unknown>
 }
 
@@ -82,6 +137,16 @@ export interface ResourceLibraryInstallApiRequest {
   target_namespace: string
   version_id?: number
   install_options?: Record<string, unknown>
+}
+
+export interface ResourceLibraryAgentBindings {
+  agent_id: number
+  personal: boolean
+  group_names: string[]
+}
+
+export interface ResourceLibraryAgentBindingsUpdateRequest {
+  group_names: string[]
 }
 
 export interface ResourceLibraryInstalledReference {
@@ -108,7 +173,6 @@ export interface ResourceLibraryInstall {
   installed_reference: ResourceLibraryInstalledReference
   install_status: ResourceLibraryInstallStatus
   error_message?: string | null
-  requires_configuration: boolean
   installed_at: string
   updated_at: string
 }

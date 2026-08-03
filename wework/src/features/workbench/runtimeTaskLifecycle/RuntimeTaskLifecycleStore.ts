@@ -119,8 +119,8 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
-    const hasStreamingAssistant = transcript.messages.some(
-      message => message.role === 'assistant' && message.status === 'streaming'
+    const hasStreamingTurn = transcript.turns.some(
+      turn => turn.status === 'pending' || turn.status === 'streaming'
     )
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
@@ -133,7 +133,7 @@ export class RuntimeTaskLifecycleStore {
       this.executorSettled(address)
     }
 
-    if (hasStreamingAssistant && transcript.running !== false) {
+    if (hasStreamingTurn && transcript.running !== false) {
       this.dispatch(address, { type: 'turn_recovered', streaming: true })
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.turnSettled(address)

@@ -25,6 +25,13 @@ import type { ManagedResourceSourceFilter } from '../types'
 export interface ResourceCreateTarget {
   scope: 'personal' | 'group'
   groupName?: string
+  groupNames?: string[]
+}
+
+export interface ResourceCreateRequest {
+  id: number
+  target: ResourceCreateTarget
+  publishAfterCreate?: boolean
 }
 
 interface ResourceCreateButtonProps {
@@ -38,7 +45,9 @@ interface ResourceCreateButtonProps {
 }
 
 function canCreateInGroup(group: Group): boolean {
-  return group.my_role === 'Owner' || group.my_role === 'Maintainer'
+  return (
+    group.my_role === 'Owner' || group.my_role === 'Maintainer' || group.my_role === 'Developer'
+  )
 }
 
 function getGroupLabel(group: Group): string {

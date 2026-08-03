@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils'
 import { TOGGLE_MODEL_SELECTOR_COMMAND } from '@/lib/keybindings'
 import type { UnifiedModel } from '@/types/api'
+import { FastModeIcon } from './FastModeIcon'
 import { ModelAdvancedHeader } from './ModelAdvancedHeader'
 import { ModelAutomaticReasoningOption } from './ModelAutomaticReasoningOption'
 import { ModelPowerSlider } from './ModelPowerSlider'
@@ -350,10 +351,14 @@ export function ModelSelector({
 
   useMobileModelSelectorFocus(open, isMobile, mobileCloseButtonRef)
 
-  const selectedButtonLabel =
-    getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
-      t(key, fallback)
-    ) || t('workbench.default_model', 'Default')
+  const emptyModelLabel = t('workbench.no_models', 'No models available')
+  const selectedButtonLabel = selectedModel
+    ? getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
+        t(key, fallback)
+      )
+    : familyGroups.length === 0
+      ? emptyModelLabel
+      : t('workbench.default_model', 'Default')
   const buttonLabel = nextTurn
     ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
     : selectedButtonLabel
@@ -480,7 +485,7 @@ export function ModelSelector({
                   data-testid={`model-control-${control.id}-${option.value}`}
                   onFocus={clearSubmenuOnHover ? clearDesktopSubmenu : undefined}
                   onClick={() => handleSelectModelOption(control.id, option.value)}
-                  className="flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm text-text-primary hover:bg-muted"
+                  className="flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-sm text-text-primary hover:bg-muted"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block font-normal">
@@ -524,7 +529,7 @@ export function ModelSelector({
         onFocus={() => activateControl(control.id)}
         onClick={() => activateControl(control.id)}
         className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
+          'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
           active
             ? 'bg-muted text-text-primary'
             : 'text-text-secondary hover:bg-muted hover:text-text-primary',
@@ -569,7 +574,7 @@ export function ModelSelector({
             handleSelectModel(model)
           }}
           className={[
-            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
+            'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-sm leading-[18px]',
             modelDisabled
               ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
               : 'text-text-primary hover:bg-muted',
@@ -830,7 +835,9 @@ export function ModelSelector({
 
   const desktopModelLabel = selectedModel
     ? getModelDisplayLabel(selectedModel, {}, resolveControlLabel)
-    : t('workbench.default_model', 'Default')
+    : familyGroups.length === 0
+      ? emptyModelLabel
+      : t('workbench.default_model', 'Default')
   const modelRowActive = activeDesktopSubmenu?.type === 'models'
 
   return (
@@ -850,7 +857,7 @@ export function ModelSelector({
               data-enter-animation="main"
               style={{ maxHeight: desktopMenuMaxHeight }}
               className={cn(
-                'w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                'w-64 shrink-0 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                 styles.mainMenu
               )}
             >
@@ -866,7 +873,7 @@ export function ModelSelector({
                       onFocus={activateModels}
                       onClick={activateModels}
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal leading-[18px]',
+                        'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
                         modelRowActive
                           ? 'bg-muted text-text-primary'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -885,7 +892,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-reasoning"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.reasoning_level', '推理强度')}
@@ -900,7 +907,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-speed"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.speed', '速度')}
@@ -909,7 +916,7 @@ export function ModelSelector({
                       </button>
                     )}
                   </div>
-                  <div className="mx-3 my-1.5 border-t border-border" />
+                  <div className="mx-2 my-1 border-t border-border" />
                 </>
               ) : null}
               {selectedPowerSettingAvailable ? (
@@ -979,7 +986,7 @@ export function ModelSelector({
                 data-enter-animation="submenu"
                 style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                   styles.submenu
                 )}
               >
@@ -996,7 +1003,7 @@ export function ModelSelector({
                 data-enter-animation="submenu"
                 style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                   styles.submenu
                 )}
               >
@@ -1026,9 +1033,21 @@ export function ModelSelector({
         disabled={disabled}
         isMobile={isMobile}
         label={buttonLabel}
+        leadingIcon={
+          fastModeState.enabled ? (
+            <FastModeIcon
+              data-testid="model-selector-fast-mode-icon"
+              className="h-3.5 w-3.5 shrink-0 text-text-primary"
+            />
+          ) : undefined
+        }
         highlightedLabel={isMobile ? undefined : ultraLabel}
         shortcut={modelSelectorShortcut}
-        ariaLabel={t('workbench.model_selector')}
+        ariaLabel={
+          fastModeState.enabled
+            ? `${t('workbench.model_selector')}, ${t('workbench.speed_fast', '快速')}`
+            : t('workbench.model_selector')
+        }
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
         buttonClassName={buttonClassName}
         maxClosedWidth={maxClosedWidth}

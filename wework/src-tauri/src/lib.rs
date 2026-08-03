@@ -8,6 +8,8 @@ mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
 mod local_executor;
+#[cfg(desktop)]
+mod local_model_secrets;
 mod local_terminal;
 #[cfg(desktop)]
 mod popout_window;
@@ -442,6 +444,16 @@ fn create_log_plugin(
     let webview_log_file_name = format!("{WEBVIEW_LOG_FILE_NAME}-{process_id}");
     Ok(tauri_plugin_log::Builder::default()
         .clear_targets()
+        .max_file_size(if cfg!(debug_assertions) {
+            10 * 1024 * 1024
+        } else {
+            40_000
+        })
+        .rotation_strategy(if cfg!(debug_assertions) {
+            tauri_plugin_log::RotationStrategy::KeepSome(3)
+        } else {
+            tauri_plugin_log::RotationStrategy::KeepOne
+        })
         .level(if cfg!(debug_assertions) {
             log::LevelFilter::Trace
         } else {
@@ -4525,6 +4537,7 @@ pub fn run() {
             cloud_authorization_window::position_cloud_authorization_window,
             desktop_capture::capture_main_webview,
             desktop_capture::capture_popout_webview,
+            desktop_capture::capture_workspace_webview,
             acknowledge_frontend_resume_probe,
             register_frontend_recovery_bridge,
             #[cfg(desktop)]
@@ -4548,7 +4561,9 @@ pub fn run() {
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_resolve_agent_approval,
             embedded_browser::embedded_browser_resume_download,
+            embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
@@ -4572,6 +4587,10 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
+            #[cfg(desktop)]
+            local_model_secrets::read_local_model_api_keys,
+            #[cfg(desktop)]
+            local_model_secrets::update_local_model_api_key,
             get_app_log_directory,
             get_app_preferences,
             close_main_window_to_tray,

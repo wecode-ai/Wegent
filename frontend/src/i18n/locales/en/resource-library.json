@@ -1,10 +1,17 @@
 {
   "title": "Resource Library",
+  "description": "Discover Agents and Skills published by teams and the community, then add and use them right away",
+  "mine": {
+    "title": "My Capabilities",
+    "description": "Manage capabilities you created, your teams shared, or you added from the Resource Library"
+  },
   "tabs": {
     "discover": "Discover",
     "mine": "Mine",
-    "installed": "Installed",
-    "published": "Published by me"
+    "team": "Team",
+    "system": "Built-in",
+    "installed": "Added",
+    "published": "Published by Me"
   },
   "filters": {
     "all": "All",
@@ -14,6 +21,10 @@
     "skill": "Skill",
     "retriever": "Retriever"
   },
+  "market_filters": {
+    "agent": "Agent Marketplace",
+    "skill": "Skill Marketplace"
+  },
   "scopes": {
     "personal": "Created by me",
     "group": "Team shared",
@@ -22,9 +33,11 @@
   "sources": {
     "all": "All",
     "personal": "Created by me",
-    "group": "Team",
+    "group": "Team shared",
+    "installed": "Added",
     "system": "System",
-    "all_groups": "All teams"
+    "all_groups": "All teams",
+    "selected_groups": "{{count}} teams selected"
   },
   "targets": {
     "personal": "My Resources",
@@ -36,29 +49,72 @@
   },
   "actions": {
     "install": "Install",
-    "installed": "Installed",
+    "use": "Use now",
+    "use_now": "Use now",
+    "open_chat": "Start chat",
+    "open_code": "Open code",
+    "add": "Add",
+    "added": "Added",
+    "system_available": "System available",
+    "new_capability": "New Capability",
+    "my_capabilities": "My Capabilities",
+    "back_to_library": "Back to Resource Library",
+    "browse_agent_market": "Browse Agent Marketplace",
+    "clear_search": "Clear search",
+    "view_capabilities": "Capabilities",
+    "add_capability": "Add from Resource Library",
+    "enable_personal_install": "Allow personal adds",
+    "enable_group_install": "Allow team adds",
+    "restore": "Republish",
+    "installed": "Added",
     "publish": "Publish Resource",
+    "publish_new_version": "Publish New Version",
+    "edit_skill": "Edit Skill",
+    "edit_and_publish": "Edit and Publish New Version",
     "upgrade": "Upgrade",
     "archive": "Archive",
     "configure": "Configure",
     "view_detail": "View Details",
     "details": "Details",
     "manage_groups": "Manage...",
+    "more": "More actions",
+    "remove_added_agent": "Remove",
+    "remove_added_skill": "Remove",
+    "remove_from_team": "Remove from team",
     "retry": "Retry",
+    "load_more": "Load more",
     "create_to_personal": "Create in My Resources",
     "create_to_group": "Create in {{group}}",
     "choose_create_target": "Where should {{action}} be saved?",
     "choose_create_target_description": "The save location controls who can see and manage this resource.",
     "search": "Search",
+    "filter": "Filter",
+    "continue": "Continue",
+    "save": "Save",
     "close": "Close",
     "cancel": "Cancel"
   },
   "status": {
-    "installed": "Installed",
-    "requires_configuration": "Requires Configuration",
+    "installed": "Added",
     "draft": "Draft",
     "published": "Published",
     "archived": "Archived"
+  },
+  "publication": {
+    "settings": "Publication settings",
+    "published_to_library": "Published to Resource Library",
+    "personal_install": "Personal add",
+    "group_install": "Team add",
+    "edit_scope": "Edit publishing scope",
+    "edit_scope_description": "Choose the publishing scope. Team publishing supports multiple target teams.",
+    "edit_share_scope": "Edit sharing scope",
+    "edit_share_scope_description": "Change where this Skill is shared. Team sharing supports multiple target teams.",
+    "personal_install_description": "Other users can add this capability to their own capabilities.",
+    "group_install_description": "Authorized members can add this capability to a team.",
+    "target_groups": "Target teams",
+    "target_groups_description": "Select multiple teams. Each selected team references the same source capability.",
+    "target_groups_preserve_note": "Removing a team from this scope removes its reference without deleting the source capability.",
+    "target_groups_count": "{{count}} target teams"
   },
   "fields": {
     "name": "Name",
@@ -67,41 +123,120 @@
     "tags": "Tags",
     "type": "Resource type",
     "sort": "Sort",
+    "scope": "Scope",
+    "mode": "Mode",
     "source": "Source",
     "source_id": "Source resource ID",
     "version": "Version",
     "publisher": "Publisher",
-    "install_count": "Installs",
-    "updated_at": "Updated"
+    "official_publisher": "Wegent Official",
+    "install_count": "Adds",
+    "people_added": "added",
+    "official_badge": "Official",
+    "updated_at": "Updated",
+    "team_scope": "Team scope",
+    "group_added_skills": "Skills added to the team",
+    "installed_capabilities": "Added capabilities"
   },
   "sort": {
     "default": "Default",
+    "popular": "Popular",
     "latest": "Latest"
+  },
+  "modes": {
+    "all": "All modes",
+    "chat": "Chat",
+    "code": "Code",
+    "task": "Device"
   },
   "empty": {
     "discover": "No resources to discover",
-    "mine": "No resources yet"
+    "mine": "No capabilities yet",
+    "team": "No team capabilities yet",
+    "published": "No publications yet",
+    "create_model": "Use New Capability at the top of the page to create your first model",
+    "create_shell": "Use New Capability at the top of the page to create your first executor",
+    "create_retriever": "Use New Capability at the top of the page to create your first retriever"
   },
   "states": {
     "loading": "Loading resources",
     "empty": "No resources",
     "error": "Failed to load resources",
     "requiresConfiguration": "Configuration required",
-    "no_groups": "No group resources"
+    "no_groups": "No group resources",
+    "select_groups": "Select at least one team"
   },
   "search": {
     "placeholder": "Search resources",
+    "agent_placeholder": "Search agents or descriptions",
+    "skill_placeholder": "Search skills",
+    "model_placeholder": "Search model names",
+    "shell_placeholder": "Search executor names",
+    "retriever_placeholder": "Search retriever names",
     "groups_placeholder": "Search teams",
     "groups_empty": "No matching teams"
   },
   "messages": {
-    "install_success": "Installed",
-    "install_requires_configuration": "Installed, configuration required",
-    "install_failed": "Install failed",
+    "install_success": "Added",
+    "install_failed": "Add failed",
     "publish_success": "Published",
-    "publish_failed": "Publish failed"
+    "publish_failed": "Publish failed",
+    "update_success": "Publication rules updated",
+    "update_failed": "Failed to update publication rules",
+    "publication_loading": "Loading sharing scope…",
+    "publication_load_failed": "Failed to load sharing scope",
+    "groups_load_failed": "Failed to load teams",
+    "group_manage_required": "Group developer permission or higher is required",
+    "skill_saved_group_binding_failed": "The Skill was saved, but could not be added to some teams. Update its sharing scope under My resources.",
+    "agent_saved_publication_failed": "The Agent was saved, but its publication scope could not be updated. Retry under My publications.",
+    "remove_added_agent_success": "Agent removed from your capabilities",
+    "remove_added_agent_failed": "Failed to remove Agent",
+    "remove_added_agent_confirm": "Remove “{{agent}}” from your capabilities? This only removes your reference; the source Agent will not be deleted.",
+    "remove_added_skill_success": "Skill removed from your capabilities",
+    "remove_added_skill_failed": "Failed to remove Skill",
+    "remove_added_skill_confirm": "Remove \u201c{{skill}}\u201d from your capabilities? The source Skill will not be deleted.",
+    "remove_from_team_success": "Skill removed from team",
+    "remove_from_team_failed": "Failed to remove Skill from team",
+    "remove_from_team_confirm": "Remove “{{skill}}” from “{{group}}”? The source Skill will not be deleted."
   },
   "publish": {
-    "description": "Publish an existing Agent or Skill to the resource library"
+    "description": "Select an existing Agent or Skill and publish it to the marketplace",
+    "select_resource": "Select an existing capability"
+  },
+  "new_capability": {
+    "description": "Choose the capability type. Set its publishing scope in the creation form.",
+    "core_resources": "Core capabilities",
+    "common": "Common",
+    "advanced": "Advanced",
+    "advanced_description": "Models, executors, and retrievers",
+    "foundation_resources": "Foundation resources",
+    "type_descriptions": {
+      "agent": "Combine bots and collaboration modes",
+      "skill": "Upload or import reusable skills",
+      "model": "Configure models and inference services",
+      "shell": "Configure agent execution environments",
+      "retriever": "Configure knowledge retrieval services"
+    },
+    "scope_title": "Publishing scope",
+    "scope_description": "Choose who can see this capability. Multiple target teams can be selected.",
+    "existing_scope_description": "Publishing to another scope creates a reference to the current capability. Source changes take effect in every scope immediately.",
+    "scopes": {
+      "personal": "Private",
+      "team": "Team",
+      "marketplace": "Marketplace"
+    },
+    "destination": "Publish to",
+    "group": "Target group",
+    "select_group": "Select a group",
+    "targets": {
+      "mine": "Private",
+      "published": "Marketplace",
+      "team": "Team"
+    },
+    "target_descriptions": {
+      "mine": "Only you can see, use, and manage it",
+      "published": "Publicly listed for users to add",
+      "team": "Shared with group members"
+    }
   }
 }

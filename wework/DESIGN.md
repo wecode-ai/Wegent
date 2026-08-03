@@ -388,7 +388,15 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Priority task entries are selectable two-line data rows rather than compact
+  navigation rows. They use a `48px` minimum height so the title and `12px–14px`
+  source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Sortable sidebar rows must keep the sortable container separate from the
+  pointer activator. Only the primary icon-and-label or label region may start
+  pointer sorting, after at least `6px` of movement; trailing actions, metadata,
+  and unused row space must remain click-only. Preserve keyboard sorting on the
+  sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - On macOS light theme, use the captured warm translucent/off-white sidebar
   material and keep the main canvas pure white. Preserve the traffic-light safe

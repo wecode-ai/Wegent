@@ -21,6 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -54,6 +55,9 @@ import {
   buildEmbeddingConfig,
   hasImageInputCapability,
 } from '@/features/settings/utils/embedding-model-config'
+import { CapabilityScopeSelector } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
+import type { Group } from '@/types/group'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -175,6 +179,7 @@ interface ModelEditDialogProps {
    * Scope for the model (personal or group)
    */
   scope?: 'personal' | 'group'
+  publicationGroups?: Group[]
 }
 
 // Model category type options
@@ -287,6 +292,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   onSave,
   groupName,
   scope,
+  publicationGroups,
 }) => {
   const { t } = useTranslation()
   // Support both legacy model prop and new initialData prop
@@ -325,6 +331,18 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   }, [initialData, model])
   const isEditing = !!effectiveInitialData
   const isGroupScope = scope === 'group'
+  const publicationNamespace =
+    model?.metadata.namespace || (isGroupScope && groupName ? groupName : 'default')
+  const publicationScope = useCapabilityPublicationScope({
+    enabled: publicationGroups !== undefined,
+    open,
+    resourceType: 'model',
+    sourceName: isEditing ? effectiveInitialData?.name : undefined,
+    sourceNamespace: publicationNamespace,
+    groups: publicationGroups || [],
+    defaultTarget: publicationNamespace === 'default' ? 'personal' : 'team',
+    defaultGroupNames: publicationNamespace === 'default' ? [] : [publicationNamespace],
+  })
 
   // Form state
   const [modelIdName, setModelIdName] = useState('')
@@ -1021,6 +1039,18 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       return
     }
 
+    if (
+      publicationGroups &&
+      publicationScope.target === 'team' &&
+      publicationScope.groupNames.length === 0
+    ) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:new_capability.select_groups'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       // Build type-specific config based on modelCategoryType
@@ -1250,15 +1280,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Default behavior: use modelApis for user models
         if (isEditing && model) {
           await modelApis.updateModel(model.metadata.name, modelCRD)
-          toast({
-            title: t('common:models.update_success'),
-          })
         } else {
           await modelApis.createModel(modelCRD)
-          toast({
-            title: t('common:models.create_success'),
+        }
+        if (publicationGroups) {
+          await publicationScope.savePublicationScope({
+            sourceName: modelCRD.metadata.name,
+            sourceNamespace: modelCRD.metadata.namespace,
+            displayName: modelCRD.metadata.displayName || modelCRD.metadata.name,
           })
         }
+        toast({
+          title: isEditing ? t('common:models.update_success') : t('common:models.create_success'),
+        })
         onClose()
       }
     } catch (error) {
@@ -1296,6 +1330,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           <DialogTitle>
             {isEditing ? t('common:models.edit_title') : t('common:models.create_title')}
           </DialogTitle>
+          <DialogDescription>{t('common:models.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
@@ -2185,6 +2220,19 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               onChange={changes => setImageConfig(prev => ({ ...prev, ...changes }))}
             />
           )}
+
+          {publicationGroups && (
+            <div data-testid="model-publish-scope-section">
+              <CapabilityScopeSelector
+                value={publicationScope.target}
+                groups={publicationScope.writableGroups}
+                groupNames={publicationScope.groupNames}
+                onChange={publicationScope.handleChange}
+                existingResource={isEditing}
+                multipleGroups
+              />
+            </div>
+          )}
         </div>
 
         <DialogFooter className="flex items-center justify-between sm:justify-between">
@@ -2201,7 +2249,11 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             <Button variant="outline" onClick={onClose}>
               {t('common:actions.cancel')}
             </Button>
-            <Button variant="primary" onClick={handleSave} disabled={saving}>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              disabled={saving || publicationScope.loading}
+            >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {saving ? t('common:actions.saving') : t('common:actions.save')}
             </Button>

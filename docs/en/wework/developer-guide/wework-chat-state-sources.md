@@ -85,6 +85,38 @@ while retaining the same canonical `turnId`. Turn-level actions such as fork
 and rollback must use the canonical turn ID persisted by Codex, never a
 UI-only segmented message ID.
 
+### Codex Turn Identity and Recovery
+
+The Codex app-server `turn/start` response is the authoritative source for a
+new turn identity. The executor must record its turn ID immediately after the
+request succeeds. A later `turn/started` notification may confirm or correct
+that identity, but it must not be required before the turn becomes active.
+Guidance and interruption therefore still target the current turn when a live
+notification is delayed or missing.
+
+When the user sends guidance, Wework optimistically inserts the guidance
+message into the current turn before calling `runtime.tasks.guidance`. If
+Codex `turn/steer` explicitly reports that the expected turn ID differs from
+the actual active turn ID, the executor updates its record with the returned
+ID and retries exactly once. The successful response turn ID may rebind the
+optimistic message to the correct turn. On failure, Wework removes the
+optimistic message and keeps a retryable queue item so the transcript never
+shows guidance that Codex did not accept.
+
+**Interrupt and send now** optimistically marks the running turn as cancelled
+and removes in-flight optimistic guidance before requesting interruption. The
+interrupt operation treats an already absent active turn as idempotent
+success, then starts the replacement turn. If the request fails, the frontend
+restores the previous turn state and optimistic guidance instead of losing
+the user's message.
+
+Live events carry incremental updates only. After the WebView or runtime
+transport is rebuilt, recovery for a persisted Codex thread must call
+`thread/resume` and then read a complete snapshot with
+`thread/read(includeTurns)`. The snapshot re-establishes turns, messages, and
+running state; code must not continue inferring them from pre-disconnect
+in-memory events.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -205,6 +237,14 @@ A reference is serialized in the draft as `[$title](wework-conversation://<encod
 
 This feature is a user-authorized pre-send snapshot injection, not a conversation MCP. The model cannot independently list, search, or read conversations that the user did not reference; menu search uses only metadata already loaded in `runtimeWork`. Changes to this path must keep the reference parsing and context construction unit tests, composer/message rendering tests, and the `conversation-mention.scenario.mjs` desktop E2E scenario aligned.
 
+## Conversation Switching and Transcript Restoration
+
+`loadedRuntimeTranscriptKeyRef` only proves that a task transcript finished loading at some point. It does not prove that the message area is still displaying that task. When the user rapidly switches from task A to a still-loading task B and back to A, B's cached messages may already have replaced the message area while A remains the last successfully loaded key.
+
+The pane may therefore skip restoration only when both the loaded key and the displayed transcript identity match the target task. When the identities differ, it must reapply the target task's cached messages and start a transcript load. Effect cleanup must continue isolating late responses from other tasks so they cannot overwrite the current task.
+
+Cover this path with both a component race test and a real desktop scenario: keep one task running, switch rapidly between it and a completed task, then verify that every historical turn in the completed task remains visible after switching back.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:
@@ -234,7 +274,7 @@ Running Codex LocalTasks can send a queued message as native guidance. Guidance 
 
 Do not append the user message to the bottom after guidance succeeds, and do not wait for `runtime.tasks.guidance` to return before splitting the assistant. Assistant text generated while the guidance request is waiting would otherwise appear before the user guidance message, making live streaming order differ from refreshed transcript order.
 
-If the source pane is unmounted when guidance is applied, the background subscriber must remove the matching item from `queuedMessages` and write the confirmed user message into the in-memory live projection in `runtimeConversationCache.messages`. Reopening the source conversation before the Codex transcript covers the running turn must still show that confirmed message. Once the Provider transcript covers the same turn, it takes over the content and ordering as a whole. The cache is neither persisted nor merged into Provider transcript pages, so it does not become a second persistent transcript source.
+If the source pane is unmounted when guidance is applied, the background subscriber must remove the matching item from `queuedMessages` and write the confirmed user message into the in-memory live projection in `runtimeConversationCache.messages`. The background path must reuse the foreground `AppliedRuntimeGuidanceMessage` constructor and assistant-splitting entry point; it must never append with `[...messages, guidance]`, which places the user message after the entire running assistant when the source conversation is reopened. Split-prefix boundaries must be shared by conversation key so a foreground `chat:done` can still trim the already rendered assistant prefix after a background split. Reopening the source conversation before the Codex transcript covers the running turn must still show that confirmed message. Once the Provider transcript covers the same turn, it takes over the content and ordering as a whole. The cache is neither persisted nor merged into Provider transcript pages, so it does not become a second persistent transcript source.
 
 After inserting guidance, the message area must scroll to the bottom and briefly maintain stable bottom-following even if the user had previously scrolled upward, so the new user message and assistant continuation remain visible. This forced scroll applies only to newly applied guidance in the current conversation; loading a historical page that contains older guidance must preserve the user's current viewport anchor.
 
@@ -260,6 +300,15 @@ After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop 
 The workbench owns live state that cannot be serialized reliably, including composer drafts, Terminal sessions, and the in-app browser. When users move from the workbench to plugins, apps, or iframe apps, `AppRoutes` must keep `WorkbenchProvider` and `WorkbenchPage` mounted and only hide the workbench surface. Returning to the workbench then reuses the original component instances. A direct visit to an auxiliary page may defer the initial workbench mount to avoid creating unused background sessions.
 
 Do not unmount the workbench during route transitions, and do not add incomplete restoration fallbacks for Terminal or browser state. New top-level pages should join the auxiliary-page rendering branch without changing the workbench lifecycle.
+
+Multiple top-level document tabs use React `Activity` to retain independent
+workbench instances. Updates inside a hidden `Activity` may be deferred while
+portals that it created in global titlebar targets remain attached. Every
+global titlebar portal must therefore identify its owning document tab, and
+`AppRoutes` must control portal visibility from the active-tab state. Do not
+rely only on conditional rendering inside the hidden workbench to withdraw a
+portal. After a tab switch, only the active tab may expose its main header,
+panel actions, right-workspace title, and feedback entry.
 
 ## Workbench Pane Cache
 

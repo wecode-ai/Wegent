@@ -12,6 +12,9 @@ import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import type { ResourceLibrarySortMode } from '@/features/resource-library/resourceSorting'
+import type { ResourceCreateRequest } from '@/features/resource-library/components/ResourceCreateButton'
+import type { Team } from '@/types/api'
+import type { TeamModeFilter } from '@/features/tasks/components/selector/team-selector-utils'
 
 interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -21,7 +24,18 @@ interface TeamListWithScopeProps {
   sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  groupFilter?: string[]
   sortMode?: ResourceLibrarySortMode
+  modeFilter?: TeamModeFilter
+  onModeFilterChange?: (mode: TeamModeFilter) => void
+  hideModeFilter?: boolean
+  createRequest?: ResourceCreateRequest
+  onCreated?: (team: Team) => void
+  onCreateRequestClose?: () => void
+  creationOnly?: boolean
+  compact?: boolean
+  hideCreateActions?: boolean
+  searchQuery?: string
 }
 
 export function TeamListWithScope({
@@ -32,7 +46,18 @@ export function TeamListWithScope({
   sortControls,
   sourceFilter,
   groups: externalGroups,
+  groupFilter,
   sortMode = 'default',
+  modeFilter,
+  onModeFilterChange,
+  hideModeFilter = false,
+  createRequest,
+  onCreated,
+  onCreateRequestClose,
+  creationOnly = false,
+  compact = false,
+  hideCreateActions = false,
+  searchQuery = '',
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -84,7 +109,18 @@ export function TeamListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        modeFilter={modeFilter}
+        onModeFilterChange={onModeFilterChange}
+        hideModeFilter={hideModeFilter}
+        createRequest={createRequest}
+        onCreated={onCreated}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        compact={compact}
+        hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -98,7 +134,18 @@ export function TeamListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        modeFilter={modeFilter}
+        onModeFilterChange={onModeFilterChange}
+        hideModeFilter={hideModeFilter}
+        createRequest={createRequest}
+        onCreated={onCreated}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        compact={compact}
+        hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -122,7 +169,18 @@ export function TeamListWithScope({
         sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        groupFilter={groupFilter}
         sortMode={sortMode}
+        modeFilter={modeFilter}
+        onModeFilterChange={onModeFilterChange}
+        hideModeFilter={hideModeFilter}
+        createRequest={createRequest}
+        onCreated={onCreated}
+        onCreateRequestClose={onCreateRequestClose}
+        creationOnly={creationOnly}
+        compact={compact}
+        hideCreateActions={hideCreateActions}
+        searchQuery={searchQuery}
       />
     </div>
   )

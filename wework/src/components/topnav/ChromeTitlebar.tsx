@@ -1,49 +1,52 @@
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
-import type { AppTab } from '@/config/apps'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
-  TITLEBAR_CENTER_PORTAL_ID,
+  TITLEBAR_FEEDBACK_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MessageSquareWarning } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useState, type ReactNode } from 'react'
+import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 
 interface ChromeTitlebarProps {
-  tabs: AppTab[]
-  activeKey: string
-  onNavigate: (appKey: string) => void
   beforeTabs?: ReactNode
   afterTabs?: ReactNode
   className?: string
-  iconOnlyTabs?: boolean
+  showWorkspacePortals?: boolean
+  showFeedback?: boolean
 }
 
 export function ChromeTitlebar({
-  tabs,
-  activeKey,
-  onNavigate,
   beforeTabs,
   afterTabs,
   className,
-  iconOnlyTabs = false,
+  showWorkspacePortals = true,
+  showFeedback = true,
 }: ChromeTitlebarProps) {
   const isTauri = isTauriRuntime()
   const platform = getPlatform()
+  const feedbackSlotVisible = isTauri && platform === 'mac'
+  const fixedActionsWidth = showWorkspacePortals
+    ? feedbackSlotVisible
+      ? '6.75rem'
+      : '5rem'
+    : feedbackSlotVisible
+      ? '1.75rem'
+      : '0px'
 
   return (
     <div
       data-testid="chrome-titlebar"
       className={cn(
-        'z-titlebar flex h-[38px] shrink-0 items-center bg-surface pr-2 select-none',
+        'z-titlebar flex h-[38px] shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 backdrop-blur-xl backdrop-saturate-150 select-none',
         className
       )}
     >
@@ -64,91 +67,65 @@ export function ChromeTitlebar({
         </div>
       )}
 
-      {/* Tab strip */}
-      {iconOnlyTabs ? (
-        <DesktopAppSwitcher
-          activeApp={
-            activeKey === 'apps'
-              ? 'apps'
-              : activeKey === 'todo'
-                ? 'todo'
-                : activeKey === 'wegent'
-                  ? 'wegent'
-                  : 'wework'
-          }
-          onNavigate={onNavigate}
-        />
-      ) : (
-        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              type="button"
-              data-testid={`chrome-tab-${tab.key}`}
-              onClick={() => onNavigate(tab.key)}
-              title={tab.label}
-              aria-label={tab.label}
-              className={cn(
-                'group relative flex h-8 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-sm font-medium leading-none transition-colors',
-                activeKey === tab.key
-                  ? 'bg-black/[0.045] text-text-primary'
-                  : 'text-text-secondary hover:bg-black/[0.04]'
-              )}
-            >
-              <span className="truncate">{tab.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <WorkspaceTabStrip />
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
           {afterTabs}
         </div>
       )}
 
-      <div
-        id={TITLEBAR_CENTER_PORTAL_ID}
-        data-testid="titlebar-center"
-        className="pointer-events-none relative z-chrome flex h-full min-w-6 flex-1 items-center overflow-hidden"
-        {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
-      >
-        {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
-      </div>
-      {isTauri && platform === 'mac' && <TopnavFeedbackButton />}
-      {isTauri && <TitlebarExtensionSlot />}
-      <div
-        data-testid="titlebar-right-workspace-zone"
-        className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
-        style={{
-          right:
-            isTauri && platform === 'win'
-              ? 'calc(138px + 5rem)'
-              : isTauri && platform === 'linux'
-                ? 'calc(138px + 5rem)'
-                : '5rem',
-          width: 'var(--right-workspace-titlebar-width, auto)',
-        }}
-      >
+      {showWorkspacePortals && isTauri && <TitlebarExtensionSlot />}
+      {showWorkspacePortals && (
         <div
-          id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
-          data-testid="titlebar-right-panel"
-          className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
+          data-testid="titlebar-right-workspace-zone"
+          className="pointer-events-none absolute top-0 z-chrome flex h-full items-center"
+          style={{
+            right:
+              isTauri && platform === 'win'
+                ? `calc(138px + ${fixedActionsWidth})`
+                : isTauri && platform === 'linux'
+                  ? `calc(138px + ${fixedActionsWidth})`
+                  : fixedActionsWidth,
+            width: 'var(--right-workspace-titlebar-width, auto)',
+          }}
         >
-          {isTauri ? (
-            <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
-              <MacOSTitleBarDragRegion className="h-full w-full" />
-            </div>
-          ) : null}
+          <div
+            id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
+            data-testid="titlebar-right-panel"
+            className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
+          >
+            {isTauri ? (
+              <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
+                <MacOSTitleBarDragRegion className="h-full w-full" />
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
-      <div
-        id={TITLEBAR_ACTIONS_PORTAL_ID}
-        data-testid="titlebar-actions"
-        className="pointer-events-auto absolute right-0 top-0 z-chrome flex h-full w-[5rem] shrink-0 items-center justify-end gap-1 pr-3"
-        style={{
-          right: isTauri && (platform === 'linux' || platform === 'win') ? '138px' : undefined,
-        }}
-      />
+      )}
+      {(showWorkspacePortals || feedbackSlotVisible) && (
+        <div
+          data-testid="titlebar-fixed-actions"
+          className="relative z-chrome flex h-full shrink-0 items-center"
+          style={{ width: fixedActionsWidth }}
+        >
+          {showWorkspacePortals && (
+            <div
+              id={TITLEBAR_ACTIONS_PORTAL_ID}
+              data-testid="titlebar-actions"
+              className="pointer-events-auto flex h-full w-[5rem] shrink-0 items-center justify-end gap-1"
+            />
+          )}
+          {feedbackSlotVisible && (
+            <div
+              id={TITLEBAR_FEEDBACK_PORTAL_ID}
+              data-testid="titlebar-feedback"
+              className="pointer-events-auto flex h-full w-7 shrink-0 items-center justify-center"
+            >
+              {showFeedback && <TopnavFeedbackButton />}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Linux: right spacer for native window controls */}
       {isTauri && platform === 'linux' && (

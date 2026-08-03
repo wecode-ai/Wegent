@@ -733,7 +733,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(screen.getByTestId('plugins-button'))
+    await userEvent.click(await screen.findByTestId('plugins-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
     expect(
@@ -1167,6 +1167,8 @@ describe('App plugins route', () => {
 
     renderApp()
 
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+
     const pluginsDragRegion = within(screen.getByTestId('plugins-topbar-drag-region')).getByTestId(
       'macos-titlebar-drag-region'
     )
@@ -1174,7 +1176,6 @@ describe('App plugins route', () => {
     expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
     expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
@@ -1189,7 +1190,9 @@ describe('App plugins route', () => {
     renderApp()
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    await userEvent.click(
+      within(screen.getByTestId('desktop-sidebar')).getByTestId('collapse-sidebar-button')
+    )
 
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
@@ -1198,7 +1201,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
-  test('does not reserve traffic light space on collapsed plugin routes in Tauri', async () => {
+  test('uses the global Chrome titlebar on collapsed plugin routes in Tauri', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1210,23 +1213,10 @@ describe('App plugins route', () => {
 
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
-    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chrome-titlebar')).toBeInTheDocument()
+    expect(screen.getByTestId('macos-traffic-light-spacer')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
     expect(screen.getByTestId('plugins-topbar').style.paddingLeft).toBe('')
-  })
-
-  test('collapses and expands the desktop sidebar on plugin management route', async () => {
-    window.history.pushState({}, '', '/plugins/manage')
-
-    renderApp()
-
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
-
-    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
@@ -1235,7 +1225,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
@@ -1265,7 +1255,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
@@ -1275,15 +1265,15 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(screen.getByTestId('plugins-manage-button'))
+    await userEvent.click(await screen.findByTestId('plugins-manage-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
+    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByText('管理')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '市场 1' })).toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
   })
 
@@ -1292,10 +1282,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
+    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     expect(
       vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
     ).toBe(false)
@@ -1335,7 +1325,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(screen.getByTestId('plugin-management-create-button'))
+    await userEvent.click(await screen.findByTestId('plugin-management-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-mcp-option'))
     fireEvent.change(screen.getByTestId('custom-mcp-name-input'), {
       target: { value: 'local-docs' },
@@ -1470,7 +1460,7 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(screen.getByTestId('plugin-management-create-button'))
+    await userEvent.click(await screen.findByTestId('plugin-management-create-button'))
     expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-create-skill-option'))

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schemas for authenticated Wework feedback submissions."""
+"""Schemas for Wework feedback submissions."""
 
 from typing import Any
 
@@ -19,5 +19,4 @@ class FeedbackResponse(BaseModel):
     report_id: str
     project_id: str
     item_id: str
-    created_by_user_id: int
     duplicate: bool

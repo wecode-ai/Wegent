@@ -87,10 +87,6 @@ pub(crate) fn codex_phase_is_process(phase: Option<&str>) -> bool {
     matches!(phase, Some("analysis") | Some("commentary"))
 }
 
-pub(crate) fn codex_phase_is_final(phase: Option<&str>) -> bool {
-    matches!(phase, Some("final") | Some("finalanswer"))
-}
-
 pub(crate) fn normalize_codex_phase(value: &str) -> String {
     value.trim().replace(['_', '-'], "").to_ascii_lowercase()
 }

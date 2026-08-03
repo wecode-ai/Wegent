@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
 import { modelApis } from '@/apis/models'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { retrieverApis } from '@/apis/retrievers'
 import { shellApis } from '@/apis/shells'
 import ModelList from '@/features/settings/components/ModelList'
@@ -45,16 +46,25 @@ jest.mock('@/apis/retrievers', () => ({
   },
 }))
 
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    uninstallListing: jest.fn(),
+    getReferenceUsage: jest.fn(),
+  },
+}))
+
 jest.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({
-    toast: jest.fn(),
-  }),
+  useToast: (() => {
+    const toast = jest.fn()
+    return () => ({ toast })
+  })(),
 }))
 
 const translations: Record<string, string> = {
   'common:models.title': 'Models',
   'common:models.description': 'Manage models.',
   'common:models.create': 'New Model',
+  'common:models.edit': 'Edit Model',
   'common:models.test_connection': 'Test Connection',
   'common:models.test_success': 'Connection successful',
   'common:models.test_failed': 'Connection failed',
@@ -71,6 +81,7 @@ const translations: Record<string, string> = {
   'common:shells.title': 'Executors',
   'common:shells.description': 'Manage executors.',
   'common:shells.create': 'New Executor',
+  'common:shells.edit': 'Edit Executor',
   'common:shells.my_shells': 'My Executors',
   'common:shells.public': 'Public',
   'common:shells.group': 'Group',
@@ -79,11 +90,37 @@ const translations: Record<string, string> = {
   'common:retrievers.title': 'Retrievers',
   'common:retrievers.description': 'Manage retrievers.',
   'common:retrievers.create': 'New Retriever',
+  'common:retrievers.edit': 'Edit Retriever',
+  'common:retrievers.test_connection': 'Test Connection',
   'common:retrievers.my_retrievers': 'My Retrievers',
   'common:retrievers.group': 'Group',
   'retrievers.public': 'Public',
   'common:retrievers.group_retrievers': 'Group Retrievers',
   'retrievers.public_retrievers': 'System Retrievers',
+  'common:actions.edit': 'Edit',
+  'common:actions.unbind': 'Unbind',
+  'common:actions.unbinding': 'Unbinding...',
+  'common:actions.unbind_success': 'Unbound successfully',
+  'common:actions.unbind_failed': 'Failed to unbind',
+  'common:actions.unbind_in_use_title': 'Unable to unbind',
+  'common:actions.unbind_shell_in_use_message': 'This executor is used by: {{names}}.',
+  'common:actions.unbind_shell_in_use_prefix': 'This executor is used by: ',
+  'common:actions.unbind_shell_in_use_suffix': '.',
+  'common:actions.unbind_shell_in_use_summary': 'Used by {{count}} agents:',
+  'common:actions.unbind_shell_in_use_guidance': 'Change their executor first.',
+  'common:actions.unbind_retriever_in_use_message': 'This retriever is used by: {{names}}.',
+  'common:actions.unbind_retriever_in_use_prefix': 'This retriever is used by: ',
+  'common:actions.unbind_retriever_in_use_suffix': '.',
+  'common:actions.unbind_retriever_in_use_summary': 'Used by {{count}} knowledge bases:',
+  'common:actions.unbind_retriever_in_use_guidance': 'Change their retriever first.',
+  'common:actions.go_to_agents': 'Go to agents',
+  'common:actions.go_to_knowledge_bases': 'Go to knowledge bases',
+  'common:actions.unbind_confirm_title': 'Confirm unbind',
+  'common:actions.unbind_confirm_message': 'The original resource will not be affected.',
+  'common:actions.got_it': 'Got it',
+  'common:actions.cancel': 'Cancel',
+  'common:actions.more_actions': 'More actions',
+  'common:teams.more_actions': 'More actions',
   'actions.choose_create_target': 'Choose location',
   'actions.choose_create_target_description':
     'The save location controls who can see and manage this resource.',
@@ -97,7 +134,10 @@ const translations: Record<string, string> = {
   'search.groups_empty': 'No matching teams',
 }
 
-const mockT = (key: string) => translations[key] ?? key
+const mockT = (key: string, options?: Record<string, unknown>) =>
+  (translations[key] ?? key)
+    .replace('{{names}}', String(options?.names ?? ''))
+    .replace('{{count}}', String(options?.count ?? ''))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -148,6 +188,10 @@ function sourceControls(): ReactNode {
 describe('resource list layout consistency', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [],
+      referenced_knowledge_bases: [],
+    })
     ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
       data: [
         {
@@ -353,5 +397,332 @@ describe('resource list layout consistency', () => {
     expect(within(headerActions).getByTestId('create-retriever-button')).toBeInTheDocument()
     expect(screen.getByTestId('retriever-list-items')).toBeInTheDocument()
     expect(screen.queryByText('My Retrievers (1)')).not.toBeInTheDocument()
+  })
+
+  it('uses the shared responsive card grid only in compact resource-library views', async () => {
+    const gridClass = 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+    const modelView = render(
+      <ModelList scope="all" sourceFilter="all" groups={writableGroups} compact />
+    )
+
+    await screen.findByText('Personal Model')
+    expect(screen.getByTestId('model-list-items')).toHaveClass('grid', gridClass)
+    const modelCard = screen.getByTestId('model-card-user-personal-model')
+    expect(modelCard.className).not.toContain('min-h-[')
+    const modelActions = within(modelCard).getByTestId('model-card-actions-user-personal-model')
+    const testModelButton = within(modelActions).getByTestId('test-model-personal-model-button')
+    const editModelButton = within(modelActions).getByTestId('edit-model-personal-model-button')
+    const modelMoreButton = within(modelActions).getByTestId(
+      'model-more-actions-personal-model-button'
+    )
+    expect(testModelButton).toHaveAccessibleName('Test Connection')
+    expect(editModelButton).toHaveAccessibleName('Edit Model')
+    expect(editModelButton).toHaveTextContent('Edit')
+    expect(testModelButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(editModelButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(modelMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(modelActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(modelCard).queryByTestId('resource-list-item-actions')).toBeNull()
+    expect(screen.queryByTestId('model-management-title')).not.toBeInTheDocument()
+    modelView.unmount()
+
+    const shellView = render(
+      <ShellList scope="all" sourceFilter="all" groups={writableGroups} compact />
+    )
+
+    await screen.findByText('Personal Executor')
+    expect(screen.getByTestId('shell-list-items')).toHaveClass('grid', gridClass)
+    const shellCard = screen.getByTestId('shell-card-user-personal-shell')
+    expect(shellCard.className).not.toContain('min-h-[')
+    const shellActions = within(shellCard).getByTestId('shell-card-actions-user-personal-shell')
+    const editShellButton = within(shellActions).getByTestId('edit-shell-personal-shell-button')
+    const shellMoreButton = within(shellActions).getByTestId(
+      'shell-more-actions-personal-shell-button'
+    )
+    expect(editShellButton).toHaveAccessibleName('Edit Executor')
+    expect(editShellButton).toHaveTextContent('Edit')
+    expect(editShellButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(shellMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(shellActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(shellCard).queryByTestId('resource-list-item-actions')).toBeNull()
+    shellView.unmount()
+
+    render(<RetrieverList scope="all" sourceFilter="all" groups={writableGroups} compact />)
+
+    await screen.findByText('Personal Retriever')
+    expect(screen.getByTestId('retriever-list-items')).toHaveClass('grid', gridClass)
+    const retrieverCard = screen.getByTestId('retriever-card-user-personal-retriever')
+    expect(retrieverCard.className).not.toContain('min-h-[')
+    const retrieverActions = within(retrieverCard).getByTestId(
+      'retriever-card-actions-user-personal-retriever'
+    )
+    const testRetrieverButton = within(retrieverActions).getByTestId(
+      'test-retriever-personal-retriever-button'
+    )
+    const editRetrieverButton = within(retrieverActions).getByTestId(
+      'edit-retriever-personal-retriever-button'
+    )
+    const retrieverMoreButton = within(retrieverActions).getByTestId(
+      'retriever-more-actions-personal-retriever-button'
+    )
+    expect(testRetrieverButton).toHaveAccessibleName('Test Connection')
+    expect(editRetrieverButton).toHaveAccessibleName('Edit Retriever')
+    expect(editRetrieverButton).toHaveTextContent('Edit')
+    expect(testRetrieverButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(editRetrieverButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(retrieverMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(retrieverActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(retrieverCard).queryByTestId('resource-list-item-actions')).toBeNull()
+  })
+
+  it('shrinks a read-only system model card without duplicate metadata or empty actions', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'ali-deepseek-v4-flash',
+          type: 'public',
+          provider: 'anthropic',
+          modelId: 'ali-deepseek-v4-flash',
+          namespace: 'system',
+          modelCategoryType: 'llm',
+          config: { env: { model: 'anthropic', model_id: 'ali-deepseek-v4-flash' } },
+        },
+      ],
+    })
+
+    render(<ModelList scope="all" sourceFilter="system" compact hideCreateActions />)
+
+    const card = await screen.findByTestId('model-card-public-ali-deepseek-v4-flash')
+    expect(card).not.toHaveClass('min-h-[176px]')
+    expect(within(card).queryByTestId('model-card-actions-public-ali-deepseek-v4-flash')).toBeNull()
+    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
+      'h-11',
+      'w-11',
+      'rounded-xl',
+      'border'
+    )
+    expect(within(card).getAllByText('ali-deepseek-v4-flash')).toHaveLength(1)
+  })
+
+  it('omits empty actions and uses the shared icon container for system executors and retrievers', async () => {
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'system-shell',
+          displayName: 'System Executor',
+          type: 'public',
+          shellType: 'Chat',
+          executionType: 'external_api',
+          namespace: 'system',
+        },
+      ],
+    })
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'system-retriever',
+          displayName: 'System Retriever',
+          type: 'public',
+          storageType: 'elasticsearch',
+          namespace: 'system',
+        },
+      ],
+    })
+
+    const shellView = render(
+      <ShellList scope="all" sourceFilter="system" compact hideCreateActions />
+    )
+    const shellCard = await screen.findByTestId('shell-card-public-system-shell')
+    expect(shellCard).not.toHaveClass('min-h-[176px]')
+    expect(within(shellCard).queryByTestId('shell-card-actions-public-system-shell')).toBeNull()
+    expect(within(shellCard).getByTestId('resource-card-icon')).toHaveClass('h-11', 'w-11')
+    shellView.unmount()
+
+    render(<RetrieverList scope="all" sourceFilter="system" compact hideCreateActions />)
+    const retrieverCard = await screen.findByTestId('retriever-card-public-system-retriever')
+    expect(retrieverCard).not.toHaveClass('min-h-[176px]')
+    expect(
+      within(retrieverCard).queryByTestId('retriever-card-actions-public-system-retriever')
+    ).toBeNull()
+    expect(within(retrieverCard).getByTestId('resource-card-icon')).toHaveClass('h-11', 'w-11')
+  })
+
+  it('offers only unbind for installed foundation resource references', async () => {
+    const user = userEvent.setup()
+    ;(modelApis.getUnifiedModels as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-model',
+          displayName: 'Installed Model',
+          type: 'user',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+          config: {},
+          isReference: true,
+          listingId: 91,
+        },
+      ],
+    })
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-shell',
+          displayName: 'Installed Executor',
+          type: 'user',
+          shellType: 'Chat',
+          namespace: 'default',
+          isReference: true,
+          listingId: 92,
+        },
+      ],
+    })
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-retriever',
+          displayName: 'Installed Retriever',
+          type: 'user',
+          storageType: 'elasticsearch',
+          namespace: 'default',
+          isReference: true,
+          listingId: 93,
+        },
+      ],
+    })
+
+    const modelView = render(<ModelList scope="personal" compact />)
+    const modelCard = await screen.findByTestId('model-card-user-installed-model')
+    const unbindModelButton = within(modelCard).getByTestId('unbind-model-installed-model-button')
+    expect(unbindModelButton).toHaveTextContent('Unbind')
+    expect(unbindModelButton).toHaveClass('flex-1')
+    expect(within(modelCard).queryByTestId('model-more-actions-installed-model-button')).toBeNull()
+    modelView.unmount()
+
+    const shellView = render(<ShellList scope="personal" compact />)
+    const shellCard = await screen.findByTestId('shell-card-user-installed-shell')
+    expect(within(shellCard).queryByTestId('shell-more-actions-installed-shell-button')).toBeNull()
+    await user.click(within(shellCard).getByTestId('unbind-shell-installed-shell-button'))
+    await user.click(screen.getByRole('button', { name: 'Unbind' }))
+    await waitFor(() => {
+      expect(resourceLibraryApi.uninstallListing).toHaveBeenCalledWith(92, 'default')
+    })
+    shellView.unmount()
+
+    render(<RetrieverList scope="personal" compact />)
+    const retrieverCard = await screen.findByTestId('retriever-card-user-installed-retriever')
+    expect(
+      within(retrieverCard).queryByTestId('retriever-more-actions-installed-retriever-button')
+    ).toBeNull()
+    expect(
+      within(retrieverCard).getByTestId('unbind-retriever-installed-retriever-button')
+    ).toHaveTextContent('Unbind')
+  })
+
+  it('shows knowledge base usage before unbinding an installed retriever', async () => {
+    const user = userEvent.setup()
+    ;(retrieverApis.getUnifiedRetrievers as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-retriever',
+          displayName: 'Installed Retriever',
+          type: 'user',
+          storageType: 'elasticsearch',
+          namespace: 'default',
+          isReference: true,
+          listingId: 93,
+        },
+      ],
+    })
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [],
+      referenced_knowledge_bases: [
+        {
+          id: 166,
+          name: 'Knowledge Base Using Marketplace Retriever',
+          namespace: 'default',
+        },
+      ],
+    })
+
+    render(<RetrieverList scope="personal" compact />)
+    const retrieverCard = await screen.findByTestId('retriever-card-user-installed-retriever')
+    await user.click(
+      within(retrieverCard).getByTestId('unbind-retriever-installed-retriever-button')
+    )
+
+    expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(93, 'default')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      'Knowledge Base Using Marketplace Retriever'
+    )
+    expect(screen.getByText('Used by 1 knowledge bases:')).toBeInTheDocument()
+    expect(screen.getByText('Knowledge Base Using Marketplace Retriever')).toHaveClass(
+      'font-semibold'
+    )
+    expect(screen.getByRole('link', { name: 'Go to knowledge bases' })).toHaveAttribute(
+      'href',
+      '/knowledge?type=document'
+    )
+    expect(screen.queryByRole('button', { name: 'Unbind' })).not.toBeInTheDocument()
+  })
+
+  it('shows agent usage before unbinding an installed executor', async () => {
+    const user = userEvent.setup()
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'installed-shell',
+          displayName: 'Installed Executor',
+          type: 'user',
+          shellType: 'Chat',
+          namespace: 'default',
+          isReference: true,
+          listingId: 92,
+        },
+      ],
+    })
+    ;(resourceLibraryApi.getReferenceUsage as jest.Mock).mockResolvedValue({
+      referenced_bots: [
+        {
+          id: 25,
+          name: 'Agent Using Marketplace Executor',
+          namespace: 'default',
+        },
+      ],
+      referenced_knowledge_bases: [],
+    })
+
+    render(<ShellList scope="personal" compact />)
+    const shellCard = await screen.findByTestId('shell-card-user-installed-shell')
+    await user.click(within(shellCard).getByTestId('unbind-shell-installed-shell-button'))
+
+    expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(92, 'default')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Agent Using Marketplace Executor')
+    expect(screen.getByText('Used by 1 agents:')).toBeInTheDocument()
+    expect(screen.getByText('Agent Using Marketplace Executor')).toHaveClass('font-semibold')
+    expect(screen.getByRole('link', { name: 'Go to agents' })).toHaveAttribute(
+      'href',
+      '/resource-library?type=agent&tab=mine'
+    )
+    expect(screen.queryByRole('button', { name: 'Unbind' })).not.toBeInTheDocument()
+  })
+
+  it('does not repeat public source or executor type metadata', async () => {
+    ;(shellApis.getUnifiedShells as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          name: 'Chat',
+          type: 'public',
+          shellType: 'Chat',
+          executionType: 'external_api',
+          namespace: 'system',
+        },
+      ],
+    })
+
+    render(<ShellList scope="all" sourceFilter="system" compact hideCreateActions />)
+
+    const card = await screen.findByTestId('shell-card-public-Chat')
+    expect(within(card).getAllByText('Public')).toHaveLength(1)
+    expect(within(card).getAllByText('Chat')).toHaveLength(1)
   })
 })

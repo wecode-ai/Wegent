@@ -40,13 +40,14 @@ Select the cloud status in the sidebar to authorize again. Verify the Backend ad
 
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation), choose the information to include, and select **Preview export**. After reviewing, select **Confirm export**. Wework saves the bundle in the system Downloads directory.
+Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation). Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
-The bundle is organized into two groups:
+Optional information behaves as follows:
 
-- **Standard diagnostics** (on by default): Wework and local runtime logs, plus Wework version and system information. No conversation content and low privacy risk.
-- **Full task data** (off by default): Verbatim conversation history and a full window screenshot. May include business discussions, code, or anything visible on screen; review before including.
+- **Diagnostics** (on by default): Wework and local runtime logs, plus Wework version and system information. No conversation content and low privacy risk; turn it off when it is not needed.
+- **Task context** (off by default): Verbatim conversation history and a full window screenshot. May include business discussions, code, or anything visible on screen; review before including.
+- **User attachments**: Only files you pasted or selected yourself; they may contain private information.
 
 If a selected item is unavailable (for example, no task data in a new conversation), it is skipped automatically and noted in the preview.
 
-You can expand any entry to inspect its content before exporting. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.
+Expand any entry to inspect its content before continuing. When a feedback service is configured, select **Submit feedback** to send the problem. Otherwise select **Confirm export** to save the bundle in the system Downloads directory. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.

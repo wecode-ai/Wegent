@@ -67,6 +67,8 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
@@ -93,7 +95,7 @@ Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在�
 
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
 
-Wework 在发送用户消息前生成稳定的客户端消息 ID，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求传入 executor，再映射到 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留对应的 `clientMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
+Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
 
@@ -101,7 +103,7 @@ Codex 同一回合可以交错产生推理、助手文本和工具调用。execu
 
 助手文本只有在 Codex 明确提供 `final` 或 `final_answer` phase 时才会在流式阶段进入 final content。phase 缺失或无法识别的文本必须先作为过程文本发送，避免第三方模型在文本与工具调用交错时让 Wework 在 final content 和过程块之间反复切换。executor 会保留最后一段未确定文本；回合成功结束且没有明确 final 文本时，才将它提升为最终结果。若同一回合随后产生明确 final 文本，则明确 final 始终优先。
 
-推理内容仍可保留在 runtime transcript 中用于诊断和恢复，但 Wework 不展示推理字符或字符数。回合仍在执行时，界面只显示统一的“正在思考”状态；产生正常助手文本、工具状态或回合终态后，由任务状态机和可见消息内容决定该提示的显示与消失。
+Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示；完成后的摘要默认折叠，并显示字符数，用户可按需展开。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
 ### 后端设备对话任务 REST 入口
 

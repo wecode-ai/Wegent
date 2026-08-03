@@ -10,7 +10,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { isSettingsRoute, navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -31,24 +31,14 @@ import {
 } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
-import {
-  WorkbenchBackground,
-  defaultAppearance,
-  getWorkbenchBackground,
-  useOptionalAppearance,
-} from '@/features/appearance'
-import { DesktopWindowControls } from './DesktopWindowControls'
-import { DesktopAppSwitcher, type DesktopAppKey } from './DesktopAppSwitcher'
-import { WindowFrameControls } from './WindowFrameControls'
+import { WorkbenchBackground } from '@/features/appearance'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
 import { useResizableSidebar } from './useResizableSidebar'
-import { WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -63,9 +53,18 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
   return fallback
 }
 
-export function DesktopWorkbenchLayout() {
+function boardProjectIdFromRoute(contentRoute: string): string | null {
+  const searchIndex = contentRoute.indexOf('?')
+  if (searchIndex < 0) return null
+  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get('projectId')
+}
+
+interface DesktopWorkbenchLayoutProps {
+  routeActive?: boolean
+}
+
+export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
-  const windowFocused = useWindowFocus()
   const { logout: onLogout } = useAuth()
   const {
     state,
@@ -77,7 +76,6 @@ export function DesktopWorkbenchLayout() {
     startNewChat: onNewChat,
     startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
-    createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
@@ -120,6 +118,7 @@ export function DesktopWorkbenchLayout() {
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
     [state.projects, state.runtimeWork]
   )
+  const workspaceTabs = useOptionalWorkspaceTabs()
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
   const todoOpen = currentPath === '/todo'
@@ -195,21 +194,8 @@ export function DesktopWorkbenchLayout() {
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
-  const platform = getPlatform()
   const isTauri = isTauriRuntime()
-  const showWindowsTopBar = isTauri && platform === 'win' && !settingsOpen && !todoOpen
-  const activeApp: DesktopAppKey =
-    currentPath === '/todo'
-      ? 'todo'
-      : currentPath === '/app/wegent'
-        ? 'wegent'
-        : currentPath === '/apps'
-          ? 'apps'
-          : 'wework'
-
-  const appearanceContext = useOptionalAppearance()
-  const appearance = appearanceContext?.appearance ?? defaultAppearance
-  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
+  const usesLayeredViewSurface = isTauri
 
   useEffect(() => {
     const handlePopState = () => {
@@ -586,9 +572,6 @@ export function DesktopWorkbenchLayout() {
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
-      onOpenWorkbench={() => navigateTo('/')}
-      onOpenTodo={() => navigateTo('/todo')}
-      onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
       onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
@@ -638,70 +621,15 @@ export function DesktopWorkbenchLayout() {
     />
   )
 
-  const windowsTopBar = showWindowsTopBar ? (
-    <div
-      data-testid="workbench-windows-titlebar"
-      data-tauri-drag-region
-      data-window-focused={windowFocused}
-      data-sidebar-translucent={background.imagePath && background.inSidebar ? undefined : 'false'}
-      className={cn(
-        'relative z-chrome flex h-[38px] w-full shrink-0 items-center',
-        background.imagePath && background.inSidebar
-          ? 'bg-background/25'
-          : cn(
-              'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
-              !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
-            )
-      )}
-    >
-      <div
-        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
-        data-tauri-drag-region={false}
-      >
-        <DesktopWindowControls
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          onToggleSidebar={() => updateSidebarCollapsed(!effectiveSidebarCollapsed)}
-          className="gap-1"
-        />
-        <DesktopAppSwitcher
-          activeApp={activeApp}
-          onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-        />
-      </div>
-      <div
-        id={WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID}
-        data-testid="workbench-windows-titlebar-middle"
-        className={cn(
-          'absolute inset-y-0',
-          background.imagePath && background.inSidebar
-            ? 'bg-background/25'
-            : cn(
-                'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
-                !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
-              )
-        )}
-        style={{
-          left: effectiveSidebarCollapsed ? 0 : sidebarWidth,
-          right: 138,
-        }}
-      />
-      <div
-        className="pointer-events-auto absolute right-0 top-0 z-chrome h-full w-[138px]"
-        data-tauri-drag-region={false}
-      >
-        <WindowFrameControls className="h-full justify-end" />
-      </div>
-    </div>
-  ) : null
-
   return (
     <div
       className={cn(
         'relative h-full overflow-hidden bg-transparent text-text-primary',
-        showWindowsTopBar ? 'flex flex-col' : 'flex'
+        'flex',
+        usesLayeredViewSurface &&
+          'app-view-surface rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {windowsTopBar}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!todoOpen && <WorkbenchBackground />}
         {!settingsOpen &&
@@ -713,7 +641,7 @@ export function DesktopWorkbenchLayout() {
               data-testid="desktop-sidebar-hover-edge"
               aria-hidden="true"
               onPointerEnter={openSidebarPreview}
-              className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+              className="absolute left-0 top-0 z-popover h-full w-4"
             />
             <div
               data-testid="desktop-sidebar-preview"
@@ -758,27 +686,26 @@ export function DesktopWorkbenchLayout() {
                 user={state.user}
                 localProjects={localTodoProjects}
                 services={services}
-                onRunTodo={({
-                  project,
-                  message,
-                  goal,
-                  attachments,
-                  collaborationMode,
-                  deliveryId,
-                  cloudProjectId,
-                }) =>
-                  onCreateProjectRuntimeTask(message, {
-                    project,
-                    attachments,
-                    initialGoal: goal ? { objective: goal } : null,
-                    collaborationMode,
-                    deliveryId,
-                    cloudProjectId,
-                  })
+                activeProjectId={
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardProjectIdFromRoute(workspaceTabs.activeTab.contentRoute)
+                    : undefined
                 }
-                onOpenRuntimeTask={async address => {
-                  navigateTo('/')
-                  await onOpenRuntimeTask?.(address)
+                onActiveProjectChange={project => {
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  if (!project) {
+                    workspaceTabs.updateActiveTab({
+                      title: t('workbench.workspace_tab_board', '项目空间'),
+                      contentRoute: '/todo',
+                    })
+                    return
+                  }
+                  const params = new URLSearchParams()
+                  params.set('projectId', project.id)
+                  workspaceTabs.updateActiveTab({
+                    title: project.name,
+                    contentRoute: `/todo?${params.toString()}`,
+                  })
                 }}
               />
             ) : (
@@ -791,7 +718,7 @@ export function DesktopWorkbenchLayout() {
             ))}
           <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
             <DesktopWorkbenchMain
-              visible={!settingsOpen && !todoOpen}
+              visible={routeActive && !settingsOpen && !todoOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}

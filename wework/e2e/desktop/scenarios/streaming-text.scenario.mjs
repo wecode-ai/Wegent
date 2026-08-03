@@ -6,7 +6,14 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
+const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
+const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
+const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
+const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
+const ORDER_FOLLOW_UP_COUNT = 26
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
+const REASONING_SUMMARY = 'WEWORK_DESKTOP_E2E_REASONING_SUMMARY'
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
@@ -18,6 +25,12 @@ const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
+const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
+const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
+const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
@@ -38,6 +51,7 @@ const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
   ).join('\n\n')}`,
 }))
 const STREAMING_TURN_INDEX = HISTORY_TURNS.length + 1
+const PANE_EVICTION_BLANK_COUNT = 4
 const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
   return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
 })
@@ -247,20 +261,36 @@ function requestContainsToolRegressionPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
 }
 
+function requestContainsTimerPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
+}
+
+function latestModelInputText(body) {
+  const input = Array.isArray(body.input) ? body.input.at(-1) : body.input
+  const message = Array.isArray(body.messages) ? body.messages.at(-1) : null
+  return JSON.stringify(input ?? message ?? '')
+}
+
+function orderFollowUpNumber(body) {
+  const match = latestModelInputText(body).match(new RegExp(`${ORDER_FOLLOW_UP_PREFIX}_(\\d+)`))
+  return match ? Number(match[1]) : null
+}
+
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
 }
 
-function selectShellTool(body, workspacePath) {
+function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
   if (names.has('exec_command')) {
     return {
       name: 'exec_command',
       arguments: {
-        cmd: 'pwd',
+        cmd: command,
         workdir: workspacePath,
-        yield_time_ms: 1_000,
+        timeout_ms: timeoutMs,
+        yield_time_ms: timeoutMs,
       },
     }
   }
@@ -268,9 +298,9 @@ function selectShellTool(body, workspacePath) {
   return {
     name: 'shell_command',
     arguments: {
-      command: 'pwd',
+      command,
       workdir: workspacePath,
-      timeout_ms: 1_000,
+      timeout_ms: timeoutMs,
     },
   }
 }
@@ -283,6 +313,31 @@ async function getSingleElementMetrics(control, selector, description) {
 
 function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function assertElementFullyVisible(elementMetrics, scrollerMetrics, description) {
+  assert.ok(
+    elementMetrics.top >= scrollerMetrics.top && elementMetrics.bottom <= scrollerMetrics.bottom,
+    `${description} was not fully visible (element=${elementMetrics.top}-${elementMetrics.bottom}, scroller=${scrollerMetrics.top}-${scrollerMetrics.bottom})`
+  )
+}
+
+function toolDurationSeconds(text) {
+  return Number(text.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0)
+}
+
+async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
+  const startedAt = Date.now()
+  let text = ''
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  await control.command('waitFor', selector, { timeoutMs })
+  while (Date.now() - startedAt < timeoutMs) {
+    text = await control.command('getText', selector)
+    const duration = toolDurationSeconds(text)
+    if (duration >= minimumSeconds) return duration
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`)
 }
 
 async function waitForBottom(control, description, timeoutMs) {
@@ -325,6 +380,17 @@ async function waitForFolderPath(control, expectedPath, timeoutMs) {
   throw new Error(`The streaming-text project picker did not load ${expectedPath}`)
 }
 
+async function waitForProjectWorkButton(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (Number(await control.command('getElementCount', '[data-testid="project-work-button"]'))) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The streaming-text project selector did not become available')
+}
+
 async function waitForProjectBranch(control, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -336,6 +402,7 @@ async function waitForProjectBranch(control, timeoutMs) {
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
+  await waitForProjectWorkButton(control, timeoutMs)
   await control.command('click', '[data-testid="project-work-button"]')
   await control.command('click', '[data-testid="add-local-project-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
@@ -386,8 +453,10 @@ export function createDesktopScenario({
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
   let toolRegressionStage = 'initial'
+  let timerStage = 'initial'
   let releaseAppend
   let releaseResponse
+  let releaseStart
   let resolveRequest
   let targetRequest
   const appendRelease = new Promise(resolve => {
@@ -396,9 +465,66 @@ export function createDesktopScenario({
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
   })
+  const startRelease = new Promise(resolve => {
+    releaseStart = resolve
+  })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
   })
+
+  const verifyStoppedTurnOrder = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    const knownOrderTaskRows = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+    )
+    await control.command('fill', COMPOSER_SELECTOR, { value: ORDER_STOP_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    const orderTaskRowTestId = await waitForNewTaskRow(
+      control,
+      knownOrderTaskRows,
+      ORDER_STOP_PROMPT,
+      uiTimeoutMs
+    )
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="pause-response-button"]')
+    await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    for (let index = 1; index <= ORDER_FOLLOW_UP_COUNT; index += 1) {
+      const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
+      const completion = `${ORDER_COMPLETION_PREFIX}_${index}`
+      await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: completion,
+        timeoutMs: uiTimeoutMs,
+      })
+    }
+    for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    }
+    await control.command('clickWhenEnabled', `[data-testid="${orderTaskRowTestId}"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    const latestOrderCompletion = `${ORDER_COMPLETION_PREFIX}_${ORDER_FOLLOW_UP_COUNT}`
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: latestOrderCompletion,
+      stableMs: 750,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')),
+      0,
+      'The latest transcript position remained on the older stopped turn'
+    )
+    await capture(control, 'streaming-text-16-stopped-turn-order-restored.png')
+  }
 
   return {
     async handleHttp(request, response, url) {
@@ -409,6 +535,41 @@ export function createDesktopScenario({
 
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
+      const latestInput = latestModelInputText(body)
+      if (latestInput.includes(ORDER_STOP_PROMPT)) {
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse([responseCreated(responseId)]))
+        return true
+      }
+      const followUpNumber = orderFollowUpNumber(body)
+      if (followUpNumber !== null) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(`${ORDER_COMPLETION_PREFIX}_${followUpNumber}`),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        timerStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(TIMER_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         toolRegressionStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -422,9 +583,27 @@ export function createDesktopScenario({
         return true
       }
 
+      if (requestContainsTimerPrompt(body)) {
+        if (timerStage === 'initial') {
+          const tool = selectShellTool(body, workspacePath, 'sleep 15', 20_000)
+          timerStage = 'awaiting-tool-output'
+          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+          response.end(
+            sse([
+              responseCreated(responseId),
+              ...functionCall('wework-running-timer', tool.name, tool.arguments),
+              responseCompleted(responseId),
+            ])
+          )
+          return true
+        }
+        throw new Error(`Unexpected running-timer stage: ${timerStage}`)
+      }
+
       if (requestContainsPrompt(body)) {
         targetRequest = body
         resolveRequest()
+        await startRelease
         const stream = streamingEvents(responseId)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
@@ -435,7 +614,10 @@ export function createDesktopScenario({
         response.write(sse(stream.start))
         await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
         await appendRelease
-        await writeSseEvents(response, [assistantMessage(APPENDED_TEXT)])
+        await writeSseEvents(
+          response,
+          textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
+        )
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -449,7 +631,7 @@ export function createDesktopScenario({
           response.end(
             sse([
               responseCreated(responseId),
-              ...reasoningEvents('wework-hidden-reasoning', HIDDEN_REASONING),
+              ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
               assistantMessage(TOOL_PREAMBLE),
               ...functionCall('wework-tool-text-offset', tool.name, tool.arguments),
               responseCompleted(responseId),
@@ -498,6 +680,11 @@ export function createDesktopScenario({
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       }
+      if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
+        await verifyStoppedTurnOrder(control)
+        active = false
+        return
+      }
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -512,15 +699,81 @@ export function createDesktopScenario({
         'The assistant text after the tool call lost its prefix'
       )
       assert.equal(
-        toolRegressionSnapshot.text.includes(HIDDEN_REASONING),
+        toolRegressionSnapshot.text.includes(REASONING_SUMMARY),
         false,
-        'The model reasoning content remained visible after completion'
+        'The collapsed reasoning disclosure exposed its full summary'
+      )
+      await capture(control, 'streaming-text-00-processing-collapsed.png')
+      await control.command('click', '[data-testid="final-processing-toggle"]')
+      await control.command('waitFor', '[data-testid="thinking-toggle-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const expandedProcessingSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        expandedProcessingSnapshot.text.includes('思考过程'),
+        'The completed response did not render a reasoning disclosure'
       )
       assert.equal(
-        toolRegressionSnapshot.text.includes('思考过程'),
+        expandedProcessingSnapshot.text.includes(REASONING_SUMMARY),
         false,
-        'The completed response still rendered a reasoning disclosure'
+        'The collapsed reasoning disclosure exposed its full summary'
       )
+      await capture(control, 'streaming-text-01-reasoning-collapsed.png')
+      await control.command('click', '[data-testid="thinking-toggle-button"]')
+      await control.command('waitFor', '[data-testid="thinking-detail"]', {
+        text: REASONING_SUMMARY,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'streaming-text-02-reasoning-expanded.png')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      const knownTimerTaskRows = new Set(
+        JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+          testId.startsWith('runtime-local-task-row-')
+        )
+      )
+      await control.command('fill', COMPOSER_SELECTOR, { value: TIMER_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      const timerTaskRowTestId = await waitForNewTaskRow(
+        control,
+        knownTimerTaskRows,
+        TIMER_PROMPT,
+        uiTimeoutMs
+      )
+      const toolDurationBeforeSwitch = await waitForToolDuration(control, 3, uiTimeoutMs)
+      const summaryBeforeSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
+      assert.equal(
+        toolDurationSeconds(summaryBeforeSwitch),
+        0,
+        `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
+      )
+      await capture(control, 'streaming-text-03-running-tool.png')
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const toolDurationAfterSwitch = await waitForToolDuration(control, 1, uiTimeoutMs)
+      assert.ok(
+        toolDurationAfterSwitch >= toolDurationBeforeSwitch,
+        `The running tool timer reset from ${toolDurationBeforeSwitch}s to ${toolDurationAfterSwitch}s after switching pages`
+      )
+      const summaryAfterSwitch = await control.command('getText', PROCESSING_SUMMARY_SELECTOR)
+      assert.equal(
+        toolDurationSeconds(summaryAfterSwitch),
+        0,
+        `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
+      )
+      await capture(control, 'streaming-text-04-running-tool-restored.png')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: TIMER_COMPLETION,
+        timeoutMs: 25_000,
+      })
+      await capture(control, 'streaming-text-05-tool-completed.png')
+
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const knownTaskRows = new Set(
@@ -548,7 +801,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
       }
-      await capture(control, 'streaming-text-00-ready-to-send.png')
+      await capture(control, 'streaming-text-10-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
         mimeType: 'image/png',
@@ -576,17 +829,69 @@ export function createDesktopScenario({
         JSON.stringify(targetRequest).includes(ATTACHMENT_FILENAME),
         'The real Codex request omitted the streaming attachment'
       )
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
+      await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const waitingScrollerMetrics = await waitForBottom(
+        control,
+        'The conversation scroller while waiting for the assistant',
+        uiTimeoutMs
+      )
+      const thinkingIndicatorMetrics = await getSingleElementMetrics(
+        control,
+        THINKING_INDICATOR_SELECTOR,
+        'The thinking indicator after sending'
+      )
+      assertElementFullyVisible(
+        thinkingIndicatorMetrics,
+        waitingScrollerMetrics,
+        'The thinking indicator after sending'
+      )
+      await control.command('markElementWithText', USER_MESSAGE_SELECTOR, {
+        text: PROMPT,
+        value: USER_MESSAGE_E2E_ID,
+        timeoutMs: uiTimeoutMs,
+      })
+      const latestUserMessageMetrics = await getSingleElementMetrics(
+        control,
+        USER_MESSAGE_SELECTOR_MARKED,
+        'The latest user message after sending'
+      )
+      const scrollerAfterSend = await getSingleElementMetrics(
+        control,
+        SCROLLER_SELECTOR,
+        'The conversation scroller after sending'
+      )
+      assertElementFullyVisible(
+        latestUserMessageMetrics,
+        scrollerAfterSend,
+        'The latest user message after sending'
+      )
+      releaseStart()
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitForBottom(
+        control,
+        'The conversation scroller while the assistant response starts',
+        uiTimeoutMs
       )
       const streamingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
       assert.ok(
         streamingSnapshot.text.includes(MARKER),
-        'The process text after the streaming tool call lost its prefix'
+        'The assistant text after the streaming tool call lost its prefix'
+      )
+      assert.ok(
+        streamingSnapshot.testIds.includes('assistant-message-content'),
+        'The phase-less streaming response was not rendered as assistant content'
+      )
+      assert.ok(
+        !streamingSnapshot.text.includes(APPEND_MARKER),
+        'The later assistant delta was visible before the runtime released it'
       )
       await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.18' })
       await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
@@ -645,7 +950,7 @@ export function createDesktopScenario({
           anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
         `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
       )
-      await capture(control, 'streaming-text-01-user-scrolled-up.png')
+      await capture(control, 'streaming-text-11-user-scrolled-up.png')
 
       releaseAppend()
       const scrollerAfterAppend = await waitForScrollHeightIncrease(
@@ -668,9 +973,14 @@ export function createDesktopScenario({
         Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
         `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
       )
-      await capture(control, 'streaming-text-02-anchor-stable-after-append.png')
+      await capture(control, 'streaming-text-12-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
         'The streaming conversation before switching tasks',
@@ -680,31 +990,57 @@ export function createDesktopScenario({
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
         `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
       )
+      await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
-      await new Promise(resolve => setTimeout(resolve, 1_500))
-      const pinnedAfterSwitch = await getSingleElementMetrics(
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
+      const pinnedAfterSwitch = await waitForBottom(
         control,
-        SCROLLER_SELECTOR,
-        'The bottom-pinned streaming conversation after switching back'
+        'The bottom-pinned streaming conversation after switching back',
+        5_000
       )
       assert.ok(
         distanceFromBottom(pinnedAfterSwitch) <= 8,
         `The bottom-pinned streaming conversation reopened ${distanceFromBottom(pinnedAfterSwitch)}px from the bottom`
       )
-      await capture(control, 'streaming-text-03-bottom-restored-after-task-switch.png')
+      await capture(control, 'streaming-text-13-bottom-restored-after-task-switch.png')
+
+      for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+      await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
-        'The user turns were rendered with duplicate turn-navigation markers'
+        'The remounted running conversation lost or duplicated earlier user turns'
+      )
+      await control.command('hover', `${TURN_NAVIGATION_MARKER_SELECTOR}[data-turn-index="0"]`)
+      const initialTurnPreview = await control.command(
+        'getText',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-preview"][data-turn-index="0"]`
+      )
+      assert.ok(
+        initialTurnPreview.includes(INITIAL_PROMPT),
+        'The remounted running conversation lost the previous user question'
+      )
+      assert.ok(
+        initialTurnPreview.includes('WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE'),
+        'The remounted running conversation lost the previous assistant answer'
       )
       await control.command(
         'hover',
@@ -726,7 +1062,7 @@ export function createDesktopScenario({
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, 'streaming-text-04-thinking-below-partial-response.png')
+      await capture(control, 'streaming-text-14-thinking-below-partial-response.png')
 
       releaseResponse()
       await control.command(
@@ -734,11 +1070,11 @@ export function createDesktopScenario({
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
         { stableMs: 750, timeoutMs: uiTimeoutMs }
       )
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`,
-        { text: MARKER, stableMs: 750, timeoutMs: uiTimeoutMs }
-      )
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const completedSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -748,7 +1084,7 @@ export function createDesktopScenario({
       )
       assert.ok(
         completedSnapshot.testIds.includes('assistant-message-content'),
-        'The completed response did not promote ambiguous text to final assistant content'
+        'The completed response was not retained as assistant content'
       )
       assert.ok(
         !completedSnapshot.testIds.includes('thinking-indicator'),
@@ -758,7 +1094,8 @@ export function createDesktopScenario({
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, 'streaming-text-05-response-completed.png')
+      await capture(control, 'streaming-text-15-response-completed.png')
+      await verifyStoppedTurnOrder(control)
       active = false
     },
 

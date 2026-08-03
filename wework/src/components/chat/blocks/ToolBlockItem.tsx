@@ -202,7 +202,12 @@ export function ToolBlockItem({
             </svg>
           </button>
         ) : null}
-        <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{duration}</span>
+        <span
+          className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted"
+          data-testid="tool-block-duration"
+        >
+          {duration}
+        </span>
       </div>
       {expanded ? (
         <div className="mt-2 min-w-0 overflow-x-clip">
@@ -743,7 +748,7 @@ function fileDiffPreviewLines(
 ): DiffPreviewLine[] {
   if (file.binary || !summary.diff?.trim()) return []
   const sectionLines = fileDiffLines(file, summary)
-  return parseDiffPreviewLines(sectionLines)
+  return parseDiffPreviewLines(sectionLines, file.change_type)
 }
 
 function fileDiffLines(file: TurnFileChangeItem, summary: TurnFileChangesSummary): string[] {
@@ -768,7 +773,10 @@ function pathsMatch(left: string | undefined, right: string | undefined): boolea
   return left === right || left.endsWith(`/${right}`) || right.endsWith(`/${left}`)
 }
 
-function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
+function parseDiffPreviewLines(
+  lines: string[],
+  changeType: TurnFileChangeItem['change_type']
+): DiffPreviewLine[] {
   const previewLines: DiffPreviewLine[] = []
   let oldLine: number | undefined
   let newLine: number | undefined
@@ -805,8 +813,8 @@ function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
     if (prefix === '+') {
       previewLines.push({
         key: `addition-${index}`,
-        type: 'addition',
-        lineNumber: newLine,
+        type: diffPreviewLineType(prefix, changeType),
+        lineNumber: newLine ?? oldLine,
         content: rawLine.slice(1),
       })
       if (newLine !== undefined) newLine += 1
@@ -815,8 +823,8 @@ function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
     if (prefix === '-') {
       previewLines.push({
         key: `deletion-${index}`,
-        type: 'deletion',
-        lineNumber: oldLine,
+        type: diffPreviewLineType(prefix, changeType),
+        lineNumber: oldLine ?? newLine,
         content: rawLine.slice(1),
       })
       if (oldLine !== undefined) oldLine += 1
@@ -834,6 +842,17 @@ function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
   })
 
   return previewLines
+}
+
+function diffPreviewLineType(
+  prefix: '+' | '-',
+  changeType: TurnFileChangeItem['change_type']
+): DiffPreviewLine['type'] {
+  // Runtime patches can be reversed, but the file summary remains the
+  // authoritative semantic direction for whole-file creation and deletion.
+  if (changeType === 'created') return 'addition'
+  if (changeType === 'deleted') return 'deletion'
+  return prefix === '+' ? 'addition' : 'deletion'
 }
 
 function basename(path: string): string {

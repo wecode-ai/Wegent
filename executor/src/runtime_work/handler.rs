@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use tokio::time::sleep;
 
 use crate::{
@@ -64,7 +64,7 @@ use super::{
         sync_codex_global_remote_projects, upsert_codex_global_local_project,
         CodexGlobalProjectIndex, CodexGlobalRemoteProject,
     },
-    codex_notifications::codex_notification,
+    codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     connectors::ConnectorRuntime,
     events::{emit_response_event, CodexNotificationEventMapper},
@@ -285,6 +285,7 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
     codex_app_server: CodexAppServerClient,
+    codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
@@ -300,6 +301,12 @@ pub struct RuntimeWorkRpcHandler {
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
     connectors: ConnectorRuntime,
+}
+
+#[derive(Default)]
+struct CodexRuntimeProxyConfig {
+    initialized: bool,
+    proxy_url: Option<String>,
 }
 
 struct ActiveTurnCancellation {
@@ -345,6 +352,9 @@ impl RuntimeWorkRpcHandler {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
+            codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
+                CodexRuntimeProxyConfig::default(),
+            )),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -421,6 +431,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,

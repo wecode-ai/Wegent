@@ -46,6 +46,7 @@ Environment:
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
   VITE_WEGENT_BACKEND_URL  Default Backend URL shown in Connect cloud.
   VITE_WEGENT_SOCKET_URL   Optional Socket.IO origin; defaults to the Backend URL.
+  VITE_WEWORK_FEEDBACK_URL Optional feedback submission endpoint. Disabled when empty.
 
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
@@ -173,6 +174,7 @@ echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  NO_SIGN=${NO_SIGN:-0}"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "  VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
@@ -239,7 +241,7 @@ if [ "$NO_SIGN" = "1" ]; then
   TAURI_ARGS+=(--no-sign)
 fi
 
-WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \

@@ -94,12 +94,53 @@ class CloudProjectCreate(BaseModel):
         return self
 
 
+class CloudProjectCardDisplay(BaseModel):
+    show_assignee: bool = True
+    show_priority: bool = True
+    show_tags: bool = True
+    show_date: bool = True
+
+
+class CloudProjectBoardStatus(BaseModel):
+    id: str = Field(min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=40)
+    color: Literal["gray", "blue", "orange", "purple", "green", "red"] = "gray"
+
+
+def default_board_statuses() -> list[CloudProjectBoardStatus]:
+    return [
+        CloudProjectBoardStatus(id="inbox", name="收集箱", color="gray"),
+        CloudProjectBoardStatus(id="pending", name="待开始", color="blue"),
+        CloudProjectBoardStatus(id="in_progress", name="进行中", color="orange"),
+        CloudProjectBoardStatus(id="in_review", name="待确认", color="purple"),
+        CloudProjectBoardStatus(id="completed", name="已完成", color="green"),
+    ]
+
+
+class CloudProjectBoardConfig(BaseModel):
+    group_by: Literal["status", "priority", "assignee", "tag"] = "status"
+    statuses: list[CloudProjectBoardStatus] = Field(
+        default_factory=default_board_statuses
+    )
+
+    @model_validator(mode="after")
+    def validate_statuses(self) -> "CloudProjectBoardConfig":
+        ids = [item.id for item in self.statuses]
+        if len(ids) != len(set(ids)):
+            raise ValueError("board status ids must be unique")
+        if len(self.statuses) > 50:
+            raise ValueError("board supports at most 50 statuses")
+        return self
+
+
 class CloudProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     provider_config: dict[str, object] | None = None
     visibility: ProjectVisibility | None = None
+    card_display: CloudProjectCardDisplay | None = None
+    board_config: CloudProjectBoardConfig | None = None
     version: int = Field(ge=1)
 
     @field_validator("tags", mode="before")
@@ -136,6 +177,12 @@ class CloudProjectResponse(BaseModel):
     # provider kinds it can operate.
     task_provider: str = "local"
     provider_config: dict[str, object] = Field(default_factory=dict)
+    card_display: CloudProjectCardDisplay = Field(
+        default_factory=CloudProjectCardDisplay
+    )
+    board_config: CloudProjectBoardConfig = Field(
+        default_factory=CloudProjectBoardConfig
+    )
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -161,6 +208,8 @@ class CloudProjectResponse(BaseModel):
                 "provider_config": mask_provider_config(
                     metadata.get("provider_config", {})
                 ),
+                "card_display": metadata.get("card_display", {}),
+                "board_config": metadata.get("board_config", {}),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),

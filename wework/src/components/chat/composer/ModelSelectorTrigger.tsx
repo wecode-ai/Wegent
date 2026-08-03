@@ -1,6 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 import {
   type CSSProperties,
+  type ReactNode,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -12,6 +13,7 @@ import { cn } from '@/lib/utils'
 
 const CLOSED_MAX_WIDTH = 208
 const HORIZONTAL_CHROME = 36
+const LEADING_ICON_CHROME = 18
 
 interface ModelSelectorTriggerProps {
   buttonRef: RefObject<HTMLButtonElement | null>
@@ -19,6 +21,7 @@ interface ModelSelectorTriggerProps {
   disabled: boolean
   isMobile: boolean
   label: string
+  leadingIcon?: ReactNode
   highlightedLabel?: string
   shortcut?: string | null
   ariaLabel: string
@@ -47,6 +50,7 @@ export function ModelSelectorTrigger({
   disabled,
   isMobile,
   label,
+  leadingIcon,
   highlightedLabel,
   shortcut,
   ariaLabel,
@@ -58,6 +62,7 @@ export function ModelSelectorTrigger({
   const measureRef = useRef<HTMLSpanElement>(null)
   const previousOpenRef = useRef(open)
   const [tooltipSuppressed, setTooltipSuppressed] = useState(false)
+  const hasLeadingIcon = Boolean(leadingIcon)
 
   useEffect(() => {
     if (previousOpenRef.current && !open) {
@@ -75,7 +80,8 @@ export function ModelSelectorTrigger({
         measureRef.current?.scrollWidth ?? 0
       )
       if (measuredWidth <= 0) return
-      const naturalWidth = Math.ceil(measuredWidth) + HORIZONTAL_CHROME
+      const naturalWidth =
+        Math.ceil(measuredWidth) + HORIZONTAL_CHROME + (hasLeadingIcon ? LEADING_ICON_CHROME : 0)
       button.style.setProperty(
         '--model-selector-width',
         `${Math.max(64, Math.min(maxClosedWidth, naturalWidth))}px`
@@ -91,7 +97,7 @@ export function ModelSelectorTrigger({
       observer?.disconnect()
       window.removeEventListener('resize', updateWidth)
     }
-  }, [buttonRef, isMobile, label, maxClosedWidth])
+  }, [buttonRef, hasLeadingIcon, isMobile, label, maxClosedWidth])
 
   const desktopStyle: CSSProperties | undefined = isMobile
     ? undefined
@@ -122,8 +128,11 @@ export function ModelSelectorTrigger({
         aria-label={ariaLabel}
         aria-describedby={showTooltip ? 'model-selector-tooltip' : undefined}
       >
-        <span className="min-w-0 flex-1 truncate text-center">
-          <TriggerLabel label={label} highlightedLabel={highlightedLabel} />
+        <span className="flex min-w-0 flex-1 items-center justify-center gap-1">
+          {leadingIcon}
+          <span className="min-w-0 truncate">
+            <TriggerLabel label={label} highlightedLabel={highlightedLabel} />
+          </span>
         </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
       </button>

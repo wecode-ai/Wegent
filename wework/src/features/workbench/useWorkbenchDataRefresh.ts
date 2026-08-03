@@ -51,6 +51,8 @@ interface UseWorkbenchDataRefreshOptions {
   services: WorkbenchServices
 }
 
+const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 8000
+
 function createCloudRuntimeStateWithCache(runtimeWork: RuntimeWorkListResponse): CloudRuntimeState {
   if (runtimeWork.projects.length === 0 && runtimeWork.chats.length === 0) {
     return EMPTY_CLOUD_RUNTIME_STATE
@@ -320,7 +322,8 @@ export function useWorkbenchDataRefresh({
         const inFlightBackgroundApi = backgroundApi
         const devicesResult = await timedWorkbenchBootstrapRequest(
           'cloudDevices',
-          backgroundApi.listDevices()
+          backgroundApi.listDevices(),
+          CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
         )
         if (
           options?.isCancelled?.() ||
@@ -353,13 +356,25 @@ export function useWorkbenchDataRefresh({
       const revision = startedState.inFlightRevision
 
       const teamsRequest = backgroundApi?.listTeams
-        ? timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams())
+        ? timedWorkbenchBootstrapRequest(
+            'cloudTeams',
+            backgroundApi.listTeams(),
+            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
+          )
         : Promise.resolve(undefined)
       const devicesRequest = backgroundApi?.listDevices
-        ? timedWorkbenchBootstrapRequest('cloudDevices', backgroundApi.listDevices())
+        ? timedWorkbenchBootstrapRequest(
+            'cloudDevices',
+            backgroundApi.listDevices(),
+            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
+          )
         : Promise.resolve(undefined)
       const runtimeWorkRequest = backgroundApi?.listRuntimeWork
-        ? timedWorkbenchBootstrapRequest('cloudRuntimeWork', backgroundApi.listRuntimeWork())
+        ? timedWorkbenchBootstrapRequest(
+            'cloudRuntimeWork',
+            backgroundApi.listRuntimeWork(),
+            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
+          )
         : Promise.resolve(undefined)
       const devicesResult = await devicesRequest
 

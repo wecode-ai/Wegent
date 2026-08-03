@@ -17,12 +17,15 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
+import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
+import { executeVerificationControlCommand } from './verification-control'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -175,7 +178,7 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
-function seedDesktopE2ECloudConnection() {
+async function seedDesktopE2ECloudConnection(): Promise<void> {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
   const modelServerUrl = import.meta.env.VITE_WEWORK_E2E_MODEL_SERVER_URL?.trim() || backendUrl
@@ -239,6 +242,7 @@ function seedDesktopE2ECloudConnection() {
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
+      persistApiKey: false,
       catalogReady: localModelsCatalogReady,
       enabled: true,
     })
@@ -252,14 +256,17 @@ function seedDesktopE2ECloudConnection() {
   })
 }
 
-export function installWeworkAutomationBridge() {
+export async function installWeworkAutomationBridge(
+  beforeSeed: Promise<void> = Promise.resolve()
+): Promise<void> {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
-  seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
+  await beforeSeed.catch(() => undefined)
+  await seedDesktopE2ECloudConnection()
 }
 
 function findDesktopControlElements(selector: string): HTMLElement[] {
@@ -317,28 +324,32 @@ function desktopControlSnapshot(selector = 'body'): string {
 }
 
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
-  const restoreMainWindow = async () => {
-    const mainWindow = getCurrentWindow()
-    await mainWindow.show()
-    await mainWindow.unminimize()
-    await mainWindow.setFocus()
+  const currentWindow = getCurrentWindow()
+  const restoreCurrentWindow = async () => {
+    await currentWindow.show()
+    await currentWindow.unminimize()
+    await currentWindow.setFocus()
     await new Promise<void>(resolve => window.setTimeout(resolve, 50))
   }
-  const captureMainWebview = async () => {
+  const captureCurrentWebview = async () => {
     try {
-      return await invoke<string>('capture_main_webview')
+      return await invoke<string>(
+        currentWindow.label.startsWith('workspace-')
+          ? 'capture_workspace_webview'
+          : 'capture_main_webview'
+      )
     } finally {
-      await restoreMainWindow()
+      await restoreCurrentWindow()
     }
   }
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
   if (element === document.body) {
-    return captureMainWebview()
+    return captureCurrentWebview()
   }
   const rect = element.getBoundingClientRect()
   if (selector !== '[data-testid="model-selector-menu"]') {
-    const snapshot = await captureMainWebview()
+    const snapshot = await captureCurrentWebview()
     return cropDesktopControlScreenshot(snapshot, rect)
   }
   // NSView snapshots can omit WebKit's separately composited fixed-position popovers.
@@ -358,7 +369,7 @@ async function captureDesktopControlScreenshot(selector: string): Promise<string
   document.body.appendChild(captureClone)
   try {
     await new Promise<void>(resolve => window.setTimeout(resolve, 50))
-    const snapshot = await captureMainWebview()
+    const snapshot = await captureCurrentWebview()
     return cropDesktopControlScreenshot(snapshot, rect)
   } finally {
     captureClone.remove()
@@ -710,26 +721,58 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   const getWindowFocusSnapshot = async () => {
     const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
     const popoutWindow = await WebviewWindow.getByLabel('popout-window')
+    const workspaceWindows = (await WebviewWindow.getAll()).filter(window =>
+      window.label.startsWith('workspace-')
+    )
     return JSON.stringify({
       mainFocused: await getCurrentWindow().isFocused(),
       popoutExists: Boolean(popoutWindow),
       popoutFocused: popoutWindow ? await popoutWindow.isFocused() : false,
       popoutVisible: popoutWindow ? await popoutWindow.isVisible() : false,
+      workspaceWindows: await Promise.all(
+        workspaceWindows.map(async window => ({
+          label: window.label,
+          focused: await window.isFocused(),
+          visible: await window.isVisible(),
+        }))
+      ),
     })
   }
+
+  const verificationResult = await executeVerificationControlCommand(command, {
+    elementEnabled: desktopControlElementEnabled,
+  })
+  if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
     case 'capturePopoutWindow':
       return invoke<string>('capture_popout_webview')
+    case 'captureWorkspaceWindow':
+      return invoke<string>('capture_workspace_webview')
     case 'closeMainWindowToTray':
       return ''
     case 'requestMainWindowClose':
       return ''
+    case 'reloadMainWindow':
+      return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'storeLocalProxyUrl':
+      return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
+    case 'getLocalStorageItem':
+      return localStorage.getItem(command.value ?? '') ?? ''
+    case 'setLocalProxyUrl': {
+      const proxyUrl = command.value?.trim() ?? ''
+      const config = saveLocalProxyUrl(proxyUrl)
+      await invoke(LOCAL_EXECUTOR_COMMANDS.request, {
+        method: 'runtime.codex.runtime_config.update',
+        params: { proxyUrl: proxyUrl || null },
+      })
+      return JSON.stringify(config)
+    }
     case 'toggleSidebar': {
       const event = new Event('wework:desktop-sidebar-toggle-request', { cancelable: true })
       window.dispatchEvent(event)
@@ -786,6 +829,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'getAttribute': {
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.text
+        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : elements[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const attribute = command.value?.trim()
+      if (!attribute) throw new Error('getAttribute requires an attribute name')
+      return element.getAttribute(attribute) ?? ''
+    }
     case 'getStyle': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -834,8 +887,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'expandProcessingSummaries':
       return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
-      const element = findDesktopControlElements(command.selector)[0]
+      const elements = findDesktopControlElements(command.selector)
+      const element = command.text
+        ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))
+        : elements[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const text = element.textContent?.trim() ?? ''
       element.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
@@ -845,7 +902,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         })
       )
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
-      return element.textContent?.trim() ?? ''
+      return text
     }
     case 'scrollToBottomAsUser': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -892,6 +949,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       element.click()
       return element.textContent?.trim() ?? ''
+    }
+    case 'clickThenMacrotask': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!desktopControlElementEnabled(element)) {
+        throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      const targetSelector = command.target?.trim()
+      if (!targetSelector) throw new Error('clickThenMacrotask requires target')
+
+      element.click()
+      await new Promise(resolve => window.setTimeout(resolve, 0))
+
+      const target = findDesktopControlElements(targetSelector)[0]
+      if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
+      if (!desktopControlElementEnabled(target)) {
+        throw new Error(`Target selector "${targetSelector}" is disabled`)
+      }
+      target.click()
+      return target.textContent?.trim() ?? ''
     }
     case 'clickIfPresent': {
       const element = findDesktopControlElements(command.selector).find(
@@ -987,6 +1064,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getWorkbenchDebugSnapshot':
       return JSON.stringify(getWorkbenchDebugSnapshot())
+    case 'getLocalExecutorStatus':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':
@@ -1041,7 +1120,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
   }
 }
 
-async function runDesktopControlClient(url: string): Promise<void> {
+async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () =>
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
@@ -1055,7 +1134,7 @@ async function runDesktopControlClient(url: string): Promise<void> {
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ clientId, location: window.location.href }),
+    body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
   })
   if (!readyResponse.ok) {
     throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
@@ -1081,6 +1160,9 @@ async function runDesktopControlClient(url: string): Promise<void> {
           await closeMainWindowToTray()
         } else if (command.action === 'requestMainWindowClose') {
           await getCurrentWindow().close()
+        } else if (command.action === 'reloadMainWindow') {
+          window.location.reload()
+          return
         }
       } catch (error) {
         await postDesktopControlResult(url, {
@@ -1100,12 +1182,13 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
+  const windowLabel = getCurrentWindow().label
   if (
     !url ||
-    getCurrentWindow().label !== 'main' ||
+    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return
   }
-  void runDesktopControlClient(url)
+  void runDesktopControlClient(url, windowLabel)
 }

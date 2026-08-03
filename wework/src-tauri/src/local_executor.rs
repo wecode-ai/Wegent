@@ -96,6 +96,7 @@ struct LocalExecutorInner {
     runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
+    codex_initialize_elapsed_ms: Option<u64>,
     generation: u64,
 }
 
@@ -376,6 +377,8 @@ pub struct LocalExecutorStatus {
     device_id: Option<String>,
     #[serde(rename = "runtimeInstanceId")]
     runtime_instance_id: Option<String>,
+    #[serde(rename = "codexInitializeElapsedMs")]
+    codex_initialize_elapsed_ms: Option<u64>,
     version: Option<String>,
     error: Option<String>,
 }
@@ -533,7 +536,7 @@ fn local_executor_isolation_enabled() -> Result<bool, String> {
             .unwrap_or(true))
 }
 
-fn local_executor_home_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -748,6 +751,7 @@ fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
         ready: inner.ready,
         device_id: inner.device_id.clone(),
         runtime_instance_id: inner.runtime_instance_id.clone(),
+        codex_initialize_elapsed_ms: inner.codex_initialize_elapsed_ms,
         version: inner.version.clone(),
         error: inner.error.clone(),
     }
@@ -1622,6 +1626,22 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
+            let debug_text_delta = event.event == "response.output_text.delta"
+                && std::env::var_os("WEGENT_CODEX_STREAM_DEBUG").is_some();
+            if debug_text_delta {
+                let data = event.payload.get("data").unwrap_or(&Value::Null);
+                log::info!(
+                    "Forwarding runtime text delta to frontend: task_id={:?}, subtask_id={:?}, item_id={:?}, offset={:?}, delta_len={}",
+                    event.payload.get("taskId"),
+                    event.payload.get("subtaskId"),
+                    data.get("itemId").or_else(|| data.get("item_id")),
+                    data.get("offset"),
+                    data.get("delta")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default()
+                );
+            }
             app.state::<crate::system_sleep::SystemSleepState>()
                 .handle_runtime_event(
                     &event.event,
@@ -1693,6 +1713,9 @@ fn handle_executor_line_inner(
                 }
                 return Err(error.to_string());
             }
+            if debug_text_delta {
+                log::info!("Forwarded runtime text delta to frontend event bus");
+            }
             if terminal {
                 log::info!(
                     "Forwarded runtime terminal event to frontend event bus: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
@@ -1749,6 +1772,7 @@ fn register_spawned_child(
     inner.child = Some(child);
     inner.running = true;
     inner.ready = false;
+    inner.codex_initialize_elapsed_ms = None;
     inner.device_id = Some(
         inner
             .device_id
@@ -2333,8 +2357,39 @@ pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> 
 pub async fn local_executor_ensure_started(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
+    proxy_url: Option<String>,
 ) -> Result<LocalExecutorStatus, String> {
-    start_executor_if_needed(app, &state).await?;
+    start_executor_if_needed(app.clone(), &state).await?;
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.runtime_config.update".to_string(),
+            params: json!({"proxyUrl": proxy_url}),
+        },
+    )
+    .await?;
+    let startup = send_executor_request(
+        app,
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.ensure_started".to_string(),
+            params: json!({}),
+        },
+    )
+    .await?;
+    if startup
+        .get("started")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let elapsed_ms = startup.get("initializeElapsedMs").and_then(Value::as_u64);
+        state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?
+            .codex_initialize_elapsed_ms = elapsed_ms;
+    }
     status_from_state(&state)
 }
 

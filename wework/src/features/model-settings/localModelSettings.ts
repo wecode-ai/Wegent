@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
@@ -6,6 +8,9 @@ import {
 export const KIMI_CODING_CONTEXT_WINDOW = 262_144
 export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
+export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
+export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
+export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
   id: string
@@ -18,6 +23,7 @@ export interface LocalModelConfig {
   toolProfile: LocalModelToolProfile
   requestPath?: string
   apiKey?: string
+  apiKeyConfigured?: boolean
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
@@ -57,6 +63,7 @@ export interface SaveLocalModelConfigInput {
   catalogReady?: boolean
   catalogPendingRuntimeInstanceId?: string | null
   enabled?: boolean
+  persistApiKey?: boolean
 }
 
 export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
@@ -71,6 +78,76 @@ export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
 export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
 export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
+
+const localModelApiKeys = new Map<string, string>()
+let localModelSecretWriteQueue: Promise<void> = Promise.resolve()
+let localModelApiKeyHydration: Promise<void> | null = null
+
+function scheduleLocalModelApiKeyWrite(configId: string, apiKey?: string): void {
+  if (!isTauriRuntime()) return
+  localModelSecretWriteQueue = localModelSecretWriteQueue
+    .catch(() => undefined)
+    .then(() =>
+      invoke('update_local_model_api_key', {
+        configId,
+        apiKey: apiKey || null,
+      })
+    )
+  void localModelSecretWriteQueue.catch(error => {
+    console.error('Failed to persist local model credentials', error)
+  })
+}
+
+export function flushLocalModelSecretWrites(): Promise<void> {
+  return localModelSecretWriteQueue
+}
+
+export async function hydrateLocalModelApiKeys(): Promise<void> {
+  if (!isTauriRuntime()) return
+  const raw = globalThis.localStorage?.getItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
+  if (!raw) return
+  const parsed: unknown = JSON.parse(raw)
+  if (!Array.isArray(parsed)) return
+  const configs = parsed.filter(isLocalModelConfig)
+  const configIds = configs
+    .filter(config => config.apiKeyConfigured !== false && !config.apiKey)
+    .map(config => config.id)
+  const storedApiKeys =
+    configIds.length > 0
+      ? await invoke<Record<string, string>>('read_local_model_api_keys', { configIds })
+      : {}
+  localModelApiKeys.clear()
+  for (const [configId, apiKey] of Object.entries(storedApiKeys)) {
+    if (apiKey) localModelApiKeys.set(configId, apiKey)
+  }
+
+  const legacyApiKeys = configs.flatMap(config =>
+    config.apiKey ? [{ configId: config.id, apiKey: config.apiKey }] : []
+  )
+  if (legacyApiKeys.length > 0) {
+    for (const { configId, apiKey } of legacyApiKeys) {
+      localModelApiKeys.set(configId, apiKey)
+      scheduleLocalModelApiKeyWrite(configId, apiKey)
+    }
+    globalThis.localStorage?.setItem(
+      LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+      JSON.stringify(configs.map(persistableLocalModelConfig))
+    )
+    await flushLocalModelSecretWrites()
+  }
+  dispatchChanged(readStoredConfigs())
+}
+
+export function ensureLocalModelApiKeysHydrated(): Promise<void> {
+  if (!isTauriRuntime()) return Promise.resolve()
+  if (!localModelApiKeyHydration) {
+    localModelApiKeyHydration = hydrateLocalModelApiKeys().catch(error => {
+      localModelApiKeyHydration = null
+      throw error
+    })
+  }
+  return localModelApiKeyHydration
+}
 
 export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
   if (apiFormat === 'openai-chat-completions') {
@@ -118,7 +195,28 @@ function readStoredConfigs(): LocalModelConfig[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isLocalModelConfig).map(normalizeStoredLocalModelConfig)
+    const storedConfigs = parsed.filter(isLocalModelConfig)
+    const canMigrateLegacyApiKeys = isTauriRuntime()
+    let migratedLegacyApiKey = false
+    for (const config of storedConfigs) {
+      if (!config.apiKey) continue
+      localModelApiKeys.set(config.id, config.apiKey)
+      if (canMigrateLegacyApiKeys) {
+        scheduleLocalModelApiKeyWrite(config.id, config.apiKey)
+        migratedLegacyApiKey = true
+      }
+    }
+    if (migratedLegacyApiKey) {
+      globalThis.localStorage?.setItem(
+        LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+        JSON.stringify(storedConfigs.map(persistableLocalModelConfig))
+      )
+    }
+    return storedConfigs.map(config => {
+      const normalized = normalizeStoredLocalModelConfig(config)
+      const apiKey = localModelApiKeys.get(normalized.id)
+      return apiKey ? { ...normalized, apiKey } : normalized
+    })
   } catch {
     return []
   }
@@ -142,6 +240,7 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.toolProfile === 'custom' ||
       record.toolProfile === 'function' ||
       record.toolProfile === 'shell') &&
+    (record.apiKeyConfigured === undefined || typeof record.apiKeyConfigured === 'boolean') &&
     (record.requestPath === undefined || typeof record.requestPath === 'string') &&
     (record.requestUrlMode === undefined ||
       record.requestUrlMode === 'responses_path' ||
@@ -172,13 +271,24 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
-  const apiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const storedApiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
+  const migrateDeepSeekResponses =
+    legacyConfig.providerProfileId === 'deepseek' &&
+    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID &&
+    legacyConfig.baseUrl.replace(/\/+$/, '') === 'https://api.deepseek.com' &&
+    storedApiFormat === 'openai-chat-completions' &&
+    normalizeLocalModelRequestPath(legacyConfig.requestPath, storedApiFormat) ===
+      DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
+  const apiFormat = migrateDeepSeekResponses ? 'openai-responses' : storedApiFormat
+  const preferredRequestPath = migrateDeepSeekResponses
+    ? DEFAULT_LOCAL_MODEL_REQUEST_PATH
+    : legacyConfig.requestPath
   const splitUrl =
     legacyConfig.requestUrlMode === 'custom_url'
-      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, legacyConfig.requestPath)
+      ? splitLocalModelRequestUrl(legacyConfig.baseUrl, preferredRequestPath, apiFormat)
       : {
           baseUrl: legacyConfig.baseUrl,
-          requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath, apiFormat),
+          requestPath: normalizeLocalModelRequestPath(preferredRequestPath, apiFormat),
         }
   const isCustomProvider = (legacyConfig.providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
@@ -201,6 +311,12 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
           ? KIMI_K27_CATALOG_MODEL_ID
           : undefined
       : undefined
+  const deepSeekCatalogModelId =
+    legacyConfig.providerProfileId === 'deepseek' &&
+    legacyConfig.modelId === DEEPSEEK_V4_FLASH_MODEL_ID
+      ? DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID
+      : undefined
+  const providerCatalogModelId = kimiCatalogModelId ?? deepSeekCatalogModelId
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
     ...(legacyConfig.providerProfileId
@@ -211,23 +327,32 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
     apiFormat,
-    toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
+    toolProfile: migrateDeepSeekResponses
+      ? 'custom'
+      : normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
-    ...(kimiCatalogModelId
-      ? { contextWindow: KIMI_CODING_CONTEXT_WINDOW }
+    apiKeyConfigured: legacyConfig.apiKeyConfigured ?? Boolean(legacyConfig.apiKey),
+    ...(providerCatalogModelId
+      ? {
+          contextWindow: kimiCatalogModelId
+            ? KIMI_CODING_CONTEXT_WINDOW
+            : DEEPSEEK_V4_CONTEXT_WINDOW,
+        }
       : legacyConfig.contextWindow
         ? { contextWindow: legacyConfig.contextWindow }
         : {}),
-    webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
+    webSearchMode: migrateDeepSeekResponses
+      ? 'live'
+      : normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
     imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
       legacyConfig.imageGenerationEnabled
     ),
-    ...(kimiCatalogModelId ||
+    ...(providerCatalogModelId ||
     legacyConfig.codexCatalogModelId ||
     typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId:
-            kimiCatalogModelId ||
+            providerCatalogModelId ||
             legacyConfig.codexCatalogModelId ||
             (catalogEntry?.slug as string),
         }
@@ -248,8 +373,19 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
-  globalThis.localStorage?.setItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY, JSON.stringify(configs))
+  globalThis.localStorage?.setItem(
+    LOCAL_MODEL_SETTINGS_STORAGE_KEY,
+    JSON.stringify(
+      configs.map(config => (isTauriRuntime() ? persistableLocalModelConfig(config) : config))
+    )
+  )
   dispatchChanged(configs)
+}
+
+function persistableLocalModelConfig(config: LocalModelConfig): Omit<LocalModelConfig, 'apiKey'> {
+  const persistableConfig = { ...config }
+  delete persistableConfig.apiKey
+  return persistableConfig
 }
 
 function dispatchChanged(configs: LocalModelConfig[]): void {
@@ -461,6 +597,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     toolProfile,
     requestPath,
     apiKey,
+    apiKeyConfigured: Boolean(apiKey),
     ...(contextWindow ? { contextWindow } : {}),
     webSearchMode,
     imageGenerationEnabled,
@@ -478,6 +615,14 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       : {}),
     enabled: input.enabled ?? previous?.enabled ?? true,
     updatedAt: nextLocalModelUpdatedAt(previous),
+  }
+  if (apiKey) {
+    localModelApiKeys.set(id, apiKey)
+  } else {
+    localModelApiKeys.delete(id)
+  }
+  if (input.persistApiKey !== false) {
+    scheduleLocalModelApiKeyWrite(id, apiKey)
   }
   const index = existing.findIndex(config => config.id === id)
   const configs =
@@ -521,11 +666,16 @@ export function deleteLocalModelConfig(id: string): boolean {
   const configs = readStoredConfigs()
   const next = configs.filter(config => config.id !== id)
   if (next.length === configs.length) return false
+  localModelApiKeys.delete(id)
+  scheduleLocalModelApiKeyWrite(id)
   writeStoredConfigs(next)
   return true
 }
 
 export function clearLocalModelConfigs(): void {
+  const configIds = readStoredConfigs().map(config => config.id)
+  localModelApiKeys.clear()
+  for (const configId of configIds) scheduleLocalModelApiKeyWrite(configId)
   globalThis.localStorage?.removeItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
   dispatchChanged([])
 }

@@ -12,6 +12,16 @@ use zip::write::SimpleFileOptions;
 
 const MAX_LOG_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_ENTRY_PREVIEW_CHARS: usize = 20_000;
+const MAX_ATTACHMENT_COUNT: usize = 20;
+const MAX_ATTACHMENT_TOTAL_BYTES: usize = 100 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackAttachment {
+    name: String,
+    mime_type: String,
+    data_base64: String,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +33,7 @@ pub struct FeedbackExportRequest {
     note: String,
     task_context: Option<serde_json::Value>,
     screenshot_data_url: Option<String>,
+    attachments: Vec<FeedbackAttachment>,
 }
 
 #[derive(Serialize)]
@@ -64,7 +75,6 @@ pub struct FeedbackBundleDecision {
 #[serde(rename_all = "camelCase")]
 pub struct FeedbackSubmitRequest {
     api_url: String,
-    access_token: String,
     staging_id: String,
     title: String,
     description: String,
@@ -77,7 +87,6 @@ pub struct FeedbackSubmitResult {
     report_id: String,
     project_id: String,
     item_id: String,
-    created_by_user_id: i64,
     duplicate: bool,
 }
 
@@ -117,6 +126,8 @@ fn categorize_entry(archive_path: &str) -> &'static str {
         "system"
     } else if archive_path == "screenshot.png" {
         "screenshot"
+    } else if archive_path.starts_with("attachments/") {
+        "attachments"
     } else {
         "other"
     }
@@ -251,6 +262,37 @@ fn build_pending_bundle(
         }
     }
 
+    if !request.attachments.is_empty() {
+        if request.attachments.len() > MAX_ATTACHMENT_COUNT {
+            return Err(format!(
+                "Feedback supports at most {MAX_ATTACHMENT_COUNT} attachments"
+            ));
+        }
+        let mut total_bytes = 0usize;
+        for (index, attachment) in request.attachments.iter().enumerate() {
+            let estimated_bytes = estimated_decoded_attachment_size(&attachment.data_base64);
+            if total_bytes.saturating_add(estimated_bytes) > MAX_ATTACHMENT_TOTAL_BYTES {
+                return Err("Feedback attachments are larger than 100 MB".to_string());
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&attachment.data_base64)
+                .map_err(|error| {
+                    format!("Failed to decode attachment {}: {error}", attachment.name)
+                })?;
+            total_bytes = total_bytes.saturating_add(bytes.len());
+            if total_bytes > MAX_ATTACHMENT_TOTAL_BYTES {
+                return Err("Feedback attachments are larger than 100 MB".to_string());
+            }
+            let safe_name = sanitize_attachment_name(&attachment.name, index);
+            entries.push(PendingEntry {
+                archive_path: format!("attachments/{safe_name}"),
+                data: bytes,
+                previewable: is_previewable_attachment(&attachment.mime_type),
+            });
+        }
+        included.push("attachments");
+    }
+
     Ok(PendingBundle {
         report_id,
         created_at_unix_ms: created_at.as_millis(),
@@ -262,12 +304,56 @@ fn build_pending_bundle(
     })
 }
 
+fn estimated_decoded_attachment_size(data_base64: &str) -> usize {
+    let padding = data_base64
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .take(2)
+        .count();
+    base64::decoded_len_estimate(data_base64.len()).saturating_sub(padding)
+}
+
 fn text_entry(archive_path: &str, content: String) -> PendingEntry {
     PendingEntry {
         archive_path: archive_path.to_string(),
         data: content.into_bytes(),
         previewable: true,
     }
+}
+
+fn sanitize_attachment_name(name: &str, index: usize) -> String {
+    let leaf = Path::new(name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let sanitized: String = leaf
+        .chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '/' | '\\' | ':') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches(['.', ' ']);
+    let fallback = format!("attachment-{}", index + 1);
+    let name = if sanitized.is_empty() {
+        fallback.as_str()
+    } else {
+        sanitized
+    };
+    format!("{}-{name}", index + 1)
+}
+
+fn is_previewable_attachment(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || matches!(
+            mime_type,
+            "application/json" | "application/xml" | "application/javascript"
+        )
 }
 
 fn write_pending_bundle(bundle: &PendingBundle, destination: &Path) -> Result<(), String> {
@@ -465,9 +551,6 @@ fn submit_feedback_bundle_blocking(
     if !(api_url.starts_with("https://") || api_url.starts_with("http://")) {
         return Err("Feedback API URL must use HTTP or HTTPS".to_string());
     }
-    if request.access_token.trim().is_empty() {
-        return Err("Feedback authentication is unavailable".to_string());
-    }
     let staging_path = resolve_staging_path(app, &request.staging_id)?;
     let report_id = report_id_from_staging_archive(&staging_path)?;
     let bundle = reqwest::blocking::multipart::Part::file(&staging_path)
@@ -483,7 +566,6 @@ fn submit_feedback_bundle_blocking(
         .part("bundle", bundle);
     let response = reqwest::blocking::Client::new()
         .post(api_url)
-        .bearer_auth(request.access_token)
         .multipart(form)
         .send()
         .map_err(|error| format!("Failed to submit feedback: {error}"))?;
@@ -719,8 +801,9 @@ fn write_zip_bytes(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_log_entries, decode_data_url, empty_task_context, redact, redact_home_path,
-        redact_json_value, LogManifestEntry, PendingEntry,
+        collect_log_entries, decode_data_url, empty_task_context,
+        estimated_decoded_attachment_size, redact, redact_home_path, redact_json_value,
+        sanitize_attachment_name, LogManifestEntry, PendingEntry,
     };
     use std::collections::HashSet;
     use std::fs;
@@ -756,6 +839,26 @@ mod tests {
             Some(b"hello".to_vec())
         );
         assert_eq!(decode_data_url("https://example.com/image.png"), None);
+    }
+
+    #[test]
+    fn sanitizes_attachment_names_before_adding_them_to_the_archive() {
+        assert_eq!(
+            sanitize_attachment_name("../../private/screenshot.png", 0),
+            "1-screenshot.png"
+        );
+        assert_eq!(sanitize_attachment_name("..", 1), "2-attachment-2");
+        assert_eq!(
+            sanitize_attachment_name("notes:one.txt", 2),
+            "3-notes_one.txt"
+        );
+    }
+
+    #[test]
+    fn estimates_decoded_attachment_size_without_padding_bytes() {
+        assert_eq!(estimated_decoded_attachment_size("YQ=="), 1);
+        assert_eq!(estimated_decoded_attachment_size("YWI="), 2);
+        assert_eq!(estimated_decoded_attachment_size("YWJj"), 3);
     }
 
     #[test]

@@ -55,7 +55,7 @@ Environment overrides:
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
   MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL,
-  VITE_WEGENT_SOCKET_URL
+  VITE_WEGENT_SOCKET_URL, VITE_WEWORK_FEEDBACK_URL
 EOF
 }
 
@@ -547,6 +547,7 @@ elif [ "$TARGET" = "local" ]; then
 fi
 echo "VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"
@@ -558,7 +559,7 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
   TAURI_BUILD_ARGS+=(--features release-devtools)
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
-WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 if [ -n "$app_sign_identity" ]; then
   wework_sign_prepared_codex_macos_binaries \

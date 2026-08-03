@@ -4,39 +4,65 @@
 
 'use client'
 
-import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ResourceLibraryTypeFilter } from '@/features/resource-library/types'
 
 interface ResourceTypeFilterProps {
   value: ResourceLibraryTypeFilter
   onValueChange: (value: ResourceLibraryTypeFilter) => void
+  filters?: ResourceLibraryTypeFilter[]
+  marketLabels?: boolean
 }
 
-const RESOURCE_TYPE_FILTERS: ResourceLibraryTypeFilter[] = ['all', 'agent', 'skill']
+const RESOURCE_TYPE_FILTERS: ResourceLibraryTypeFilter[] = [
+  'all',
+  'agent',
+  'skill',
+  'model',
+  'shell',
+  'retriever',
+]
 
-export function ResourceTypeFilter({ value, onValueChange }: ResourceTypeFilterProps) {
+export function ResourceTypeFilter({
+  value,
+  onValueChange,
+  filters = RESOURCE_TYPE_FILTERS,
+  marketLabels = false,
+}: ResourceTypeFilterProps) {
   const { t } = useTranslation('resource-library')
 
   return (
-    <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('fields.tags')}>
-      {RESOURCE_TYPE_FILTERS.map(filter => {
-        const isActive = value === filter
+    <Tabs
+      value={value}
+      onValueChange={nextValue => onValueChange(nextValue as ResourceLibraryTypeFilter)}
+      className="min-w-0 max-w-full"
+    >
+      <TabsList
+        className="inline-flex h-auto w-fit max-w-full justify-start gap-7 overflow-x-auto rounded-none bg-transparent p-0"
+        aria-label={t('fields.type')}
+        data-testid="resource-type-navigation"
+      >
+        {filters.map(filter => {
+          const isActive = value === filter
+          const labelKey =
+            marketLabels && (filter === 'agent' || filter === 'skill')
+              ? `market_filters.${filter}`
+              : `filters.${filter}`
 
-        return (
-          <Button
-            key={filter}
-            type="button"
-            variant={isActive ? 'primary' : 'outline'}
-            aria-pressed={isActive}
-            data-testid={`resource-type-${filter}-filter`}
-            className="h-11 min-w-[44px] px-4 lg:h-9"
-            onClick={() => onValueChange(filter)}
-          >
-            {t(`filters.${filter}`)}
-          </Button>
-        )
-      })}
-    </div>
+          return (
+            <TabsTrigger
+              key={filter}
+              value={filter}
+              aria-pressed={isActive}
+              data-testid={`resource-type-${filter}-filter`}
+              className="relative h-11 min-w-[44px] shrink-0 rounded-none border-0 bg-transparent px-1 font-medium text-text-secondary shadow-none after:absolute after:bottom-1 after:left-1 after:right-1 after:h-0.5 after:bg-transparent hover:text-text-primary data-[state=active]:bg-transparent data-[state=active]:font-semibold data-[state=active]:text-text-primary data-[state=active]:shadow-none data-[state=active]:after:bg-primary"
+            >
+              {t(labelKey)}
+            </TabsTrigger>
+          )
+        })}
+      </TabsList>
+    </Tabs>
   )
 }

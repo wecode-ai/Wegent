@@ -149,11 +149,26 @@ export function MessageTurnNavigation({
   }, [messages, turnNavigation, userTurnsSignature])
 
   const updateActiveMarker = useCallback(
-    (nextMarkers: MessageTurnMarker[], reason = 'unknown') => {
+    (
+      nextMarkers: MessageTurnMarker[],
+      reason = 'unknown',
+      anchorByMessageId?: ReadonlyMap<string, HTMLElement>
+    ) => {
       void reason
       const scroller = scrollRef.current
       if (!scroller || nextMarkers.length === 0) {
         setActiveMarkerId(null)
+        return
+      }
+
+      const mountedMessageMarker = findActiveMarkerFromMountedMessages(
+        nextMarkers,
+        messagesRef.current,
+        anchorByMessageId,
+        scroller
+      )
+      if (mountedMessageMarker) {
+        setActiveMarkerId(mountedMessageMarker.id)
         return
       }
 
@@ -162,7 +177,6 @@ export function MessageTurnNavigation({
         (marker): marker is MessageTurnMarker & { targetTop: number } => marker.targetTop !== null
       )
       if (loadedMarkers.length === 0) {
-        setActiveMarkerId(null)
         return
       }
 
@@ -215,7 +229,7 @@ export function MessageTurnNavigation({
 
       markersRef.current = nextMarkers
       setMarkers(nextMarkers)
-      updateActiveMarker(nextMarkers, reason)
+      updateActiveMarker(nextMarkers, reason, anchorByMessageId)
     },
     [contentRef, scrollRef, updateActiveMarker]
   )
@@ -263,6 +277,8 @@ export function MessageTurnNavigation({
     const content = contentRef.current
     if (!scroller || !content) return
 
+    // Mounted anchors are recalculated by observers; raw scroll events reuse
+    // measured user targets and preserve the last valid virtualized marker.
     const handleScroll = () => updateActiveMarker(markersRef.current, 'scroll')
     const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
@@ -745,6 +761,70 @@ function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
   return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+}
+
+function findActiveMarkerFromMountedMessages(
+  markers: MessageTurnMarker[],
+  messages: WorkbenchMessage[],
+  anchorByMessageId: ReadonlyMap<string, HTMLElement> | undefined,
+  scroller: HTMLDivElement
+): MessageTurnMarker | null {
+  if (!anchorByMessageId || anchorByMessageId.size === 0) return null
+
+  const messagePositionById = buildMessageTimelinePositions(messages)
+  const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
+  let currentMessageIndex: number | null = null
+  let currentMessageTop = Number.NEGATIVE_INFINITY
+  let firstMountedMessageIndex: number | null = null
+  let firstMountedMessageTop = Number.POSITIVE_INFINITY
+
+  anchorByMessageId.forEach((anchor, messageId) => {
+    const messagePosition = messagePositionById.get(messageId)
+    if (messagePosition === undefined) return
+
+    const targetTop = getMessageAnchorTargetTop(scroller, anchor)
+    if (targetTop < firstMountedMessageTop) {
+      firstMountedMessageTop = targetTop
+      firstMountedMessageIndex = messagePosition
+    }
+    if (targetTop <= currentPosition && targetTop > currentMessageTop) {
+      currentMessageTop = targetTop
+      currentMessageIndex = messagePosition
+    }
+  })
+
+  const viewportMessageIndex = currentMessageIndex ?? firstMountedMessageIndex
+  if (viewportMessageIndex === null) return null
+
+  let activeMarker: MessageTurnMarker | null = null
+  for (const marker of markers) {
+    if (marker.messageIndex > viewportMessageIndex) break
+    activeMarker = marker
+  }
+  return activeMarker
+}
+
+function buildMessageTimelinePositions(messages: WorkbenchMessage[]): Map<string, number> {
+  const positions = new Map<string, number>()
+  let nextMessageIndex: number | null = null
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (Number.isFinite(message.runtimeMessageIndex)) {
+      nextMessageIndex = message.runtimeMessageIndex as number
+      positions.set(message.id, nextMessageIndex)
+      continue
+    }
+
+    // A persisted page can start with an assistant message whose preceding user
+    // message belongs to the previous page. Keep it in the absolute transcript
+    // coordinate system by placing it immediately before the next indexed row.
+    if (nextMessageIndex !== null) {
+      positions.set(message.id, nextMessageIndex - 0.5)
+    }
+  }
+
+  return positions
 }
 
 function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {

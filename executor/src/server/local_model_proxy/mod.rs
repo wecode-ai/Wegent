@@ -37,7 +37,9 @@ use crate::logging::log_executor_event;
 use super::{codex_responses_proxy_transform, HttpError};
 use fork::{codex_forked_from_thread_id, prepare_fork_request};
 
-pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
+pub(crate) const API_KEY: &str = "wework-local-router";
+pub(crate) const ROUTE: &str = "/v1/codex-router/responses";
+pub(crate) const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -55,7 +57,14 @@ pub(crate) fn route<S>() -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    post(handle_routed).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+    post(handle_bound_thread).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+}
+
+pub(crate) fn token_route<S>() -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    post(handle_token_route).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
 }
 
 #[derive(Debug, Clone)]
@@ -241,19 +250,59 @@ fn registry() -> &'static Mutex<LocalModelProxyRegistry> {
 
 #[cfg(test)]
 pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
-    let token = local_token(&headers).ok_or_else(|| HttpError {
+    let token = bearer_token(&headers).ok_or_else(|| HttpError {
         status: StatusCode::UNAUTHORIZED,
         detail: "missing local model proxy token".to_owned(),
     })?;
     handle_for_token(token, headers, body).await
 }
 
-pub(super) async fn handle_routed(
+pub(super) async fn handle_token_route(
     Path(token): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
     handle_for_token(token, headers, body).await
+}
+
+async fn handle_bound_thread(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
+    if bearer_token(&headers).as_deref() != Some(API_KEY) {
+        return Err(HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "invalid local model proxy authorization".to_owned(),
+        });
+    }
+    let token = bound_thread_token(&body)?;
+    handle_for_token(token, headers, body).await
+}
+
+fn bound_thread_token(body: &[u8]) -> Result<String, HttpError> {
+    let identity = request_thread_identity(body).ok_or_else(|| HttpError {
+        status: StatusCode::CONFLICT,
+        detail: "Codex Responses request is missing task thread metadata".to_owned(),
+    })?;
+    let registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let mut tokens = registry.routes.iter().filter_map(|(token, registered)| {
+        let matches_thread = registered.thread_ids.contains(&identity.thread_id);
+        let matches_parent = identity
+            .parent_thread_id
+            .as_ref()
+            .is_some_and(|parent| registered.thread_ids.contains(parent));
+        (matches_thread || matches_parent).then(|| token.clone())
+    });
+    let token = tokens.next().ok_or_else(|| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "no local model proxy route is bound to the Codex thread".to_owned(),
+    })?;
+    if tokens.next().is_some() {
+        return Err(HttpError {
+            status: StatusCode::CONFLICT,
+            detail: "multiple local model proxy routes are bound to the Codex thread".to_owned(),
+        });
+    }
+    Ok(token)
 }
 
 async fn handle_for_token(
@@ -995,8 +1044,7 @@ enum Conversion {
     Responses(chat::ToolContext),
 }
 
-#[cfg(test)]
-fn local_token(headers: &HeaderMap) -> Option<String> {
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let auth = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())?
@@ -2378,6 +2426,74 @@ mod tests {
 
         drop(entries);
         unregister(&token);
+    }
+
+    #[test]
+    fn generic_route_resolves_the_task_from_the_bound_codex_thread() {
+        let token = register(
+            "generic-bound-thread-task-route",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: None,
+                routing_model_id: Some("gpt-5.6-luna".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        bind_thread(&token, "generic-bound-thread-root").expect("root thread should bind");
+
+        assert_eq!(
+            bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-bound-thread-root"}}"#)
+                .expect("bound root should resolve"),
+            token
+        );
+        assert_eq!(
+            bound_thread_token(
+                br#"{"client_metadata":{"thread_id":"generic-bound-thread-child","parent_thread_id":"generic-bound-thread-root"}}"#
+            )
+            .expect("child of bound root should resolve"),
+            token
+        );
+
+        unregister(&token);
+    }
+
+    #[test]
+    fn generic_route_rejects_unbound_and_ambiguous_codex_threads() {
+        let unbound_error =
+            bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-unbound-thread"}}"#)
+                .expect_err("unbound thread must not resolve");
+        assert_eq!(unbound_error.status, StatusCode::NOT_FOUND);
+
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: None,
+            routing_model_id: Some("gpt-5.6-luna".to_owned()),
+            max_output_tokens: None,
+        };
+        let first = register("generic-ambiguous-thread-task-a", upstream.clone());
+        let second = register("generic-ambiguous-thread-task-b", upstream);
+        bind_thread(&first, "generic-ambiguous-thread").expect("first route should bind");
+        bind_thread(&second, "generic-ambiguous-thread").expect("second route should bind");
+
+        let ambiguous_error =
+            bound_thread_token(br#"{"client_metadata":{"thread_id":"generic-ambiguous-thread"}}"#)
+                .expect_err("ambiguous thread must not resolve");
+        assert_eq!(ambiguous_error.status, StatusCode::CONFLICT);
+
+        unregister(&first);
+        unregister(&second);
     }
 
     #[test]
