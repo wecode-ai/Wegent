@@ -702,13 +702,22 @@ function ScrollableMessagePaneContent({
     }
 
     if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
-      scrollToBottom('auto', { saveSnapshot: false })
+      const shouldStabilizeExternalBottom =
+        externalScrollRef?.current &&
+        currentScrollKey !== null &&
+        getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true
+      if (shouldStabilizeExternalBottom) {
+        scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+      } else {
+        scrollToBottom('auto', { saveSnapshot: false })
+      }
     }
   }, [
     conversationKey,
     autoScrollSuspended,
     currentScrollKey,
     clearScheduledScrolls,
+    externalScrollRef,
     isTurnNavigationAutoScrollSuspended,
     isWaitingForAssistant,
     lastMessage,
