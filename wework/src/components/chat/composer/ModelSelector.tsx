@@ -351,10 +351,14 @@ export function ModelSelector({
 
   useMobileModelSelectorFocus(open, isMobile, mobileCloseButtonRef)
 
-  const selectedButtonLabel =
-    getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
-      t(key, fallback)
-    ) || t('workbench.default_model', 'Default')
+  const emptyModelLabel = t('workbench.no_models', 'No models available')
+  const selectedButtonLabel = selectedModel
+    ? getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
+        t(key, fallback)
+      )
+    : familyGroups.length === 0
+      ? emptyModelLabel
+      : t('workbench.default_model', 'Default')
   const buttonLabel = nextTurn
     ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
     : selectedButtonLabel
@@ -831,7 +835,9 @@ export function ModelSelector({
 
   const desktopModelLabel = selectedModel
     ? getModelDisplayLabel(selectedModel, {}, resolveControlLabel)
-    : t('workbench.default_model', 'Default')
+    : familyGroups.length === 0
+      ? emptyModelLabel
+      : t('workbench.default_model', 'Default')
   const modelRowActive = activeDesktopSubmenu?.type === 'models'
 
   return (
