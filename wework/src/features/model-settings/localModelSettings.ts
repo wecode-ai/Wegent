@@ -1,5 +1,3 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   createDefaultLocalModelCatalogEntry,
   type LocalModelCatalogEntry,
@@ -77,44 +75,6 @@ export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
 export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
 export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
-
-let localModelApiKeyHydration: Promise<void> | null = null
-
-export async function hydrateLocalModelApiKeys(): Promise<void> {
-  if (!isTauriRuntime()) return
-  const raw = globalThis.localStorage?.getItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
-  if (!raw) return
-  const parsed: unknown = JSON.parse(raw)
-  if (!Array.isArray(parsed)) return
-  const configs = parsed.filter(isLocalModelConfig)
-  const configIds = configs
-    .filter(config => config.apiKeyConfigured !== false && !config.apiKey)
-    .map(config => config.id)
-  const storedApiKeys =
-    configIds.length > 0
-      ? await invoke<Record<string, string>>('read_local_model_api_keys', { configIds })
-      : {}
-  if (Object.keys(storedApiKeys).length === 0) return
-  writeStoredConfigs(
-    configs.map(config => {
-      const apiKey = storedApiKeys[config.id]
-      return apiKey ? { ...config, apiKey, apiKeyConfigured: true } : config
-    })
-  )
-  void invoke('delete_local_model_api_keys', {
-    configIds: Object.keys(storedApiKeys),
-  }).catch(error => {
-    console.error('Failed to remove migrated local model credentials', error)
-  })
-}
-
-export function ensureLocalModelApiKeysHydrated(): Promise<void> {
-  if (!isTauriRuntime()) return Promise.resolve()
-  if (!localModelApiKeyHydration) {
-    localModelApiKeyHydration = hydrateLocalModelApiKeys()
-  }
-  return localModelApiKeyHydration
-}
 
 export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
   if (apiFormat === 'openai-chat-completions') {
