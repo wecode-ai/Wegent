@@ -98,6 +98,7 @@ fn transcript_canonical_turns(
     let mut turn_indexes = std::collections::HashMap::<String, usize>::new();
 
     for message in messages {
+        let message_index = message.get("messageIndex").and_then(Value::as_u64);
         let Some(turn_id) = string_field(message, "turnId")
             .or_else(|| string_field(message, "turn_id"))
             .or_else(|| string_field(message, "subtaskId"))
@@ -112,6 +113,7 @@ fn transcript_canonical_turns(
             turns.push(json!({
                 "id": turn_id,
                 "items": [],
+                "messageIndex": message_index,
                 "status": "done",
             }));
             turn_indexes.insert(turn_id.clone(), index);
@@ -120,6 +122,13 @@ fn transcript_canonical_turns(
         let Some(turn) = turns.get_mut(turn_index).and_then(Value::as_object_mut) else {
             continue;
         };
+        if let Some(message_index) = message_index {
+            let earliest_index = turn
+                .get("messageIndex")
+                .and_then(Value::as_u64)
+                .map_or(message_index, |current| current.min(message_index));
+            turn.insert("messageIndex".to_owned(), json!(earliest_index));
+        }
         for key in [
             "status",
             "runtimeStatus",

@@ -568,6 +568,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
   completedAt?: string | number | null

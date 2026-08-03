@@ -8,6 +8,10 @@ const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
+const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
+const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
+const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
+const ORDER_FOLLOW_UP_COUNT = 26
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
@@ -260,6 +264,17 @@ function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
 }
 
+function latestModelInputText(body) {
+  const input = Array.isArray(body.input) ? body.input.at(-1) : body.input
+  const message = Array.isArray(body.messages) ? body.messages.at(-1) : null
+  return JSON.stringify(input ?? message ?? '')
+}
+
+function orderFollowUpNumber(body) {
+  const match = latestModelInputText(body).match(new RegExp(`${ORDER_FOLLOW_UP_PREFIX}_(\\d+)`))
+  return match ? Number(match[1]) : null
+}
+
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
 }
@@ -460,6 +475,60 @@ export function createDesktopScenario({
     resolveRequest = resolve
   })
 
+  const verifyStoppedTurnOrder = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    const knownOrderTaskRows = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+    )
+    await control.command('fill', COMPOSER_SELECTOR, { value: ORDER_STOP_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    const orderTaskRowTestId = await waitForNewTaskRow(
+      control,
+      knownOrderTaskRows,
+      ORDER_STOP_PROMPT,
+      uiTimeoutMs
+    )
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="pause-response-button"]')
+    await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    for (let index = 1; index <= ORDER_FOLLOW_UP_COUNT; index += 1) {
+      const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
+      const completion = `${ORDER_COMPLETION_PREFIX}_${index}`
+      await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: completion,
+        timeoutMs: uiTimeoutMs,
+      })
+    }
+    for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    }
+    await control.command('clickWhenEnabled', `[data-testid="${orderTaskRowTestId}"]`, {
+      timeoutMs: uiTimeoutMs,
+    })
+    const latestOrderCompletion = `${ORDER_COMPLETION_PREFIX}_${ORDER_FOLLOW_UP_COUNT}`
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: latestOrderCompletion,
+      stableMs: 750,
+      timeoutMs: uiTimeoutMs,
+    })
+    assert.equal(
+      Number(await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')),
+      0,
+      'The latest transcript position remained on the older stopped turn'
+    )
+    await capture(control, 'streaming-text-06-stopped-turn-order-restored.png')
+  }
+
   return {
     async handleHttp(request, response, url) {
       if (!active) return false
@@ -469,6 +538,29 @@ export function createDesktopScenario({
 
       const body = await readJson(request)
       const responseId = `wework-streaming-text-${Date.now()}`
+      const latestInput = latestModelInputText(body)
+      if (latestInput.includes(ORDER_STOP_PROMPT)) {
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(sse([responseCreated(responseId)]))
+        return true
+      }
+      const followUpNumber = orderFollowUpNumber(body)
+      if (followUpNumber !== null) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(`${ORDER_COMPLETION_PREFIX}_${followUpNumber}`),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (timerStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
         timerStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -590,6 +682,11 @@ export function createDesktopScenario({
       } else {
         await control.command('click', '[data-testid="new-chat-button"]')
         await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      }
+      if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
+        await verifyStoppedTurnOrder(control)
+        active = false
+        return
       }
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
@@ -971,6 +1068,7 @@ export function createDesktopScenario({
         'The pause button remained after completion'
       )
       await capture(control, 'streaming-text-05-response-completed.png')
+      await verifyStoppedTurnOrder(control)
       active = false
     },
 

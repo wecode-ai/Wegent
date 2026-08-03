@@ -419,6 +419,14 @@ function canonicalTranscriptTurnsFromMessages(
 
   const appendUser = (turn: RuntimeTranscriptTurn, message: NormalizedRuntimeMessage) => {
     const clientUserMessageId = message.clientUserMessageId ?? message.id
+    if (
+      typeof message.messageIndex === 'number' &&
+      (turn.messageIndex === undefined ||
+        turn.messageIndex === null ||
+        message.messageIndex < turn.messageIndex)
+    ) {
+      turn.messageIndex = message.messageIndex
+    }
     turn.items.push({
       id: clientUserMessageId,
       type: 'user_message',
@@ -440,6 +448,14 @@ function canonicalTranscriptTurnsFromMessages(
 
     const turnId = String(explicitTurnId ?? `fixture-turn:${message.id}`)
     const turn = getTurn(turnId)
+    if (
+      typeof message.messageIndex === 'number' &&
+      (turn.messageIndex === undefined ||
+        turn.messageIndex === null ||
+        message.messageIndex < turn.messageIndex)
+    ) {
+      turn.messageIndex = message.messageIndex
+    }
     pendingUsers.forEach(user => appendUser(turn, user))
     pendingUsers = []
 
@@ -6782,7 +6798,14 @@ describe('WorkbenchProvider runtime tasks', () => {
           taskId: 'runtime-a',
           workspacePath: '/workspace/project-alpha',
           runtime: 'codex',
-          messages: [{ id: 'runtime-a:user:o20', role: 'user', content: 'older message' }],
+          messages: [
+            {
+              id: 'runtime-a:user:o20',
+              role: 'user',
+              content: 'older message',
+              messageIndex: 20,
+            },
+          ],
           hasMoreBefore: false,
           beforeCursor: null,
         } satisfies RuntimeTranscriptResponse)
@@ -6791,7 +6814,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
         workspacePath: '/workspace/project-alpha',
         runtime: 'codex',
-        messages: [{ id: 'runtime-a:user:o120', role: 'user', content: 'recent message' }],
+        messages: [
+          {
+            id: 'runtime-a:user:o120',
+            role: 'user',
+            content: 'recent message',
+            messageIndex: 120,
+          },
+        ],
         hasMoreBefore: true,
         beforeCursor: 'offset:120',
       } satisfies RuntimeTranscriptResponse)

@@ -51,7 +51,7 @@ export function mergeRuntimeConversationTurns(
       merged.push(turn)
     }
   })
-  return merged
+  return orderRuntimeConversationTurns(merged)
 }
 
 export function reduceRuntimeConversationTurns(
@@ -209,12 +209,62 @@ function mergeRuntimeConversationTurn(
     ...local,
     ...snapshot,
     clientUserMessageId: snapshot.clientUserMessageId ?? local.clientUserMessageId,
+    runtimeMessageIndex: earliestRuntimeMessageIndex(local, snapshot),
     items,
     status: preserveLocalFailure ? local.status : snapshot.status,
     completedAt: preserveLocalFailure ? local.completedAt : snapshot.completedAt,
     error: preserveLocalFailure ? local.error : snapshot.error,
     errorType: preserveLocalFailure ? local.errorType : snapshot.errorType,
   }
+}
+
+function earliestRuntimeMessageIndex(
+  local: RuntimeConversationTurn,
+  snapshot: RuntimeConversationTurn
+): number | undefined {
+  const indexes = [local.runtimeMessageIndex, snapshot.runtimeMessageIndex].filter(
+    (index): index is number => typeof index === 'number'
+  )
+  return indexes.length > 0 ? Math.min(...indexes) : undefined
+}
+
+function orderRuntimeConversationTurns(
+  turns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
+  const indexedTurns = turns.map((turn, index) => ({
+    turn,
+    index,
+    timestamp: runtimeConversationTurnTimestamp(turn),
+  }))
+  if (indexedTurns.every(({ turn }) => turn.runtimeMessageIndex !== undefined)) {
+    return indexedTurns
+      .sort(
+        (left, right) =>
+          left.turn.runtimeMessageIndex! - right.turn.runtimeMessageIndex! ||
+          left.index - right.index
+      )
+      .map(({ turn }) => turn)
+  }
+  if (indexedTurns.every(({ timestamp }) => timestamp !== undefined)) {
+    return indexedTurns
+      .sort((left, right) => left.timestamp! - right.timestamp! || left.index - right.index)
+      .map(({ turn }) => turn)
+  }
+  return turns
+}
+
+function runtimeConversationTurnTimestamp(turn: RuntimeConversationTurn): number | undefined {
+  for (const item of turn.items) {
+    const value =
+      item.type === 'user_message'
+        ? item.message.createdAt
+        : item.type === 'assistant_text'
+          ? item.createdAt
+          : item.block.createdAt
+    const timestamp = typeof value === 'number' ? value : Date.parse(value ?? '')
+    if (Number.isFinite(timestamp)) return timestamp
+  }
+  return undefined
 }
 
 function mergeRuntimeConversationItems(
