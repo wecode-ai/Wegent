@@ -40,19 +40,33 @@ function filterDingTalkNodes(nodes: DingtalkDocNode[], query: string): DingtalkD
   }, [])
 }
 
-function SelectionIndicator({ selected }: { selected: boolean }) {
+function SelectionIndicator({
+  selected,
+  indeterminate = false,
+}: {
+  selected: boolean
+  indeterminate?: boolean
+}) {
   return (
     <span
       className={cn(
-        'flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border',
-        selected
-          ? 'border-primary bg-primary/10 text-primary'
-          : 'text-transparent group-hover:border-primary/60'
+        'flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border border-border bg-base text-transparent transition-colors group-hover:border-primary/70',
+        selected && !indeterminate ? 'border-primary bg-primary text-white shadow-sm' : '',
+        indeterminate ? 'border-primary bg-primary/10 text-primary' : ''
       )}
     >
-      <Check className="h-4 w-4 stroke-[3]" />
+      {indeterminate ? (
+        <span className="h-0.5 w-2.5 rounded bg-current" />
+      ) : selected ? (
+        <Check className="h-3 w-3 stroke-[2.5]" />
+      ) : null}
     </span>
   )
+}
+
+function collectSelectableDingTalkNodes(node: DingtalkDocNode): DingtalkDocNode[] {
+  if (node.node_type !== 'folder') return [node]
+  return (node.children ?? []).flatMap(collectSelectableDingTalkNodes)
 }
 
 function DingTalkPickerLoading({ label }: { label: string }) {
@@ -87,16 +101,50 @@ export function useDingTalkKnowledgeSelection({
   selectedContexts,
   onSelect,
   onDeselect,
+  onSelectMultiple,
+  onDeselectMultiple,
 }: {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
+  onSelectMultiple?: (contexts: ContextItem[]) => void
+  onDeselectMultiple?: (ids: (number | string)[]) => void
 }) {
   const selectedIds = getDingTalkSelectedIds(selectedContexts)
 
   const toggleNode = useCallback(
     (node: DingtalkDocNode, container?: { id?: string; name?: string }) => {
-      if (node.node_type === 'folder') return
+      if (node.node_type === 'folder') {
+        const descendants = collectSelectableDingTalkNodes(node)
+        const descendantIds = descendants.map(descendant =>
+          getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id)
+        )
+        const allSelected =
+          descendantIds.length > 0 && descendantIds.every(id => selectedIds.has(id))
+        if (allSelected) {
+          if (onDeselectMultiple) {
+            onDeselectMultiple(descendantIds)
+          } else {
+            descendantIds.forEach(id => onDeselect(id))
+          }
+          return
+        }
+
+        const contexts = descendants
+          .filter(
+            descendant =>
+              !selectedIds.has(
+                getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id)
+              )
+          )
+          .map(descendant => buildDingTalkDocContext(descendant, container))
+        if (onSelectMultiple) {
+          onSelectMultiple(contexts)
+        } else {
+          contexts.forEach(context => onSelect(context))
+        }
+        return
+      }
 
       const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
       if (selectedIds.has(selectionKey)) {
@@ -105,7 +153,7 @@ export function useDingTalkKnowledgeSelection({
         onSelect(buildDingTalkDocContext(node, container))
       }
     },
-    [onDeselect, onSelect, selectedIds]
+    [onDeselect, onDeselectMultiple, onSelect, onSelectMultiple, selectedIds]
   )
 
   return {
@@ -322,7 +370,17 @@ function DingTalkDocumentNode({
     }
   }, [forceOpen])
   const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
-  const selected = !isFolder && selectedIds.has(selectionKey)
+  const selectableDescendants = isFolder ? collectSelectableDingTalkNodes(node) : []
+  const selectedDescendantCount = selectableDescendants.filter(descendant =>
+    selectedIds.has(getDingTalkSelectionKey(descendant.source, descendant.dingtalk_node_id))
+  ).length
+  const selected = isFolder
+    ? selectableDescendants.length > 0 && selectedDescendantCount === selectableDescendants.length
+    : selectedIds.has(selectionKey)
+  const partiallySelected =
+    isFolder &&
+    selectedDescendantCount > 0 &&
+    selectedDescendantCount < selectableDescendants.length
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
 
   return (
@@ -331,31 +389,38 @@ function DingTalkDocumentNode({
         className="group flex min-h-11 w-full items-center justify-between gap-2 rounded-md pr-2 text-left text-sm hover:bg-surface"
         style={{ paddingLeft: 8 + depth * 16 }}
       >
-        {isFolder && hasChildren ? (
-          <button
-            type="button"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded hover:bg-surface"
-            onClick={() => setOpen(!open)}
-            data-testid={`knowledge-picker-dingtalk-node-expander-${node.source}-${node.dingtalk_node_id}`}
-          >
-            <ChevronRight
-              className={cn('h-4 w-4 text-text-muted transition-transform', open && 'rotate-90')}
-            />
-          </button>
-        ) : (
-          <span className="h-11 w-11 shrink-0" />
-        )}
         <button
           type="button"
-          className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 text-left"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
           onClick={() => (isFolder ? setOpen(!open) : onToggle(node))}
           data-testid={`knowledge-picker-dingtalk-node-${node.source}-${node.dingtalk_node_id}`}
         >
+          {isFolder && hasChildren ? (
+            <ChevronRight
+              className={cn(
+                'h-4 w-4 shrink-0 text-text-muted transition-transform',
+                open && 'rotate-90'
+              )}
+            />
+          ) : (
+            <span className="h-4 w-4 shrink-0" />
+          )}
           <span className="flex min-w-0 items-center gap-2">
             <Icon className="h-4 w-4 shrink-0 text-text-muted" />
             <span className="truncate text-text-primary">{node.name}</span>
           </span>
-          {selected ? <SelectionIndicator selected={true} /> : null}
+        </button>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={partiallySelected ? 'mixed' : selected}
+          aria-label={node.name}
+          disabled={isFolder && !hasChildren}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary md:h-9 md:w-9"
+          onClick={() => onToggle(node)}
+          data-testid={`knowledge-picker-dingtalk-node-select-${node.source}-${node.dingtalk_node_id}`}
+        >
+          <SelectionIndicator selected={selected} indeterminate={partiallySelected} />
         </button>
       </div>
       {isFolder && open

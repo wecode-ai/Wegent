@@ -579,7 +579,7 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('shows internal knowledge selection as empty, partial, whole, then empty', async () => {
+  it('converts a whole internal knowledge base to a custom snapshot when a child is cleared', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
       {
@@ -594,6 +594,11 @@ describe('ContextSelector organization grouping', () => {
           id: 101,
           name: 'API.md',
           folder_id: 10,
+        },
+        {
+          id: 102,
+          name: 'README.md',
+          folder_id: 0,
         },
       ],
     })
@@ -676,24 +681,30 @@ describe('ContextSelector organization grouping', () => {
         'aria-checked',
         'true'
       )
-      expect(screen.getByTestId('knowledge-picker-folder-scope-10')).toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-folder-scope-10')).not.toBeDisabled()
       expect(screen.getByTestId('knowledge-picker-folder-scope-10')).toHaveAttribute(
         'aria-checked',
         'true'
       )
-      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeDisabled()
+      expect(screen.getByTestId('knowledge-picker-document-node-document-101')).not.toBeDisabled()
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toHaveAttribute(
         'aria-pressed',
         'true'
       )
     })
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-document-node-document-101'))
     await waitFor(() => {
-      expect(contextChanges).toHaveBeenLastCalledWith([])
+      expect(contextChanges).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          scope_restricted: true,
+          document_ids: [102],
+          folder_ids: undefined,
+        }),
+      ])
       expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
         'aria-checked',
-        'false'
+        'mixed'
       )
       expect(screen.getByTestId('knowledge-picker-folder-scope-10')).not.toBeDisabled()
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).not.toBeDisabled()
@@ -702,9 +713,27 @@ describe('ContextSelector organization grouping', () => {
         'false'
       )
     })
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    )
+    fireEvent.click(screen.getByTestId('knowledge-picker-folder-scope-10'))
+    await waitFor(() => {
+      expect(contextChanges).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          scope_restricted: true,
+          document_ids: [102],
+          folder_ids: undefined,
+        }),
+      ])
+    })
   })
 
-  it('marks folder-covered child documents as inherited and non-toggleable', async () => {
+  it('converts an inherited folder selection to a document snapshot when a child is cleared', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
       {
@@ -718,6 +747,11 @@ describe('ContextSelector organization grouping', () => {
         {
           id: 101,
           name: 'API.md',
+          folder_id: 10,
+        },
+        {
+          id: 102,
+          name: 'Guide.md',
           folder_id: 10,
         },
       ],
@@ -768,14 +802,14 @@ describe('ContextSelector organization grouping', () => {
     fireEvent.click(screen.getByTestId('knowledge-picker-folder-scope-10'))
 
     const childDocument = screen.getByTestId('knowledge-picker-document-node-document-101')
-    expect(childDocument).toBeDisabled()
+    expect(childDocument).not.toBeDisabled()
     fireEvent.click(childDocument)
 
     await waitFor(() => {
       expect(contextChanges).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          folder_ids: [10],
-          document_ids: undefined,
+          folder_ids: undefined,
+          document_ids: [102],
         }),
       ])
     })
@@ -1039,7 +1073,7 @@ describe('ContextSelector organization grouping', () => {
     expect(documentColumn).toHaveClass('flex', 'h-full', 'min-h-0', 'flex-col')
   })
 
-  it('uses DingTalk containers for browsing and only allows selecting documents', async () => {
+  it('uses DingTalk containers for browsing and selects folder descendants as a snapshot', async () => {
     const onSelect = jest.fn()
     mockGetDingTalkDocs.mockResolvedValue({
       total_count: 2,
@@ -1113,8 +1147,7 @@ describe('ContextSelector organization grouping', () => {
       screen.queryByTestId('knowledge-picker-dingtalk-all-docs-select')
     ).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-file-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-select-docs-folder-1'))
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'docs:file-1',

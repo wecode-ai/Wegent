@@ -355,8 +355,11 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
   })
 
-  it('keeps whole-KB and document refs mutually exclusive for external sources', async () => {
+  it('converts a whole external knowledge base to a custom document snapshot', async () => {
     const onChange = jest.fn()
+    mockListFakeNodes.mockResolvedValue({
+      items: [makeFakeDocument(1), makeFakeDocument(2)],
+    })
 
     function StatefulSelector() {
       const [contexts, setContexts] = useState<ContextItem[]>([])
@@ -414,36 +417,33 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
     expect(onChange.mock.calls.at(-1)?.[0][0].ref.target_type).toBeUndefined()
 
-    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toBeDisabled()
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).not.toBeDisabled()
     expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
     fireEvent.click(screen.getByTestId('knowledge-picker-external-node-document:doc-1'))
-    expect(onChange.mock.calls.at(-1)?.[0][0].ref.target_type).toBeUndefined()
-
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
-    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
-    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).not.toBeDisabled()
-    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    )
-
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-node-document:doc-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1:document:document:doc-1',
+          id: 'external:fake-provider:explicit:lib-1:document:document:doc-2',
           ref: expect.objectContaining({
             name: 'Fake Lib',
             target_type: 'document',
-            node_id: 'document:doc-1',
-            document_id: 'doc-1',
-            target_name: 'Doc 1',
+            node_id: 'document:doc-2',
+            document_id: 'doc-2',
+            target_name: 'Doc 2',
           }),
         }),
       ])
+    )
+    expect(screen.getByTestId('knowledge-picker-external-kb-select-lib-1')).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    )
+    expect(screen.getByTestId('knowledge-picker-external-node-document:doc-1')).toHaveAttribute(
+      'aria-pressed',
+      'false'
     )
 
     fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
@@ -455,6 +455,89 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         }),
       ])
     )
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
+  })
+
+  it('selects external folders and clears them from a whole-KB snapshot', async () => {
+    const onChange = jest.fn()
+    mockListFakeNodes.mockResolvedValue({
+      items: [
+        {
+          node_id: 'folder:guides',
+          raw_id: 'guides',
+          name: 'Guides',
+          node_type: 'folder',
+          children: [makeFakeDocument(1), makeFakeDocument(2)],
+        },
+        makeFakeDocument(3),
+      ],
+    })
+
+    function StatefulSelector() {
+      const [contexts, setContexts] = useState<ContextItem[]>([])
+      const updateContexts = (next: ContextItem[]) => {
+        onChange(next)
+        setContexts(next)
+      }
+
+      return (
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={contexts}
+          onSelect={context => updateContexts([...contexts, context])}
+          onDeselect={id => updateContexts(contexts.filter(context => context.id !== id))}
+          onReplaceContexts={(idsToRemove, contextsToAdd) => {
+            const idSet = new Set(idsToRemove)
+            updateContexts([
+              ...contexts.filter(context => !idSet.has(context.id)),
+              ...contextsToAdd,
+            ])
+          }}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      )
+    }
+
+    render(<StatefulSelector />)
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-picker-external-kb-lib-1')).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-lib-1'))
+    const folderSelection = await screen.findByTestId(
+      'knowledge-picker-external-folder-scope-folder:guides'
+    )
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
+    fireEvent.click(folderSelection)
+    await waitFor(() => {
+      expect(onChange).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          ref: expect.objectContaining({ node_id: 'document:doc-3' }),
+        }),
+      ])
+      expect(folderSelection).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('knowledge-picker-external-kb-select-lib-1')).toHaveAttribute(
+        'aria-checked',
+        'mixed'
+      )
+    })
+
+    fireEvent.click(folderSelection)
+    await waitFor(() => {
+      expect(onChange.mock.calls.at(-1)?.[0]).toHaveLength(3)
+      expect(folderSelection).toHaveAttribute('aria-checked', 'true')
+    })
   })
 
   it('opens external knowledge bases without selecting them when whole-KB selection is unsupported', async () => {

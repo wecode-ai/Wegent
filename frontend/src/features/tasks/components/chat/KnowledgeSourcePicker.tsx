@@ -237,28 +237,40 @@ function ScopeSelectionControl({
       aria-label={label}
       disabled={disabled}
       className={cn(
-        'group flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base',
+        'group flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base md:h-9 md:w-9',
         disabled ? 'cursor-not-allowed opacity-60' : ''
       )}
       onClick={onToggle}
       data-testid={testId}
     >
-      <span
-        className={cn(
-          'flex h-5 w-5 items-center justify-center rounded-[5px] border border-border/80 bg-base text-transparent transition-all group-hover:border-primary/70',
-          checked && !indeterminate
-            ? 'border-primary bg-primary text-primary-contrast shadow-sm'
-            : '',
-          indeterminate ? 'border-primary bg-primary/15 text-primary' : ''
-        )}
-      >
-        {indeterminate ? (
-          <Minus className="h-3.5 w-3.5 stroke-[2.5]" />
-        ) : checked ? (
-          <Check className="h-3.5 w-3.5 stroke-[2.5]" />
-        ) : null}
-      </span>
+      <ScopeSelectionIndicator checked={checked} indeterminate={indeterminate} />
     </button>
+  )
+}
+
+function ScopeSelectionIndicator({
+  checked,
+  indeterminate = false,
+}: {
+  checked: boolean
+  indeterminate?: boolean
+}) {
+  return (
+    <span
+      className={cn(
+        'flex h-[18px] w-[18px] items-center justify-center rounded border border-border bg-base text-transparent transition-colors group-hover:border-primary/70',
+        checked && !indeterminate
+          ? 'border-primary bg-primary text-primary-contrast shadow-sm'
+          : '',
+        indeterminate ? 'border-primary bg-primary/10 text-primary' : ''
+      )}
+    >
+      {indeterminate ? (
+        <Minus className="h-3 w-3 stroke-[2.5]" />
+      ) : checked ? (
+        <Check className="h-3 w-3 stroke-[2.5]" />
+      ) : null}
+    </span>
   )
 }
 
@@ -366,6 +378,44 @@ function flattenInternalSearchResults(nodes: InternalTreeNode[]) {
   return result
 }
 
+function collectInternalDocuments(node: InternalTreeNode): KnowledgeDocument[] {
+  if (node.document) return [node.document]
+  return node.children.flatMap(collectInternalDocuments)
+}
+
+function findInternalDocumentNode(
+  nodes: InternalTreeNode[],
+  documentId: number
+): InternalTreeNode | undefined {
+  for (const node of nodes) {
+    if (node.document?.id === documentId) return node
+    const match = findInternalDocumentNode(node.children, documentId)
+    if (match) return match
+  }
+  return undefined
+}
+
+function getEffectiveInternalDocuments(
+  existing: KnowledgeBaseContext,
+  tree: InternalTreeNode[],
+  documents: KnowledgeDocument[]
+): KnowledgeDocument[] {
+  if (!existing.scope_restricted) return documents
+
+  const selectedDocumentIds = new Set(existing.document_ids ?? [])
+  const selectedFolderIds = new Set(existing.folder_ids ?? [])
+  const selectedByFolder = tree
+    .flatMap(function collectSelectedFolderDocuments(node): KnowledgeDocument[] {
+      if (node.type === 'folder' && node.folderId && selectedFolderIds.has(node.folderId)) {
+        return collectInternalDocuments(node)
+      }
+      return node.children.flatMap(collectSelectedFolderDocuments)
+    })
+    .map(document => document.id)
+  selectedByFolder.forEach(id => selectedDocumentIds.add(id))
+  return documents.filter(document => selectedDocumentIds.has(document.id))
+}
+
 function flattenExternalDocuments(nodes: ExternalKbNode[]) {
   const result: Array<{ node: ExternalKbNode; path: string[] }> = []
 
@@ -381,6 +431,15 @@ function flattenExternalDocuments(nodes: ExternalKbNode[]) {
 
   nodes.forEach(node => walk(node, []))
   return result
+}
+
+function collectExternalDocuments(node: ExternalKbNode): ExternalKbNode[] {
+  if (node.node_type !== 'folder') return [node]
+  return (node.children ?? []).flatMap(collectExternalDocuments)
+}
+
+function collectAllExternalDocuments(nodes: ExternalKbNode[]): ExternalKbNode[] {
+  return nodes.flatMap(collectExternalDocuments)
 }
 
 function countExternalDocuments(node: ExternalKbNode): number {
@@ -450,6 +509,31 @@ function isCoveredBySelectedAncestorFolder(
   return ancestorFolderIds.some(folderId => selectedFolderIds.has(folderId))
 }
 
+function countSelectedInternalDocuments(
+  node: InternalTreeNode,
+  wholeKnowledgeBaseSelected: boolean,
+  selectedDocIds: Set<number>,
+  selectedFolderIds: Set<number>
+): number {
+  const inheritedSelected =
+    wholeKnowledgeBaseSelected ||
+    isCoveredBySelectedAncestorFolder(node, selectedFolderIds) ||
+    Boolean(node.folderId && selectedFolderIds.has(node.folderId))
+  if (inheritedSelected) return node.documentCount
+  if (node.document) return selectedDocIds.has(node.document.id) ? 1 : 0
+  return node.children.reduce(
+    (total, child) =>
+      total +
+      countSelectedInternalDocuments(
+        child,
+        wholeKnowledgeBaseSelected,
+        selectedDocIds,
+        selectedFolderIds
+      ),
+    0
+  )
+}
+
 function hasSelectedExternalDocument(node: ExternalKbNode, selectedNodeIds: Set<string>): boolean {
   if (node.node_type !== 'folder') {
     return selectedNodeIds.has(node.node_id)
@@ -516,6 +600,31 @@ function getExternalChildContexts(
   )
 }
 
+function toExternalDocumentContext(
+  source: ExternalKnowledgeSource,
+  kb: ExternalKnowledgeBase,
+  node: ExternalKbNode
+): ExternalKnowledgeContext {
+  const ref: ExternalKnowledgeRef = {
+    provider: source.providerId,
+    mode: 'explicit',
+    id: kb.knowledge_base_id,
+    name: kb.knowledge_base_name,
+    scope: kb.scope ?? undefined,
+    target_type: 'document',
+    node_id: node.node_id,
+    document_id: stripTypedExternalId(node.raw_id ?? node.node_id),
+    parent_id: stripTypedExternalId(node.parent_id),
+    target_name: node.name,
+  }
+  return {
+    type: 'external_knowledge',
+    id: buildExternalContextId(ref),
+    name: node.name,
+    ref,
+  }
+}
+
 export function KnowledgeSourcePicker({
   groupedKnowledgeBases,
   boundKnowledgeBases,
@@ -527,6 +636,8 @@ export function KnowledgeSourcePicker({
   onRetry,
   onSelect,
   onDeselect,
+  onSelectMultiple,
+  onDeselectMultiple,
   onReplaceContexts,
 }: KnowledgeSourcePickerProps) {
   const { t } = useTranslation('knowledge')
@@ -547,6 +658,8 @@ export function KnowledgeSourcePicker({
       selectedContexts,
       onSelect,
       onDeselect,
+      onSelectMultiple,
+      onDeselectMultiple,
     })
 
   const externalProviderId = activeSource.startsWith('external:')
@@ -728,6 +841,27 @@ export function KnowledgeSourcePicker({
 
   const toggleInternalDocument = (kb: KnowledgeBase, doc: KnowledgeDocument) => {
     const existing = getKnowledgeContext(selectedContexts, kb.id)
+    const treeState = internalTreeByKb.get(kb.id)
+    const documentNode = findInternalDocumentNode(treeState?.tree ?? [], doc.id)
+    const coveredByFolder = Boolean(
+      existing?.scope_restricted &&
+      documentNode &&
+      isCoveredBySelectedAncestorFolder(documentNode, new Set(existing.folder_ids ?? []))
+    )
+
+    if (existing && treeState && (!existing.scope_restricted || coveredByFolder)) {
+      const nextDocuments = getEffectiveInternalDocuments(
+        existing,
+        treeState.tree,
+        treeState.documents
+      ).filter(document => document.id !== doc.id)
+      replaceContexts(
+        [existing.id],
+        nextDocuments.length > 0 ? [toKnowledgeContext(kb, { documents: nextDocuments })] : []
+      )
+      return
+    }
+
     const existingIds = existing?.scope_restricted ? (existing.document_ids ?? []) : []
     const existingFolderIds = existing?.scope_restricted ? (existing.folder_ids ?? []) : []
     const existingFolderNames = existing?.scope_restricted ? (existing.folder_names ?? []) : []
@@ -739,7 +873,6 @@ export function KnowledgeSourcePicker({
       return
     }
 
-    const treeState = internalTreeByKb.get(kb.id)
     const documentsById = new Map((treeState?.documents ?? []).map(item => [item.id, item]))
     const nextDocuments = nextIds
       .map(id => (id === doc.id ? doc : documentsById.get(id)))
@@ -761,10 +894,33 @@ export function KnowledgeSourcePicker({
     }
 
     const existing = getKnowledgeContext(selectedContexts, kb.id)
+    const treeState = internalTreeByKb.get(kb.id)
     const existingFolderIds = existing?.scope_restricted ? (existing.folder_ids ?? []) : []
     const existingFolderNames = existing?.scope_restricted ? (existing.folder_names ?? []) : []
     const existingDocumentIds = existing?.scope_restricted ? (existing.document_ids ?? []) : []
     const selected = existingFolderIds.includes(node.folderId)
+    const inheritedSelected = Boolean(
+      existing &&
+      (!existing.scope_restricted ||
+        isCoveredBySelectedAncestorFolder(node, new Set(existingFolderIds)))
+    )
+
+    if (existing && treeState && inheritedSelected) {
+      const removedDocumentIds = new Set(
+        collectInternalDocuments(node).map(document => document.id)
+      )
+      const nextDocuments = getEffectiveInternalDocuments(
+        existing,
+        treeState.tree,
+        treeState.documents
+      ).filter(document => !removedDocumentIds.has(document.id))
+      replaceContexts(
+        [existing.id],
+        nextDocuments.length > 0 ? [toKnowledgeContext(kb, { documents: nextDocuments })] : []
+      )
+      return
+    }
+
     const nextFolderIds = selected
       ? existingFolderIds.filter(id => id !== node.folderId)
       : [...existingFolderIds, node.folderId]
@@ -777,7 +933,6 @@ export function KnowledgeSourcePicker({
       return
     }
 
-    const treeState = internalTreeByKb.get(kb.id)
     const documentsById = new Map((treeState?.documents ?? []).map(item => [item.id, item]))
     const nextDocuments = existingDocumentIds
       .map(id => documentsById.get(id))
@@ -850,35 +1005,89 @@ export function KnowledgeSourcePicker({
       return
     }
 
-    const ref: ExternalKnowledgeRef = {
-      provider: source.providerId,
-      mode: 'explicit',
-      id: kb.knowledge_base_id,
-      name: kb.knowledge_base_name,
-      scope: kb.scope ?? undefined,
-      target_type: 'document',
-      node_id: node.node_id,
-      document_id: stripTypedExternalId(node.raw_id ?? node.node_id),
-      parent_id: stripTypedExternalId(node.parent_id),
-      target_name: node.name,
-    }
-    const context: ExternalKnowledgeContext = {
-      type: 'external_knowledge',
-      id: buildExternalContextId(ref),
-      name: node.name,
-      ref,
-    }
+    const context = toExternalDocumentContext(source, kb, node)
+
     if (wholeKb) {
-      if (!canAddExternalRefs(source, [wholeKb.id], [ref])) {
+      const treeState = externalNodesByKb.get(`${source.providerId}:${kb.knowledge_base_id}`)
+      const contexts = collectAllExternalDocuments(treeState?.items ?? [])
+        .filter(documentNode => documentNode.node_id !== node.node_id)
+        .map(documentNode => toExternalDocumentContext(source, kb, documentNode))
+      if (
+        !canAddExternalRefs(
+          source,
+          [wholeKb.id],
+          contexts.map(item => item.ref)
+        )
+      ) {
         return
       }
-      replaceContexts([wholeKb.id], [context])
+      replaceContexts([wholeKb.id], contexts)
       return
     }
-    if (!canAddExternalRefs(source, [], [ref])) {
+
+    if (!canAddExternalRefs(source, [], [context.ref])) {
       return
     }
     onSelect(context)
+  }
+
+  const toggleExternalFolder = (
+    source: ExternalKnowledgeSource,
+    kb: ExternalKnowledgeBase,
+    node: ExternalKbNode
+  ) => {
+    if (node.node_type !== 'folder') return
+    const wholeKb = getExternalContext(selectedContexts, source.providerId, kb.knowledge_base_id)
+    const childContexts = getExternalChildContexts(
+      selectedContexts,
+      source.providerId,
+      kb.knowledge_base_id
+    )
+    const descendants = collectExternalDocuments(node)
+    const descendantIds = new Set(descendants.map(document => document.node_id))
+    const selectedDescendants = childContexts.filter(
+      context => context.ref.node_id && descendantIds.has(context.ref.node_id)
+    )
+
+    if (wholeKb) {
+      const treeState = externalNodesByKb.get(`${source.providerId}:${kb.knowledge_base_id}`)
+      const contexts = collectAllExternalDocuments(treeState?.items ?? [])
+        .filter(document => !descendantIds.has(document.node_id))
+        .map(document => toExternalDocumentContext(source, kb, document))
+      if (
+        !canAddExternalRefs(
+          source,
+          [wholeKb.id],
+          contexts.map(item => item.ref)
+        )
+      ) {
+        return
+      }
+      replaceContexts([wholeKb.id], contexts)
+      return
+    }
+
+    if (selectedDescendants.length === descendants.length && descendants.length > 0) {
+      replaceContexts(
+        selectedDescendants.map(context => context.id),
+        []
+      )
+      return
+    }
+
+    const selectedNodeIds = new Set(childContexts.map(context => context.ref.node_id))
+    const contextsToAdd = descendants
+      .filter(document => !selectedNodeIds.has(document.node_id))
+      .map(document => toExternalDocumentContext(source, kb, document))
+    if (
+      !canAddExternalRefs(
+        source,
+        [],
+        contextsToAdd.map(item => item.ref)
+      )
+    )
+      return
+    replaceContexts([], contextsToAdd)
   }
 
   const [internalTreeByKb, setInternalTreeByKb] = useState<
@@ -1519,6 +1728,7 @@ export function KnowledgeSourcePicker({
                 wholeKnowledgeBaseSelected={wholeKnowledgeBaseSelected}
                 selectedNodeIds={selectedNodeIds}
                 onToggleDocument={item => toggleExternalDocument(provider, knowledgeBase, item)}
+                onToggleFolder={item => toggleExternalFolder(provider, knowledgeBase, item)}
               />
             ))}
           </div>
@@ -1593,7 +1803,6 @@ function KnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
             <ScopeSelectionControl
               checked={Boolean(existing && !existing.scope_restricted)}
@@ -1660,7 +1869,6 @@ function ExternalKnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
             {canSelectKnowledgeBase ? (
               <ScopeSelectionControl
@@ -1724,6 +1932,12 @@ function InternalDocumentSearchResults({
         const document = node.document
         const inheritedSelected =
           wholeKnowledgeBaseSelected || isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
+        const selectedDocumentCount = countSelectedInternalDocuments(
+          node,
+          wholeKnowledgeBaseSelected,
+          selectedDocIds,
+          selectedFolderIds
+        )
         const selected =
           isFolder && node.folderId !== undefined
             ? inheritedSelected || selectedFolderIds.has(node.folderId)
@@ -1733,18 +1947,15 @@ function InternalDocumentSearchResults({
           <button
             key={node.id}
             type="button"
-            disabled={inheritedSelected}
-            aria-disabled={inheritedSelected}
             aria-pressed={selected}
             className={cn(
               'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
-              selected ? 'bg-primary/10 text-primary' : '',
-              inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+              selected ? 'bg-primary/10 text-primary' : ''
             )}
             onClick={() => {
               if (isFolder) {
                 onToggleFolder(node)
-              } else if (document && !inheritedSelected) {
+              } else if (document) {
                 onToggleDocument(document)
               }
             }}
@@ -1761,13 +1972,24 @@ function InternalDocumentSearchResults({
                 <PathLabel path={path} />
               </span>
             </span>
-            {isFolder && !selected ? (
-              <Badge variant="secondary" size="sm">
-                {node.documentCount}
-              </Badge>
-            ) : selected ? (
-              <Check className="h-4 w-4 shrink-0 text-primary" />
-            ) : null}
+            {isFolder ? (
+              <span className="flex items-center gap-2">
+                <Badge variant="secondary" size="sm">
+                  {node.documentCount}
+                </Badge>
+                <ScopeSelectionIndicator
+                  checked={
+                    selected ||
+                    (selectedDocumentCount === node.documentCount && node.documentCount > 0)
+                  }
+                  indeterminate={
+                    selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
+                  }
+                />
+              </span>
+            ) : (
+              <ScopeSelectionIndicator checked={selected} />
+            )}
           </button>
         )
       })}
@@ -1797,18 +2019,17 @@ function ExternalDocumentSearchResults({
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {items.map(({ node, path }) => {
         const selected = wholeKnowledgeBaseSelected || selectedNodeIds.has(node.node_id)
-        const documentDisabled = disabled || wholeKnowledgeBaseSelected
         return (
           <button
             key={node.node_id}
             type="button"
-            disabled={documentDisabled}
-            aria-disabled={documentDisabled}
+            disabled={disabled}
+            aria-disabled={disabled}
             aria-pressed={selected}
             className={cn(
               'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
               selected ? 'bg-primary/10 text-primary' : '',
-              documentDisabled ? 'cursor-not-allowed opacity-70' : ''
+              disabled ? 'cursor-not-allowed opacity-70' : ''
             )}
             onClick={() => onToggleDocument(node)}
             data-testid={`knowledge-picker-external-node-${node.node_id}`}
@@ -1820,7 +2041,7 @@ function ExternalDocumentSearchResults({
                 <PathLabel path={path} />
               </span>
             </span>
-            {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            <ScopeSelectionIndicator checked={selected} />
           </button>
         )
       })}
@@ -1850,9 +2071,22 @@ function InternalDocumentNode({
   const isFolder = node.type === 'folder'
   const inheritedSelected =
     wholeKnowledgeBaseSelected || isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
-  const folderSelected = Boolean(
+  const selectedDocumentCount = countSelectedInternalDocuments(
+    node,
+    wholeKnowledgeBaseSelected,
+    selectedDocIds,
+    selectedFolderIds
+  )
+  const folderScopeSelected = Boolean(
     isFolder && (inheritedSelected || (node.folderId && selectedFolderIds.has(node.folderId)))
   )
+  const folderSelected = Boolean(
+    isFolder &&
+    (folderScopeSelected ||
+      (node.documentCount > 0 && selectedDocumentCount === node.documentCount))
+  )
+  const folderPartiallySelected =
+    isFolder && selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
   const containsSelected =
     hasSelectedInternalDocument(node, selectedDocIds) ||
     (isFolder && hasSelectedInternalFolder(node, selectedFolderIds))
@@ -1899,14 +2133,10 @@ function InternalDocumentNode({
             </Badge>
             <ScopeSelectionControl
               checked={folderSelected}
-              disabled={inheritedSelected}
+              indeterminate={folderPartiallySelected}
               label={node.name}
               testId={`knowledge-picker-folder-scope-${node.folderId}`}
-              onToggle={() => {
-                if (!inheritedSelected) {
-                  onToggleFolder(node)
-                }
-              }}
+              onToggle={() => onToggleFolder(node)}
             />
           </span>
         </div>
@@ -1916,15 +2146,12 @@ function InternalDocumentNode({
           className={cn(
             'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
             selected ? 'bg-primary/10 text-primary' : '',
-            disabled ? 'opacity-50' : '',
-            inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+            disabled ? 'opacity-50' : ''
           )}
-          disabled={inheritedSelected}
-          aria-disabled={inheritedSelected}
           aria-pressed={selected}
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => {
-            if (node.document && !disabled && !inheritedSelected) {
+            if (node.document && !disabled) {
               onToggleDocument(node.document)
             }
           }}
@@ -1938,7 +2165,7 @@ function InternalDocumentNode({
               <PathLabel path={node.path} />
             </span>
           </span>
-          {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+          <ScopeSelectionIndicator checked={selected} />
         </button>
       )}
       {isFolder && open
@@ -1967,6 +2194,7 @@ function ExternalDocumentNode({
   wholeKnowledgeBaseSelected,
   selectedNodeIds,
   onToggleDocument,
+  onToggleFolder,
 }: {
   node: ExternalKbNode
   depth: number
@@ -1974,6 +2202,7 @@ function ExternalDocumentNode({
   wholeKnowledgeBaseSelected: boolean
   selectedNodeIds: Set<string>
   onToggleDocument: (node: ExternalKbNode) => void
+  onToggleFolder: (node: ExternalKbNode) => void
 }) {
   const isFolder = node.node_type === 'folder'
   const containsSelected = hasSelectedExternalDocument(node, selectedNodeIds)
@@ -1983,33 +2212,40 @@ function ExternalDocumentNode({
       setOpen(true)
     }
   }, [containsSelected])
+  const descendantDocuments = isFolder ? collectExternalDocuments(node) : []
+  const selectedDocumentCount = wholeKnowledgeBaseSelected
+    ? descendantDocuments.length
+    : descendantDocuments.filter(document => selectedNodeIds.has(document.node_id)).length
+  const folderSelected =
+    isFolder &&
+    descendantDocuments.length > 0 &&
+    selectedDocumentCount === descendantDocuments.length
+  const folderPartiallySelected =
+    isFolder && selectedDocumentCount > 0 && selectedDocumentCount < descendantDocuments.length
   const selected = wholeKnowledgeBaseSelected || selectedNodeIds.has(node.node_id)
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
   const documentCount = isFolder ? countExternalDocuments(node) : 1
-  const documentDisabled = (disabled || wholeKnowledgeBaseSelected) && !isFolder
+  const documentDisabled = disabled && !isFolder
 
   return (
     <div>
-      <button
-        type="button"
-        disabled={documentDisabled}
-        aria-disabled={documentDisabled}
-        aria-pressed={!isFolder ? selected : undefined}
+      <div
         className={cn(
           'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
           documentDisabled ? 'cursor-not-allowed opacity-70' : ''
         )}
         style={{ paddingLeft: 8 + depth * 16 }}
-        onClick={() => {
-          if (isFolder) {
-            setOpen(!open)
-          } else if (!documentDisabled) {
-            onToggleDocument(node)
-          }
-        }}
-        data-testid={`knowledge-picker-external-node-${node.node_id}`}
+        data-testid={isFolder ? `knowledge-picker-external-node-${node.node_id}` : undefined}
       >
-        <span className="flex min-w-0 items-start gap-2">
+        <button
+          type="button"
+          disabled={documentDisabled}
+          aria-disabled={documentDisabled}
+          aria-pressed={!isFolder ? selected : undefined}
+          className="flex min-h-9 min-w-0 flex-1 items-center gap-2 text-left"
+          onClick={() => (isFolder ? setOpen(!open) : onToggleDocument(node))}
+          data-testid={!isFolder ? `knowledge-picker-external-node-${node.node_id}` : undefined}
+        >
           {isFolder ? (
             <ChevronRight
               className={cn(
@@ -2024,15 +2260,25 @@ function ExternalDocumentNode({
           <span className="min-w-0">
             <span className="block truncate text-text-primary">{node.name}</span>
           </span>
-        </span>
+        </button>
         {isFolder ? (
-          <Badge variant="secondary" size="sm">
-            {documentCount}
-          </Badge>
-        ) : selected ? (
-          <Check className="h-4 w-4 shrink-0 text-primary" />
-        ) : null}
-      </button>
+          <span className="flex shrink-0 items-center gap-2">
+            <Badge variant="secondary" size="sm">
+              {documentCount}
+            </Badge>
+            <ScopeSelectionControl
+              checked={folderSelected}
+              indeterminate={folderPartiallySelected}
+              disabled={disabled}
+              label={node.name}
+              testId={`knowledge-picker-external-folder-scope-${node.node_id}`}
+              onToggle={() => onToggleFolder(node)}
+            />
+          </span>
+        ) : (
+          <ScopeSelectionIndicator checked={selected} />
+        )}
+      </div>
       {isFolder && open
         ? (node.children ?? []).map(child => (
             <ExternalDocumentNode
@@ -2043,6 +2289,7 @@ function ExternalDocumentNode({
               wholeKnowledgeBaseSelected={wholeKnowledgeBaseSelected}
               selectedNodeIds={selectedNodeIds}
               onToggleDocument={onToggleDocument}
+              onToggleFolder={onToggleFolder}
             />
           ))
         : null}
