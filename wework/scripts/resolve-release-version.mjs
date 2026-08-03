@@ -34,15 +34,19 @@ function bumpPatch(version) {
   return `${major}.${minor}.${patch + 1}`
 }
 
-function nextBetaVersion(tags) {
+function nextStableVersion(tags) {
   const stableVersions = tags
     .filter(tag => /^wework-v\d+\.\d+\.\d+$/.test(tag))
     .map(tag => tag.slice('wework-v'.length))
+  return stableVersions.length ? bumpPatch(latestVersion(stableVersions)) : '0.0.1'
+}
+
+function nextBetaVersion(tags) {
   const betaVersions = tags
     .filter(tag => /^wework-v\d+\.\d+\.\d+-beta\.[1-9]\d*$/.test(tag))
     .map(tag => tag.slice('wework-v'.length))
 
-  const nextStable = stableVersions.length ? bumpPatch(latestVersion(stableVersions)) : '0.0.1'
+  const nextStable = nextStableVersion(tags)
   if (!betaVersions.length) return `${nextStable}-beta.1`
 
   const latestBeta = latestVersion(betaVersions)
@@ -86,10 +90,7 @@ export function resolveReleaseVersion({
     version = inputVersion.replace(/^v/, '')
     validateStableVersion(version)
   } else {
-    const stableVersions = tags
-      .filter(tag => /^wework-v\d+\.\d+\.\d+$/.test(tag))
-      .map(tag => tag.slice('wework-v'.length))
-    version = stableVersions.length ? bumpPatch(latestVersion(stableVersions)) : '0.0.1'
+    version = nextStableVersion(tags)
   }
 
   return {

@@ -805,6 +805,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.release_sha }}
+          persist-credentials: false
 
       - name: Publish rolling update manifests
         shell: bash
@@ -832,11 +833,24 @@ jobs:
 
           is_newer_than_channel() {
             local channel="$1"
+            local asset_name="${channel}-darwin-aarch64.json"
             local current_manifest="$work_dir/current-${channel}.json"
-            if ! gh release download wework-updater \
-              --pattern "${channel}-darwin-aarch64.json" \
-              --output "$current_manifest" 2>/dev/null; then
+            local assets_file="$work_dir/wework-updater-assets.json"
+
+            if ! gh release view wework-updater --json assets > "$assets_file"; then
+              echo "Failed to inspect existing Wework updater assets." >&2
+              return 2
+            fi
+            if ! jq -e --arg name "$asset_name" \
+              'any(.assets[]; .name == $name)' "$assets_file" >/dev/null; then
               return 0
+            fi
+            if ! gh release download wework-updater \
+              --pattern "$asset_name" \
+              --output "$current_manifest" \
+              --clobber; then
+              echo "Failed to download existing ${channel} channel manifest." >&2
+              return 2
             fi
 
             current_version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$current_manifest")"
@@ -846,10 +860,18 @@ jobs:
 
           publish_channel() {
             local channel="$1"
-            if ! is_newer_than_channel "$channel"; then
-              echo "Keeping newer ${channel} channel manifest."
-              return
-            fi
+            local comparison_status=0
+            is_newer_than_channel "$channel" || comparison_status=$?
+            case "$comparison_status" in
+              0) ;;
+              1)
+                echo "Keeping newer ${channel} channel manifest."
+                return
+                ;;
+              *)
+                return "$comparison_status"
+                ;;
+            esac
 
             node wework/scripts/update-channel-manifests.mjs \
               generate "$work_dir/latest.json" "$work_dir" "$channel"

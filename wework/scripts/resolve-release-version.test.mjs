@@ -59,4 +59,23 @@ describe('resolveReleaseVersion', () => {
       publishRelease: true,
     })
   })
+
+  test('rejects an unknown release channel', () => {
+    expect(() =>
+      resolveReleaseVersion({
+        tags: [],
+        inputChannel: 'nightly',
+      })
+    ).toThrow('Invalid Wework release channel')
+  })
+
+  test('rejects an invalid stable version override', () => {
+    expect(() =>
+      resolveReleaseVersion({
+        tags: [],
+        inputChannel: 'stable',
+        inputVersion: '1.2',
+      })
+    ).toThrow('Invalid stable Wework version')
+  })
 })

@@ -133,6 +133,46 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.availableUpdate?.version).toBe('0.2.0-beta.1')
   })
 
+  test('shows manual feedback when reusing an in-flight automatic check', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishCheck: (() => void) | undefined
+    vi.mocked(checkForWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishCheck = () => resolve(null)
+        })
+    )
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_INITIAL_CHECK_DELAY_MS)
+    let manualCheck: Promise<unknown> | undefined
+    await act(async () => {
+      manualCheck = appUpdate?.checkNow()
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.status).toBe('checking')
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    finishCheck?.()
+    await act(async () => {
+      await manualCheck
+    })
+
+    expect(appUpdate?.status).toBe('upToDate')
+    expect(appUpdate?.message).toBe('upToDate')
+  })
+
   test('wakes hourly but only checks the update source after 24 hours', async () => {
     localStorage.setItem(APP_UPDATE_LAST_AUTO_CHECK_KEY, String(Date.now()))
 

@@ -21,4 +21,10 @@ describe('getWeworkUpdateTarget', () => {
 
     expect(getWeworkUpdateTarget('beta')).toBe('beta-windows')
   })
+
+  test('rejects Linux because desktop updates are unavailable', () => {
+    setUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+
+    expect(() => getWeworkUpdateTarget('stable')).toThrow()
+  })
 })

@@ -52,12 +52,16 @@ export async function generateChannelManifests({ sourcePath, outputDirectory, ch
     const [operatingSystem, ...architectureParts] = platform.split('-')
     const architecture = architectureParts.join('-')
     const target = `${channel}-${operatingSystem}`
+    const entry = source.platforms?.[platform]
+    if (!entry) {
+      throw new Error(`Missing platform '${platform}' in ${sourcePath}`)
+    }
     const data = {
       version: source.version,
       notes: source.notes,
       pub_date: source.pub_date,
       platforms: {
-        [target]: source.platforms[platform],
+        [target]: entry,
       },
     }
     await writeFile(

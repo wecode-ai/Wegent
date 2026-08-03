@@ -24,6 +24,11 @@ const SIMULATED_DOWNLOAD_TOTAL_BYTES = 10_000_000
 const SIMULATED_DOWNLOAD_STEP_BYTES = 1_000_000
 const SIMULATED_DOWNLOAD_INTERVAL_MS = 250
 
+interface UpdateCheckResult {
+  update: WeworkUpdateInfo | null
+  error: string | null
+}
+
 function readUpdateChannel(): WeworkUpdateChannel {
   return window.localStorage.getItem(APP_UPDATE_CHANNEL_KEY) === 'beta' ? 'beta' : 'stable'
 }
@@ -66,7 +71,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const updateChannelRef = useRef(updateChannel)
   const activeCheckRef = useRef<{
     channel: WeworkUpdateChannel
-    promise: Promise<WeworkUpdateInfo | null>
+    promise: Promise<UpdateCheckResult>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
 
@@ -89,12 +94,37 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       }
 
       const activeCheck = activeCheckRef.current
+      if (activeCheck?.channel === channel) {
+        if (!silent && channel === updateChannelRef.current) {
+          setStatus('checking')
+          setMessage(null)
+          setError(null)
+        }
+
+        const result = await activeCheck.promise
+        if (!silent && channel === updateChannelRef.current) {
+          setAvailableUpdate(result.update)
+          if (result.error) {
+            setStatus('error')
+            setMessage(null)
+            setError(result.error)
+          } else if (result.update) {
+            setStatus('available')
+            setMessage(null)
+            setError(null)
+          } else {
+            setStatus('upToDate')
+            setMessage('upToDate')
+            setError(null)
+          }
+        }
+        return result.update
+      }
       if (activeCheck) {
-        const activeResult = await activeCheck.promise
-        if (activeCheck.channel === channel) return activeResult
+        await activeCheck.promise
       }
 
-      const promise = (async () => {
+      const promise = (async (): Promise<UpdateCheckResult> => {
         if (!silent && channel === updateChannelRef.current) {
           setStatus('checking')
           setMessage(null)
@@ -103,7 +133,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
         try {
           const update = await checkForWeworkUpdate(channel)
-          if (channel !== updateChannelRef.current) return update
+          if (channel !== updateChannelRef.current) {
+            return { update, error: null }
+          }
 
           setAvailableUpdate(update)
 
@@ -117,20 +149,21 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
             setError(null)
           }
 
-          return update
+          return { update, error: null }
         } catch (caughtError) {
+          const checkError = messageFor(caughtError)
           if (!silent && channel === updateChannelRef.current) {
             setStatus('error')
             setMessage(null)
-            setError(messageFor(caughtError))
+            setError(checkError)
           }
-          return null
+          return { update: null, error: checkError }
         }
       })()
 
       activeCheckRef.current = { channel, promise }
       try {
-        return await promise
+        return (await promise).update
       } finally {
         if (activeCheckRef.current?.promise === promise) {
           activeCheckRef.current = null

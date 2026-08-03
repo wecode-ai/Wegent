@@ -58,4 +58,31 @@ describe('Wework update channel manifests', () => {
       'beta-darwin': source.platforms['darwin-aarch64'],
     })
   })
+
+  test('rejects a source manifest that omits a required platform', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'wework-update-channel-'))
+    temporaryDirectories.push(directory)
+    const sourcePath = resolve(directory, 'latest.json')
+    await writeFile(
+      sourcePath,
+      JSON.stringify({
+        version: '1.2.4',
+        notes: 'Stable release',
+        pub_date: '2026-08-03T00:00:00Z',
+        platforms: {
+          'darwin-aarch64': { signature: 'mac-arm', url: 'https://example.com/mac-arm' },
+          'darwin-x86_64': { signature: 'mac-x64', url: 'https://example.com/mac-x64' },
+        },
+      }),
+      'utf8'
+    )
+
+    await expect(
+      generateChannelManifests({
+        sourcePath,
+        outputDirectory: directory,
+        channel: 'stable',
+      })
+    ).rejects.toThrow("Missing platform 'windows-x86_64'")
+  })
 })
