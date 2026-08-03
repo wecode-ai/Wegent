@@ -3,10 +3,14 @@ import type { NodeView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'
 import type { EditorView } from 'prosemirror-view'
 import { createComposerLinkElement, type ComposerLinkPayload } from './composerLinks'
+import { serializeComposerLinkNode, serializeComposerSlice } from './composerProseMirrorModel'
 
 export interface ComposerLinkNodeViewCallbacks {
-  onOpenUrl?: (url: string) => void
-  onEditLink?: (payload: ComposerLinkPayload, anchor?: HTMLElement) => void
+  onEditLink?: (
+    payload: ComposerLinkPayload,
+    anchor?: HTMLElement,
+    range?: { start: number; end: number }
+  ) => void
 }
 
 export class ComposerLinkNodeView implements NodeView {
@@ -29,21 +33,23 @@ export class ComposerLinkNodeView implements NodeView {
     this.dom = createComposerLinkElement(node.attrs as ComposerLinkPayload)
     this.dom.addEventListener('mousedown', this.handleMouseDown)
     this.dom.addEventListener('click', this.handleClick)
+    this.dom.addEventListener('keydown', this.handleKeyDown)
   }
 
   update(node: ProseMirrorNode): boolean {
-    if (!node.sameMarkup(this.node)) return false
+    if (node.type !== this.node.type) return false
     this.node = node
     const payload = node.attrs as ComposerLinkPayload
     const label = this.dom.querySelector('.composer-mention-label')
     if (label) label.textContent = payload.label
     this.dom.setAttribute('data-composer-link-url', payload.url)
+    this.dom.setAttribute('data-composer-link-label', payload.label)
     this.dom.setAttribute('aria-label', payload.label)
     return true
   }
 
   stopEvent(event: Event): boolean {
-    return event.type === 'mousedown' || event.type === 'click'
+    return event.type === 'mousedown' || event.type === 'click' || event.type === 'keydown'
   }
 
   ignoreMutation(): boolean {
@@ -53,6 +59,7 @@ export class ComposerLinkNodeView implements NodeView {
   destroy(): void {
     this.dom.removeEventListener('mousedown', this.handleMouseDown)
     this.dom.removeEventListener('click', this.handleClick)
+    this.dom.removeEventListener('keydown', this.handleKeyDown)
   }
 
   private readonly payload = (): ComposerLinkPayload => this.node.attrs as ComposerLinkPayload
@@ -76,6 +83,29 @@ export class ComposerLinkNodeView implements NodeView {
   private readonly handleClick = (event: MouseEvent): void => {
     event.preventDefault()
     event.stopPropagation()
-    this.callbacks.onEditLink?.(this.payload(), this.dom)
+    const position = this.getPos()
+    const range =
+      position === undefined ? undefined : computeSerializedRange(this.view, position, this.node)
+    this.callbacks.onEditLink?.(this.payload(), this.dom, range)
   }
+
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    event.stopPropagation()
+    const position = this.getPos()
+    const range =
+      position === undefined ? undefined : computeSerializedRange(this.view, position, this.node)
+    this.callbacks.onEditLink?.(this.payload(), this.dom, range)
+  }
+}
+
+function computeSerializedRange(
+  view: EditorView,
+  position: number,
+  node: ProseMirrorNode
+): { start: number; end: number } {
+  const before = serializeComposerSlice(view.state.doc.slice(0, position))
+  const start = before.length
+  return { start, end: start + serializeComposerLinkNode(node).length }
 }

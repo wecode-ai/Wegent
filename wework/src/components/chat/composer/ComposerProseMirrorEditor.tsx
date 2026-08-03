@@ -14,6 +14,7 @@ import {
   createComposerDocument,
   OBJECT_REPLACEMENT_CHARACTER,
   serializeComposerDocument,
+  serializeComposerLinkNode,
   serializeComposerSlice,
 } from './composerProseMirrorModel'
 
@@ -44,8 +45,11 @@ interface ComposerProseMirrorEditorProps {
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
   onOpenMentionPlugin?: (reference: PluginReference) => void
-  onOpenUrl?: (url: string) => void
-  onEditComposerLink?: (payload: ComposerLinkPayload, anchor?: HTMLElement) => void
+  onEditComposerLink?: (
+    payload: ComposerLinkPayload,
+    anchor?: HTMLElement,
+    range?: { start: number; end: number }
+  ) => void
   onClick: () => void
   onFocus: () => void
   disabled?: boolean
@@ -139,9 +143,8 @@ export const ComposerProseMirrorEditor = forwardRef<
         },
         composer_link(node, view, getPos) {
           return new ComposerLinkNodeView(node, view, getPos, {
-            onOpenUrl: url => callbacksRef.current.onOpenUrl?.(url),
-            onEditLink: (payload, anchor) =>
-              callbacksRef.current.onEditComposerLink?.(payload, anchor),
+            onEditLink: (payload, anchor, range) =>
+              callbacksRef.current.onEditComposerLink?.(payload, anchor, range),
           })
         },
       },
@@ -378,21 +381,21 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     return setComposerSelection(view, event, nextPosition)
   }
 
-  const domMention = findComposerMentionFromDOMSelection(view)
-  if (!domMention) return false
-  const position = view.posAtDOM(domMention, 0)
+  const domAtom = findComposerAtomFromDOMSelection(view)
+  if (!domAtom) return false
+  const position = view.posAtDOM(domAtom, 0)
   return setComposerSelection(view, event, event.key === 'ArrowLeft' ? position : position + 1)
 }
 
-function findComposerMentionFromDOMSelection(view: EditorView): HTMLElement | null {
+function findComposerAtomFromDOMSelection(view: EditorView): HTMLElement | null {
   const anchorNode = view.dom.ownerDocument.getSelection()?.anchorNode
   const anchorElement =
     anchorNode instanceof HTMLElement ? anchorNode : (anchorNode?.parentElement ?? null)
-  const mention =
+  const atom =
     anchorElement?.closest<HTMLElement>(
       '[data-composer-skill-reference], [data-composer-link-url]'
     ) ?? null
-  return mention && view.dom.contains(mention) ? mention : null
+  return atom && view.dom.contains(atom) ? atom : null
 }
 
 function setComposerSelection(view: EditorView, event: KeyboardEvent, position: number): boolean {
@@ -483,7 +486,7 @@ function serializedOffsetFromPosition(doc: ProseMirrorNode, position: number): n
     }
     if (node.type === composerSchema.nodes.composer_link) {
       if (position >= nodeStart + node.nodeSize) {
-        serializedOffset += String(node.attrs.url ?? '').length
+        serializedOffset += serializeComposerLinkNode(node).length
       }
       return
     }
@@ -520,7 +523,7 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
       node.type === composerSchema.nodes.composer_mention
         ? String(node.attrs.reference ?? '').length
         : node.type === composerSchema.nodes.composer_link
-          ? String(node.attrs.url ?? '').length
+          ? serializeComposerLinkNode(node).length
           : node.type === composerSchema.nodes.hard_break
             ? 1
             : 0

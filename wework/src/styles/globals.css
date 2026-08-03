@@ -294,7 +294,8 @@ button:disabled {
     line-height: 1.4;
   }
 
-  .composer-mention-node {
+  .composer-mention-node,
+  .composer-link-node {
     display: inline-flex;
     align-items: baseline;
     max-width: 100%;
@@ -305,6 +306,10 @@ button:disabled {
     white-space: nowrap;
     user-select: text;
     -webkit-user-select: text;
+  }
+
+  .composer-link-node {
+    cursor: pointer;
   }
 
   .composer-mention-link {
@@ -348,20 +353,6 @@ button:disabled {
   }
 
   .composer-mention-node[data-composer-skill-path] {
-    cursor: pointer;
-  }
-
-  .composer-link-node {
-    display: inline-flex;
-    align-items: baseline;
-    max-width: 100%;
-    font-size: inherit;
-    font-weight: inherit;
-    line-height: inherit;
-    vertical-align: baseline;
-    white-space: nowrap;
-    user-select: text;
-    -webkit-user-select: text;
     cursor: pointer;
   }
 

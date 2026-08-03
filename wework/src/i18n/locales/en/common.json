@@ -4,6 +4,7 @@
   },
   "common": {
     "loading": "Loading...",
+    "confirm": "Confirm",
     "window": {
       "minimize": "Minimize",
       "maximize": "Maximize",

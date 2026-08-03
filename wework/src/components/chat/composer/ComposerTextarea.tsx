@@ -49,7 +49,6 @@ import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
 import type { ComposerLinkPayload } from './composerLinks'
-import { openExternalUrl } from '@/lib/external-links'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -127,6 +126,9 @@ export function ComposerTextarea({
   const [appsLoadError, setAppsLoadError] = useState(false)
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
   const [editingLink, setEditingLink] = useState<ComposerLinkPayload | null>(null)
+  const [editingLinkRange, setEditingLinkRange] = useState<{ start: number; end: number } | null>(
+    null
+  )
   const [editingLinkAnchor, setEditingLinkAnchor] = useState<HTMLElement | null>(null)
   const canPickNativeWorkspacePaths =
     canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
@@ -1022,14 +1024,16 @@ export function ComposerTextarea({
         return true
       }
 
-      if (event.key !== 'Backspace' && event.key !== 'Delete') {
+      const delegateKeyDown = (): boolean => {
         const handledByProp = onKeyDown?.(event, snapshot)
-        if (handledByProp) {
-          event.preventDefault()
-          event.stopPropagation()
-          return true
-        }
-        return false
+        if (!handledByProp) return false
+        event.preventDefault()
+        event.stopPropagation()
+        return true
+      }
+
+      if (event.key !== 'Backspace' && event.key !== 'Delete') {
+        return delegateKeyDown()
       }
       const range = findComposerMentionDeletionRange(
         snapshot.value,
@@ -1038,13 +1042,7 @@ export function ComposerTextarea({
         event.key
       )
       if (!range) {
-        const handledByProp = onKeyDown?.(event, snapshot)
-        if (handledByProp) {
-          event.preventDefault()
-          event.stopPropagation()
-          return true
-        }
-        return false
+        return delegateKeyDown()
       }
       event.preventDefault()
       const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
@@ -1129,9 +1127,9 @@ export function ComposerTextarea({
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
-        onOpenUrl={url => void openExternalUrl(url)}
-        onEditComposerLink={(payload, anchor) => {
+        onEditComposerLink={(payload, anchor, range) => {
           setEditingLink(payload)
+          setEditingLinkRange(range ?? null)
           setEditingLinkAnchor(anchor ?? null)
         }}
         onClick={() => updateAutocompleteTrigger()}
@@ -1201,34 +1199,47 @@ export function ComposerTextarea({
       )}
       {editingLink && (
         <LinkEditPopover
-          payload={editingLink}
+          key={`${editingLink.url}-${editingLink.label}`}
+          payload={{ url: editingLink.url, label: editingLink.label }}
           anchor={editingLinkAnchor}
           onClose={() => {
             setEditingLink(null)
+            setEditingLinkRange(null)
             setEditingLinkAnchor(null)
           }}
-          onChange={nextPayload => {
+          onChange={next => {
             const editor = editorRef.current
-            if (!editor) return
+            if (!editor || !editingLinkRange) return
             const snapshot = editor.getSnapshot()
-            const oldMarkdown = `[${editingLink.label}](${editingLink.url})`
-            const nextMarkdown = `[${nextPayload.label}](${nextPayload.url})`
-            const nextValue = snapshot.value.replaceAll(oldMarkdown, nextMarkdown)
-            const nextCursor = snapshot.selectionOffset + (nextMarkdown.length - oldMarkdown.length)
-            commitEditorValue(nextValue, Math.max(0, nextCursor))
+            const nextPayload = { ...editingLink, ...next }
+            const nextMarkdown = nextPayload.label
+              ? `[${nextPayload.label}](${nextPayload.url})`
+              : nextPayload.url
+            const nextValue =
+              snapshot.value.slice(0, editingLinkRange.start) +
+              nextMarkdown +
+              snapshot.value.slice(editingLinkRange.end)
+            const nextCursor = editingLinkRange.start + nextMarkdown.length
+            commitEditorValue(nextValue, nextCursor)
             setEditingLink(null)
+            setEditingLinkRange(null)
             setEditingLinkAnchor(null)
           }}
           onRemove={() => {
             const editor = editorRef.current
-            if (!editor) return
+            if (!editor || !editingLinkRange) return
             const snapshot = editor.getSnapshot()
-            const nextValue = snapshot.value
-              .replaceAll(`[${editingLink.label}](${editingLink.url})`, '')
-              .replace(/\s+/g, ' ')
-              .trim()
-            commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, nextValue.length))
+            const before = snapshot.value.slice(0, editingLinkRange.start)
+            const after = snapshot.value.slice(editingLinkRange.end)
+            let nextValue = before + after
+            let cursor = before.length
+            if (before.endsWith(' ') && after.startsWith(' ')) {
+              nextValue = before.slice(0, -1) + after
+              cursor = before.length - 1
+            }
+            commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, cursor))
             setEditingLink(null)
+            setEditingLinkRange(null)
             setEditingLinkAnchor(null)
           }}
         />

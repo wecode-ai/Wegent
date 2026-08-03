@@ -59,10 +59,11 @@ export function createComposerLinkElement(payload: ComposerLinkPayload): HTMLSpa
   element.setAttribute('data-testid', 'composer-link-chip')
   element.setAttribute('data-composer-link-url', payload.url)
   element.setAttribute('data-composer-link-provider', payload.provider)
+  element.setAttribute('data-composer-link-label', payload.label)
   element.setAttribute('contenteditable', 'false')
   element.setAttribute('aria-label', payload.label)
   element.setAttribute('spellcheck', 'false')
-  element.setAttribute('tabindex', '-1')
+  element.setAttribute('tabindex', '0')
 
   const iconSlot = document.createElement('span')
   iconSlot.className = 'composer-mention-icon-slot'

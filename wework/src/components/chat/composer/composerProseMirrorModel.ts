@@ -79,7 +79,10 @@ const linkNodeSpec: NodeSpec = {
         if (!(element instanceof HTMLElement)) return false
         return {
           url: element.getAttribute('data-composer-link-url') ?? '',
-          label: element.getAttribute('aria-label') ?? '',
+          label:
+            element.getAttribute('data-composer-link-label') ??
+            element.getAttribute('aria-label') ??
+            '',
           iconUrl: element.querySelector('img')?.getAttribute('src') ?? '',
           provider: element.getAttribute('data-composer-link-provider') ?? '',
         }
@@ -184,6 +187,12 @@ function mergeComposerTokens(
     .sort((a, b) => a.start - b.start)
 }
 
+export function serializeComposerLinkNode(node: ProseMirrorNode): string {
+  const label = String(node.attrs.label ?? '')
+  const url = String(node.attrs.url ?? '')
+  return label ? `[${label}](${url})` : url
+}
+
 export function serializeComposerDocument(doc: ProseMirrorNode): string {
   return serializeComposerFragment(doc.content)
 }
@@ -200,9 +209,7 @@ function serializeComposerFragment(fragment: Fragment): string {
     } else if (node.type === composerSchema.nodes.composer_mention) {
       parts.push(String(node.attrs.reference ?? ''))
     } else if (node.type === composerSchema.nodes.composer_link) {
-      const label = String(node.attrs.label ?? '')
-      const url = String(node.attrs.url ?? '')
-      parts.push(label ? `[${label}](${url})` : url)
+      parts.push(serializeComposerLinkNode(node))
     } else if (node.type === composerSchema.nodes.hard_break) {
       parts.push('\n')
     }

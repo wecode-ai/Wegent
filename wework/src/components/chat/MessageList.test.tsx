@@ -2140,7 +2140,7 @@ describe('MessageList', () => {
           {
             id: 'assistant-link',
             role: 'assistant',
-            content: '[MessageList.tsx](https://example.com/MessageList.tsx)',
+            content: '[MessageList.tsx](https://github.com/wecode-ai/Wegent)',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
           },
@@ -2150,9 +2150,9 @@ describe('MessageList', () => {
 
     const chip = screen.getByTestId('composer-link-chip')
     expect(chip).toHaveTextContent('MessageList.tsx')
-    expect(chip).toHaveAttribute('data-composer-link-url', 'https://example.com/MessageList.tsx')
+    expect(chip).toHaveAttribute('data-composer-link-url', 'https://github.com/wecode-ai/Wegent')
     fireEvent.click(chip)
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/wecode-ai/Wegent')
   })
 
   test('keeps angle-bracket external link destinations as external links', () => {

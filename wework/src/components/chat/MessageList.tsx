@@ -44,6 +44,7 @@ import {
   isTextAttachment,
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
+import { getRecognizedLink } from '@/lib/link-preview'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
@@ -1805,12 +1806,13 @@ function renderUserTextWithLinks(text: string, baseOffset: number): ReactNode[] 
   let localOffset = 0
   for (const match of text.matchAll(COMPOSER_LINK_PATTERN)) {
     const start = match.index ?? 0
+    const url = match[2] ?? ''
+    if (!getRecognizedLink(url)) continue
     const before = text.slice(localOffset, start)
     if (before) {
       nodes.push(<span key={`text-${baseOffset}-${localOffset}`}>{before}</span>)
     }
     const label = match[1] ?? ''
-    const url = match[2] ?? ''
     nodes.push(
       <ComposerLinkChip
         key={`link-${baseOffset}-${start}`}

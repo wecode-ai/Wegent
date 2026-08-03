@@ -41,7 +41,12 @@ class GitHubRecognizer implements LinkRecognizer {
   private static GITHUB_ICON = 'https://github.githubassets.com/favicons/favicon.svg'
 
   match(url: string): RecognizedLink | undefined {
-    const parsed = new URL(url)
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return undefined
+    }
     const domain = normalizeDomain(parsed.hostname)
     if (domain !== 'github.com') return undefined
 
@@ -77,10 +82,9 @@ class GitHubRecognizer implements LinkRecognizer {
     const isIssue = path[2] === 'issues'
     const number = path[3]
     if ((isPull || isIssue) && number) {
-      const typeChar = isPull ? '#' : '#'
       return {
         url,
-        label: `${repoRef}${typeChar}${number}`,
+        label: `${repoRef}#${number}`,
         iconUrl: GitHubRecognizer.GITHUB_ICON,
         provider: this.provider,
         fullUrl: url,
@@ -109,18 +113,20 @@ export function getRecognizedLink(url: string): RecognizedLink | undefined {
   return undefined
 }
 
+const FIRST_URL_REGEX = /https?:\/\/[^\s)\]}]+/i
+const TRAILING_PUNCTUATION_REGEX = /[),.;:]+$/
+
 export function extractFirstLink(text: string): LinkPreview | undefined {
-  const regex = new RegExp('https?:\\/\\/[^\\s)\\]}]+', 'i')
-  const match = regex.exec(text)
+  const match = FIRST_URL_REGEX.exec(text)
   if (!match) return undefined
 
-  const raw = match[0]
+  const raw = match[0].replace(TRAILING_PUNCTUATION_REGEX, '')
   try {
     const parsed = new URL(raw)
     const domain = normalizeDomain(parsed.hostname)
     if (!domain) return undefined
     const path = `${parsed.pathname}${parsed.search}${parsed.hash}`
-    const displayUrl = `${domain}${path === '/' ? '' : path.replace(/[),.;:]+$/, '')}`
+    const displayUrl = `${domain}${path === '/' ? '' : path.replace(TRAILING_PUNCTUATION_REGEX, '')}`
     return {
       url: parsed.toString(),
       domain,

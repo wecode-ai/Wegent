@@ -60,7 +60,7 @@ describe('recognized links', () => {
     expect(link?.isAbbreviated).toBe(false)
   })
 
-  test('keeps the full URL for trailing-slash GitHub repositories', () => {
+  test('recognizes GitHub repositories with a trailing slash', () => {
     const link = getRecognizedLink('https://github.com/wecode-ai/Wegent/')
     expect(link?.label).toBe('wecode-ai/Wegent')
     expect(link?.provider).toBe('github')

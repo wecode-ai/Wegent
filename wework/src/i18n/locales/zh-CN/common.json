@@ -4,6 +4,7 @@
   },
   "common": {
     "loading": "加载中...",
+    "confirm": "确认",
     "window": {
       "minimize": "最小化",
       "maximize": "最大化",

@@ -20,6 +20,7 @@ import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
+import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -179,7 +180,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       ),
       a: ({ href, children }: { href?: string; children?: ReactNode }) => {
         const text = reactNodeToText(children)
-        const isComposerLink = href && /^https?:\/\//.test(href) && text && text !== href
+        const isComposerLink =
+          href && /^https?:\/\//.test(href) && text && text !== href && getRecognizedLink(href)
         if (isComposerLink && !href?.startsWith(WEWORK_MARKDOWN_FILE_LINK_PREFIX)) {
           return <ComposerLinkChip payload={{ url: href, label: text }} />
         }
