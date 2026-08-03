@@ -36,6 +36,8 @@ Interrupting stops the current response but does not roll back completed file ed
 
 The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
 
+Completed processing activity is summarized by type. Terminal commands and Node.js REPL JavaScript calls count as commands, MCP and other capabilities count as tools, and file reads or edits use their own categories. Expand the processing area, then select a row or its chevron to inspect the details. The collapsed row uses a readable short name; the detail view shows the full tool name, invocation input, and returned output. Status-only activity without input or output does not show an empty disclosure control.
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
