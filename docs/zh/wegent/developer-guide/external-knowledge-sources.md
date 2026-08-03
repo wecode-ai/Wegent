@@ -53,6 +53,10 @@ registry 是 core 和 provider 之间的边界。Core 只依赖 registry 查找 
 | `target_type`                           | 可选目标类型：`knowledge_base`、`folder` 或 `document`。缺省按整库处理。                                                                          |
 | `node_id` / `document_id` / `parent_id` | provider-neutral 的目录或文档定位字段。                                                                                                           |
 | `target_name`                           | 当选择的是文件夹或文档时的目标展示名。文档级引用应保留 `name` 为知识源名，并用 `target_name` 保存文档名，避免后续来源列表把文档名误当成知识源名。 |
+| `scope_mode`                            | 可选动态范围模式：`all` 表示整个容器，`custom` 表示指定文件夹和文档。                                                                             |
+| `folder_ids` / `document_ids`           | `custom` 范围内动态包含的文件夹，以及显式包含的文档。                                                                                             |
+| `excluded_node_ids`                     | 从整库或文件夹继承范围中排除的节点；后端在检索时解析其后代。                                                                                      |
+| `include_descendants`                   | 文件夹范围是否动态包含后代节点，默认 `true`。                                                                                                     |
 
 ### 管理入口和 API
 

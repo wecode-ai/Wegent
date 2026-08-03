@@ -174,17 +174,17 @@ spec:
 
 ### 字段说明
 
-| 字段                   | 类型   | 必填 | 说明                               |
-| ---------------------- | ------ | ---- | ---------------------------------- |
-| `metadata.name`        | string | 是   | Model 的唯一标识符                 |
-| `metadata.namespace`   | string | 是   | 命名空间，通常为 `default`         |
-| `spec.modelGroup`      | string | 否   | 模型选择器使用的一级展示分组       |
-| `spec.modelSubGroup`   | string | 否   | `spec.modelGroup` 下的二级展示分组 |
-| `spec.modelConfig`     | object | 是   | 模型配置对象                       |
-| `spec.modelConfig.env` | object | 是   | 环境变量配置                       |
-| `spec.protocol`        | string | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。 |
-| `spec.apiFormat`       | string | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
-| `spec.isWeworkAvailable` | boolean | 否 | 是否将该模型分发到 wework 桌面客户端。 |
+| 字段                     | 类型    | 必填 | 说明                                                                                 |
+| ------------------------ | ------- | ---- | ------------------------------------------------------------------------------------ |
+| `metadata.name`          | string  | 是   | Model 的唯一标识符                                                                   |
+| `metadata.namespace`     | string  | 是   | 命名空间，通常为 `default`                                                           |
+| `spec.modelGroup`        | string  | 否   | 模型选择器使用的一级展示分组                                                         |
+| `spec.modelSubGroup`     | string  | 否   | `spec.modelGroup` 下的二级展示分组                                                   |
+| `spec.modelConfig`       | object  | 是   | 模型配置对象                                                                         |
+| `spec.modelConfig.env`   | object  | 是   | 环境变量配置                                                                         |
+| `spec.protocol`          | string  | 否   | 上游协议（如 `openai`、`openai-responses`、`claude`）。省略时从 `env.model` 推断。   |
+| `spec.apiFormat`         | string  | 否   | 上游 API 格式（如 `responses`、`chat/completions`）。省略时由 `spec.protocol` 推导。 |
+| `spec.isWeworkAvailable` | boolean | 否   | 是否将该模型分发到 wework 桌面客户端。                                               |
 
 ### 模型选择器分组
 
@@ -609,18 +609,23 @@ spec:
 
 `spec.externalKnowledgeRefs` 是运行时字段，描述当前 Task 已绑定的外部知识源。它由聊天发送和任务知识库管理接口维护，不用于 Ghost、Bot 或 Team 默认配置。
 
-| 字段          | 类型   | 必填     | 说明                                                     |
-| ------------- | ------ | -------- | -------------------------------------------------------- |
-| `provider`    | string | 是       | 外部知识 provider id                                     |
-| `mode`        | string | 否       | 绑定模式，默认 `explicit`；`explicit` 需要提供 `id`      |
-| `id`          | string | 条件必填 | provider 内稳定的知识源 ID                               |
-| `name`        | string | 否       | 知识源展示名                                             |
-| `scope`       | string | 否       | provider 可解释的范围                                    |
-| `target_type` | string | 否       | `knowledge_base`、`folder` 或 `document`，缺省按整库处理 |
-| `node_id`     | string | 否       | provider-neutral 节点 ID                                 |
-| `document_id` | string | 否       | provider-neutral 文档 ID                                 |
-| `parent_id`   | string | 否       | provider-neutral 父节点 ID                               |
-| `target_name` | string | 否       | 文件夹或文档目标展示名                                   |
+| 字段                  | 类型    | 必填     | 说明                                                     |
+| --------------------- | ------- | -------- | -------------------------------------------------------- |
+| `provider`            | string  | 是       | 外部知识 provider id                                     |
+| `mode`                | string  | 否       | 绑定模式，默认 `explicit`；`explicit` 需要提供 `id`      |
+| `id`                  | string  | 条件必填 | provider 内稳定的知识源 ID                               |
+| `name`                | string  | 否       | 知识源展示名                                             |
+| `scope`               | string  | 否       | provider 可解释的范围                                    |
+| `target_type`         | string  | 否       | `knowledge_base`、`folder` 或 `document`，缺省按整库处理 |
+| `node_id`             | string  | 否       | provider-neutral 节点 ID                                 |
+| `document_id`         | string  | 否       | provider-neutral 文档 ID                                 |
+| `parent_id`           | string  | 否       | provider-neutral 父节点 ID                               |
+| `target_name`         | string  | 否       | 文件夹或文档目标展示名                                   |
+| `scope_mode`          | string  | 否       | 动态范围模式：`all` 或 `custom`                          |
+| `folder_ids`          | array   | 否       | `custom` 模式下包含的文件夹节点 ID                       |
+| `document_ids`        | array   | 否       | `custom` 模式下显式包含的文档节点 ID                     |
+| `excluded_node_ids`   | array   | 否       | 从整库或文件夹继承范围中排除的节点 ID                    |
+| `include_descendants` | boolean | 否       | 文件夹范围是否动态包含后代节点，默认 `true`              |
 
 ### 任务状态
 
@@ -681,22 +686,22 @@ spec:
 
 ### 字段说明
 
-| 字段                         | 类型    | 必填 | 说明                                                             |
-| ---------------------------- | ------- | ---- | ---------------------------------------------------------------- |
-| `metadata.name`              | string  | 是   | Connector App 的唯一 slug，工具名前缀使用该值                    |
-| `metadata.namespace`         | string  | 是   | 当前使用 `system`                                                |
-| `spec.name`                  | string  | 是   | 展示名称                                                         |
-| `spec.description`           | string  | 否   | 应用描述                                                         |
-| `spec.iconUrl`               | string  | 否   | 图标 URL                                                         |
-| `spec.enabled`               | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                  |
-| `spec.visibility`            | string  | 是   | `all` 或 `roles`                                                 |
-| `spec.allowedRoles`          | array   | 否   | `visibility: roles` 时允许访问的用户角色                         |
-| `spec.authType`              | string  | 是   | 当前仅支持 `none`                                                |
-| `spec.transport`             | string  | 是   | `streamable-http`、`sse` 或 `http`                               |
-| `spec.mcpUrl`                | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                |
-| `spec.providerHeadersEncrypted` | string | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                  |
-| `spec.toolAllowlist`         | array   | 否   | 允许暴露和调用的上游工具名                                       |
-| `spec.httpTools`             | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
+| 字段                            | 类型    | 必填 | 说明                                                              |
+| ------------------------------- | ------- | ---- | ----------------------------------------------------------------- |
+| `metadata.name`                 | string  | 是   | Connector App 的唯一 slug，工具名前缀使用该值                     |
+| `metadata.namespace`            | string  | 是   | 当前使用 `system`                                                 |
+| `spec.name`                     | string  | 是   | 展示名称                                                          |
+| `spec.description`              | string  | 否   | 应用描述                                                          |
+| `spec.iconUrl`                  | string  | 否   | 图标 URL                                                          |
+| `spec.enabled`                  | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                   |
+| `spec.visibility`               | string  | 是   | `all` 或 `roles`                                                  |
+| `spec.allowedRoles`             | array   | 否   | `visibility: roles` 时允许访问的用户角色                          |
+| `spec.authType`                 | string  | 是   | 当前仅支持 `none`                                                 |
+| `spec.transport`                | string  | 是   | `streamable-http`、`sse` 或 `http`                                |
+| `spec.mcpUrl`                   | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                 |
+| `spec.providerHeadersEncrypted` | string  | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                   |
+| `spec.toolAllowlist`            | array   | 否   | 允许暴露和调用的上游工具名                                        |
+| `spec.httpTools`                | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
 
 `providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
 

@@ -53,6 +53,10 @@ Key constraints:
 | `target_type`                           | Optional target type: `knowledge_base`, `folder`, or `document`. Missing values are treated as whole-source bindings.                                                                                                            |
 | `node_id` / `document_id` / `parent_id` | Provider-neutral folder or document locator fields.                                                                                                                                                                              |
 | `target_name`                           | Display name for a selected folder or document. Document-scoped refs should keep `name` as the source name and store the document title in `target_name`, so source lists do not mistake the document title for the source name. |
+| `scope_mode`                            | Optional dynamic scope mode: `all` for the whole container or `custom` for selected folders and documents.                                                                                                                       |
+| `folder_ids` / `document_ids`           | Folders dynamically included by a `custom` scope and documents included explicitly.                                                                                                                                              |
+| `excluded_node_ids`                     | Nodes excluded from an inherited whole-source or folder scope; descendants are resolved during retrieval.                                                                                                                        |
+| `include_descendants`                   | Whether folder scopes dynamically include descendants, defaults to `true`.                                                                                                                                                       |
 
 ### Management Entry and API
 

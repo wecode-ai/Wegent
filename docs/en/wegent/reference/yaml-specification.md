@@ -174,17 +174,17 @@ spec:
 
 ### Field Description
 
-| Field                  | Type   | Required | Description                                        |
-| ---------------------- | ------ | -------- | -------------------------------------------------- |
-| `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
-| `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
-| `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
-| `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
-| `spec.modelConfig`     | object | Yes      | Model configuration object                         |
-| `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
-| `spec.protocol`        | string | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
-| `spec.apiFormat`       | string | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted. |
-| `spec.isWeworkAvailable` | boolean | No     | Whether the model is distributed to the wework desktop client. |
+| Field                    | Type    | Required | Description                                                                                              |
+| ------------------------ | ------- | -------- | -------------------------------------------------------------------------------------------------------- |
+| `metadata.name`          | string  | Yes      | Unique identifier for the Model                                                                          |
+| `metadata.namespace`     | string  | Yes      | Namespace, typically `default`                                                                           |
+| `spec.modelGroup`        | string  | No       | First-level display group used by model selectors                                                        |
+| `spec.modelSubGroup`     | string  | No       | Second-level display group under `spec.modelGroup`                                                       |
+| `spec.modelConfig`       | object  | Yes      | Model configuration object                                                                               |
+| `spec.modelConfig.env`   | object  | Yes      | Environment variables configuration                                                                      |
+| `spec.protocol`          | string  | No       | Upstream protocol (`openai`, `openai-responses`, `claude`, ...). Inferred from `env.model` when omitted. |
+| `spec.apiFormat`         | string  | No       | Upstream API format (`responses`, `chat/completions`, ...). Derived from `spec.protocol` when omitted.   |
+| `spec.isWeworkAvailable` | boolean | No       | Whether the model is distributed to the wework desktop client.                                           |
 
 ### Model Selector Grouping
 
@@ -609,18 +609,23 @@ spec:
 
 `spec.externalKnowledgeRefs` is a runtime field describing the external knowledge sources bound to the current Task. It is maintained by chat send handling and the task knowledge management APIs. It is not used for Ghost, Bot, or Team default configuration.
 
-| Field         | Type   | Required      | Description                                                                                    |
-| ------------- | ------ | ------------- | ---------------------------------------------------------------------------------------------- |
-| `provider`    | string | Yes           | External knowledge provider id                                                                 |
-| `mode`        | string | No            | Binding mode, defaults to `explicit`; `explicit` requires `id`                                 |
-| `id`          | string | Conditionally | Stable provider-owned source ID                                                                |
-| `name`        | string | No            | Source display name                                                                            |
-| `scope`       | string | No            | Provider-interpretable scope                                                                   |
-| `target_type` | string | No            | `knowledge_base`, `folder`, or `document`; missing values are treated as whole-source bindings |
-| `node_id`     | string | No            | Provider-neutral node ID                                                                       |
-| `document_id` | string | No            | Provider-neutral document ID                                                                   |
-| `parent_id`   | string | No            | Provider-neutral parent node ID                                                                |
-| `target_name` | string | No            | Folder or document target display name                                                         |
+| Field                 | Type    | Required      | Description                                                                                    |
+| --------------------- | ------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| `provider`            | string  | Yes           | External knowledge provider id                                                                 |
+| `mode`                | string  | No            | Binding mode, defaults to `explicit`; `explicit` requires `id`                                 |
+| `id`                  | string  | Conditionally | Stable provider-owned source ID                                                                |
+| `name`                | string  | No            | Source display name                                                                            |
+| `scope`               | string  | No            | Provider-interpretable scope                                                                   |
+| `target_type`         | string  | No            | `knowledge_base`, `folder`, or `document`; missing values are treated as whole-source bindings |
+| `node_id`             | string  | No            | Provider-neutral node ID                                                                       |
+| `document_id`         | string  | No            | Provider-neutral document ID                                                                   |
+| `parent_id`           | string  | No            | Provider-neutral parent node ID                                                                |
+| `target_name`         | string  | No            | Folder or document target display name                                                         |
+| `scope_mode`          | string  | No            | Dynamic scope mode: `all` or `custom`                                                          |
+| `folder_ids`          | array   | No            | Folder node IDs included by a `custom` scope                                                   |
+| `document_ids`        | array   | No            | Document node IDs explicitly included by a `custom` scope                                      |
+| `excluded_node_ids`   | array   | No            | Node IDs excluded from an inherited whole-source or folder scope                               |
+| `include_descendants` | boolean | No            | Whether folder scopes dynamically include descendants, defaults to `true`                      |
 
 ### Task Status
 
@@ -681,22 +686,22 @@ spec:
 
 ### Field Reference
 
-| Field                           | Type    | Required      | Description                                                               |
-| ------------------------------- | ------- | ------------- | ------------------------------------------------------------------------- |
-| `metadata.name`                 | string  | Yes           | Unique Connector App slug, also used as the tool-name prefix              |
-| `metadata.namespace`            | string  | Yes           | Currently `system`                                                        |
-| `spec.name`                     | string  | Yes           | Display name                                                              |
-| `spec.description`              | string  | No            | App description                                                           |
-| `spec.iconUrl`                  | string  | No            | Icon URL                                                                  |
+| Field                           | Type    | Required      | Description                                                                |
+| ------------------------------- | ------- | ------------- | -------------------------------------------------------------------------- |
+| `metadata.name`                 | string  | Yes           | Unique Connector App slug, also used as the tool-name prefix               |
+| `metadata.namespace`            | string  | Yes           | Currently `system`                                                         |
+| `spec.name`                     | string  | Yes           | Display name                                                               |
+| `spec.description`              | string  | No            | App description                                                            |
+| `spec.iconUrl`                  | string  | No            | Icon URL                                                                   |
 | `spec.enabled`                  | boolean | Yes           | Whether the app is enabled; disabled apps are hidden from catalogs/runtime |
-| `spec.visibility`               | string  | Yes           | `all` or `roles`                                                          |
-| `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                               |
-| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                        |
-| `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                       |
-| `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                         |
+| `spec.visibility`               | string  | Yes           | `all` or `roles`                                                           |
+| `spec.allowedRoles`             | array   | No            | User roles allowed when `visibility: roles`                                |
+| `spec.authType`                 | string  | Yes           | Currently only `none` is supported                                         |
+| `spec.transport`                | string  | Yes           | `streamable-http`, `sse`, or `http`                                        |
+| `spec.mcpUrl`                   | string  | Yes           | MCP endpoint or HTTP API base URL                                          |
 | `spec.providerHeadersEncrypted` | string  | No            | Fixed provider headers JSON encrypted with the project sensitive-data tool |
-| `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                  |
-| `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools      |
+| `spec.toolAllowlist`            | array   | No            | Upstream tool names allowed for discovery and invocation                   |
+| `spec.httpTools`                | array   | Conditionally | Required for `transport: http`; maps ordinary HTTP APIs to MCP tools       |
 
 `providerHeadersEncrypted` must be an encrypted JSON string. The administrator API accepts plaintext `provider_headers` and encrypts them before storage; do not commit plaintext API keys, service tokens, or headers in hand-written YAML.
 
