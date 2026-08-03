@@ -763,6 +763,8 @@ function ScrollableMessagePaneContent({
     scheduleStableScrollToBottom,
     scrollToBottom,
     setScrollToBottom,
+    turnNavigationLoading,
+    turnNavigationTargetMessageId,
   ])
 
   useLayoutEffect(() => {
