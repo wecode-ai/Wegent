@@ -2913,14 +2913,10 @@ async function verifyExpandedToolDetail(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    `${selector} [data-tool-detail-toggle][aria-expanded="true"]`,
-    {
-      stableMs: 250,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${selector} [data-tool-detail-toggle][aria-expanded="true"]`, {
+    stableMs: 250,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, screenshotName, selector)
   await control.command('click', `${selector} [data-tool-detail-toggle]`)
 }
@@ -6644,12 +6640,7 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
-  control.releaseSupervisorInitialResponse()
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: SUPERVISOR_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await control.command('click', '[data-testid="add-context-button"]')
   await control.command('waitFor', '[data-testid="task-supervisor-toggle-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -6659,6 +6650,22 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
     value: SUPERVISOR_PRINCIPLES,
   })
   await control.command('click', '[data-testid="task-supervisor-save-button"]')
+  await control.command('waitFor', '[data-testid="pending-supervisor-indicator"]', {
+    text: '监督将在任务开始后生效',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'supervisor-pending-context.png')
+  await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
+  control.releaseSupervisorInitialResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pending-supervisor-indicator'),
+    'The pre-task supervisor indicator remained after the task was created'
+  )
 
   await withTimeout(
     control.awaitScenarioRequestCount('supervisor', 2),

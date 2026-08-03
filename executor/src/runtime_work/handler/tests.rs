@@ -1161,6 +1161,12 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                         "reasoningEffort": "high"
                     }
                 },
+                "initialSupervisor": {
+                    "mode": "auto",
+                    "instructions": "Keep the task focused",
+                    "modelId": "supervisor-model",
+                    "intervalSeconds": 10
+                },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
             }
         }))
@@ -1192,6 +1198,15 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
             }
         })
     );
+    let supervisor = link
+        .supervisor
+        .expect("initial supervisor should be stored with the task");
+    assert_eq!(supervisor.mode, "auto");
+    assert_eq!(supervisor.instructions, "Keep the task focused");
+    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(supervisor.interval_seconds, 10);
+    assert_eq!(supervisor.status, "active");
+    assert!(supervisor.last_error.is_none());
 
     let _ = fs::remove_file(index_path);
 }
@@ -1324,11 +1339,15 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let event = event_rx
         .try_recv()
         .expect("a non-active turn should still be routed by its own identity");
-    assert_eq!(event["event"], "response.output_text.delta");
+    assert_eq!(event["event"], "response.block.created");
     assert_eq!(event["payload"]["taskId"], local_task_id);
     assert_eq!(event["payload"]["subtaskId"], "turn-earlier");
-    assert_eq!(event["payload"]["data"]["delta"], "Earlier");
-    assert_eq!(event["payload"]["data"]["itemId"], "msg-earlier");
+    assert_eq!(event["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(event["payload"]["data"]["block"]["content"], "Earlier");
+    assert_eq!(
+        event["payload"]["data"]["block"]["process_item_id"],
+        "msg-earlier"
+    );
 
     let _ = fs::remove_file(index_path);
 }
