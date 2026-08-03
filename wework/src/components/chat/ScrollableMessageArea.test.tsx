@@ -2027,6 +2027,92 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps an unopened conversation pinned when the external scroller height changes', () => {
+    const resizeObservers: Array<{
+      callback: ResizeObserverCallback
+      targets: Set<Element>
+    }> = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        targets = new Set<Element>()
+
+        constructor(public callback: ResizeObserverCallback) {
+          resizeObservers.push(this)
+        }
+
+        observe(target: Element) {
+          this.targets.add(target)
+        }
+
+        disconnect() {}
+      }
+    )
+
+    const externalScrollRef = createRef<HTMLDivElement>()
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="unopened-external-resize"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            {
+              id: 'completed-response',
+              role: 'assistant',
+              content: '后台完成的长回复',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    let clientHeight = 600
+    const scrollHeight = 1_600
+    Object.defineProperty(scroller, 'clientHeight', {
+      get: () => clientHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Math.min(Number(top), scrollHeight - clientHeight)
+    })
+
+    flushScheduledTimers()
+    expect(scroller.scrollTop).toBe(1_000)
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+
+    expect(resizeObservers.some(observer => observer.targets.has(scroller))).toBe(true)
+    expect(getConversationScrollSnapshot('unopened-external-resize')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
+    })
+
+    clientHeight = 460
+    act(() => {
+      resizeObservers
+        .filter(observer => observer.targets.has(scroller))
+        .forEach(observer => observer.callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: scrollHeight,
+      behavior: 'auto',
+    })
+    expect(scroller.scrollTop).toBe(1_140)
+  })
+
   test('follows the assistant response after latest-user placement stabilizes', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(

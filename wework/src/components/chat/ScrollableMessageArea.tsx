@@ -571,6 +571,14 @@ function ScrollableMessagePaneContent({
     [setScrollToBottom]
   )
 
+  const markCurrentConversationPinnedToBottom = useCallback(() => {
+    if (currentScrollKey === null) return
+    setConversationScrollSnapshot(currentScrollKey, {
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
+    })
+  }, [currentScrollKey])
+
   const scheduleStableScrollToBottom = useCallback(
     (
       behavior: ScrollBehavior = 'auto',
@@ -578,6 +586,7 @@ function ScrollableMessagePaneContent({
     ) => {
       clearScheduledScrolls()
       followingBottomKeyRef.current = currentScrollKey
+      markCurrentConversationPinnedToBottom()
       STABLE_SCROLL_DELAYS.forEach(delay => {
         scheduleScrollTimer(() => {
           scrollToBottom(behavior, options)
@@ -604,7 +613,13 @@ function ScrollableMessagePaneContent({
         )
       }
     },
-    [clearScheduledScrolls, currentScrollKey, scheduleScrollTimer, scrollToBottom]
+    [
+      clearScheduledScrolls,
+      currentScrollKey,
+      markCurrentConversationPinnedToBottom,
+      scheduleScrollTimer,
+      scrollToBottom,
+    ]
   )
 
   useLayoutEffect(() => {
@@ -781,7 +796,8 @@ function ScrollableMessagePaneContent({
   useEffect(() => {
     const content = contentRef.current
     const footer = stickyFooterRef.current
-    if (!content || typeof ResizeObserver === 'undefined') return
+    const scroller = activeScrollRefRef.current.current
+    if (!content || !scroller || typeof ResizeObserver === 'undefined') return
 
     const resizeObserver = new ResizeObserver(() => {
       if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
@@ -806,7 +822,11 @@ function ScrollableMessagePaneContent({
         return
       }
 
-      if (followingBottomKeyRef.current === currentScrollKey) {
+      const shouldFollowBottom =
+        followingBottomKeyRef.current === currentScrollKey ||
+        (currentScrollKey !== null &&
+          getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
+      if (shouldFollowBottom) {
         setScrollToBottom('auto', { saveSnapshot: false })
         return
       }
@@ -821,6 +841,7 @@ function ScrollableMessagePaneContent({
       }
     })
 
+    resizeObserver.observe(scroller)
     resizeObserver.observe(content)
     if (footer) {
       resizeObserver.observe(footer)
