@@ -797,9 +797,31 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
+        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+    }
+
+    pub(super) fn hydrate_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+    ) {
+        self.update_runtime_task_goal_status(local_task_id, goal_status, false);
+    }
+
+    fn update_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+        update_activity_time: bool,
+    ) {
         self.store.update_task(local_task_id, |link| {
-            link.goal_status = goal_status.clone();
-            link.updated_at = now_ms();
+            if link.goal_status == goal_status {
+                return;
+            }
+            link.goal_status = goal_status;
+            if update_activity_time {
+                link.updated_at = now_ms();
+            }
         });
     }
 }

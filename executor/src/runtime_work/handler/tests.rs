@@ -236,6 +236,30 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
 }
 
 #[test]
+fn hydrating_goal_status_does_not_update_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("hydrate-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.hydrate_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn current_codex_model_provider_reads_configured_provider_name() {
     let provider = current_codex_model_provider_from_config(&json!({
         "config": {
