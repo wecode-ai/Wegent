@@ -20,6 +20,7 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
+import { AssistantThinkingIndicator } from '../AssistantThinkingIndicator'
 import {
   ToolBlockItem,
   type FileEditDuration,
@@ -72,6 +73,7 @@ interface ToolBlocksDisplayProps {
   forceExpanded?: boolean
   processingPhase?: 'live' | 'intermediate' | 'final'
   showInterToolThinking?: boolean
+  thinkingContent?: string
   showSummary?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
@@ -92,6 +94,7 @@ export function ToolBlocksDisplay({
   forceExpanded = false,
   processingPhase = 'live',
   showInterToolThinking = false,
+  thinkingContent = '',
   showSummary = true,
   stateKey,
   onOpenWorkspaceFile,
@@ -358,6 +361,7 @@ export function ToolBlocksDisplay({
             !hasRunningToolActivity &&
             (processingPhase === 'live' || showInterToolThinking)
           }
+          thinkingContent={thinkingContent}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
           stateKey={stateKey}
@@ -486,17 +490,18 @@ function ToolActivityStats({
 function LiveProcessingPreview({
   rows,
   showThinking,
+  thinkingContent,
   onOpenWorkspaceFile,
   fileEditDurations,
   stateKey,
 }: {
   rows: ProcessingDisplayRow[]
   showThinking: boolean
+  thinkingContent: string
   onOpenWorkspaceFile?: (path: string) => void
   fileEditDurations: FileEditDurationsByBlock
   stateKey?: string
 }) {
-  const { t } = useTranslation('chat')
   const scrollRef = useRef<HTMLDivElement>(null)
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
   const hasExpandedDetail = rows.some(row => expandedRowIds.has(row.id))
@@ -547,7 +552,10 @@ function LiveProcessingPreview({
         ))}
         {showThinking ? (
           <div className="flex min-h-8 items-center py-1 text-sm" data-testid="tool-block-thinking">
-            <span className="waiting-thinking-text">{t('thinking.running')}</span>
+            <AssistantThinkingIndicator
+              content={thinkingContent}
+              testId="tool-thinking-indicator"
+            />
           </div>
         ) : null}
       </div>

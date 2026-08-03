@@ -14,6 +14,7 @@ const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
 const ORDER_FOLLOW_UP_COUNT = 26
 const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 const REASONING_SUMMARY = 'WEWORK_DESKTOP_E2E_REASONING_SUMMARY'
+const REASONING_PREVIEW = REASONING_SUMMARY.replaceAll('_', ' ')
 const INITIAL_PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL'
 const HISTORY_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_HISTORY'
 const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response active until released.'
@@ -457,7 +458,9 @@ export function createDesktopScenario({
   let releaseAppend
   let releaseResponse
   let releaseStart
+  let releaseToolCompletion
   let resolveRequest
+  let resolveToolFollowUp
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
@@ -470,6 +473,12 @@ export function createDesktopScenario({
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
+  })
+  const toolCompletionRelease = new Promise(resolve => {
+    releaseToolCompletion = resolve
+  })
+  const toolFollowUpReceived = new Promise(resolve => {
+    resolveToolFollowUp = resolve
   })
 
   const verifyStoppedTurnOrder = async control => {
@@ -571,6 +580,9 @@ export function createDesktopScenario({
         return true
       }
       if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
+        toolRegressionStage = 'awaiting-completion-release'
+        resolveToolFollowUp()
+        await toolCompletionRelease
         toolRegressionStage = 'complete'
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -687,6 +699,13 @@ export function createDesktopScenario({
       }
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await toolFollowUpReceived
+      await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
+        text: `正在思考 · ${REASONING_PREVIEW}`,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'streaming-text-00-live-reasoning-summary.png')
+      releaseToolCompletion()
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TOOL_COMPLETION,
         timeoutMs: uiTimeoutMs,
@@ -703,7 +722,7 @@ export function createDesktopScenario({
         false,
         'The collapsed reasoning disclosure exposed its full summary'
       )
-      await capture(control, 'streaming-text-00-processing-collapsed.png')
+      await capture(control, 'streaming-text-01-processing-collapsed.png')
       await control.command('click', '[data-testid="final-processing-toggle"]')
       const expandedProcessingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -718,7 +737,7 @@ export function createDesktopScenario({
         false,
         'The completed response retained its reasoning summary'
       )
-      await capture(control, 'streaming-text-01-reasoning-removed.png')
+      await capture(control, 'streaming-text-02-reasoning-removed.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

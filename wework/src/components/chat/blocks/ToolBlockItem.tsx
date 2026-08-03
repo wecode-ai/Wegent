@@ -31,7 +31,6 @@ import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 
-const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
@@ -81,7 +80,7 @@ export function ToolBlockItem({
   }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
-    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+    return null
   }
   if (block.type === 'text') {
     return (
@@ -852,37 +851,6 @@ function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
-function ThinkingBlockItem({
-  block,
-  isRunning,
-}: {
-  block: Extract<ProcessingBlock, { type: 'thinking' }>
-  isRunning: boolean
-}) {
-  const { t } = useTranslation('chat')
-
-  if (!block.content || !isRunning) return null
-
-  const preview = buildBlockPreview(block.content)
-
-  return (
-    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
-      <div
-        className="flex max-w-full items-center gap-1.5 text-text-secondary"
-        role="status"
-        aria-live="polite"
-        data-testid="thinking-live-preview"
-      >
-        <span className="shrink-0">{t('thinking.running')}</span>
-        <span className="shrink-0 text-text-muted">·</span>
-        <span className="min-w-0 truncate text-text-muted">
-          {preview || t('thinking.updating')}
-        </span>
-      </div>
-    </div>
-  )
-}
-
 function ProcessTextBlockItem({
   block,
   isRunning,
@@ -1585,23 +1553,4 @@ function getStringField(record: Record<string, unknown>, ...keys: string[]): str
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str
   return str.substring(0, maxLen) + '...'
-}
-
-function buildBlockPreview(content: string): string {
-  const normalized = content
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/[#>*_[\]()-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!normalized) return ''
-
-  const segments = normalized
-    .split(/[。！？!?]+|\.(?=\s|$)/)
-    .map(segment => segment.trim())
-    .filter(Boolean)
-  const preview = segments[segments.length - 1] ?? normalized
-
-  return truncate(preview, THINKING_PREVIEW_MAX_LENGTH)
 }

@@ -1847,13 +1847,22 @@ function getDisplayProcessingBlocks(
         : block
     )
     .filter(block => {
-      if (block.type === 'thinking') {
-        return block.status !== 'done' && block.status !== 'error' && Boolean(block.content.trim())
-      }
+      if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
     })
+}
+
+function getLatestThinkingContent(blocks: ProcessingBlock[] | undefined): string {
+  if (!blocks?.length) return ''
+
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (block?.type === 'thinking' && block.content.trim()) return block.content
+  }
+
+  return ''
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1933,6 +1942,7 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
+  const activeThinkingContent = isStreaming ? getLatestThinkingContent(message.blocks) : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -1995,6 +2005,7 @@ function AssistantMessage({
             segment.kind === 'tool' &&
             !processingSegments.slice(index + 1).some(candidate => candidate.kind === 'tool')
           }
+          thinkingContent={activeThinkingContent}
           showSummary={segment.kind === 'tool'}
           stateKey={`${processingStateKey}:${index}`}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
@@ -2061,7 +2072,9 @@ function AssistantMessage({
           ) : (
             processingTimeline
           )}
-          {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {shouldShowThinking && !hasVisibleContent && (
+            <AssistantThinkingIndicator content={activeThinkingContent} />
+          )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
           {message.contentTruncated ? (
             <ContentTruncatedNotice
@@ -2080,7 +2093,9 @@ function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
+          {shouldShowThinking && hasVisibleContent && (
+            <AssistantThinkingIndicator content={activeThinkingContent} />
+          )}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
