@@ -502,7 +502,7 @@ class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
-    collaborationModel: str  # pipeline、route、coordinate、collaborate
+    collaborationModel: str  # solo、pipeline、route、coordinate、collaborate
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
@@ -1008,7 +1008,33 @@ class KnowledgeBaseSpec(BaseModel):
     )
     kbType: Optional[str] = Field(
         "notebook",
-        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
+        description=(
+            "What this knowledge base is: 'notebook' or 'classic' select the default "
+            "opening view and may be switched freely; 'code_wiki' binds the knowledge "
+            "base to a source repository and is fixed at creation."
+        ),
+    )
+    source: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Source repository a code wiki is generated from",
+    )
+    language: Optional[str] = Field(
+        None,
+        max_length=10,
+        description=(
+            "Language a code wiki's pages are generated in. Absent falls back to the "
+            "deployment default rather than meaning English, so changing that default "
+            "does not strand wikis created before this field existed."
+        ),
+    )
+    publishedGenerationId: int = Field(
+        0,
+        description=(
+            "Generation whose content is currently projected into this knowledge base; "
+            "0 means nothing has been published yet. Sole authority for which version "
+            "is live — never infer it from the latest completed generation, because a "
+            "generation that finished but failed its publish gate is not published."
+        ),
     )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"

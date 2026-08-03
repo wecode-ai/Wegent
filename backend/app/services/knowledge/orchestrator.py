@@ -36,11 +36,13 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseResponse,
+    KnowledgeBaseType,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
@@ -1079,7 +1081,12 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
-        kb_type: str = "notebook",
+        kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
+        source: Optional[SourceRepository] = None,
+        # Only meaningful for a code wiki: what language its pages are generated in.
+        # Empty is not "English", it is "fall back to the deployment default", which
+        # is also what a wiki created before this field existed does.
+        language: str = "",
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1204,7 +1211,9 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
-            kb_type=kb_type,
+            kb_type=KnowledgeBaseType(kb_type),
+            source=source.to_spec() if source else None,
+            language=language or None,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,

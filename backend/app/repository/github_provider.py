@@ -17,10 +17,20 @@ from fastapi import HTTPException
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
+from app.repository.file_status import file_status_letter
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
+
+# Repository access checks run inside a user-facing request (creating a code wiki),
+# so an unresponsive provider must fail rather than hold the worker. Only this check
+# is bounded here; the other calls in this module remain as they were.
+ACCESS_CHECK_TIMEOUT_SECONDS = 15
+
+# GitHub's compare endpoint returns at most this many files and gives no reliable
+# signal that it truncated, so hitting it is treated as "the diff is unknown".
+GITHUB_COMPARE_FILE_LIMIT = 300
 
 
 class GitHubProvider(RepositoryProvider):
@@ -859,7 +869,11 @@ class GitHubProvider(RepositoryProvider):
 
         # First get the current user info from the token
         try:
-            user_response = requests.get(f"{api_base_url}/user", headers=headers)
+            user_response = requests.get(
+                f"{api_base_url}/user",
+                headers=headers,
+                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            )
             if user_response.status_code == 401:
                 return {
                     "has_access": False,
@@ -880,6 +894,7 @@ class GitHubProvider(RepositoryProvider):
             permission_response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/collaborators/{username}/permission",
                 headers=headers,
+                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
             )
 
             if permission_response.status_code == 404:
@@ -924,6 +939,7 @@ class GitHubProvider(RepositoryProvider):
                     repo_response = requests.get(
                         f"{api_base_url}/repos/{repo_name}",
                         headers=headers,
+                        timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
                     )
                     if repo_response.status_code == 200:
                         return {
@@ -942,3 +958,115 @@ class GitHubProvider(RepositoryProvider):
                 }
             self.logger.error(f"Failed to check repository access: {str(e)}")
             raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+    # ---- repository state, for deciding whether a code wiki needs regenerating ----
+
+    def get_default_branch_head(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Dict[str, str]:
+        """Return the default branch and the commit it points at.
+
+        Two targeted calls rather than ``get_branches``, which pages through the
+        whole branch list to answer a question about one branch.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+
+        repo = requests.get(
+            f"{api_base_url}/repos/{repo_name}",
+            headers=headers,
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        repo.raise_for_status()
+        branch_name = repo.json().get("default_branch") or "main"
+
+        branch = requests.get(
+            f"{api_base_url}/repos/{repo_name}/branches/{branch_name}",
+            headers=headers,
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        branch.raise_for_status()
+        commit = (branch.json() or {}).get("commit") or {}
+        return {"branch": branch_name, "commit": commit.get("sha", "")}
+
+    def get_changed_files(
+        self, token: str, git_domain: str, repo_name: str, base: str, head: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """List the files that changed between two commits.
+
+        Returns:
+            One entry per file, or ``None`` when the answer would be incomplete.
+            GitHub truncates ``compare`` at 300 files, and a partial diff read as a
+            complete one would pick an incremental run for a change big enough to
+            need a rebuild.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        response = requests.get(
+            f"{api_base_url}/repos/{repo_name}/compare/{base}...{head}",
+            headers={
+                "Authorization": f"token {token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+
+        files = payload.get("files") or []
+        if len(files) >= GITHUB_COMPARE_FILE_LIMIT:
+            self.logger.info(
+                "Compare of %s is at GitHub's %s file limit; reporting the diff as "
+                "unknown rather than truncated",
+                repo_name,
+                GITHUB_COMPARE_FILE_LIMIT,
+            )
+            return None
+
+        return [
+            {
+                "path": entry.get("filename", ""),
+                "status": file_status_letter(entry.get("status", "")),
+            }
+            for entry in files
+            if entry.get("filename")
+        ]
+
+    def describe_repository(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Metadata a caller needs before binding a repository, or ``None``.
+
+        GitHub answers 404 rather than 403 for a private repository an anonymous
+        caller cannot see, which is the behaviour to preserve rather than unpick:
+        "not readable" is the whole answer a caller is entitled to.
+
+        Anonymous requests are rate limited to 60 an hour per address, so callers
+        are expected to cache this rather than probe per keystroke.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if token:
+            headers["Authorization"] = f"token {self.decrypt_token(token)}"
+        try:
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}",
+                headers=headers,
+                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+            )
+        except requests.exceptions.RequestException as e:
+            self._log_domain_failure("describe repository", git_domain, e)
+            return None
+        if response.status_code != 200:
+            return None
+
+        data = response.json() or {}
+        return {
+            "visibility": data.get("visibility")
+            or ("private" if data.get("private") else "public"),
+            "default_branch": data.get("default_branch") or "",
+            "name": data.get("full_name") or repo_name,
+            "description": data.get("description") or "",
+        }

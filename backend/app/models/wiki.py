@@ -17,6 +17,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.sql import func
 
@@ -33,16 +34,35 @@ class WikiProject(WikiBase):
     project_name = Column(String(200), nullable=False, index=True)
     project_type = Column(String(50), nullable=False, default="git", index=True)
     source_type = Column(String(50), nullable=False, default="github", index=True)
-    source_url = Column(String(500), nullable=False, unique=True)
+    source_url = Column(String(500), nullable=False)
     source_id = Column(String(100), nullable=True)
     source_domain = Column(String(100), nullable=True)
     description = Column(Text)
     ext = Column(JSON, comment="Project extension data")
+    # The code wiki this row registers, or 0 for a legacy wiki project. One row per
+    # (repository, wiki): a code wiki belongs to its creator, so a repository may
+    # have several, one per person who built one.
+    kind_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        index=True,
+        comment="Code wiki knowledge base built from this repository; 0 = legacy",
+    )
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
+        # The pair rather than the URL alone. It is what settles two requests racing
+        # for the same (repository, wiki), which a check against a JSON field on the
+        # knowledge base could not — that leaves a window between read and insert
+        # exactly where it matters. Legacy rows carry kind_id = 0 and are therefore
+        # still limited to one per repository.
+        UniqueConstraint(
+            "source_url", "kind_id", name="uq_wiki_projects_source_url_kind_id"
+        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
@@ -82,6 +102,11 @@ class WikiGeneration(WikiBase):
         nullable=False,
         index=True,
     )
+    # Knowledge base this version line belongs to (references kinds.id, no FK).
+    # Versions are owned by the KB rather than by the project: wiki_projects.source_url
+    # is globally unique, so project-scoped versions would be shared between knowledge
+    # bases tracking the same repository. 0 marks a row predating code_wiki.
+    kind_id = Column(Integer, nullable=False, default=0, server_default="0", index=True)
     user_id = Column(Integer, nullable=False, index=True)
     task_id = Column(big_integer_id_type(), nullable=False, default=0, index=True)
     team_id = Column(Integer, nullable=False)

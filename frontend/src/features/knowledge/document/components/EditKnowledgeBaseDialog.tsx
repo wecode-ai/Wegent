@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { BookOpen, Database } from 'lucide-react'
+import { BookOpen, Code2, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -275,6 +275,7 @@ export function EditKnowledgeBaseDialog({
   const kb = fullKnowledgeBase
   const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
+  const isCodeWiki = kbType === 'code_wiki'
 
   // Handle default opening view update success
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
@@ -361,32 +362,48 @@ export function EditKnowledgeBaseDialog({
                   onGuidedQuestionsChange={setGuidedQuestions}
                 />
 
-                {/* Default opening view section */}
-                <div className="border-t border-border pt-4 mt-4">
-                  <div className="flex items-center justify-between">
+                {/* Default opening view section. A code wiki has neither view — it
+                    is read in its own reader — so offering to switch between them
+                    would show it as "classic" and let it be converted into one. */}
+                {!isCodeWiki && (
+                  <div className="border-t border-border pt-4 mt-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {isNotebook ? (
+                          <BookOpen className="w-4 h-4 text-primary" />
+                        ) : (
+                          <Database className="w-4 h-4 text-text-secondary" />
+                        )}
+                        <span className="text-sm font-medium">
+                          {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
+                          {isNotebook
+                            ? tKnowledge('document.knowledgeBase.typeNotebook')
+                            : tKnowledge('document.knowledgeBase.typeClassic')}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowConvertDialog(true)}
+                        className="flex items-center gap-1.5"
+                      >
+                        {tKnowledge('document.knowledgeBase.changeDefaultView')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {isCodeWiki && kb?.source?.sourceUrl && (
+                  <div className="border-t border-border pt-4 mt-4">
                     <div className="flex items-center gap-2">
-                      {isNotebook ? (
-                        <BookOpen className="w-4 h-4 text-primary" />
-                      ) : (
-                        <Database className="w-4 h-4 text-text-secondary" />
-                      )}
+                      <Code2 className="w-4 h-4 text-primary" />
                       <span className="text-sm font-medium">
-                        {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
-                        {isNotebook
-                          ? tKnowledge('document.knowledgeBase.typeNotebook')
-                          : tKnowledge('document.knowledgeBase.typeClassic')}
+                        {tKnowledge('codeWiki.create.repository')}:{' '}
+                        {kb.source.projectName || kb.source.sourceUrl}
                       </span>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowConvertDialog(true)}
-                      className="flex items-center gap-1.5"
-                    >
-                      {tKnowledge('document.knowledgeBase.changeDefaultView')}
-                    </Button>
                   </div>
-                </div>
+                )}
 
                 {error && <p className="text-sm text-error">{error}</p>}
               </>

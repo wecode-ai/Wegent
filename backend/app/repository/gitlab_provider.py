@@ -9,6 +9,7 @@ GitLab repository provider implementation
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 from fastapi import HTTPException
@@ -19,6 +20,11 @@ from app.models.user import User
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
 from shared.utils.url_util import build_url
+
+# Repository access checks run inside a user-facing request (creating a code wiki),
+# so an unresponsive provider must fail rather than hold the worker. Only this check
+# is bounded here; the other calls in this module remain as they were.
+ACCESS_CHECK_TIMEOUT_SECONDS = 15
 
 
 class GitLabProvider(RepositoryProvider):
@@ -894,6 +900,7 @@ class GitLabProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/user",
                 token=decrypt_token,
+                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
             )
             user_data = user_response.json()
             user_id = user_data.get("id")
@@ -920,6 +927,7 @@ class GitLabProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project_id}/members/all/{user_id}",
                 token=decrypt_token,
+                timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
             )
             member_data = member_response.json()
             access_level = member_data.get("access_level", 0)
@@ -949,3 +957,118 @@ class GitLabProvider(RepositoryProvider):
                 }
             self.logger.error(f"Failed to check project access: {str(e)}")
             raise HTTPException(status_code=502, detail=f"GitLab API error: {str(e)}")
+
+    # ---- repository state, for deciding whether a code wiki needs regenerating ----
+
+    def get_default_branch_head(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Dict[str, str]:
+        """Return the default branch and the commit it points at."""
+        api_base_url = self._get_api_base_url(git_domain)
+        encoded = quote(repo_name, safe="")
+
+        project = self._make_request_with_auth_retry(
+            method="GET",
+            url=f"{api_base_url}/projects/{encoded}",
+            token=token,
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        branch_name = (project.json() or {}).get("default_branch") or "main"
+
+        branch = self._make_request_with_auth_retry(
+            method="GET",
+            url=f"{api_base_url}/projects/{encoded}/repository/branches/"
+            f"{quote(branch_name, safe='')}",
+            token=token,
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        commit = (branch.json() or {}).get("commit") or {}
+        return {"branch": branch_name, "commit": commit.get("id", "")}
+
+    def get_changed_files(
+        self, token: str, git_domain: str, repo_name: str, base: str, head: str
+    ) -> Optional[List[Dict[str, str]]]:
+        """List the files that changed between two commits.
+
+        Returns:
+            One entry per file, or ``None`` when GitLab reports that it gave up
+            computing the diff. A partial diff read as a complete one would pick an
+            incremental run for a change big enough to need a rebuild.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        encoded = quote(repo_name, safe="")
+
+        response = self._make_request_with_auth_retry(
+            method="GET",
+            url=f"{api_base_url}/projects/{encoded}/repository/compare",
+            token=token,
+            params={"from": base, "to": head},
+            timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+        )
+        payload = response.json() or {}
+
+        if payload.get("compare_timeout"):
+            self.logger.info(
+                "GitLab timed out comparing %s; reporting the diff as unknown",
+                repo_name,
+            )
+            return None
+
+        changed: List[Dict[str, str]] = []
+        for entry in payload.get("diffs") or []:
+            path = entry.get("new_path") or entry.get("old_path") or ""
+            if not path:
+                continue
+            if entry.get("new_file"):
+                status = "A"
+            elif entry.get("deleted_file"):
+                status = "D"
+            elif entry.get("renamed_file"):
+                status = "R"
+            else:
+                status = "M"
+            changed.append({"path": path, "status": status})
+        return changed
+
+    def describe_repository(
+        self, token: str, git_domain: str, repo_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Metadata a caller needs before binding a repository, or ``None``.
+
+        ``None`` means "not readable with what was supplied" and deliberately does
+        not distinguish private from absent: answering that would tell an anonymous
+        caller which private repositories exist.
+
+        Works without a token, which is the point — a public repository is readable
+        by anyone, and requiring a credential to see that would make a wiki more
+        closed than the repository it documents.
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        url = f"{api_base_url}/projects/{quote(repo_name, safe='')}"
+        try:
+            if token:
+                response = self._make_request_with_auth_retry(
+                    method="GET",
+                    url=url,
+                    token=token,
+                    timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                )
+            else:
+                response = requests.get(
+                    url,
+                    headers={"Accept": "application/json"},
+                    timeout=ACCESS_CHECK_TIMEOUT_SECONDS,
+                )
+                if response.status_code != 200:
+                    return None
+        except requests.exceptions.RequestException as e:
+            self._log_domain_failure("describe repository", git_domain, e)
+            return None
+
+        data = response.json() or {}
+        return {
+            "visibility": data.get("visibility") or "private",
+            "default_branch": data.get("default_branch") or "",
+            "name": data.get("path_with_namespace") or repo_name,
+            "description": data.get("description") or "",
+        }
