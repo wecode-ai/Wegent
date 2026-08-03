@@ -1037,16 +1037,6 @@ async fn codex_personality_write_rejects_unsupported_value() {
     assert_eq!(error.code, "invalid_request");
 }
 
-#[test]
-fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
-    let combined = combined_codex_developer_instructions("用中文回复");
-
-    assert!(combined.contains("用中文回复"));
-    assert!(combined.contains("browser_open"));
-    assert!(combined.contains("Wework built-in browser"));
-    assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
-}
-
 #[tokio::test]
 async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

@@ -6,8 +6,10 @@ import { fileURLToPath } from 'node:url'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-const RIGHT_PANEL_TOGGLE_SELECTOR = '[data-testid="toggle-right-workspace-panel-button"]'
-const RIGHT_BROWSER_OPTION_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
+const RIGHT_PANEL_TOGGLE_SELECTOR =
+  '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
+const RIGHT_BROWSER_OPTION_SELECTOR =
+  `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
@@ -289,15 +291,34 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
       await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        fixtureUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive fixture URL before submit'
+      await control.command('finishAnimations', 'body')
+      const browserPanelMetrics = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+        )
       )
-      await control.command('press', BROWSER_INPUT_SELECTOR, { key: 'Enter' })
+      const [browserPanelWidth, rightPanelShellWidth] = await Promise.all([
+        control.command(
+          'getInlineStyle',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`,
+          { value: 'width' }
+        ),
+        control.command(
+          'getInlineStyle',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+          { value: 'width' }
+        ),
+      ])
+      assert.equal(browserPanelMetrics.length, 1, 'Expected exactly one active browser panel')
+      assert.ok(
+        browserPanelMetrics[0].width > 1 && browserPanelMetrics[0].height > 1,
+        `Browser panel is not visible: ${JSON.stringify({
+          metrics: browserPanelMetrics[0],
+          browserPanelWidth,
+          rightPanelShellWidth,
+        })}`
+      )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, payload)
       const openResult = await bridgeCall({
@@ -306,6 +327,14 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 8_000,
       })
       assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
+      await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'Bridge open did not show the fixture URL in the browser panel'
+      )
 
       const pendingAgentWait = bridgeCall({
         action: 'waitFor',
@@ -347,14 +376,18 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           `open_and_inspect failed:\n${openText}`
         )
         assert.ok(openText.includes(READY_TEXT))
-        const openJson = parseToolJson(openText)
+        const inspectText = await callTool('browser_inspect', {
+          inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+          timeoutMs: 8_000,
+        })
+        const inspectJson = parseToolJson(inspectText)
         const mcpInputNode = findNode(
-          openJson.inspect,
+          inspectJson,
           node => node.role === 'textbox' && node.name === 'Agent name',
           'MCP Agent name textbox'
         )
         const mcpButtonNode = findNode(
-          openJson.inspect,
+          inspectJson,
           node => node.role === 'button' && node.name === 'Run agent form',
           'MCP run button'
         )
