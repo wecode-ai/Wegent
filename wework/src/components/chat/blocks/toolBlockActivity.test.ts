@@ -98,6 +98,22 @@ describe('toolBlockActivity', () => {
     ).toBe('已读取 1 个文件 已搜索代码 已运行 1 条命令')
   })
 
+  test('classifies node_repl js calls as command activity', () => {
+    expect(
+      summarizeToolBlocks([
+        {
+          id: 'node-repl-js',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'mcp__node_repl__js',
+          toolInput: { code: "nodeRepl.write('hello')" },
+          status: 'done',
+          createdAt: 1770000000000,
+        },
+      ])
+    ).toBe('已运行 1 条命令')
+  })
+
   test('classifies commandLine aliases as shell command activity', () => {
     expect(
       summarizeToolBlocks([

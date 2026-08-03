@@ -313,6 +313,8 @@ const TOOL_BLOCK_ORDER_TASK_ID = 'wework-e2e-tool-block-order'
 const TOOL_BLOCK_ORDER_TASK_TITLE = 'Tool block chronological order'
 const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
 const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
+const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
+const GENERIC_MCP_TOOL_BLOCK_ID = 'wework-e2e-tool-generic-mcp'
 const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
@@ -2840,6 +2842,8 @@ async function seedToolBlockOrderTask(executorHome, workspacePath) {
     })
   const messageCreatedAt = Date.now()
   const earlierCreatedAt = messageCreatedAt + 1_000
+  const nodeReplCreatedAt = messageCreatedAt + 1_300
+  const genericMcpCreatedAt = messageCreatedAt + 1_600
   const laterCreatedAt = messageCreatedAt + 2_000
 
   runtimeIndex.tasks ??= {}
@@ -2890,6 +2894,31 @@ async function seedToolBlockOrderTask(executorHome, workspacePath) {
               createdAt: earlierCreatedAt,
               completedAt: earlierCreatedAt + 100,
             },
+            {
+              id: NODE_REPL_TOOL_BLOCK_ID,
+              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
+              type: 'tool',
+              toolName: 'mcp__node_repl__js',
+              toolInput: { code: "nodeRepl.write({ status: 'ready', value: 42 })" },
+              toolOutput: "{ status: 'ready', value: 42 }",
+              status: 'done',
+              createdAt: nodeReplCreatedAt,
+              completedAt: nodeReplCreatedAt + 100,
+            },
+            {
+              id: GENERIC_MCP_TOOL_BLOCK_ID,
+              subtaskId: TOOL_BLOCK_ORDER_TASK_ID,
+              type: 'tool',
+              toolName: 'github__issues__get_issue_details',
+              toolInput: { owner: 'wecode-ai', repo: 'Wegent', issue_number: 123 },
+              toolOutput: {
+                title: 'Tool detail verification',
+                state: 'open',
+              },
+              status: 'done',
+              createdAt: genericMcpCreatedAt,
+              completedAt: genericMcpCreatedAt + 100,
+            },
           ],
         },
       ],
@@ -2931,6 +2960,8 @@ async function verifyToolBlockChronologicalOrder({
   await control.command('click', '[data-testid="processing-summary-toggle"]')
 
   const earlierSelector = `[data-processing-block-id="${EARLIER_TOOL_BLOCK_ID}"]`
+  const nodeReplSelector = `[data-processing-block-id="${NODE_REPL_TOOL_BLOCK_ID}"]`
+  const genericMcpSelector = `[data-processing-block-id="${GENERIC_MCP_TOOL_BLOCK_ID}"]`
   const laterSelector = `[data-processing-block-id="${LATER_TOOL_BLOCK_ID}"]`
   await control.command('waitFor', earlierSelector, {
     visible: true,
@@ -2942,16 +2973,90 @@ async function verifyToolBlockChronologicalOrder({
     stableMs: 500,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', nodeReplSelector, {
+    text: '运行 JavaScript',
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', genericMcpSelector, {
+    text: '调用 get issue details',
+    visible: true,
+    stableMs: 500,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const [earlierMetrics] = JSON.parse(await control.command('getElementMetrics', earlierSelector))
   const [laterMetrics] = JSON.parse(await control.command('getElementMetrics', laterSelector))
   assert.ok(
     earlierMetrics.top < laterMetrics.top,
     `The later-created tool appeared above the earlier tool (${laterMetrics.top} <= ${earlierMetrics.top})`
   )
+  await control.command('scrollIntoView', earlierSelector)
   await captureVerificationScreenshot(
     control,
     'tool-block-order-01-chronological.png',
-    '[data-testid="message-assistant"]'
+    '[data-testid="processing-live-preview"]'
+  )
+
+  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
+  await control.command(
+    'waitFor',
+    `${nodeReplSelector} [data-testid="generic-tool-block-detail"]`,
+    {
+      text: 'mcp__node_repl__js',
+      visible: true,
+      stableMs: 500,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-input"]`, {
+    text: "nodeRepl.write({ status: 'ready', value: 42 })",
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${nodeReplSelector} [data-testid="generic-tool-output"]`, {
+    text: "{ status: 'ready', value: 42 }",
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', nodeReplSelector)
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-details-02-node-repl-expanded.png',
+    nodeReplSelector
+  )
+
+  await control.command('click', `${nodeReplSelector} [data-tool-detail-toggle]`)
+  await control.command('click', `${genericMcpSelector} [data-tool-detail-toggle]`)
+  await control.command(
+    'waitFor',
+    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`,
+    {
+      text: 'github__issues__get_issue_details',
+      visible: true,
+      stableMs: 500,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-input"]`, {
+    text: '"issue_number": 123',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `${genericMcpSelector} [data-testid="generic-tool-output"]`, {
+    text: '"title": "Tool detail verification"',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('scrollIntoView', genericMcpSelector)
+  await control.command(
+    'clickIfPresent',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
+  )
+  await captureVerificationScreenshot(
+    control,
+    'tool-block-details-03-generic-mcp-expanded.png',
+    `${genericMcpSelector} [data-testid="generic-tool-block-detail"]`
   )
 }
 

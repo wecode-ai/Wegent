@@ -25,6 +25,7 @@ import {
   isGuidanceToolName,
   isImageViewToolName,
   isFileReadToolName,
+  isNodeReplToolName,
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
@@ -139,6 +140,9 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
+    javascriptRunning: t('tool_activity.javascript_running'),
+    javascriptDone: t('tool_activity.javascript_done'),
+    javascriptError: t('tool_activity.javascript_error'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
@@ -975,6 +979,9 @@ type GenericToolLabels = {
   searchError: string
   imageView: (filename: string) => string
   imageViewFallback: string
+  javascriptRunning: string
+  javascriptDone: string
+  javascriptError: string
 }
 
 function getBlockLabel(
@@ -984,6 +991,15 @@ function getBlockLabel(
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
+  if (isNodeReplToolName(name)) {
+    const label =
+      block.status === 'error'
+        ? genericLabels.javascriptError
+        : block.status === 'done'
+          ? genericLabels.javascriptDone
+          : genericLabels.javascriptRunning
+    return { icon: <TerminalIcon />, label }
+  }
   if (isCommandToolName(name)) {
     const activityKind = getToolActivityKind(block)
     if (activityKind === 'file') {
@@ -1228,18 +1244,100 @@ function renderBlockDetail(
     return null
   }
 
-  return null
+  return <GenericToolBlockDetail block={block} />
 }
 
 function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
-  return (
+  if (isGuidanceToolName(name)) return false
+  if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
     isFileEditToolName(name) ||
     isWebSearchToolName(name) ||
     isImageViewToolName(name)
+  ) {
+    return true
+  }
+  return block.toolInput !== undefined || block.toolOutput !== undefined
+}
+
+function GenericToolBlockDetail({ block }: { block: ToolBlock }) {
+  const { t } = useTranslation('chat')
+  const inputText = stringifyToolValue(block.toolInput)
+  const outputText = stringifyToolValue(block.toolOutput)
+  const isJavaScript = isNodeReplToolName(block.toolName)
+  const code = isJavaScript ? getInputField(block, 'code', 'javascript', 'source') : undefined
+
+  return (
+    <div
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface"
+      data-testid="generic-tool-block-detail"
+    >
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <span className="min-w-0 truncate font-mono text-xs text-text-secondary">
+          {block.toolName}
+        </span>
+        {isJavaScript ? <span className="shrink-0 text-xs text-text-muted">JavaScript</span> : null}
+      </div>
+      <div className="flex min-w-0 flex-col gap-3 p-3">
+        {code ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_input')}
+            content={code}
+            testId="generic-tool-input"
+          />
+        ) : inputText ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_input')}
+            content={inputText}
+            testId="generic-tool-input"
+          />
+        ) : null}
+        {outputText ? (
+          <ToolDetailSection
+            label={t('tool_activity.tool_output')}
+            content={outputText}
+            testId="generic-tool-output"
+          />
+        ) : block.status === 'done' ? (
+          <p className="text-xs text-text-muted">{t('tool_activity.tool_no_output')}</p>
+        ) : null}
+      </div>
+    </div>
   )
+}
+
+function ToolDetailSection({
+  label,
+  content,
+  testId,
+}: {
+  label: string
+  content: string
+  testId: string
+}) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-1 text-xs text-text-muted">{label}</div>
+      <pre
+        className="max-h-48 max-w-full overflow-auto rounded-md bg-code-bg px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap break-words text-text-secondary"
+        data-testid={testId}
+      >
+        {content}
+      </pre>
+    </section>
+  )
+}
+
+function stringifyToolValue(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
