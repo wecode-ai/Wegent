@@ -2,9 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Internal company knowledge document protection API and registration."""
-
-import logging
+"""Internal company knowledge document protection API."""
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
@@ -13,18 +11,12 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.services.attachment.action_authorizer import (
-    AttachmentActionContext,
-    register_attachment_action_authorizer,
-)
 from app.services.knowledge import KnowledgeService
 from wecode.service.knowledge.document_protection_policy import (
-    is_protected_attachment,
     is_protected_knowledge_base,
 )
 from wecode.service.knowledge.watermark_identity import resolve_watermark_identity
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -40,26 +32,6 @@ class DocumentProtectionResponse(BaseModel):
     product_download_allowed: bool
     preview_mode: str
     watermark: WatermarkIdentityResponse | None = None
-
-
-async def authorize_company_document_action(
-    context: AttachmentActionContext,
-) -> None:
-    if not is_protected_attachment(context.db, context.attachment_id):
-        return
-    logger.info(
-        "Protected document export denied: attachment_id=%s user_id=%s action=%s",
-        context.attachment_id,
-        context.user_id,
-        context.action.value,
-    )
-    raise HTTPException(
-        status_code=403,
-        detail={"code": "ORGANIZATION_KB_EXPORT_FORBIDDEN"},
-    )
-
-
-register_attachment_action_authorizer(authorize_company_document_action)
 
 
 @router.get(

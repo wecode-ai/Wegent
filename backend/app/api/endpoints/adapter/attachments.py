@@ -38,11 +38,6 @@ from app.schemas.subtask_context import (
     AttachmentResponse,
     TruncationInfo,
 )
-from app.services.attachment.action_authorizer import (
-    AttachmentAction,
-    AttachmentActionContext,
-    authorize_attachment_action,
-)
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
@@ -689,14 +684,6 @@ async def get_attachment_preview(
             )
             if context is None:
                 raise HTTPException(status_code=404, detail="Attachment not found")
-            await authorize_attachment_action(
-                AttachmentActionContext(
-                    attachment_id=attachment_id,
-                    action=AttachmentAction.PREVIEW_BY_SHARE_TOKEN,
-                    db=db,
-                    user_id=current_user.id if current_user else None,
-                )
-            )
         else:
             raise HTTPException(status_code=403, detail="Share token access denied")
     # Method 2: JWT token authentication (existing logic)
@@ -772,14 +759,6 @@ async def download_attachment(
             )
             if context is None:
                 raise HTTPException(status_code=404, detail="Attachment not found")
-            await authorize_attachment_action(
-                AttachmentActionContext(
-                    attachment_id=attachment_id,
-                    action=AttachmentAction.DOWNLOAD_BY_SHARE_TOKEN,
-                    db=db,
-                    user_id=current_user.id if current_user else None,
-                )
-            )
 
     # Method 2: JWT token authentication (existing logic)
     elif current_user:
@@ -1171,15 +1150,6 @@ async def create_public_share_link(
             status_code=403, detail="Only the attachment owner can create share links"
         )
 
-    await authorize_attachment_action(
-        AttachmentActionContext(
-            attachment_id=attachment_id,
-            action=AttachmentAction.CREATE_PUBLIC_SHARE,
-            db=db,
-            user_id=current_user.id,
-        )
-    )
-
     # Generate public share token
     token = _generate_public_share_token(attachment_id, expires_in_days)
 
@@ -1231,15 +1201,6 @@ async def public_download_attachment(
 
     if context is None or context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
-
-    await authorize_attachment_action(
-        AttachmentActionContext(
-            attachment_id=attachment_id,
-            action=AttachmentAction.DOWNLOAD_SHARED,
-            db=db,
-            user_id=current_user.id,
-        )
-    )
 
     _raise_if_weibo_video_download_unsupported(context)
 
