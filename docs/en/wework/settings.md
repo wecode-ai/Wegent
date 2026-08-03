@@ -18,6 +18,13 @@ Common macOS shortcuts include:
 | Select model           | `Control+Shift+M`         |
 | Appshot                | `Command+Shift+2`         |
 
+## Model availability
+
+**My Codex** shows official Codex models only when the current device has a configured
+`auth.json`. Without that file, the group is omitted from the model picker; provider models,
+local custom models, and cloud models remain available according to their own configuration. If
+no source provides a model, the picker displays **No models available**.
+
 ## Custom Codex models
 
 In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
