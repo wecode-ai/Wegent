@@ -53,6 +53,8 @@ export class ShellsPage extends BasePage {
     await expect(this.page.locator('[data-testid="new-capability-menu"]')).toBeVisible({
       timeout: 10000,
     })
+    await this.page.locator('[data-testid="new-capability-advanced"]').click()
+    await expect(this.page.locator('[data-testid="new-capability-advanced-content"]')).toBeVisible()
     await this.page.locator('[data-testid="new-capability-type-shell"]').click()
     await this.waitForDialog()
   }

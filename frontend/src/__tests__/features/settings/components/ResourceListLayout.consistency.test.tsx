@@ -54,15 +54,17 @@ jest.mock('@/apis/resourceLibrary', () => ({
 }))
 
 jest.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({
-    toast: jest.fn(),
-  }),
+  useToast: (() => {
+    const toast = jest.fn()
+    return () => ({ toast })
+  })(),
 }))
 
 const translations: Record<string, string> = {
   'common:models.title': 'Models',
   'common:models.description': 'Manage models.',
   'common:models.create': 'New Model',
+  'common:models.edit': 'Edit Model',
   'common:models.test_connection': 'Test Connection',
   'common:models.test_success': 'Connection successful',
   'common:models.test_failed': 'Connection failed',
@@ -79,6 +81,7 @@ const translations: Record<string, string> = {
   'common:shells.title': 'Executors',
   'common:shells.description': 'Manage executors.',
   'common:shells.create': 'New Executor',
+  'common:shells.edit': 'Edit Executor',
   'common:shells.my_shells': 'My Executors',
   'common:shells.public': 'Public',
   'common:shells.group': 'Group',
@@ -87,11 +90,14 @@ const translations: Record<string, string> = {
   'common:retrievers.title': 'Retrievers',
   'common:retrievers.description': 'Manage retrievers.',
   'common:retrievers.create': 'New Retriever',
+  'common:retrievers.edit': 'Edit Retriever',
+  'common:retrievers.test_connection': 'Test Connection',
   'common:retrievers.my_retrievers': 'My Retrievers',
   'common:retrievers.group': 'Group',
   'retrievers.public': 'Public',
   'common:retrievers.group_retrievers': 'Group Retrievers',
   'retrievers.public_retrievers': 'System Retrievers',
+  'common:actions.edit': 'Edit',
   'common:actions.unbind': 'Unbind',
   'common:actions.unbinding': 'Unbinding...',
   'common:actions.unbind_success': 'Unbound successfully',
@@ -113,6 +119,8 @@ const translations: Record<string, string> = {
   'common:actions.unbind_confirm_message': 'The original resource will not be affected.',
   'common:actions.got_it': 'Got it',
   'common:actions.cancel': 'Cancel',
+  'common:actions.more_actions': 'More actions',
+  'common:teams.more_actions': 'More actions',
   'actions.choose_create_target': 'Choose location',
   'actions.choose_create_target_description':
     'The save location controls who can see and manage this resource.',
@@ -399,6 +407,22 @@ describe('resource list layout consistency', () => {
 
     await screen.findByText('Personal Model')
     expect(screen.getByTestId('model-list-items')).toHaveClass('grid', gridClass)
+    const modelCard = screen.getByTestId('model-card-user-personal-model')
+    expect(modelCard.className).not.toContain('min-h-[')
+    const modelActions = within(modelCard).getByTestId('model-card-actions-user-personal-model')
+    const testModelButton = within(modelActions).getByTestId('test-model-personal-model-button')
+    const editModelButton = within(modelActions).getByTestId('edit-model-personal-model-button')
+    const modelMoreButton = within(modelActions).getByTestId(
+      'model-more-actions-personal-model-button'
+    )
+    expect(testModelButton).toHaveAccessibleName('Test Connection')
+    expect(editModelButton).toHaveAccessibleName('Edit Model')
+    expect(editModelButton).toHaveTextContent('Edit')
+    expect(testModelButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(editModelButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(modelMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(modelActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(modelCard).queryByTestId('resource-list-item-actions')).toBeNull()
     expect(screen.queryByTestId('model-management-title')).not.toBeInTheDocument()
     modelView.unmount()
 
@@ -408,12 +432,47 @@ describe('resource list layout consistency', () => {
 
     await screen.findByText('Personal Executor')
     expect(screen.getByTestId('shell-list-items')).toHaveClass('grid', gridClass)
+    const shellCard = screen.getByTestId('shell-card-user-personal-shell')
+    expect(shellCard.className).not.toContain('min-h-[')
+    const shellActions = within(shellCard).getByTestId('shell-card-actions-user-personal-shell')
+    const editShellButton = within(shellActions).getByTestId('edit-shell-personal-shell-button')
+    const shellMoreButton = within(shellActions).getByTestId(
+      'shell-more-actions-personal-shell-button'
+    )
+    expect(editShellButton).toHaveAccessibleName('Edit Executor')
+    expect(editShellButton).toHaveTextContent('Edit')
+    expect(editShellButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(shellMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(shellActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(shellCard).queryByTestId('resource-list-item-actions')).toBeNull()
     shellView.unmount()
 
     render(<RetrieverList scope="all" sourceFilter="all" groups={writableGroups} compact />)
 
     await screen.findByText('Personal Retriever')
     expect(screen.getByTestId('retriever-list-items')).toHaveClass('grid', gridClass)
+    const retrieverCard = screen.getByTestId('retriever-card-user-personal-retriever')
+    expect(retrieverCard.className).not.toContain('min-h-[')
+    const retrieverActions = within(retrieverCard).getByTestId(
+      'retriever-card-actions-user-personal-retriever'
+    )
+    const testRetrieverButton = within(retrieverActions).getByTestId(
+      'test-retriever-personal-retriever-button'
+    )
+    const editRetrieverButton = within(retrieverActions).getByTestId(
+      'edit-retriever-personal-retriever-button'
+    )
+    const retrieverMoreButton = within(retrieverActions).getByTestId(
+      'retriever-more-actions-personal-retriever-button'
+    )
+    expect(testRetrieverButton).toHaveAccessibleName('Test Connection')
+    expect(editRetrieverButton).toHaveAccessibleName('Edit Retriever')
+    expect(editRetrieverButton).toHaveTextContent('Edit')
+    expect(testRetrieverButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(editRetrieverButton).toHaveClass('h-11', 'flex-1', 'md:h-8')
+    expect(retrieverMoreButton).toHaveClass('h-11', 'w-11', 'md:h-8', 'md:w-8')
+    expect(retrieverActions).toHaveClass('border-t', 'mt-auto')
+    expect(within(retrieverCard).queryByTestId('resource-list-item-actions')).toBeNull()
   })
 
   it('shrinks a read-only system model card without duplicate metadata or empty actions', async () => {
@@ -533,11 +592,15 @@ describe('resource list layout consistency', () => {
 
     const modelView = render(<ModelList scope="personal" compact />)
     const modelCard = await screen.findByTestId('model-card-user-installed-model')
-    expect(within(modelCard).getByTestId('unbind-model-installed-model-button')).toBeInTheDocument()
+    const unbindModelButton = within(modelCard).getByTestId('unbind-model-installed-model-button')
+    expect(unbindModelButton).toHaveTextContent('Unbind')
+    expect(unbindModelButton).toHaveClass('flex-1')
+    expect(within(modelCard).queryByTestId('model-more-actions-installed-model-button')).toBeNull()
     modelView.unmount()
 
     const shellView = render(<ShellList scope="personal" compact />)
     const shellCard = await screen.findByTestId('shell-card-user-installed-shell')
+    expect(within(shellCard).queryByTestId('shell-more-actions-installed-shell-button')).toBeNull()
     await user.click(within(shellCard).getByTestId('unbind-shell-installed-shell-button'))
     await user.click(screen.getByRole('button', { name: 'Unbind' }))
     await waitFor(() => {
@@ -548,8 +611,11 @@ describe('resource list layout consistency', () => {
     render(<RetrieverList scope="personal" compact />)
     const retrieverCard = await screen.findByTestId('retriever-card-user-installed-retriever')
     expect(
+      within(retrieverCard).queryByTestId('retriever-more-actions-installed-retriever-button')
+    ).toBeNull()
+    expect(
       within(retrieverCard).getByTestId('unbind-retriever-installed-retriever-button')
-    ).toBeInTheDocument()
+    ).toHaveTextContent('Unbind')
   })
 
   it('shows knowledge base usage before unbinding an installed retriever', async () => {
@@ -579,7 +645,10 @@ describe('resource list layout consistency', () => {
     })
 
     render(<RetrieverList scope="personal" compact />)
-    await user.click(await screen.findByTestId('unbind-retriever-installed-retriever-button'))
+    const retrieverCard = await screen.findByTestId('retriever-card-user-installed-retriever')
+    await user.click(
+      within(retrieverCard).getByTestId('unbind-retriever-installed-retriever-button')
+    )
 
     expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(93, 'default')
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
@@ -623,7 +692,8 @@ describe('resource list layout consistency', () => {
     })
 
     render(<ShellList scope="personal" compact />)
-    await user.click(await screen.findByTestId('unbind-shell-installed-shell-button'))
+    const shellCard = await screen.findByTestId('shell-card-user-installed-shell')
+    await user.click(within(shellCard).getByTestId('unbind-shell-installed-shell-button'))
 
     expect(resourceLibraryApi.getReferenceUsage).toHaveBeenCalledWith(92, 'default')
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Agent Using Marketplace Executor')

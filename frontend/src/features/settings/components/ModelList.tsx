@@ -24,7 +24,7 @@ import {
   GlobeAltIcon,
   LinkSlashIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, MoreHorizontal } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -60,6 +60,7 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
@@ -67,6 +68,12 @@ import {
   type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 // Model category type filter options
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
@@ -128,6 +135,7 @@ interface ModelListProps {
   onCategoryFilterChange?: (category: ResourceLibraryModelCategoryFilter) => void
   hideCategoryFilterControls?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 type ModelProviderType = TestConnectionRequest['provider_type']
@@ -201,6 +209,7 @@ const ModelList: React.FC<ModelListProps> = ({
   onCategoryFilterChange,
   hideCategoryFilterControls = false,
   compact = false,
+  searchQuery = '',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -264,10 +273,24 @@ const ModelList: React.FC<ModelListProps> = ({
       filteredModels = unifiedModels.filter(model => model.type === 'group')
     } else if (sourceFilter === 'system') {
       filteredModels = unifiedModels.filter(model => model.type === 'public')
+    } else if (sourceFilter === 'mine') {
+      filteredModels = unifiedModels.filter(model => model.type !== 'public')
     }
 
-    return filterResourceLibraryItemsByGroups(filteredModels, groupFilter, model => model.namespace)
-  }, [unifiedModels, sourceFilter, groupFilter])
+    return filterResourceLibraryItemsByGroups(
+      filteredModels,
+      groupFilter,
+      model => model.namespace
+    ).filter(model =>
+      matchesResourceSearch(
+        searchQuery,
+        model.name,
+        model.displayName,
+        model.provider,
+        model.modelId
+      )
+    )
+  }, [unifiedModels, sourceFilter, groupFilter, searchQuery])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -611,7 +634,7 @@ const ModelList: React.FC<ModelListProps> = ({
               {displayModels.map(displayModel => (
                 <Card
                   key={`${displayModel.sourceType}-${displayModel.namespace}-${displayModel.name}`}
-                  className={getResourceCardClassName(compact)}
+                  className={cn(getResourceCardClassName(compact), compact && 'min-w-0 gap-2')}
                   data-testid={`model-card-${displayModel.sourceType}-${displayModel.name}`}
                 >
                   <div className={getResourceCardBodyClassName(compact)}>
@@ -619,7 +642,12 @@ const ModelList: React.FC<ModelListProps> = ({
                       cardLayout={compact}
                       name={displayModel.name}
                       displayName={displayModel.displayName}
-                      showId={true}
+                      showId={!compact}
+                      identity={
+                        compact
+                          ? `${getProviderLabel(displayModel.modelType)} · ${displayModel.modelId}`
+                          : undefined
+                      }
                       isPublic={displayModel.isPublic}
                       publicLabel={t('common:models.public')}
                       icon={
@@ -659,13 +687,17 @@ const ModelList: React.FC<ModelListProps> = ({
                             MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
                             'default',
                         },
-                        {
-                          key: 'provider',
-                          label: getProviderLabel(displayModel.modelType),
-                          variant: 'default',
-                          className: 'capitalize',
-                        },
-                        ...(shouldShowModelId(displayModel)
+                        ...(!compact
+                          ? [
+                              {
+                                key: 'provider',
+                                label: getProviderLabel(displayModel.modelType),
+                                variant: 'default' as const,
+                                className: 'capitalize',
+                              },
+                            ]
+                          : []),
+                        ...(!compact && shouldShowModelId(displayModel)
                           ? [
                               {
                                 key: 'model-id',
@@ -677,7 +709,7 @@ const ModelList: React.FC<ModelListProps> = ({
                           : []),
                       ]}
                     />
-                    {hasModelActions(displayModel) && (
+                    {!compact && hasModelActions(displayModel) && (
                       <div
                         className={cn(
                           'flex flex-shrink-0 items-center gap-1',
@@ -746,6 +778,96 @@ const ModelList: React.FC<ModelListProps> = ({
                       </div>
                     )}
                   </div>
+                  {compact && hasModelActions(displayModel) && (
+                    <div
+                      className={cn(
+                        'flex min-w-0 flex-shrink-0 items-center justify-end gap-1.5',
+                        getResourceCardActionsClassName(true)
+                      )}
+                      data-testid={`model-card-actions-${displayModel.sourceType}-${displayModel.name}`}
+                    >
+                      {!displayModel.isPublic &&
+                        !displayModel.isGroup &&
+                        !displayModel.isReference && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                            onClick={() => handleTestConnection(displayModel)}
+                            disabled={testingModelName === displayModel.name}
+                            title={t('common:models.test_connection')}
+                            aria-label={t('common:models.test_connection')}
+                            data-testid={`test-model-${displayModel.name}-button`}
+                          >
+                            {testingModelName === displayModel.name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <BeakerIcon className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      {canEditModel(displayModel) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => handleEdit(displayModel)}
+                          disabled={loadingModelName === displayModel.name}
+                          title={t('common:models.edit')}
+                          aria-label={t('common:models.edit')}
+                          data-testid={`edit-model-${displayModel.name}-button`}
+                        >
+                          {loadingModelName === displayModel.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <PencilIcon className="h-4 w-4" />
+                          )}
+                          <span>{t('common:actions.edit')}</span>
+                        </Button>
+                      )}
+                      {canUnbindModel(displayModel) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => setDeleteConfirmModel(displayModel)}
+                          title={t('common:actions.unbind')}
+                          aria-label={t('common:actions.unbind')}
+                          data-testid={`unbind-model-${displayModel.name}-button`}
+                        >
+                          <LinkSlashIcon className="h-4 w-4" />
+                          <span>{t('common:actions.unbind')}</span>
+                        </Button>
+                      )}
+                      {canDeleteModel(displayModel) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                              aria-label={t('common:actions.more_actions')}
+                              data-testid={`model-more-actions-${displayModel.name}-button`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {canDeleteModel(displayModel) && (
+                              <DropdownMenuItem
+                                danger
+                                onClick={() => setDeleteConfirmModel(displayModel)}
+                                data-testid={`delete-model-${displayModel.name}-button`}
+                              >
+                                <TrashIcon className="mr-2 h-4 w-4" />
+                                {t('common:models.delete')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>
