@@ -7,6 +7,7 @@
 import React from 'react'
 import { X, Cloud, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { getExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ContextItem,
@@ -144,13 +145,17 @@ export default function ContextBadge({
       context.type === 'dingtalk_doc' &&
       !!(context as DingTalkDocContext).doc_url)
 
+  const externalProvider =
+    context.type === 'external_knowledge'
+      ? (context as ExternalKnowledgeContext).ref.provider
+      : undefined
+  const externalSource = externalProvider ? getExternalKnowledgeSource(externalProvider) : undefined
+
   const sourceLabel =
     context.type === 'dingtalk_doc'
       ? t('chat:dingtalkDocs.tabTitle')
       : context.type === 'external_knowledge'
-        ? (context as ExternalKnowledgeContext).ref.provider === 'ap'
-          ? 'WeiboAP'
-          : (context as ExternalKnowledgeContext).ref.provider
+        ? (externalSource?.shortLabel ?? externalSource?.label ?? externalProvider)
         : context.type === 'knowledge_base'
           ? 'Wegent'
           : undefined

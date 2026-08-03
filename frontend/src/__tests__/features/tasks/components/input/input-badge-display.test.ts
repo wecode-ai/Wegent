@@ -9,13 +9,13 @@ describe('groupComposerContexts', () => {
   it('groups external documents by knowledge base', () => {
     const contexts: ContextItem[] = ['doc-1', 'doc-2'].map(id => ({
       type: 'external_knowledge',
-      id: `external:ap:explicit:kb-1:document:${id}`,
+      id: `external:demo-provider:explicit:kb-1:document:${id}`,
       name: id,
       ref: {
-        provider: 'ap',
+        provider: 'demo-provider',
         mode: 'explicit',
         id: 'kb-1',
-        name: 'AP Knowledge Base',
+        name: 'Demo Knowledge Base',
         target_type: 'document',
         node_id: id,
       },
@@ -26,7 +26,7 @@ describe('groupComposerContexts', () => {
     expect(groups).toHaveLength(1)
     expect(groups[0].context).toEqual(
       expect.objectContaining({
-        name: 'AP Knowledge Base',
+        name: 'Demo Knowledge Base',
         selected_document_count: 2,
       })
     )
