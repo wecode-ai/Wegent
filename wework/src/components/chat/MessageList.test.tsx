@@ -1642,7 +1642,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('hides completed assistant turns that only contain reasoning text', () => {
+  test('shows completed assistant reasoning and expands its summary', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -1669,17 +1669,23 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('message-assistant')).not.toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
+    const toggle = screen.getByTestId('thinking-toggle-button')
+    expect(toggle).toHaveTextContent('思考过程')
     expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
   })
 
-  test('shows only the generic thinking indicator while reasoning is streaming', () => {
+  test('shows the live reasoning summary while reasoning is streaming', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
         subtaskId: 11,
         type: 'thinking',
-        content: '不应展示的模型思考字符',
+        content: '检查运行日志并定位事件边界',
         status: 'streaming',
         createdAt: 1770000000000,
       },
@@ -1700,9 +1706,10 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
-    expect(screen.queryByText('不应展示的模型思考字符')).not.toBeInTheDocument()
-    expect(screen.queryByText('思考过程')).not.toBeInTheDocument()
+    const preview = screen.getByTestId('thinking-live-preview')
+    expect(preview).toHaveTextContent('正在思考')
+    expect(preview).toHaveTextContent('检查运行日志并定位事件边界')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('keeps completed process text inside the message-level processing group', () => {
@@ -1812,7 +1819,7 @@ describe('MessageList', () => {
     expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
-  test('anchors a remounted running tool timer to the assistant turn start', () => {
+  test('does not show the turn-wide elapsed time as a tool duration after remount', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026-06-24T08:10:00.000Z'))
@@ -1840,8 +1847,10 @@ describe('MessageList', () => {
       unmount()
       render(<MessageList messages={restoredMessages} />)
 
-      expect(screen.getByText('10 分 0 秒')).toBeInTheDocument()
-      expect(screen.queryByText('1 秒')).not.toBeInTheDocument()
+      const header = screen.getByTestId('processing-summary-header')
+      expect(header).toHaveTextContent('调用 1 个工具')
+      expect(header).not.toHaveTextContent('10 分')
+      expect(screen.getByText('1.0s')).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }

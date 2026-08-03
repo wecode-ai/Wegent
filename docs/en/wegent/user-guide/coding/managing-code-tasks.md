@@ -213,7 +213,8 @@ After task completion, you can continue chatting with the agent:
 View detailed execution information in the Workbench:
 
 - **Execution Timeline**: See tools used by AI and execution order
-- **Tool Duration**: Shows seconds below one minute, then minutes and seconds from one minute onward
+- **Tool Duration**: Each command or tool row shows its own precise duration; the tool-group header does not count the turn's reasoning and waiting time as tool duration
+- **Reasoning Summary**: Shows the latest model-provided reasoning summary while work is active and keeps it expandable after completion
 - **Commit History**: View all code commits
 - **File Changes**: See specific modifications for each file
 

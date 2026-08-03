@@ -96,7 +96,7 @@ export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   return shouldUseMobileWorkbenchLayout({ isMobileViewport, isTauri }) ? (
     <MobileWorkbenchLayout />
   ) : (
-    <DesktopWorkbenchLayout />
+    <DesktopWorkbenchLayout routeActive={routeActive} />
   )
 }
 
