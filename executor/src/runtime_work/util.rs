@@ -88,8 +88,8 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .insert("additionalContext".to_owned(), additional_context);
     }
     if let Some(client_user_message_id) = payload
-        .get("clientMessageId")
-        .or_else(|| payload.get("client_message_id"))
+        .get("clientUserMessageId")
+        .or_else(|| payload.get("client_user_message_id"))
         .filter(|value| value.is_string())
         .cloned()
     {

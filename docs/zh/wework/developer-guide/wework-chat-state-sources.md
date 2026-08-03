@@ -74,6 +74,27 @@ work list 刷新也可能立即触发一次已完成 transcript 重载。该 tra
 必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
 只能使用 Codex 持久化的规范 turn ID，不能使用为了界面分段生成的消息 ID。
 
+### Codex Turn 身份与恢复
+
+Codex app-server 的 `turn/start` 返回值是新 turn 身份的权威来源。executor 必须在
+请求成功后立即记录返回的 turn ID；后续 `turn/started` notification 只用于确认或
+纠正，不能作为进入活跃 turn 的必要条件。这样即使实时通知延迟或遗漏，引导和中断
+仍能定位当前 turn。
+
+用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
+`runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
+turn ID 不一致，executor 用返回的实际 ID 更新记录并只重试一次。成功回执中的
+turn ID 可以把乐观消息重新绑定到正确 turn；失败时必须移除乐观消息并保留可重试的
+队列项，不能让 transcript 中出现未被 Codex 接受的引导。
+
+“立即发送”在发起中断请求前先把当前运行 turn 乐观标记为已取消，并移除正在发送的
+乐观引导；中断接口必须把“已经没有活跃 turn”视为幂等成功，然后启动新 turn。请求
+失败时，前端恢复此前的 turn 状态和乐观引导，避免消息丢失。
+
+实时事件只负责增量更新。WebView 或 runtime transport 重建后，恢复路径必须对已持久化
+的 Codex thread 执行 `thread/resume`，再用 `thread/read(includeTurns)` 读取完整快照；
+快照重新建立 turn、消息和运行状态，不能依赖断线前的内存事件缓存继续推断。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
@@ -242,6 +263,12 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 工作台包含输入草稿、Terminal 会话和内置浏览器等无法可靠序列化的实时状态。用户从工作台切换到插件、应用或 iframe 应用时，`AppRoutes` 必须保持 `WorkbenchProvider` 和 `WorkbenchPage` 挂载，只隐藏工作台表面；返回后继续使用原组件实例。直接打开辅助页面时可以延迟首次挂载工作台，避免创建没有使用过的后台会话。
 
 不要通过路由切换卸载工作台，也不要为 Terminal 或浏览器增加不完整的状态恢复 fallback。新增顶层页面时，应将它纳入辅助页面渲染分支，并保持工作台生命周期不变。
+
+多个顶层文档标签会用 React `Activity` 保持各自的工作台实例。隐藏
+`Activity` 的更新可能延迟提交，但它创建到全局标题栏的 Portal 仍会保留在目标节点中。
+因此所有全局标题栏 Portal 都必须标记所属文档标签，并由 `AppRoutes` 的活动标签状态统一
+控制可见性；不能仅依赖隐藏工作台内部的条件渲染来撤销 Portal。切换标签时只能显示当前
+活动标签的主标题栏、面板操作区、右侧工作区标题和反馈入口。
 
 ## 工作台 pane 缓存
 

@@ -2,9 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Check, Code2, Loader2, Plus, Server } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { format } from 'date-fns'
+import { ChatBubbleLeftEllipsisIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
+import {
+  Bot,
+  BrainCircuit,
+  Check,
+  Database,
+  Loader2,
+  Plus,
+  Server,
+  Sparkles,
+  SquareTerminal,
+} from 'lucide-react'
 
-import { ResourceCardFooter } from '@/components/common/ResourceCardFooter'
+import {
+  getResourceCardActionsClassName,
+  getResourceCardClassName,
+} from '@/components/common/resourceCardLayout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -19,11 +35,17 @@ interface ResourceListingCardProps {
   onViewDetails: (listing: ResourceLibraryListing) => void
   targetNamespace?: string
   compact?: boolean
+  presentation?: 'discovery' | 'management'
+  managementAction?: ReactNode
+  managementFooterAction?: ReactNode
 }
 
 const typeIcons = {
   agent: Bot,
-  skill: Code2,
+  skill: Sparkles,
+  model: BrainCircuit,
+  shell: SquareTerminal,
+  retriever: Database,
   mcp: Server,
 } satisfies Record<ResourceLibraryResourceType, typeof Bot>
 
@@ -36,6 +58,13 @@ function getPublisher(listing: ResourceLibraryListing, officialPublisher: string
   return listing.publisher_user_name?.trim() || listing.publisher_namespace?.trim() || null
 }
 
+function formatInstallCount(count: number): string {
+  return new Intl.NumberFormat(undefined, {
+    notation: count >= 1000 ? 'compact' : 'standard',
+    maximumFractionDigits: 1,
+  }).format(count)
+}
+
 export function ResourceListingCard({
   listing,
   isInstalling = false,
@@ -43,26 +72,98 @@ export function ResourceListingCard({
   onViewDetails,
   targetNamespace = 'default',
   compact = false,
+  presentation = 'discovery',
+  managementAction,
+  managementFooterAction,
 }: ResourceListingCardProps) {
   const { t } = useTranslation('resource-library')
   const TypeIcon = typeIcons[listing.resource_type]
   const title = getListingTitle(listing)
   const isAgent = listing.resource_type === 'agent'
+  const isDirectlyUsableSystemCapability =
+    ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
+    listing.publisher_user_id === 0
   const isPersonalTarget = targetNamespace === 'default'
+  const isCodeOnlyAgent =
+    isAgent && listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
   const publisher = getPublisher(listing, t('fields.official_publisher'))
+  const isOfficial = listing.publisher_user_id === 0
+  const isOfficialAgent = isAgent && isOfficial
+  const isManagementPresentation = presentation === 'management'
+  const isFloatingAgentAction = isAgent && isPersonalTarget && !isManagementPresentation
+  const isManagementAgentAction = isAgent && isManagementPresentation
+  const isTopRightSkillAction =
+    listing.resource_type === 'skill' && isPersonalTarget && !isManagementPresentation
+  const isTopRightAction = isFloatingAgentAction || isTopRightSkillAction
+  const updatedDate = new Date(listing.updated_at)
+  const hasUpdatedDate = !Number.isNaN(updatedDate.getTime())
+  const updatedDateLabel = hasUpdatedDate ? format(updatedDate, 'yyyy-MM-dd') : null
+  const updatedDateTitle = hasUpdatedDate ? format(updatedDate, 'yyyy-MM-dd HH:mm:ss') : undefined
+  const showInstallCount = !isOfficialAgent && listing.install_count > 0
   const installDisabled = (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
   const actionLabel = isAgent
     ? isPersonalTarget
-      ? t('actions.use')
+      ? t(isCodeOnlyAgent ? 'actions.open_code' : 'actions.open_chat')
       : t('actions.add')
     : listing.is_installed && isPersonalTarget
       ? t('actions.added')
       : t('actions.add')
+  const showAction = !isDirectlyUsableSystemCapability && (!isManagementPresentation || isAgent)
+  const actionButton = showAction && (
+    <Button
+      type="button"
+      variant={
+        isFloatingAgentAction ? 'primary' : isManagementPresentation ? 'outline' : 'secondary'
+      }
+      size="sm"
+      className={cn(
+        'relative z-20 h-9 shrink-0 px-3 text-xs',
+        isTopRightSkillAction && 'absolute right-3 top-3 h-11 w-11 px-0 md:h-8 md:w-8',
+        isFloatingAgentAction &&
+          'absolute right-3 top-3 h-11 min-w-[44px] px-2.5 shadow-sm transition-opacity md:h-7 md:min-w-0 md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100',
+        isManagementAgentAction &&
+          'h-11 w-full gap-2 border-primary/[0.15] bg-primary/[0.08] px-3 text-xs text-primary hover:border-primary/20 hover:bg-primary/[0.15] md:h-8'
+      )}
+      disabled={installDisabled}
+      onClick={() => onInstall(listing)}
+      aria-label={`${actionLabel} ${title}`}
+      title={isTopRightSkillAction ? actionLabel : undefined}
+      data-testid={`install-resource-${listing.id}-button`}
+    >
+      {isInstalling ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+      ) : isManagementAgentAction ? (
+        isCodeOnlyAgent ? (
+          <CodeBracketIcon className="h-4 w-4" aria-hidden />
+        ) : (
+          <ChatBubbleLeftEllipsisIcon className="h-4 w-4" aria-hidden />
+        )
+      ) : isTopRightSkillAction ? (
+        listing.is_installed ? (
+          <Check className="h-4 w-4" aria-hidden />
+        ) : (
+          <Plus className="h-4 w-4" aria-hidden />
+        )
+      ) : !isAgent && listing.is_installed && isPersonalTarget ? (
+        <Check className="h-4 w-4" aria-hidden />
+      ) : null}
+      {!isTopRightSkillAction && actionLabel}
+    </Button>
+  )
+  const showManagementHeaderAction = isManagementPresentation && Boolean(managementAction)
+
   return (
     <Card
       className={cn(
-        'group relative flex min-h-[160px] flex-col gap-4 overflow-hidden rounded-xl border-border bg-surface p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md',
-        compact && 'min-h-[180px]'
+        isManagementPresentation
+          ? getResourceCardClassName(true)
+          : 'flex flex-col overflow-hidden rounded-xl border-border bg-surface px-4 pt-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md',
+        'group relative',
+        isManagementPresentation
+          ? 'gap-3'
+          : isAgent
+            ? 'h-full gap-2.5 pb-3'
+            : 'min-h-[190px] gap-3 pb-4'
       )}
       data-testid={`resource-listing-card-${listing.id}`}
     >
@@ -73,74 +174,102 @@ export function ResourceListingCard({
         aria-label={`${t('actions.details')} ${title}`}
         data-testid={`view-resource-${listing.id}-button`}
       />
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/5 text-primary">
-            <TypeIcon className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div className={cn('min-w-0', !isAgent && 'pr-10')}>
-            <h3
-              className={cn(
-                'truncate font-semibold text-text-primary',
-                compact ? 'text-sm' : 'text-base'
-              )}
-            >
-              {title}
-            </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Badge variant="info">{t(`filters.${listing.resource_type}`)}</Badge>
+      {isTopRightAction && actionButton}
+      <div className={cn('flex min-w-0 items-start gap-3', isTopRightSkillAction && 'pr-16')}>
+        <div
+          className={cn(
+            'flex shrink-0 items-center justify-center border border-primary/10 bg-primary/5 text-primary',
+            isAgent ? 'h-10 w-10 rounded-lg' : 'h-11 w-11 rounded-xl'
+          )}
+        >
+          <TypeIcon className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3
+            className={cn(
+              'truncate font-semibold text-text-primary',
+              compact ? 'text-sm' : 'text-base'
+            )}
+          >
+            {title}
+          </h3>
+          {(listing.current_version?.version || isOfficial) && (
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
               {listing.current_version?.version && (
                 <span className="text-xs text-text-muted">v{listing.current_version.version}</span>
               )}
+              {isOfficial && (
+                <Badge variant="success" size="sm">
+                  {t('fields.official_badge')}
+                </Badge>
+              )}
             </div>
-          </div>
+          )}
         </div>
-        <Button
-          type="button"
-          variant={isAgent && !installDisabled ? 'primary' : 'secondary'}
-          size="sm"
-          className={cn(
-            'absolute right-4 top-4 z-20 shrink-0',
-            isAgent
-              ? 'h-8 px-2.5 text-xs opacity-100 transition-opacity md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100'
-              : 'h-11 w-11 border-0 bg-muted p-0 text-text-primary hover:bg-muted/80 md:h-9 md:w-9'
-          )}
-          disabled={installDisabled}
-          onClick={() => onInstall(listing)}
-          aria-label={`${actionLabel} ${title}`}
-          data-testid={`install-resource-${listing.id}-button`}
-        >
-          {isAgent ? (
-            actionLabel
-          ) : isInstalling ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : listing.is_installed && isPersonalTarget ? (
-            <Check className="h-4 w-4" aria-hidden />
-          ) : (
-            <Plus className="h-4 w-4" aria-hidden />
-          )}
-        </Button>
+        {showManagementHeaderAction && (
+          <div
+            className="relative z-20 flex shrink-0 items-center gap-1.5"
+            data-testid={`resource-listing-management-actions-${listing.id}`}
+          >
+            {managementAction}
+          </div>
+        )}
       </div>
 
-      <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">
+      <p
+        className={cn('line-clamp-2 text-sm leading-5 text-text-secondary', !isAgent && 'min-h-10')}
+      >
         {listing.description || listing.name}
       </p>
 
-      {listing.tags.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {listing.tags.slice(0, compact ? 2 : 3).map(tag => (
-            <Badge key={tag} variant="secondary">
-              {tag}
-            </Badge>
-          ))}
+      {isManagementAgentAction && (
+        <div
+          className={cn('relative z-20 min-w-0', getResourceCardActionsClassName(true))}
+          data-testid={`resource-listing-primary-action-${listing.id}`}
+        >
+          {actionButton}
         </div>
       )}
 
-      <ResourceCardFooter
-        owner={publisher}
-        updatedAt={listing.updated_at}
-        testId={`resource-listing-footer-${listing.id}`}
-      />
+      {isManagementPresentation && managementFooterAction && (
+        <div
+          className={cn('relative z-20 min-w-0', getResourceCardActionsClassName(true))}
+          data-testid={`resource-listing-footer-action-${listing.id}`}
+        >
+          {managementFooterAction}
+        </div>
+      )}
+
+      {!isManagementPresentation && (
+        <div
+          className={cn(
+            'mt-auto flex min-w-0 items-center justify-between gap-3 border-t border-border',
+            isAgent ? 'pt-2' : 'pt-3'
+          )}
+          data-testid={`resource-listing-footer-${listing.id}`}
+        >
+          <div className="flex min-w-0 items-center gap-1 text-xs text-text-muted">
+            {publisher && <span className="min-w-0 truncate">{publisher}</span>}
+            {updatedDateLabel && (
+              <>
+                {publisher && <span className="shrink-0">·</span>}
+                <time className="shrink-0" dateTime={listing.updated_at} title={updatedDateTitle}>
+                  {updatedDateLabel}
+                </time>
+              </>
+            )}
+            {showInstallCount && (
+              <>
+                {(publisher || updatedDateLabel) && <span className="shrink-0">·</span>}
+                <span className="shrink-0">
+                  {formatInstallCount(listing.install_count)} {t('fields.people_added')}
+                </span>
+              </>
+            )}
+          </div>
+          {!isTopRightAction && actionButton}
+        </div>
+      )}
     </Card>
   )
 }

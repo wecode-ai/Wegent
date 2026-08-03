@@ -85,8 +85,13 @@ iOS native builds have no Vite dev proxy, so backend URLs must be absolute. Each
 ```dotenv
 VITE_WEGENT_BACKEND_URL=https://wework.example.com
 VITE_WEGENT_SOCKET_URL=wss://wss-wework.example.com # optional
+VITE_WEWORK_FEEDBACK_URL=https://feedback.example.com/api/v1/feedback # optional
 APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX
 ```
+
+`VITE_WEWORK_FEEDBACK_URL` is the complete feedback submission endpoint baked into the
+app. Leave it empty to disable remote feedback submission while keeping local
+diagnostic export available.
 
 ### Run and Package
 
@@ -122,6 +127,7 @@ On first launch, trust the developer certificate in iOS Settings. The phone must
 
 - [Local-First Cloud Connection](../docs/en/developer-guide/wework-cloud-connection.md)
 - [Runtime Local Work](../docs/en/developer-guide/runtime-local-work.md)
+- [Priority Task Filtering](../docs/en/wegent/user-guide/coding/priority-activity-filter.md)
 - [Wework macOS Release](../docs/en/developer-guide/wework-macos-release.md)
 - [Wework Performance Diagnostics](../docs/en/developer-guide/wework-performance-diagnostics.md)
 - [Wework E2E Automation](../docs/en/developer-guide/wework-e2e-automation.md)

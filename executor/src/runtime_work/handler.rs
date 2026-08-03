@@ -64,7 +64,7 @@ use super::{
         sync_codex_global_remote_projects, upsert_codex_global_local_project,
         CodexGlobalProjectIndex, CodexGlobalRemoteProject,
     },
-    codex_notifications::codex_notification,
+    codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     connectors::ConnectorRuntime,
     events::{emit_response_event, CodexNotificationEventMapper},

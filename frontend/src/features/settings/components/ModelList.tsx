@@ -22,13 +22,15 @@ import {
   TrashIcon,
   BeakerIcon,
   GlobeAltIcon,
+  LinkSlashIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, MoreHorizontal } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import ModelEditDialog from './ModelEditDialog'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,6 +51,7 @@ import {
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import { getReferencedBotNames } from '@/features/resource-library/capabilityReferenceErrors'
 import type { ResourceLibraryModelCategoryFilter } from '@/features/resource-library/types'
 import {
   buildGroupDisplayNameMap,
@@ -57,6 +60,7 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
@@ -64,6 +68,12 @@ import {
   type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 // Model category type filter options
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
@@ -102,6 +112,8 @@ interface DisplayModel {
   modelCategoryType: ModelCategoryType // Model category type: llm, tts, stt, embedding, rerank
   created_at?: string | null
   updated_at?: string | null
+  isReference: boolean
+  listingId?: number | null
 }
 
 interface ModelListProps {
@@ -123,6 +135,7 @@ interface ModelListProps {
   onCategoryFilterChange?: (category: ResourceLibraryModelCategoryFilter) => void
   hideCategoryFilterControls?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 type ModelProviderType = TestConnectionRequest['provider_type']
@@ -196,6 +209,7 @@ const ModelList: React.FC<ModelListProps> = ({
   onCategoryFilterChange,
   hideCategoryFilterControls = false,
   compact = false,
+  searchQuery = '',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -259,10 +273,24 @@ const ModelList: React.FC<ModelListProps> = ({
       filteredModels = unifiedModels.filter(model => model.type === 'group')
     } else if (sourceFilter === 'system') {
       filteredModels = unifiedModels.filter(model => model.type === 'public')
+    } else if (sourceFilter === 'mine') {
+      filteredModels = unifiedModels.filter(model => model.type !== 'public')
     }
 
-    return filterResourceLibraryItemsByGroups(filteredModels, groupFilter, model => model.namespace)
-  }, [unifiedModels, sourceFilter, groupFilter])
+    return filterResourceLibraryItemsByGroups(
+      filteredModels,
+      groupFilter,
+      model => model.namespace
+    ).filter(model =>
+      matchesResourceSearch(
+        searchQuery,
+        model.name,
+        model.displayName,
+        model.provider,
+        model.modelId
+      )
+    )
+  }, [unifiedModels, sourceFilter, groupFilter, searchQuery])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -292,6 +320,8 @@ const ModelList: React.FC<ModelListProps> = ({
         modelCategoryType: (model.modelCategoryType as ModelCategoryType) || 'llm',
         created_at: model.created_at,
         updated_at: model.updated_at,
+        isReference: model.isReference === true,
+        listingId: model.listingId,
       }
     })
 
@@ -385,18 +415,38 @@ const ModelList: React.FC<ModelListProps> = ({
 
     setIsDeleting(true)
     try {
-      // Use the model's actual namespace for deletion
-      await modelApis.deleteModel(deleteConfirmModel.name, deleteConfirmModel.namespace)
+      if (deleteConfirmModel.isReference && deleteConfirmModel.listingId) {
+        await resourceLibraryApi.uninstallListing(
+          deleteConfirmModel.listingId,
+          deleteConfirmModel.namespace
+        )
+      } else {
+        await modelApis.deleteModel(deleteConfirmModel.name, deleteConfirmModel.namespace)
+      }
       toast({
-        title: t('common:models.delete_success'),
+        title: t(
+          deleteConfirmModel.isReference
+            ? 'common:actions.unbind_success'
+            : 'common:models.delete_success'
+        ),
       })
       setDeleteConfirmModel(null)
       fetchModels()
     } catch (error) {
+      const referencedBotNames = getReferencedBotNames(error)
       toast({
         variant: 'destructive',
-        title: t('common:models.errors.delete_failed'),
-        description: (error as Error).message,
+        title: t(
+          deleteConfirmModel.isReference
+            ? 'common:actions.unbind_failed'
+            : 'common:models.errors.delete_failed'
+        ),
+        description:
+          referencedBotNames.length > 0
+            ? t('common:actions.unbind_in_use_message', {
+                names: referencedBotNames.join('、'),
+              })
+            : (error as Error).message,
       })
     } finally {
       setIsDeleting(false)
@@ -404,6 +454,8 @@ const ModelList: React.FC<ModelListProps> = ({
   }
 
   const handleEdit = async (displayModel: DisplayModel) => {
+    if (displayModel.isReference) return
+
     if (displayModel.isPublic) return
 
     // Notify parent to update group selector if editing a group resource
@@ -468,21 +520,24 @@ const ModelList: React.FC<ModelListProps> = ({
   }
 
   const canEditModel = (displayModel: DisplayModel) => {
-    if (displayModel.isPublic) return false
+    if (displayModel.isPublic || displayModel.isReference) return false
     if (displayModel.isGroup) return canEditGroupResource(displayModel.namespace)
     return true
   }
 
   const canDeleteModel = (displayModel: DisplayModel) => {
-    if (displayModel.isPublic) return false
+    if (displayModel.isPublic || displayModel.isReference) return false
     if (displayModel.isGroup) return canDeleteGroupResource(displayModel.namespace)
     return true
   }
 
+  const canUnbindModel = (displayModel: DisplayModel) =>
+    displayModel.isReference &&
+    !!displayModel.listingId &&
+    (!displayModel.isGroup || canEditGroupResource(displayModel.namespace))
+
   const hasModelActions = (displayModel: DisplayModel) =>
-    (!displayModel.isPublic && !displayModel.isGroup) ||
-    canEditModel(displayModel) ||
-    canDeleteModel(displayModel)
+    canEditModel(displayModel) || canDeleteModel(displayModel) || canUnbindModel(displayModel)
 
   const shouldShowModelId = (displayModel: DisplayModel) =>
     Boolean(
@@ -579,7 +634,7 @@ const ModelList: React.FC<ModelListProps> = ({
               {displayModels.map(displayModel => (
                 <Card
                   key={`${displayModel.sourceType}-${displayModel.namespace}-${displayModel.name}`}
-                  className={getResourceCardClassName(compact)}
+                  className={cn(getResourceCardClassName(compact), compact && 'min-w-0 gap-2')}
                   data-testid={`model-card-${displayModel.sourceType}-${displayModel.name}`}
                 >
                   <div className={getResourceCardBodyClassName(compact)}>
@@ -587,7 +642,12 @@ const ModelList: React.FC<ModelListProps> = ({
                       cardLayout={compact}
                       name={displayModel.name}
                       displayName={displayModel.displayName}
-                      showId={true}
+                      showId={!compact}
+                      identity={
+                        compact
+                          ? `${getProviderLabel(displayModel.modelType)} · ${displayModel.modelId}`
+                          : undefined
+                      }
                       isPublic={displayModel.isPublic}
                       publicLabel={t('common:models.public')}
                       icon={
@@ -627,13 +687,17 @@ const ModelList: React.FC<ModelListProps> = ({
                             MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
                             'default',
                         },
-                        {
-                          key: 'provider',
-                          label: getProviderLabel(displayModel.modelType),
-                          variant: 'default',
-                          className: 'capitalize',
-                        },
-                        ...(shouldShowModelId(displayModel)
+                        ...(!compact
+                          ? [
+                              {
+                                key: 'provider',
+                                label: getProviderLabel(displayModel.modelType),
+                                variant: 'default' as const,
+                                className: 'capitalize',
+                              },
+                            ]
+                          : []),
+                        ...(!compact && shouldShowModelId(displayModel)
                           ? [
                               {
                                 key: 'model-id',
@@ -645,7 +709,7 @@ const ModelList: React.FC<ModelListProps> = ({
                           : []),
                       ]}
                     />
-                    {hasModelActions(displayModel) && (
+                    {!compact && hasModelActions(displayModel) && (
                       <div
                         className={cn(
                           'flex flex-shrink-0 items-center gap-1',
@@ -654,22 +718,24 @@ const ModelList: React.FC<ModelListProps> = ({
                         )}
                         data-testid={`model-card-actions-${displayModel.sourceType}-${displayModel.name}`}
                       >
-                        {!displayModel.isPublic && !displayModel.isGroup && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => handleTestConnection(displayModel)}
-                            disabled={testingModelName === displayModel.name}
-                            title={t('common:models.test_connection')}
-                          >
-                            {testingModelName === displayModel.name ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <BeakerIcon className="w-4 h-4" />
-                            )}
-                          </Button>
-                        )}
+                        {!displayModel.isPublic &&
+                          !displayModel.isGroup &&
+                          !displayModel.isReference && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleTestConnection(displayModel)}
+                              disabled={testingModelName === displayModel.name}
+                              title={t('common:models.test_connection')}
+                            >
+                              {testingModelName === displayModel.name ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <BeakerIcon className="w-4 h-4" />
+                              )}
+                            </Button>
+                          )}
                         {canEditModel(displayModel) && (
                           <Button
                             variant="ghost"
@@ -697,9 +763,111 @@ const ModelList: React.FC<ModelListProps> = ({
                             <TrashIcon className="w-4 h-4" />
                           </Button>
                         )}
+                        {canUnbindModel(displayModel) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setDeleteConfirmModel(displayModel)}
+                            title={t('common:actions.unbind')}
+                            data-testid={`unbind-model-${displayModel.name}-button`}
+                          >
+                            <LinkSlashIcon className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
+                  {compact && hasModelActions(displayModel) && (
+                    <div
+                      className={cn(
+                        'flex min-w-0 flex-shrink-0 items-center justify-end gap-1.5',
+                        getResourceCardActionsClassName(true)
+                      )}
+                      data-testid={`model-card-actions-${displayModel.sourceType}-${displayModel.name}`}
+                    >
+                      {!displayModel.isPublic &&
+                        !displayModel.isGroup &&
+                        !displayModel.isReference && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                            onClick={() => handleTestConnection(displayModel)}
+                            disabled={testingModelName === displayModel.name}
+                            title={t('common:models.test_connection')}
+                            aria-label={t('common:models.test_connection')}
+                            data-testid={`test-model-${displayModel.name}-button`}
+                          >
+                            {testingModelName === displayModel.name ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <BeakerIcon className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      {canEditModel(displayModel) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => handleEdit(displayModel)}
+                          disabled={loadingModelName === displayModel.name}
+                          title={t('common:models.edit')}
+                          aria-label={t('common:models.edit')}
+                          data-testid={`edit-model-${displayModel.name}-button`}
+                        >
+                          {loadingModelName === displayModel.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <PencilIcon className="h-4 w-4" />
+                          )}
+                          <span>{t('common:actions.edit')}</span>
+                        </Button>
+                      )}
+                      {canUnbindModel(displayModel) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => setDeleteConfirmModel(displayModel)}
+                          title={t('common:actions.unbind')}
+                          aria-label={t('common:actions.unbind')}
+                          data-testid={`unbind-model-${displayModel.name}-button`}
+                        >
+                          <LinkSlashIcon className="h-4 w-4" />
+                          <span>{t('common:actions.unbind')}</span>
+                        </Button>
+                      )}
+                      {canDeleteModel(displayModel) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                              aria-label={t('common:actions.more_actions')}
+                              data-testid={`model-more-actions-${displayModel.name}-button`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {canDeleteModel(displayModel) && (
+                              <DropdownMenuItem
+                                danger
+                                onClick={() => setDeleteConfirmModel(displayModel)}
+                                data-testid={`delete-model-${displayModel.name}-button`}
+                              >
+                                <TrashIcon className="mr-2 h-4 w-4" />
+                                {t('common:models.delete')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>
@@ -715,6 +883,7 @@ const ModelList: React.FC<ModelListProps> = ({
         toast={toast}
         groupName={createTarget.scope === 'group' ? createTarget.groupName : groupName}
         scope={editingModel ? (scope === 'group' ? 'group' : 'personal') : createTarget.scope}
+        publicationGroups={groups}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -724,9 +893,20 @@ const ModelList: React.FC<ModelListProps> = ({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('common:models.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(
+                deleteConfirmModel?.isReference
+                  ? 'common:actions.unbind_confirm_title'
+                  : 'common:models.delete_confirm_title'
+              )}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t('common:models.delete_confirm_message', { name: deleteConfirmModel?.name })}
+              {t(
+                deleteConfirmModel?.isReference
+                  ? 'common:actions.unbind_confirm_message'
+                  : 'common:models.delete_confirm_message',
+                { name: deleteConfirmModel?.name }
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -760,10 +940,18 @@ const ModelList: React.FC<ModelListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('common:actions.deleting')}
+                  {t(
+                    deleteConfirmModel?.isReference
+                      ? 'common:actions.unbinding'
+                      : 'common:actions.deleting'
+                  )}
                 </div>
               ) : (
-                t('common:actions.delete')
+                t(
+                  deleteConfirmModel?.isReference
+                    ? 'common:actions.unbind'
+                    : 'common:actions.delete'
+                )
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

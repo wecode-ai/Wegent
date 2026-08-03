@@ -57,7 +57,10 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
     await expect(page.locator('[data-testid="new-capability-button"]')).toBeVisible({
       timeout: 15000,
     })
-    await expect(page.locator('[data-testid="resource-library-mode-select"]')).toBeVisible()
+    await expect(page.locator('[data-testid="resource-library-source-segments"]')).toBeVisible()
+    await expect(
+      page.locator('[data-testid="resource-library-source-personal-button"]')
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('should display agent list or empty state', async ({ page }) => {

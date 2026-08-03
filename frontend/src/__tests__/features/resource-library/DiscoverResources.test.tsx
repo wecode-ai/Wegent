@@ -57,26 +57,38 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.agent': '智能体',
         'filters.skill': '技能',
         'actions.install': '安装',
-        'actions.use': '去使用',
+        'actions.use': '立即使用',
+        'actions.use_now': '立即使用',
+        'actions.open_chat': '去对话',
+        'actions.open_code': '去编码',
         'actions.add': '添加',
         'actions.added': '已添加',
-        'actions.installed': '已安装',
+        'actions.installed': '已添加',
         'actions.details': '详情',
         'actions.retry': '重试',
         'actions.search': '搜索',
         'fields.sort': '排序',
-        'fields.install_count': '安装次数',
+        'fields.install_count': '添加次数',
+        'fields.people_added': '人添加',
+        'fields.official_badge': '官方',
         'fields.publisher': '发布者',
         'fields.official_publisher': 'Wegent 官方',
         'fields.updated_at': '更新时间',
+        'modes.chat': '聊天',
+        'modes.code': '编码',
+        'modes.task': '设备',
+        'common:teams.go_to_chat': '去聊天',
+        'common:teams.go_to_code': '去编码',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'sort.default': '默认',
         'sort.popular': '热门',
         'sort.latest': '最新',
         'states.loading': '正在加载资源',
         'states.empty': '暂无资源',
         'states.error': '加载失败',
-        'messages.install_success': '安装成功',
+        'messages.install_success': '添加成功',
       }
 
       return translations[key] ?? key
@@ -108,6 +120,7 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
     },
     install_count: 4,
     is_installed: false,
+    bind_modes: [],
     created_at: '2026-05-27T00:00:00',
     updated_at: '2026-05-27T00:00:00',
     ...overrides,
@@ -156,29 +169,33 @@ describe('DiscoverResources', () => {
       'xl:grid-cols-4'
     )
     expect(screen.getByTestId('resource-listing-card-1')).toHaveClass(
-      'min-h-[180px]',
-      'p-4',
-      'gap-4',
+      'min-h-[190px]',
+      'px-4',
+      'pt-4',
+      'pb-4',
+      'gap-3',
       'rounded-xl'
     )
     const actionButton = screen.getByRole('button', { name: '添加 Doc Summary' })
     expect(actionButton).toBeEnabled()
     expect(actionButton).toHaveClass(
+      'absolute',
+      'right-3',
+      'top-3',
       'h-11',
       'w-11',
-      'border-0',
-      'bg-muted',
-      'p-0',
-      'md:h-9',
-      'md:w-9'
+      'px-0',
+      'md:h-8',
+      'md:w-8'
     )
-    expect(actionButton).not.toHaveClass('md:opacity-0', 'md:pointer-events-none')
-    expect(actionButton.querySelector('svg')).toBeInTheDocument()
+    expect(actionButton).toHaveAttribute('title', '添加')
+    expect(actionButton).not.toHaveTextContent('添加')
     const footer = screen.getByTestId('resource-listing-footer-1')
     expect(footer).toHaveClass('mt-auto')
     expect(footer).toHaveTextContent('publisher-user')
     expect(footer).toHaveTextContent('2026-05-27')
-    expect(within(footer).getByRole('time')).toHaveAttribute('datetime', '2026-05-27T00:00:00')
+    expect(footer).toHaveTextContent('4 人添加')
+    expect(screen.queryByText('docs')).not.toBeInTheDocument()
   })
 
   it('omits missing publisher metadata without reserving a placeholder', async () => {
@@ -199,10 +216,33 @@ describe('DiscoverResources', () => {
     const footer = await screen.findByTestId('resource-listing-footer-1')
     expect(footer).not.toHaveTextContent('publisher-user')
     expect(footer).not.toHaveTextContent('#3')
-    expect(within(footer).getByRole('time')).toBeInTheDocument()
+    expect(footer).toHaveTextContent('4 人添加')
+  })
+
+  it('hides zero add counts without truncating Skill metadata', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [createListing({ publisher_user_id: 0, install_count: 0 })],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="skill" />)
+
+    const footer = await screen.findByTestId('resource-listing-footer-1')
+    expect(footer).toHaveTextContent('Wegent 官方')
+    expect(footer).toHaveTextContent('2026-05-27')
+    expect(footer).not.toHaveTextContent('人添加')
   })
 
   it('uses the same four-column desktop grid for other resource types', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [createListing({ resource_type: 'agent', bind_modes: ['chat'] })],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
     render(<DiscoverResources resourceType="agent" />)
 
     expect(await screen.findByTestId('discover-resource-grid')).toHaveClass(
@@ -210,7 +250,20 @@ describe('DiscoverResources', () => {
       'lg:grid-cols-3',
       'xl:grid-cols-4'
     )
-    expect(screen.getByTestId('resource-listing-card-1')).toHaveClass('min-h-[160px]')
+    expect(screen.getByTestId('resource-listing-card-1')).toHaveClass('h-full')
+    expect(screen.getByTestId('install-resource-1-button')).toHaveClass(
+      'absolute',
+      'right-3',
+      'top-3',
+      'h-11',
+      'min-w-[44px]',
+      'md:h-7',
+      'bg-primary',
+      'text-white',
+      'md:opacity-0',
+      'md:group-hover:opacity-100',
+      'md:group-focus-within:opacity-100'
+    )
   })
 
   it('renders leading filters in the marketplace toolbar', async () => {
@@ -224,7 +277,10 @@ describe('DiscoverResources', () => {
     const toolbar = await screen.findByTestId('leading-team-filter')
     expect(toolbar).toBeInTheDocument()
     expect(screen.getByTestId('marketplace-toolbar')).toHaveClass('rounded-xl', 'bg-surface')
-    expect(screen.getByTestId('resource-library-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-search-input')).toHaveAttribute(
+      'placeholder',
+      '搜索技能'
+    )
   })
 
   it('persists an applied search in the URL and reloads the marketplace', async () => {
@@ -303,7 +359,7 @@ describe('DiscoverResources', () => {
     expect(screen.queryByTestId('resource-listing-card-2')).not.toBeInTheDocument()
   })
 
-  it('does not render skills already installed for the current user', async () => {
+  it('keeps added skills visible with a clear disabled state', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [
         createListing({ id: 1, display_name: 'Available Skill' }),
@@ -317,8 +373,14 @@ describe('DiscoverResources', () => {
     render(<DiscoverResources resourceType="skill" />)
 
     expect(await screen.findByText('Available Skill')).toBeInTheDocument()
-    expect(screen.queryByText('Installed Skill')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('resource-listing-card-2')).not.toBeInTheDocument()
+    expect(screen.getByText('Installed Skill')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加 Available Skill' })).toHaveClass(
+      'h-11',
+      'w-11',
+      'md:h-8',
+      'md:w-8'
+    )
+    expect(screen.getByRole('button', { name: '已添加 Installed Skill' })).toBeDisabled()
   })
 
   it('uses a system agent directly without installing it', async () => {
@@ -339,13 +401,98 @@ describe('DiscoverResources', () => {
 
     render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去使用 Wegent Chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: '去对话 Wegent Chat' }))
 
-    expect(screen.getByTestId('resource-listing-footer-81')).toHaveTextContent(
-      'Wegent 官方2026-05-27'
-    )
+    const officialFooter = screen.getByTestId('resource-listing-footer-81')
+    expect(officialFooter).toHaveTextContent('Wegent 官方')
+    expect(officialFooter).toHaveTextContent('2026-05-27')
+    expect(officialFooter).not.toHaveTextContent('人添加')
+    expect(screen.getByText('官方')).toHaveClass('h-4', 'text-[10px]')
     expect(mockPush).toHaveBeenCalledWith('/chat?teamId=81')
     expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['model', 84, 'System Model'],
+    ['shell', 85, 'System Executor'],
+    ['retriever', 86, 'System Retriever'],
+  ] as const)(
+    'does not offer installation for a directly available system %s',
+    async (resourceType, id, displayName) => {
+      const systemCapability = createListing({
+        id,
+        resource_type: resourceType,
+        name: `system-${resourceType}`,
+        display_name: displayName,
+        publisher_user_id: 0,
+        is_installed: true,
+      })
+      mockResourceLibraryApi.listListings.mockResolvedValue({
+        items: [systemCapability],
+        has_more: false,
+        next_cursor: null,
+        limit: 20,
+      })
+      mockResourceLibraryApi.getListing.mockResolvedValue(systemCapability)
+
+      render(<DiscoverResources resourceType={resourceType} />)
+
+      expect(await screen.findByText(displayName)).toBeVisible()
+      expect(screen.queryByTestId(`install-resource-${id}-button`)).not.toBeInTheDocument()
+      expect(screen.getByText('官方')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByTestId(`view-resource-${id}-button`))
+      await screen.findByTestId('resource-detail-dialog')
+      expect(screen.queryByTestId('resource-detail-install-button')).not.toBeInTheDocument()
+      expect(screen.queryByText('actions.system_available')).not.toBeInTheDocument()
+      expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+    }
+  )
+
+  it('opens a system coding agent in code mode', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 83,
+          resource_type: 'agent',
+          name: 'dev-team',
+          display_name: 'Coding Agent',
+          publisher_user_id: 0,
+          bind_modes: ['code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去编码 Coding Agent' }))
+
+    expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=83')
+    expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
+  })
+
+  it('shows the default destination for a multi-mode marketplace agent', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 85,
+          resource_type: 'agent',
+          name: 'multi-mode-agent',
+          display_name: 'Multi-mode Agent',
+          bind_modes: ['chat', 'code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    expect(await screen.findByRole('button', { name: '去对话 Multi-mode Agent' })).toBeVisible()
   })
 
   it('uses a marketplace agent without showing an installation success toast', async () => {
@@ -382,7 +529,7 @@ describe('DiscoverResources', () => {
 
     render(<DiscoverResources resourceType="agent" />)
 
-    fireEvent.click(await screen.findByRole('button', { name: '去使用 Published Agent' }))
+    fireEvent.click(await screen.findByRole('button', { name: '去对话 Published Agent' }))
 
     await waitFor(() => {
       expect(mockPush).toHaveBeenCalledWith('/chat?teamId=128')
@@ -391,6 +538,48 @@ describe('DiscoverResources', () => {
       targetNamespace: 'default',
     })
     expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('opens an installed marketplace coding agent in code mode', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 84,
+          resource_type: 'agent',
+          name: 'published-code-agent',
+          display_name: 'Published Code Agent',
+          publisher_user_id: 3,
+          bind_modes: ['code'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+    mockResourceLibraryApi.installListing.mockResolvedValue({
+      id: 11,
+      listing_id: 84,
+      version_id: 10,
+      user_id: 2,
+      resource_type: 'agent',
+      installed_kind_id: 14,
+      installed_reference: {
+        namespace: 'default',
+        name: 'published-code-agent',
+        team_id: 129,
+      },
+      install_status: 'installed',
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去编码 Published Code Agent' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/chat?agent=code&teamId=129')
+    })
   })
 
   it('does not offer globally available system agents to a group', async () => {
@@ -433,16 +622,30 @@ describe('DiscoverResources', () => {
     expect(mockResourceLibraryApi.getListing).toHaveBeenCalledWith(1)
     expect(within(dialog).getByText('Summarizes documents')).toBeInTheDocument()
     expect(dialog).toHaveTextContent('publisher-user')
-    expect(within(dialog).queryByText('安装次数')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('添加次数')).not.toBeInTheDocument()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '添加 Doc Summary' }))
+    const installButton = within(dialog).getByRole('button', { name: '安装 Doc Summary' })
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(installButton.querySelector('svg')).not.toBeInTheDocument()
+    expect(installButton).toHaveClass('h-11', 'md:h-9')
+    expect(screen.getByTestId('resource-detail-actions')).toHaveClass(
+      'border-t',
+      'px-6',
+      'py-4',
+      'md:absolute',
+      'md:right-12',
+      'md:top-4',
+      'md:border-0'
+    )
+
+    fireEvent.click(installButton)
 
     await waitFor(() => {
       expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(1, {
         targetNamespace: 'default',
       })
     })
-    expect(mockToast).toHaveBeenCalledWith({ title: '安装成功' })
+    expect(mockToast).toHaveBeenCalledWith({ title: '添加成功' })
     expect(mockResourceLibraryApi.listListings).toHaveBeenCalledTimes(2)
   })
 })

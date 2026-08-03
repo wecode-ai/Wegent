@@ -5,6 +5,20 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_codex_thread_with_turns(
+        &self,
+        thread_id: &str,
+    ) -> Result<Value, String> {
+        let response = self
+            .codex_app_server
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": true}),
+            )
+            .await?;
+        Ok(response.get("thread").unwrap_or(&response).clone())
+    }
+
     pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
@@ -209,7 +223,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
 
-        let Some(thread_id) = session_id else {
+        let Some(mut thread_id) = session_id else {
             let workspace_path = workspace_path(&payload).unwrap_or_default();
             let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "runtime".to_owned());
             log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -236,18 +250,33 @@ impl RuntimeWorkRpcHandler {
                 before_cursor,
                 after_cursor,
                 full_content: include_full_content,
+                turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
         };
 
-        let response = self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id.clone(), "includeTurns": true}),
-            )
+        if refresh && !local_execution_running {
+            if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
+                thread_id = self
+                    .resume_codex_thread_for_action(link, &thread_id)
+                    .await
+                    .map_err(|error| AppIpcError::new("codex_error", error))?;
+                log_executor_event(
+                    "runtime work transcript resumed before refresh",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                    ],
+                );
+            }
+        }
+
+        let mut thread = self
+            .read_codex_thread_with_turns(&thread_id)
             .await
             .map_err(|error| AppIpcError::new("codex_error", error))?;
-        let thread = response.get("thread").unwrap_or(&response).clone();
+        if let Some(link) = local_link.as_ref() {
+            reconcile_persisted_codex_turn_status(&mut thread, link);
+        }
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
@@ -299,6 +328,49 @@ impl RuntimeWorkRpcHandler {
                 after_cursor
             },
             full_content: include_full_content,
+            turn_item_source: TranscriptTurnItemSource::CodexItems,
         }))
+    }
+}
+
+pub(super) fn reconcile_persisted_codex_turn_status(thread: &mut Value, link: &RuntimeTaskLink) {
+    let Some(turn_id) = string_field(&link.runtime_handle, "lastTurnId") else {
+        return;
+    };
+    let Some(status) = link
+        .turn_status
+        .as_deref()
+        .filter(|status| !runtime_status_is_running(status))
+    else {
+        return;
+    };
+    let Some(turn) = thread
+        .get_mut("turns")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .find(|turn| string_field(turn, "id").as_deref() == Some(turn_id.as_str()))
+    else {
+        return;
+    };
+    let previous_status = string_field(turn, "status").unwrap_or_default();
+    let Some(turn) = turn.as_object_mut() else {
+        return;
+    };
+    turn.insert("status".to_owned(), Value::String(status.to_owned()));
+    if let Some(completed_at) = link.completed_at {
+        turn.insert("completedAt".to_owned(), json!(completed_at));
+    }
+    if previous_status != status {
+        log_executor_event(
+            "runtime work transcript turn status reconciled",
+            &[
+                ("local_task_id", link.local_task_id.clone()),
+                ("thread_id", link.thread_id.clone().unwrap_or_default()),
+                ("turn_id", turn_id),
+                ("provider_status", previous_status),
+                ("persisted_status", status.to_owned()),
+            ],
+        );
     }
 }

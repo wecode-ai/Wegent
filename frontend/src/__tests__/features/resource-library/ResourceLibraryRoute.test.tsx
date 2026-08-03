@@ -103,10 +103,13 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.skill': '技能',
         'fields.tags': '标签',
         'search.placeholder': '搜索资源',
+        'search.agent_placeholder': '搜索智能体或描述',
+        'search.skill_placeholder': '搜索技能',
         'actions.search': '搜索',
         'actions.publish': '发布资源',
         'fields.scope': '范围',
         'actions.new_capability': '新建能力',
+        'actions.my_capabilities': '我的能力',
         'actions.retry': '重试',
         'states.loading': '正在加载资源',
         'states.empty': '暂无资源',
@@ -127,10 +130,8 @@ describe('ResourceLibrary route page', () => {
     )
     expect(screen.getByTestId('resource-library-top-navigation')).not.toHaveTextContent('资源库')
     expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-discover-tab')).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByTestId('resource-library-view-toggle')).toHaveTextContent('我的能力')
+    expect(screen.queryByTestId('resource-library-discover-tab')).not.toBeInTheDocument()
     expect(await screen.findByTestId('discover-resources')).toBeInTheDocument()
   })
 })

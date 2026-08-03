@@ -46,7 +46,6 @@ const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
-const CODEX_ROUTER_API_KEY: &str = "wework-local-router";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
@@ -103,9 +102,10 @@ mod diagnostics;
 mod home;
 
 use diagnostics::{json_scalar_field, json_string_field};
+pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-use home::{prepare_wework_codex_home, wework_codex_home, CODEX_HOME_ENV};
+use home::{prepare_wework_codex_home, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -409,6 +409,7 @@ impl CodexAppServerClient {
         &self,
         thread_id: &str,
         expected_turn_id: &str,
+        client_user_message_id: Option<String>,
         input: Value,
         additional_context: Option<Value>,
     ) -> Result<String, String> {
@@ -419,6 +420,14 @@ impl CodexAppServerClient {
             Value::String(expected_turn_id.to_owned()),
         );
         params.insert("input".to_owned(), input);
+        if let Some(client_user_message_id) =
+            client_user_message_id.filter(|value| !value.trim().is_empty())
+        {
+            params.insert(
+                "clientUserMessageId".to_owned(),
+                Value::String(client_user_message_id),
+            );
+        }
         if let Some(additional_context) = additional_context.filter(Value::is_object) {
             params.insert("additionalContext".to_owned(), additional_context);
         }
@@ -991,10 +1000,6 @@ fn persistent_codex_app_server_launch_config(
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
-        // MCP tools are deferred behind tool_search by the bundled Codex. The
-        // search tool must be enabled at persistent app-server startup; enabling
-        // it per thread is too late because feature registration is process-wide.
-        "features.tool_search=true".to_owned(),
     ]);
     launch_config
         .config_overrides
@@ -1024,15 +1029,23 @@ fn codex_router_provider_overrides() -> Vec<String> {
 }
 
 #[cfg(unix)]
-fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
-    ("/usr/bin/printf", vec!["%s", CODEX_ROUTER_API_KEY])
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
+    (
+        "/usr/bin/printf",
+        vec!["%s".to_owned(), local_model_proxy::API_KEY.to_owned()],
+    )
 }
 
 #[cfg(windows)]
-fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+fn codex_router_auth_command() -> (&'static str, Vec<String>) {
     (
         "cmd.exe",
-        vec!["/D", "/S", "/C", "<nul set /p =wework-local-router"],
+        vec![
+            "/D".to_owned(),
+            "/S".to_owned(),
+            "/C".to_owned(),
+            format!("<nul set /p ={}", local_model_proxy::API_KEY),
+        ],
     )
 }
 
@@ -1174,6 +1187,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
+        let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
         let mut notification_rx = client
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
@@ -1187,8 +1201,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         let forking_thread = fork_thread_id.is_some();
         if direct_thread_id.is_none() {
             if let Some(thread_id) = resume_thread_id.as_deref() {
-                // Release this client's idle subscription before resume. The task-scoped local
-                // router keeps a stable provider URL, so model changes only update its upstream.
+                // An idle thread is unsubscribed after its previous turn. Resume establishes the
+                // next owner subscription and loads the latest materialized snapshot.
                 client.unsubscribe_thread(thread_id).await;
             }
         }
@@ -1222,7 +1236,6 @@ async fn run_codex_app_server_turn_on_shared_client(
             thread_fields.push(("operation", thread_operation.to_owned()));
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
             validate_codex_model_provider(
                 thread_operation,
                 &thread,
@@ -1266,19 +1279,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if !request.ephemeral {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    sync_goal_status_from_response(&mut state, &goal_response);
-                }
-            }
-
             if let Some(name) = initial_thread_name
                 .as_deref()
                 .map(str::trim)
@@ -1293,10 +1293,24 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
 
-        let turn_input = turn_input(&request.prompt);
+        if awaits_initial_goal_turn {
+            let goal = initial_thread_goal
+                .as_ref()
+                .expect("initial goal must exist when awaiting its turn");
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            sync_goal_status_from_response(&mut state, &goal_response);
+        } else if !request.ephemeral && resuming_thread {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                sync_goal_status_from_response(&mut state, &goal_response);
+            }
+        }
+
         let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
@@ -1304,35 +1318,50 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
-        log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let turn = match timeout_at(
-            startup_deadline,
-            client.request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(turn)) => turn,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(recover_stalled_shared_turn(
-                    client,
-                    &thread_id,
-                    startup_timeout_seconds,
-                )
-                .await);
-            }
+        let active_turn_id = if awaits_initial_goal_turn {
+            log_executor_event("codex shared goal turn awaiting", &turn_fields);
+            None
+        } else {
+            let turn_input = turn_input(&request.prompt);
+            turn_fields.push(("input_items", turn_input.len().to_string()));
+            log_executor_event("codex shared turn request started", &turn_fields);
+            let turn_start_response = match timeout_at(
+                startup_deadline,
+                client.request(
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        &thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
+            };
+            turn_start_response_id(&turn_start_response)
         };
-        let active_turn_id = turn_start_response_turn_id(&turn);
-        if let (Some(turn_id), Some(callback)) =
-            (active_turn_id.as_deref(), active_turn_started.as_ref())
-        {
-            callback(thread_id.clone(), turn_id.to_owned());
+        if let Some(turn_id) = active_turn_id.as_ref() {
+            if let Some(callback) = active_turn_started.as_ref() {
+                callback(thread_id.clone(), turn_id.clone());
+            }
+            log_executor_event(
+                "codex shared active turn resolved",
+                &[
+                    ("thread_id", thread_id.clone()),
+                    ("turn_id", turn_id.clone()),
+                    ("source", "turn_start_response".to_owned()),
+                ],
+            );
         }
         let outcome_result = read_shared_turn_notifications(
             client,
@@ -1498,7 +1527,6 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 rpc.request(thread_operation, thread_params, &mut state),
             )
             .await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
             validate_codex_model_provider(
                 thread_operation,
                 &thread,
@@ -1743,21 +1771,55 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
+        log_codex_raw_turn_message(&message);
+
+        let notification_turn_id = root_turn_notification_id(&message, state);
+        if let Some(turn_id) =
+            started_active_turn_id(options.active_turn_id.as_deref(), &message, state)
+        {
+            if let Some(previous_turn_id) = options.active_turn_id.as_deref() {
+                log_executor_event(
+                    "codex shared active turn corrected",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("previous_turn_id", previous_turn_id.to_owned()),
+                        ("turn_id", turn_id.clone()),
+                        ("source", "turn_started_notification".to_owned()),
+                    ],
+                );
+            }
+            if let Some(callback) = options.active_turn_started.as_ref() {
+                callback(thread_id.to_owned(), turn_id.clone());
+            }
+            options.active_turn_id = Some(turn_id);
+        } else if let (Some(active_turn_id), Some(notification_turn_id)) = (
+            options.active_turn_id.as_deref(),
+            notification_turn_id.as_deref(),
+        ) {
+            if notification_turn_id != active_turn_id {
+                log_executor_event(
+                    "codex stale turn notification dropped",
+                    &[
+                        ("thread_id", thread_id.to_owned()),
+                        ("active_turn_id", active_turn_id.to_owned()),
+                        ("notification_turn_id", notification_turn_id.to_owned()),
+                        (
+                            "method",
+                            message
+                                .get("method")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<none>")
+                                .to_owned(),
+                        ),
+                    ],
+                );
+                continue;
+            }
+        }
         if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
         {
             waiting_for_initial_progress = false;
         }
-        log_codex_raw_turn_message(&message);
-
-        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
-            if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
-                if let Some(callback) = options.active_turn_started.as_ref() {
-                    callback(thread_id.to_owned(), turn_id.clone());
-                }
-            }
-            options.active_turn_id = Some(turn_id);
-        }
-
         if let Some(sender) = &options.notifications {
             let _ = sender.send(message.clone());
         }
@@ -1913,7 +1975,9 @@ fn spawn_shared_request_user_input_response(
     let client = client.clone();
     tokio::spawn(async move {
         let result = async {
-            let response = receiver.receive(correlation_key).await?;
+            let Some(response) = receiver.receive(correlation_key).await? else {
+                return Ok(());
+            };
             client
                 .send_response(request_id, request_user_input_result(response))
                 .await
@@ -1940,10 +2004,14 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
+            let has_response_router = request_user_input_answers.is_some();
             let response = match request_user_input_answers {
-                Some(receiver) => Some(receiver.receive(correlation_key).await?),
+                Some(receiver) => receiver.receive(correlation_key).await?,
                 None => None,
             };
+            if response.is_none() && has_response_router {
+                return Ok(());
+            }
             let result = mcp_server_elicitation_response(&message, response.as_ref())?;
             client.send_response(request_id, result).await
         }
@@ -1970,7 +2038,19 @@ async fn notification_belongs_to_thread(
     }
 }
 
-fn turn_start_response_turn_id(response: &Value) -> Option<String> {
+fn started_active_turn_id(
+    active_turn_id: Option<&str>,
+    message: &Value,
+    state: &CodexRunState,
+) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+        return None;
+    }
+    root_turn_notification_id(message, state)
+        .filter(|turn_id| active_turn_id != Some(turn_id.as_str()))
+}
+
+fn turn_start_response_id(response: &Value) -> Option<String> {
     response
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
@@ -1978,10 +2058,7 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
         .or_else(|| string_value(response, "turn_id"))
 }
 
-fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
-        return None;
-    }
+fn root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
     let params = message_params(message);
     if state.is_subagent_message(params) {
         return None;
@@ -2034,6 +2111,7 @@ fn spawn_codex_app_server(
         ),
     );
     configure_codex_app_server_process_group(&mut command);
+    configure_codex_windows_no_window(&mut command);
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -2117,6 +2195,14 @@ fn configure_codex_app_server_process_group(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn configure_codex_app_server_process_group(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn configure_codex_windows_no_window(command: &mut Command) {
+    crate::process::hide_windows_console(command);
+}
+
+#[cfg(not(windows))]
+fn configure_codex_windows_no_window(_command: &mut Command) {}
 
 async fn terminate_codex_app_server_child(child: &mut Child) {
     signal_codex_app_server_child(child);
@@ -3694,35 +3780,6 @@ fn insert_runtime_workspace_roots(
     if !roots.is_empty() {
         params.insert("runtimeWorkspaceRoots".to_owned(), json!(roots));
     }
-}
-
-fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
-    let active_profile = response
-        .get("activePermissionProfile")
-        .and_then(|profile| profile.get("id"))
-        .and_then(Value::as_str);
-    let sandbox_type = response
-        .get("sandbox")
-        .and_then(|sandbox| sandbox.get("type"))
-        .and_then(Value::as_str);
-
-    // Minimal test doubles and older app-server builds do not expose effective permission
-    // metadata. Current Codex builds do, so reject any explicit mismatch instead of running a
-    // turn whose tools silently inherit workspace-write permissions.
-    if active_profile.is_none() && sandbox_type.is_none() {
-        return Ok(());
-    }
-    if active_profile == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE)
-        && sandbox_type == Some("dangerFullAccess")
-    {
-        return Ok(());
-    }
-
-    Err(format!(
-        "codex app-server {operation} applied unexpected permissions: active_profile={}, sandbox={}",
-        active_profile.unwrap_or("<none>"),
-        sandbox_type.unwrap_or("<none>")
-    ))
 }
 
 fn validate_codex_model_provider(

@@ -106,6 +106,20 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
+async function writeStaleBridgeRuntime(identity) {
+  await writeFile(
+    identity.runtimePath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      pid: process.pid,
+      address: '127.0.0.1:9',
+      token: 'stale-upgrade-token',
+      startedAtUnixMs: Date.now() - 60_000,
+    })}\n`,
+    'utf8'
+  )
+}
+
 async function callBridge(identity, payload) {
   const response = await fetch(`${identity.baseUrl}/browser`, {
     method: 'POST',
@@ -226,6 +240,10 @@ async function withBrowserMcp(identity, callback) {
       })
     })
     assert.equal(stderr.includes('lifecycle=fatal'), false, stderr)
+    assert.ok(
+      stderr.includes(`bridge_url=${identity.baseUrl}`),
+      `MCP server did not use the injected bridge URL. stderr:\n${stderr}`
+    )
   }
 }
 
@@ -317,6 +335,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
       await pendingAgentWait
 
+      await writeStaleBridgeRuntime(bridgeIdentity)
       const mcpResult = await withBrowserMcp(bridgeIdentity, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,

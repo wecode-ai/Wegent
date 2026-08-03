@@ -15,12 +15,17 @@ import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-export function WorkbenchPage() {
+
+interface WorkbenchPageProps {
+  routeActive?: boolean
+}
+
+export function WorkbenchPage({ routeActive = true }: WorkbenchPageProps) {
   const isMobileViewport = useIsMobile()
   const isTauri = isTauriRuntime()
   const { state, runtimeTaskReminders } = useWorkbench()
   const lifecycle = useRuntimeTaskLifecycleStoreSnapshot()
-  useRuntimeTaskRouteRestoration()
+  useRuntimeTaskRouteRestoration(routeActive)
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
@@ -91,7 +96,7 @@ export function WorkbenchPage() {
   return shouldUseMobileWorkbenchLayout({ isMobileViewport, isTauri }) ? (
     <MobileWorkbenchLayout />
   ) : (
-    <DesktopWorkbenchLayout />
+    <DesktopWorkbenchLayout routeActive={routeActive} />
   )
 }
 

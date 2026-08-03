@@ -46,6 +46,7 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
   return {
     taskId: address.taskId,
     messages: [],
+    turns: [],
     ...overrides,
   }
 }
@@ -134,11 +135,10 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncTranscript(
       address,
       transcript({
-        messages: [
+        turns: [
           {
-            id: 'historical-assistant',
-            role: 'assistant',
-            content: 'Earlier response',
+            id: 'historical-turn',
+            items: [],
             status: 'done',
           },
         ],
@@ -180,7 +180,7 @@ describe('RuntimeTaskLifecycleStore', () => {
       address,
       transcript({
         running: false,
-        messages: [{ id: 'assistant-1', role: 'assistant', content: '', status: 'streaming' }],
+        turns: [{ id: 'turn-1', items: [], status: 'streaming' }],
       }),
       { preserveActiveTurn: true }
     )

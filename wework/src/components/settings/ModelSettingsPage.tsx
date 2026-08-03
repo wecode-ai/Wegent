@@ -42,6 +42,7 @@ import {
   defaultLocalModelToolProfile,
   deleteLocalModelConfig,
   DEFAULT_LOCAL_MODEL_REQUEST_PATH,
+  ensureLocalModelApiKeysHydrated,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   markLocalModelCatalogReady,
@@ -708,6 +709,14 @@ function LocalModelSettingsSection({
   useEffect(() => {
     window.addEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
     return () => window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
+  }, [refreshModels])
+
+  useEffect(() => {
+    void ensureLocalModelApiKeysHydrated()
+      .then(refreshModels)
+      .catch(hydrationError => {
+        console.error('Failed to restore local model credentials', hydrationError)
+      })
   }, [refreshModels])
 
   const editingModel = useMemo(

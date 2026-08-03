@@ -10,6 +10,7 @@ export const GO_FORWARD_COMMAND = 'goForward'
 export const TOGGLE_SIDEBAR_COMMAND = 'toggleSidebar'
 export const TOGGLE_SIDE_PANEL_COMMAND = 'toggleSidePanel'
 export const TOGGLE_MODEL_SELECTOR_COMMAND = 'toggleModelSelector'
+export const TOGGLE_PRIORITY_FILTER_COMMAND = 'togglePriorityFilter'
 export const INCREASE_FONT_SIZE_COMMAND = 'increaseFontSize'
 export const DECREASE_FONT_SIZE_COMMAND = 'decreaseFontSize'
 export const RESET_FONT_SIZE_COMMAND = 'resetFontSize'
@@ -67,6 +68,10 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
   {
     command: TOGGLE_MODEL_SELECTOR_COMMAND,
     defaultKey: 'Control+Shift+M',
+  },
+  {
+    command: TOGGLE_PRIORITY_FILTER_COMMAND,
+    defaultKey: 'Alt+Command+U',
   },
   {
     command: INCREASE_FONT_SIZE_COMMAND,

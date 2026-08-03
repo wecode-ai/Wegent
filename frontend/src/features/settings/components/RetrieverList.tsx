@@ -22,13 +22,15 @@ import {
   TrashIcon,
   BeakerIcon,
   GlobeAltIcon,
+  LinkSlashIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, MoreHorizontal } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import RetrieverEditDialog from './RetrieverEditDialog'
+import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +45,7 @@ import { retrieverApis, UnifiedRetriever } from '@/apis/retrievers'
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import { getReferencedKnowledgeBaseNames } from '@/features/resource-library/capabilityReferenceErrors'
 import {
   buildGroupDisplayNameMap,
   filterResourceLibraryItemsByGroups,
@@ -50,13 +53,21 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
   type ResourceCreateRequest,
 } from '@/features/resource-library/components/ResourceCreateButton'
+import { UnbindInUseDialog } from '@/features/resource-library/components/UnbindInUseDialog'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 interface RetrieverListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -74,6 +85,7 @@ interface RetrieverListProps {
   creationOnly?: boolean
   hideCreateActions?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 /**
@@ -101,6 +113,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   creationOnly = false,
   hideCreateActions = false,
   compact = false,
+  searchQuery = '',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -111,6 +124,8 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   const [deleteConfirmRetriever, setDeleteConfirmRetriever] = useState<UnifiedRetriever | null>(
     null
   )
+  const [referencedKnowledgeBaseNames, setReferencedKnowledgeBaseNames] = useState<string[]>([])
+  const [checkingReferenceUsageName, setCheckingReferenceUsageName] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [testingRetrieverName, setTestingRetrieverName] = useState<string | null>(null)
   const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
@@ -146,14 +161,24 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
       filteredRetrievers = retrievers.filter(retriever => retriever.type === 'group')
     } else if (sourceFilter === 'system') {
       filteredRetrievers = retrievers.filter(retriever => retriever.type === 'public')
+    } else if (sourceFilter === 'mine') {
+      filteredRetrievers = retrievers.filter(retriever => retriever.type !== 'public')
     }
 
     return filterResourceLibraryItemsByGroups(
       filteredRetrievers,
       groupFilter,
       retriever => retriever.namespace
+    ).filter(retriever =>
+      matchesResourceSearch(
+        searchQuery,
+        retriever.name,
+        retriever.displayName,
+        retriever.description,
+        retriever.storageType
+      )
     )
-  }, [retrievers, sourceFilter, groupFilter])
+  }, [retrievers, sourceFilter, groupFilter, searchQuery])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -233,27 +258,74 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
 
     setIsDeleting(true)
     try {
-      await retrieverApis.deleteRetriever(
-        deleteConfirmRetriever.name,
-        deleteConfirmRetriever.namespace
-      )
+      if (deleteConfirmRetriever.isReference && deleteConfirmRetriever.listingId) {
+        await resourceLibraryApi.uninstallListing(
+          deleteConfirmRetriever.listingId,
+          deleteConfirmRetriever.namespace
+        )
+      } else {
+        await retrieverApis.deleteRetriever(
+          deleteConfirmRetriever.name,
+          deleteConfirmRetriever.namespace
+        )
+      }
       toast({
-        title: t('common:retrievers.delete_success'),
+        title: t(
+          deleteConfirmRetriever.isReference
+            ? 'common:actions.unbind_success'
+            : 'common:retrievers.delete_success'
+        ),
       })
       setDeleteConfirmRetriever(null)
       fetchRetrievers()
     } catch (error) {
+      const referencedKnowledgeBaseNames = getReferencedKnowledgeBaseNames(error)
       toast({
         variant: 'destructive',
-        title: t('common:retrievers.errors.delete_failed'),
-        description: (error as Error).message,
+        title: t(
+          deleteConfirmRetriever.isReference
+            ? 'common:actions.unbind_failed'
+            : 'common:retrievers.errors.delete_failed'
+        ),
+        description:
+          referencedKnowledgeBaseNames.length > 0
+            ? t('common:actions.unbind_retriever_in_use_message', {
+                names: referencedKnowledgeBaseNames.join('、'),
+              })
+            : (error as Error).message,
       })
     } finally {
       setIsDeleting(false)
     }
   }
 
+  const handleUnbindRequest = async (retriever: UnifiedRetriever) => {
+    if (!retriever.listingId || checkingReferenceUsageName) return
+
+    setCheckingReferenceUsageName(retriever.name)
+    try {
+      const usage = await resourceLibraryApi.getReferenceUsage(
+        retriever.listingId,
+        retriever.namespace
+      )
+      setReferencedKnowledgeBaseNames(
+        usage.referenced_knowledge_bases.map(knowledgeBase => knowledgeBase.name)
+      )
+      setDeleteConfirmRetriever(retriever)
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('common:actions.unbind_failed'),
+        description: (error as Error).message,
+      })
+    } finally {
+      setCheckingReferenceUsageName(null)
+    }
+  }
+
   const handleEdit = (retriever: UnifiedRetriever) => {
+    if (retriever.isReference) return
+
     // Notify parent to update group selector if editing a group resource
     if (onEditResource && retriever.namespace && retriever.namespace !== 'default') {
       onEditResource(retriever.namespace)
@@ -304,19 +376,24 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   }
 
   const canEditRetriever = (retriever: UnifiedRetriever) => {
-    if (retriever.type === 'public') return false
+    if (retriever.type === 'public' || retriever.isReference) return false
     if (retriever.type === 'group') return canEditGroupResource(retriever.namespace)
     return true
   }
 
   const canDeleteRetriever = (retriever: UnifiedRetriever) => {
-    if (retriever.type === 'public') return false
+    if (retriever.type === 'public' || retriever.isReference) return false
     if (retriever.type === 'group') return canDeleteGroupResource(retriever.namespace)
     return true
   }
 
+  const canUnbindRetriever = (retriever: UnifiedRetriever) =>
+    retriever.isReference === true &&
+    !!retriever.listingId &&
+    (retriever.type === 'user' || canEditGroupResource(retriever.namespace))
+
   const hasRetrieverActions = (retriever: UnifiedRetriever) =>
-    retriever.type !== 'public' || canEditRetriever(retriever) || canDeleteRetriever(retriever)
+    canEditRetriever(retriever) || canDeleteRetriever(retriever) || canUnbindRetriever(retriever)
 
   const createAction =
     !hideCreateActions && hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
@@ -374,7 +451,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
               {sortedRetrievers.map(retriever => (
                 <Card
                   key={`${retriever.type}-${retriever.namespace}-${retriever.name}`}
-                  className={getResourceCardClassName(compact)}
+                  className={cn(getResourceCardClassName(compact), compact && 'min-w-0 gap-2')}
                   data-testid={`retriever-card-${retriever.type}-${retriever.name}`}
                 >
                   <div className={getResourceCardBodyClassName(compact)}>
@@ -383,7 +460,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                       name={retriever.name}
                       displayName={retriever.displayName || undefined}
                       description={retriever.description}
-                      showId={true}
+                      showId={!compact}
                       isPublic={retriever.type === 'public'}
                       publicLabel={t('retrievers.public')}
                       icon={
@@ -423,7 +500,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                         },
                       ]}
                     />
-                    {hasRetrieverActions(retriever) && (
+                    {!compact && hasRetrieverActions(retriever) && (
                       <div
                         className={cn(
                           'flex flex-shrink-0 items-center gap-1',
@@ -432,7 +509,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                         )}
                         data-testid={`retriever-card-actions-${retriever.type}-${retriever.name}`}
                       >
-                        {retriever.type !== 'public' && (
+                        {retriever.type !== 'public' && !retriever.isReference && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -470,9 +547,114 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                             <TrashIcon className="w-4 h-4" />
                           </Button>
                         )}
+                        {canUnbindRetriever(retriever) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => void handleUnbindRequest(retriever)}
+                            disabled={checkingReferenceUsageName === retriever.name}
+                            title={t('common:actions.unbind')}
+                            data-testid={`unbind-retriever-${retriever.name}-button`}
+                          >
+                            {checkingReferenceUsageName === retriever.name ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <LinkSlashIcon className="w-4 h-4" />
+                            )}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
+                  {compact && hasRetrieverActions(retriever) && (
+                    <div
+                      className={cn(
+                        'relative z-20 flex min-w-0 flex-shrink-0 items-center justify-end gap-1.5',
+                        getResourceCardActionsClassName(true)
+                      )}
+                      data-testid={`retriever-card-actions-${retriever.type}-${retriever.name}`}
+                    >
+                      {retriever.type !== 'public' && !retriever.isReference && (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                          onClick={() => handleTestConnection(retriever)}
+                          disabled={testingRetrieverName === retriever.name}
+                          title={t('common:retrievers.test_connection')}
+                          aria-label={t('common:retrievers.test_connection')}
+                          data-testid={`test-retriever-${retriever.name}-button`}
+                        >
+                          {testingRetrieverName === retriever.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <BeakerIcon className="h-4 w-4" />
+                          )}
+                        </Button>
+                      )}
+                      {canEditRetriever(retriever) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => handleEdit(retriever)}
+                          title={t('common:retrievers.edit')}
+                          aria-label={t('common:retrievers.edit')}
+                          data-testid={`edit-retriever-${retriever.name}-button`}
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                          <span>{t('common:actions.edit')}</span>
+                        </Button>
+                      )}
+                      {canUnbindRetriever(retriever) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => void handleUnbindRequest(retriever)}
+                          disabled={checkingReferenceUsageName === retriever.name}
+                          title={t('common:actions.unbind')}
+                          aria-label={t('common:actions.unbind')}
+                          data-testid={`unbind-retriever-${retriever.name}-button`}
+                        >
+                          {checkingReferenceUsageName === retriever.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <LinkSlashIcon className="h-4 w-4" />
+                          )}
+                          <span>{t('common:actions.unbind')}</span>
+                        </Button>
+                      )}
+                      {canDeleteRetriever(retriever) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                              aria-label={t('common:actions.more_actions')}
+                              data-testid={`retriever-more-actions-${retriever.name}-button`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {canDeleteRetriever(retriever) && (
+                              <DropdownMenuItem
+                                danger
+                                onClick={() => setDeleteConfirmRetriever(retriever)}
+                                data-testid={`delete-retriever-${retriever.name}-button`}
+                              >
+                                <TrashIcon className="mr-2 h-4 w-4" />
+                                {t('common:retrievers.delete')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>
@@ -488,20 +670,46 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         toast={toast}
         scope={editingRetriever ? scope : createTarget.scope}
         groupName={editingRetriever ? groupName : createTarget.groupName}
+        publicationGroups={groups}
+      />
+
+      <UnbindInUseDialog
+        open={!!deleteConfirmRetriever && referencedKnowledgeBaseNames.length > 0}
+        onOpenChange={open => {
+          if (!open) {
+            setDeleteConfirmRetriever(null)
+            setReferencedKnowledgeBaseNames([])
+          }
+        }}
+        consumerType="knowledge-base"
+        consumerNames={referencedKnowledgeBaseNames}
       />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog
-        open={!!deleteConfirmRetriever}
-        onOpenChange={open => !open && !isDeleting && setDeleteConfirmRetriever(null)}
+        open={!!deleteConfirmRetriever && referencedKnowledgeBaseNames.length === 0}
+        onOpenChange={open => {
+          if (!open && !isDeleting) {
+            setDeleteConfirmRetriever(null)
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('common:retrievers.delete_confirm_title')}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t(
+                deleteConfirmRetriever?.isReference
+                  ? 'common:actions.unbind_confirm_title'
+                  : 'common:retrievers.delete_confirm_title'
+              )}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {t('common:retrievers.delete_confirm_message', {
-                name: deleteConfirmRetriever?.name,
-              })}
+              {t(
+                deleteConfirmRetriever?.isReference
+                  ? 'common:actions.unbind_confirm_message'
+                  : 'common:retrievers.delete_confirm_message',
+                { name: deleteConfirmRetriever?.name }
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -535,10 +743,18 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  {t('common:actions.deleting')}
+                  {t(
+                    deleteConfirmRetriever?.isReference
+                      ? 'common:actions.unbinding'
+                      : 'common:actions.deleting'
+                  )}
                 </div>
               ) : (
-                t('common:actions.delete')
+                t(
+                  deleteConfirmRetriever?.isReference
+                    ? 'common:actions.unbind'
+                    : 'common:actions.delete'
+                )
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

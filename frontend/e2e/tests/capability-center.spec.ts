@@ -13,6 +13,7 @@ interface CapabilityListingResponse {
     id: number
     resource_type: 'agent' | 'skill'
     publisher_user_id: number
+    bind_modes: string[]
     allow_personal_install: boolean
     allow_group_install: boolean
   }>
@@ -24,31 +25,25 @@ async function clickListingAction(page: Page, listingId: number) {
 }
 
 test.describe('Capability Center', () => {
-  test('shows marketplace views and system capabilities from the real backend', async ({
-    page,
-  }) => {
-    await page.goto('/resource-library?tab=discover&type=agent')
+  test('switches between focused discovery and My Capabilities', async ({ page }) => {
+    await page.goto('/resource-library?type=agent')
 
-    await expect(page.getByTestId('resource-library-discover-tab')).toBeVisible()
-    await expect(page.getByTestId('resource-library-mine-tab')).toBeVisible()
-    await expect(page.getByTestId('resource-library-team-tab')).toBeVisible()
-    await expect(page.getByTestId('resource-library-system-tab')).toHaveCount(0)
-    await expect(page.getByTestId('resource-library-published-tab')).toBeVisible()
+    await expect(page.getByTestId('resource-library-view-toggle')).toBeVisible()
+    await expect(page.getByTestId('resource-type-agent-filter')).toBeVisible()
+    await expect(page.getByTestId('resource-type-skill-filter')).toBeVisible()
+    await expect(page.getByTestId('resource-type-model-filter')).toHaveCount(0)
+    await expect(page.getByTestId('resource-library-source-select')).toHaveCount(0)
     await expect(page.getByTestId('discover-resources')).toBeVisible()
     await expect(page.locator('[data-testid^="resource-listing-card-"]').first()).toBeVisible()
 
-    await page.getByTestId('resource-library-mine-tab').click()
+    await page.getByTestId('resource-library-view-toggle').click()
+    await expect(page).toHaveURL(url => url.searchParams.get('tab') === 'mine')
     await expect(page.getByTestId('my-resources')).toBeVisible()
+    await expect(page.getByTestId('resource-library-source-segments')).toBeVisible()
 
-    await page.getByTestId('resource-library-team-tab').click()
-    await expect(
-      page.getByTestId('team-capabilities').or(page.getByTestId('team-capabilities-empty'))
-    ).toBeVisible()
-
-    await page.getByTestId('resource-library-published-tab').click()
-    await expect(
-      page.getByTestId('published-resources').or(page.getByTestId('published-resources-empty'))
-    ).toBeVisible()
+    await page.getByTestId('resource-library-view-toggle').click()
+    await expect(page).toHaveURL(url => url.searchParams.get('tab') === null)
+    await expect(page.getByTestId('discover-resources')).toBeVisible()
   })
 
   test('new capability opens the selected existing creator directly', async ({ page }) => {
@@ -91,20 +86,46 @@ test.describe('Capability Center', () => {
       }
     })
     await clickListingAction(page, listing!.id)
-    await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
+    if (listing!.bind_modes.includes('code')) {
+      await expect(page).toHaveURL(`/chat?agent=code&teamId=${listing!.id}`)
+    } else {
+      await expect(page).toHaveURL(`/chat?teamId=${listing!.id}`)
+    }
     expect(installRequested).toBe(false)
   })
 
-  test('my capabilities shows one resource manager at a time', async ({ page }) => {
+  test('My Capabilities exposes five resource types and contextual sources', async ({ page }) => {
     await page.goto('/resource-library?tab=mine&type=agent')
 
-    await expect(page.getByTestId('resource-type-agent-filter')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    const managedTypes = ['agent', 'skill', 'model', 'shell', 'retriever']
+    for (const resourceType of managedTypes) {
+      await expect(page.getByTestId(`resource-type-${resourceType}-filter`)).toBeVisible()
+    }
+
+    await expect(page.getByTestId('resource-type-connector-filter')).toHaveCount(0)
     await expect(page.getByTestId('resource-type-all-filter')).toHaveCount(0)
-    await expect(page.getByTestId('team-list-items')).toBeVisible()
+    await expect(page.getByTestId('my-resources')).toBeVisible()
     await expect(page.getByTestId('managed-resource-type-tabs')).toHaveCount(0)
+
+    await expect(page.getByTestId('resource-library-source-all-button')).toBeVisible()
+    await expect(page.getByTestId('resource-library-source-personal-button')).toBeVisible()
+    await expect(page.getByTestId('resource-library-source-group-button')).toBeVisible()
+    await expect(page.getByTestId('resource-library-source-installed-button')).toBeVisible()
+
+    await page.getByTestId('resource-library-source-personal-button').click()
+    await expect(page).toHaveURL(url => url.searchParams.get('source') === 'personal')
+    await expect(page.getByTestId('my-resources')).toBeVisible()
+
+    for (const resourceType of ['model', 'shell', 'retriever']) {
+      await page.getByTestId(`resource-type-${resourceType}-filter`).click()
+      await expect(page).toHaveURL(url => url.searchParams.get('type') === resourceType)
+      await expect(page.getByTestId(`resource-type-${resourceType}-filter`)).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+    }
+
+    await expect(page.getByTestId('resource-library-source-installed-button')).toHaveCount(0)
   })
 
   test('add installs a skill into the selected group without opening chat', async ({
@@ -118,16 +139,26 @@ test.describe('Capability Center', () => {
     expect((await apiClient.createGroup(group)).status).toBe(201)
 
     try {
-      await page.goto('/resource-library?tab=team&type=skill')
-      await page.getByTestId('resource-library-team-filter').click()
-      await page.getByTestId(`resource-library-team-${group.name}`).click()
-      await page.keyboard.press('Escape')
-      const listingsResponse = page.waitForResponse(
-        response =>
-          response.url().includes('/api/resource-library/listings') &&
+      await page.goto('/resource-library?tab=mine&type=skill')
+      await page.getByTestId('resource-library-source-group-button').click()
+      await expect(page).toHaveURL(url => url.searchParams.get('source') === 'group')
+
+      await page.getByTestId('resource-library-team-select').click()
+      await page.getByTestId(`resource-library-team-${group.name}-option`).click()
+      await expect(page).toHaveURL(url => url.searchParams.get('group') === group.name)
+
+      const listingsResponse = page.waitForResponse(response => {
+        const url = new URL(response.url())
+        return (
+          url.pathname.endsWith('/api/resource-library/listings') &&
+          url.searchParams.get('resource_type') === 'skill' &&
+          url.searchParams.get('target_namespace') === group.name &&
           response.request().method() === 'GET'
-      )
-      await page.getByTestId('team-capability-add-button').click()
+        )
+      })
+      await page.getByTestId('resource-library-team-add-button').click()
+      await expect(page).toHaveURL(url => url.searchParams.get('teamAction') === 'add')
+      await expect(page.getByTestId('discover-resources')).toBeVisible()
       const listings = (await (await listingsResponse).json()) as CapabilityListingResponse
       const listing = listings.items.find(
         item => item.resource_type === 'skill' && item.allow_group_install
@@ -143,8 +174,10 @@ test.describe('Capability Center', () => {
       expect((await installResponse).ok()).toBe(true)
       await expect(page).toHaveURL(/\/resource-library/)
 
-      await page.getByTestId('team-capability-current-button').click()
-      await expect(page.getByTestId('group-installed-skills')).toBeVisible()
+      await page.getByTestId('resource-library-team-current-button').click()
+      await expect(page).toHaveURL(url => url.searchParams.get('teamAction') === null)
+      await expect(page.getByTestId('installed-resources-grid')).toBeVisible()
+      await expect(page.getByTestId(`resource-listing-card-${listing!.id}`)).toBeVisible()
     } finally {
       await apiClient.deleteGroup(group.name)
     }

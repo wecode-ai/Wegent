@@ -1608,6 +1608,8 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('model-control-speed-standard')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('快速')
+    expect(screen.getByTestId('model-control-speed-fast')).not.toHaveTextContent('⚡')
     expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
 
     const speedMenuItem = screen.getByTestId('model-control-menu-speed')
@@ -1632,6 +1634,50 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
+  test('uses a Codex-style monochrome fast indicator instead of an emoji', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high', speed: 'fast' },
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(trigger).toHaveTextContent('GPT 5.6 Sol High')
+    expect(trigger).not.toHaveTextContent('⚡')
+    expect(trigger).not.toHaveTextContent('快速')
+    expect(screen.getByTestId('model-selector-fast-mode-icon')).toHaveClass('text-text-primary')
+    expect(trigger).toHaveAccessibleName(/快速/)
+
+    await userEvent.click(trigger)
+
+    expect(screen.getByTestId('model-control-menu-speed')).toHaveTextContent('快速')
+    expect(screen.getByTestId('model-control-menu-speed')).not.toHaveTextContent('⚡')
+  })
+
   test('shows an empty state when no desktop models are available', async () => {
     render(
       <ChatInput
@@ -1644,9 +1690,10 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')

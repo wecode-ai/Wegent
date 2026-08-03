@@ -1,15 +1,19 @@
 import {
+  Activity,
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, Copy, Info, Minimize2, PanelLeft } from 'lucide-react'
+import { Check, Copy, Info, Minimize2 } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
@@ -27,25 +31,18 @@ import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
-import type { AppTab } from '@/config/apps'
+import { APP_TABS } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
-import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import {
-  requestDesktopSidebarToggle,
-  useDesktopSidebarCollapsed,
-} from '@/components/layout/useDesktopSidebarCollapsed'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { useTranslation } from '@/hooks/useTranslation'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
-import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
@@ -83,7 +80,16 @@ import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useTranslation } from '@/hooks/useTranslation'
+import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import type { User } from '@/types/api'
+import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
+import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -108,21 +114,178 @@ function hasTauriIpc() {
   )
 }
 
+function buildCloudAppUrl(url: string, token: string | null): string {
+  if (!token) return url
+
+  const authenticatedUrl = new URL(url)
+  const basePath = authenticatedUrl.pathname.replace(/\/+$/, '')
+  authenticatedUrl.pathname = `${basePath}/login/oidc`
+  authenticatedUrl.searchParams.set('access_token', token)
+  authenticatedUrl.searchParams.set('token_type', 'bearer')
+  authenticatedUrl.searchParams.set('login_success', 'true')
+  return authenticatedUrl.toString()
+}
+
 function useCurrentPath() {
-  const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
+  return useCurrentLocation().pathname
+}
+
+function useCurrentLocation() {
+  const [location, setLocation] = useState(() => ({
+    pathname: stripAppBasePath(window.location.pathname),
+    search: window.location.search,
+  }))
 
   useEffect(() => {
-    const handlePopState = () => setPath(stripAppBasePath(window.location.pathname))
+    const handlePopState = () =>
+      setLocation({
+        pathname: stripAppBasePath(window.location.pathname),
+        search: window.location.search,
+      })
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  return path
+  return location
 }
 
 interface AppRoutesProps {
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
+}
+
+function workspaceTabPath(tab: WorkspaceTab): string {
+  return stripAppBasePath(new URL(tab.contentRoute, window.location.origin).pathname)
+}
+
+function workspaceTabIframe(
+  tab: WorkspaceTab,
+  wegentUrl: string | null | undefined
+): { src: string; title: string } | null {
+  const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
+  if (!match) return null
+  const app = APP_TABS.find(candidate => candidate.key === match[1])
+  if (!app || app.mode !== 'iframe') return null
+  const src = app.key === 'wegent' ? wegentUrl : app.url
+  return src ? { src, title: app.label } : null
+}
+
+function workspaceTabAuxiliaryPage(path: string, experimentalFeaturesEnabled: boolean) {
+  if (path === '/plugins/manage') return <PluginManagementPage />
+  if (path === '/plugins/create') return <PluginCreatePage />
+  if (path === '/plugins') return <PluginsPage />
+  if (path === '/cloud-work') return <CloudWorkPage />
+  if (path === '/sites') return <SitesPage />
+  if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
+  if (path === '/apps') return <AppsPage />
+  return null
+}
+
+interface WorkspaceTabSurfaceProps {
+  active: boolean
+  cloudWebUrl: string | null | undefined
+  experimentalFeaturesEnabled: boolean
+  onOpenWeworkForAppshot?: () => void
+  onWorkbenchStartupReadyChange?: (ready: boolean) => void
+  tab: WorkspaceTab
+  user: User
+}
+
+function WorkspaceTabSurface({
+  active,
+  cloudWebUrl,
+  experimentalFeaturesEnabled,
+  onOpenWeworkForAppshot,
+  onWorkbenchStartupReadyChange,
+  tab,
+  user,
+}: WorkspaceTabSurfaceProps) {
+  const tabPath = workspaceTabPath(tab)
+  const iframe = workspaceTabIframe(tab, cloudWebUrl)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, experimentalFeaturesEnabled)
+  const auxiliaryActive = Boolean(auxiliaryPage)
+  const nativeWorkbenchActive = !iframe && !auxiliaryActive
+  const [surfaceHistory, setSurfaceHistory] = useState(() => ({
+    iframe,
+    hasMountedProvider: !iframe,
+    hasMountedWorkbench: nativeWorkbenchActive,
+  }))
+  const nextIframe =
+    iframe &&
+    surfaceHistory.iframe?.src === iframe.src &&
+    surfaceHistory.iframe.title === iframe.title
+      ? surfaceHistory.iframe
+      : (iframe ?? surfaceHistory.iframe)
+  const nextSurfaceHistory = {
+    iframe: nextIframe,
+    hasMountedProvider: surfaceHistory.hasMountedProvider || !iframe,
+    hasMountedWorkbench: surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive,
+  }
+  if (
+    nextSurfaceHistory.iframe !== surfaceHistory.iframe ||
+    nextSurfaceHistory.hasMountedProvider !== surfaceHistory.hasMountedProvider ||
+    nextSurfaceHistory.hasMountedWorkbench !== surfaceHistory.hasMountedWorkbench
+  ) {
+    setSurfaceHistory(nextSurfaceHistory)
+  }
+
+  const renderedIframe = iframe ?? surfaceHistory.iframe
+  const renderProvider = surfaceHistory.hasMountedProvider || !iframe
+  const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
+  const usesAuxiliaryDesktopSurface = auxiliaryActive && isTauriRuntime()
+
+  return (
+    <WorkspaceTabPortalOwner ownerId={tab.id}>
+      <Activity mode={active ? 'visible' : 'hidden'}>
+        <div
+          className="h-full"
+          data-testid={`workspace-tab-content-${tab.id}`}
+          data-workspace-tab-content={tab.id}
+        >
+          {renderProvider ? (
+            <WorkbenchProvider
+              user={user}
+              onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
+              workspaceTabId={tab.id}
+            >
+              {onOpenWeworkForAppshot && active && !iframe ? (
+                <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+              ) : null}
+              {renderWorkbench ? (
+                <div
+                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+                  aria-hidden={!nativeWorkbenchActive}
+                >
+                  <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
+                </div>
+              ) : null}
+              {auxiliaryPage ? (
+                <div
+                  data-testid="desktop-auxiliary-surface"
+                  className={cn(
+                    'h-full',
+                    usesAuxiliaryDesktopSurface &&
+                      'app-view-surface overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
+                  )}
+                >
+                  {auxiliaryPage}
+                </div>
+              ) : null}
+            </WorkbenchProvider>
+          ) : null}
+          {renderedIframe ? (
+            <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
+              <AppIframe
+                src={renderedIframe.src}
+                title={renderedIframe.title}
+                workspaceTabId={tab.id}
+              />
+            </div>
+          ) : null}
+        </div>
+      </Activity>
+    </WorkspaceTabPortalOwner>
+  )
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
@@ -131,50 +294,21 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const experimentalFeatures = useExperimentalFeaturesState()
-  const { activeTab, isNativeApp } = useChromeTabs(path)
-  const resolvedActiveTab =
-    activeTab?.key === 'wegent' && cloudConnection.webUrl
-      ? { ...activeTab, url: cloudConnection.webUrl }
-      : activeTab
-  const activeIframeTab =
-    !isNativeApp && resolvedActiveTab?.mode === 'iframe' && resolvedActiveTab.url
-      ? resolvedActiveTab
-      : null
-  const isAuxiliaryRoute =
-    Boolean(activeIframeTab) ||
-    path === '/plugins/manage' ||
-    path === '/plugins/create' ||
-    path === '/plugins' ||
-    path === '/automations' ||
-    path === '/cloud-work' ||
-    path === '/sites' ||
-    path === '/apps' ||
-    path === '/popout' ||
-    isPopoutWindow
-  const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
-  const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
-    activeIframeTab ? [activeIframeTab] : []
-  )
-  if (!isAuxiliaryRoute && !hasMountedWorkbench) setHasMountedWorkbench(true)
-
-  const mountedActiveIframeTab = activeIframeTab
-    ? mountedIframeTabs.find(tab => tab.key === activeIframeTab.key)
-    : null
-  if (
-    activeIframeTab &&
-    (mountedActiveIframeTab?.url !== activeIframeTab.url ||
-      mountedActiveIframeTab?.label !== activeIframeTab.label)
-  ) {
-    setMountedIframeTabs(current => [
-      ...current.filter(tab => tab.key !== activeIframeTab.key),
-      activeIframeTab,
-    ])
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const [mountedTabs, setMountedTabs] = useState(() => ({
+    activeTabId: workspaceTabs?.activeTabId ?? null,
+    ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
+  }))
+  if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
+    setMountedTabs({
+      activeTabId: workspaceTabs.activeTabId,
+      ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+    })
   }
 
-  useEffect(() => {
-    if (isLoading || !user || isNativeApp || !resolvedActiveTab?.url) return
-    onWorkbenchStartupReadyChange?.(true)
-  }, [isLoading, isNativeApp, onWorkbenchStartupReadyChange, resolvedActiveTab?.url, user])
+  useLayoutEffect(() => {
+    setActiveWorkspaceTabPortalOwner(workspaceTabs?.activeTabId ?? null)
+  }, [workspaceTabs?.activeTabId])
 
   useEffect(() => {
     if (path === '/automations' && experimentalFeatures.loaded && !experimentalFeatures.enabled) {
@@ -198,47 +332,43 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
-  const auxiliaryPage = isPopoutWindow ? (
-    <PopoutWorkbenchPage />
-  ) : path === '/plugins/manage' ? (
-    <PluginManagementPage />
-  ) : path === '/plugins/create' ? (
-    <PluginCreatePage />
-  ) : path === '/plugins' ? (
-    <PluginsPage />
-  ) : path === '/cloud-work' ? (
-    <CloudWorkPage />
-  ) : path === '/sites' ? (
-    <SitesPage />
-  ) : path === '/automations' && experimentalFeatures.enabled ? (
-    <AutomationsPage />
-  ) : path === '/apps' ? (
-    <AppsPage />
-  ) : null
-  // Keep the workbench mounted while another top-level surface is visible. The
-  // composer, terminals and in-app browser own live, non-serializable state, so
-  // reconstructing them after every route change is both lossy and expensive.
-  return (
-    <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
-      {onOpenWeworkForAppshot ? <AppshotBridge onOpenWework={onOpenWeworkForAppshot} /> : null}
-      {hasTauriIpc() && isPopoutWindow && <SystemDragBridge />}
-      {(!isAuxiliaryRoute || hasMountedWorkbench) && (
-        <div className={cn('h-full', isAuxiliaryRoute && 'hidden')} aria-hidden={isAuxiliaryRoute}>
-          <WorkbenchPage />
-        </div>
-      )}
-      {mountedIframeTabs.map(tab => (
-        <div
-          key={tab.key}
-          className={cn('h-full', activeIframeTab?.key !== tab.key && 'hidden')}
-          aria-hidden={activeIframeTab?.key !== tab.key}
-        >
-          <AppIframe src={tab.url ?? ''} title={tab.label} />
-        </div>
-      ))}
-      {auxiliaryPage}
-    </WorkbenchProvider>
-  )
+  // Route surfaces and their sidebars must read one resolved preference snapshot.
+  // Mounting them before it is available makes experimental navigation items briefly
+  // disappear when a route change creates a new sidebar instance.
+  if (!experimentalFeatures.loaded) {
+    return null
+  }
+
+  if (isPopoutWindow) {
+    return (
+      <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
+        {hasTauriIpc() && <SystemDragBridge />}
+        <PopoutWorkbenchPage />
+      </WorkbenchProvider>
+    )
+  }
+
+  if (!workspaceTabs) return null
+
+  return workspaceTabs.tabs.map(tab => {
+    if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
+    return (
+      <WorkspaceTabSurface
+        key={tab.id}
+        active={tab.id === workspaceTabs.activeTabId}
+        cloudWebUrl={
+          cloudConnection.webUrl
+            ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+            : cloudConnection.webUrl
+        }
+        experimentalFeaturesEnabled={experimentalFeatures.enabled}
+        onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+        onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+        tab={tab}
+        user={user}
+      />
+    )
+  })
 }
 
 export default function App() {
@@ -257,44 +387,45 @@ function MainApp() {
     document.title = getWeworkDocumentTitle()
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-
-    getAppPreferences()
-      .then(preferences => {
-        if (!cancelled) {
-          return applyLanguagePreference(preferences.language)
-        }
-        return undefined
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to initialize language preference:', error)
-        if (!cancelled) {
-          return applyLanguagePreference(defaultAppPreferences.language)
-        }
-        return undefined
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
     <AppearanceProvider>
-      <AppUpdateProvider>
-        <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
-          <AuthProvider>
-            <AppShell />
-          </AuthProvider>
-        </CloudConnectionProvider>
-      </AppUpdateProvider>
+      <AppPreferencesProvider>
+        <LanguagePreferenceInitializer />
+        <AppUpdateProvider>
+          <CloudConnectionProvider initializeSitesPlugin={!isPopoutWindow}>
+            <AuthProvider>
+              <AppShell />
+            </AuthProvider>
+          </CloudConnectionProvider>
+        </AppUpdateProvider>
+      </AppPreferencesProvider>
     </AppearanceProvider>
   )
 }
 
+function LanguagePreferenceInitializer() {
+  const appPreferences = useAppPreferencesState()
+
+  useEffect(() => {
+    if (!appPreferences?.loaded) return
+    void applyLanguagePreference(appPreferences.preferences.language)
+  }, [appPreferences?.loaded, appPreferences?.preferences.language])
+
+  return null
+}
+
+const BROWSER_WORKSPACE_SCOPE_PREFIX = 'wework-workspace-'
+
+function browserWorkspaceTabStorageScope(): string {
+  if (!window.name.startsWith(BROWSER_WORKSPACE_SCOPE_PREFIX)) {
+    window.name = `${BROWSER_WORKSPACE_SCOPE_PREFIX}${crypto.randomUUID()}`
+  }
+  return `browser:${window.name}`
+}
+
 function AppShell() {
-  const path = useCurrentPath()
+  const { t } = useTranslation('common')
+  const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
@@ -302,16 +433,47 @@ function AppShell() {
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
   }
-  const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
+  const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
-  const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
-  const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
+  const isPopoutWindow = isPopoutWindowRuntime()
+  const isWorkspaceWindow = isTauri && getCurrentWindow().label?.startsWith('workspace-') === true
+  const usesDesktopVibrancy = isTauri && !isPopoutWindow && getPlatform() === 'mac'
+  const titlebarOverlaysContent = false
+  const showChromeTitlebar = isTauri && !isPopoutWindow
+  const workspaceTabStorageScope = useMemo(
+    () => (isTauri ? getCurrentWindow().label : browserWorkspaceTabStorageScope()),
+    [isTauri]
+  )
+  const workspaceTabLabels = useMemo(
+    () => ({
+      task: t('workbench.workspace_tab_task', '任务'),
+      board: t('workbench.workspace_tab_board', '项目空间'),
+      agent: t('workbench.workspace_tab_agent', '智能体'),
+      auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
+      auxiliaryRoutes: {
+        plugins: t('workbench.workspace_tab_plugins', '插件'),
+        sites: t('workbench.workspace_tab_sites', '站点'),
+        automations: t('workbench.workspace_tab_automations', '自动化'),
+        cloud: t('workbench.workspace_tab_cloud', '云端工作'),
+        apps: t('workbench.workspace_tab_apps', '应用'),
+      },
+    }),
+    [t]
+  )
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
-  const isPopoutWindow = isPopoutWindowRuntime()
   const openWeworkForAppshot = useCallback(() => {
     navigateToApp('wework')
   }, [navigateToApp])
+
+  useEffect(() => {
+    if (!usesDesktopVibrancy) return undefined
+
+    document.documentElement.dataset.desktopVibrancy = 'true'
+    return () => {
+      delete document.documentElement.dataset.desktopVibrancy
+    }
+  }, [usesDesktopVibrancy])
 
   useEffect(() => {
     if (!isTauri || isPopoutWindow) return undefined
@@ -491,40 +653,55 @@ function AppShell() {
   }
 
   const shell = (
-    <div
-      className={cn(
-        'h-dvh',
-        isPopoutWindow ? 'overflow-visible bg-transparent' : 'overflow-hidden bg-surface',
-        titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-      )}
+    <WorkspaceTabsProvider
+      pathname={path}
+      search={search}
+      storageScope={workspaceTabStorageScope}
+      labels={workspaceTabLabels}
     >
-      {showChromeTitlebar && (
-        <ChromeTitlebar
-          tabs={tabs}
-          activeKey={activeAppKey}
-          onNavigate={appKey => (appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey))}
-          beforeTabs={<TitlebarSidebarToggle />}
-          afterTabs={<AppUpdateTitlebarButton />}
-          iconOnlyTabs={isTauri}
-          className={
-            titlebarOverlaysContent ? 'absolute inset-x-0 top-0 z-system bg-transparent' : undefined
-          }
-        />
-      )}
       <div
         className={cn(
-          'min-h-0',
-          isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
-          titlebarOverlaysContent ? 'h-full' : 'flex-1'
+          'h-dvh',
+          isPopoutWindow
+            ? 'overflow-visible bg-transparent'
+            : isWorkspaceWindow
+              ? 'overflow-hidden bg-[rgb(var(--color-titlebar))]'
+              : usesDesktopVibrancy
+                ? 'overflow-hidden bg-transparent'
+                : 'overflow-hidden bg-surface',
+          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >
-        <AppRoutes
-          onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-          onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
-        />
+        {showChromeTitlebar && (
+          <ChromeTitlebar
+            showWorkspacePortals={activeAppKey !== 'wework'}
+            showFeedback={activeAppKey !== 'wework'}
+          />
+        )}
+        {isTauri && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+        {!isPopoutWindow && !isWorkspaceWindow ? (
+          <LocalExecutorCloudBridge
+            apiBaseUrl={cloudConnection.apiBaseUrl}
+            backendUrl={cloudConnection.backendUrl}
+            isConnected={cloudConnection.isConnected}
+            token={cloudConnection.token}
+          />
+        ) : null}
+        <div
+          className={cn(
+            'relative min-h-0',
+            isPopoutWindow ? 'overflow-visible' : 'overflow-hidden',
+            titlebarOverlaysContent ? 'h-full' : 'flex-1'
+          )}
+        >
+          <AppRoutes
+            onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+            onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+          />
+        </div>
+        {!isPopoutWindow && <WeworkDevInstanceBadge />}
       </div>
-      {!isPopoutWindow && <WeworkDevInstanceBadge />}
-    </div>
+    </WorkspaceTabsProvider>
   )
 
   if (isPopoutWindow) {
@@ -688,36 +865,5 @@ function WeworkDevInstanceBadge() {
         </div>
       </div>
     </div>
-  )
-}
-
-function TitlebarSidebarToggle() {
-  const { t } = useTranslation('common')
-  const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const label = sidebarCollapsed
-    ? t('workbench.expand_sidebar', '展开侧边栏')
-    : t('workbench.collapse_sidebar', '收起侧边栏')
-
-  return (
-    <TitlebarTooltip
-      label={t('workbench.toggle_sidebar', '切换边栏')}
-      shortcut="Command+B"
-      align="start"
-    >
-      <button
-        type="button"
-        data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-        onClick={() => {
-          if (!requestDesktopSidebarToggle()) {
-            setSidebarCollapsed(!sidebarCollapsed)
-          }
-        }}
-        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-        aria-label={label}
-        aria-pressed={sidebarCollapsed}
-      >
-        <PanelLeft />
-      </button>
-    </TitlebarTooltip>
   )
 }

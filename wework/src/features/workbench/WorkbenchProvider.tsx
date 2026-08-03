@@ -7,17 +7,16 @@ import {
   useRef,
   useState,
 } from 'react'
-import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
-import { localModelIdFromModelName } from '@/features/model-settings/localModelSettings'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { findWorkbenchDevice, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import {
   findActiveRuntimeProjectId,
   getLocalRuntimeStateDeviceId,
@@ -27,6 +26,7 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { installMainRuntimeWorkChangedListener } from '@/tauri/runtimeWorkSync'
+import { disposeTauriListener } from '@/tauri/disposeTauriListener'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
@@ -65,7 +65,6 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
-import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import {
@@ -95,9 +94,18 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from './runtimeTaskLifecycle'
 import {
+  applyRuntimeConversationGoalContinuation,
+  applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  markRuntimeConversationAssistantStarted,
+  publishRuntimeTransportReplaced,
+  runtimeConversationKey,
+  setRuntimeConversationGoal,
+  setRuntimeConversationTaskPlan,
+  settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
+import { createRuntimeConversationStreamHandlers } from './runtimePaneMessages'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -108,7 +116,6 @@ import {
   findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
-  getRuntimeTaskRouteKey,
   getDefaultProjectDeviceWorkspaceId,
   readLastProjectId,
   writeLastProjectId,
@@ -118,6 +125,10 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
+import {
+  consumeWorkspaceTabTransfer,
+  publishWorkspaceTabTransferState,
+} from '@/features/workspace-tabs/workspaceTabTransfer'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -190,6 +201,7 @@ export function WorkbenchProvider({
   user,
   services,
   onStartupReadyChange,
+  workspaceTabId,
 }: WorkbenchProviderProps) {
   const cloudConnection = useOptionalCloudConnection()
   const resolvedServices = useMemo(
@@ -261,7 +273,7 @@ export function WorkbenchProvider({
     lifecycleSnapshot,
   })
   const currentContextUsage = state.currentRuntimeTask
-    ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
+    ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
 
   const currentUser = state.user ?? user
@@ -270,7 +282,13 @@ export function WorkbenchProvider({
     currentRuntimeTask: state.currentRuntimeTask,
     standaloneChatKey: state.standaloneChatKey,
   })
-  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
+    workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
+  )
+  useEffect(() => {
+    if (!workspaceTabId) return
+    publishWorkspaceTabTransferState(workspaceTabId, { draftInputByScope })
+  }, [draftInputByScope, workspaceTabId])
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
   >({})
@@ -620,33 +638,8 @@ export function WorkbenchProvider({
       error: message || getBlockedModelSelectionMessage('runtime_family_mismatch', model),
     })
   }, [])
-  const modelExecutionDeviceId = useMemo(() => {
-    if (state.currentRuntimeTask?.deviceId) return state.currentRuntimeTask.deviceId
-    const projectWorkspace = findProjectDeviceWorkspace(
-      state.runtimeWork,
-      activeProject?.id,
-      state.selectedDeviceWorkspaceId
-    )
-    return projectWorkspace?.deviceId ?? (!activeProject ? state.standaloneDeviceId : null)
-  }, [
-    activeProject,
-    state.currentRuntimeTask,
-    state.runtimeWork,
-    state.selectedDeviceWorkspaceId,
-    state.standaloneDeviceId,
-  ])
-  const modelExecutionDevice = findWorkbenchDevice(state.devices, modelExecutionDeviceId)
-  const hideConfiguredLocalModels = Boolean(
-    modelExecutionDevice && modelExecutionDevice.device_type !== 'local'
-  )
-  const filterModelForExecution = useCallback(
-    (model: UnifiedModel) =>
-      !hideConfiguredLocalModels || localModelIdFromModelName(model.name) === null,
-    [hideConfiguredLocalModels]
-  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
-    filterModel: filterModelForExecution,
     locked: false,
     scopeKey: projectChatScopeKey,
     persistSelection: !state.currentRuntimeTask,
@@ -1358,7 +1351,7 @@ export function WorkbenchProvider({
         const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
-          [getRuntimeTaskRouteKey(address)]: contextUsage,
+          [runtimeConversationKey(address)]: contextUsage,
         }))
       }
       return transcript
@@ -1372,7 +1365,11 @@ export function WorkbenchProvider({
     )
 
     return () => {
-      void listener?.then(unlisten => unlisten())
+      void listener
+        ?.then(unlisten => disposeTauriListener(unlisten, 'local workspace open'))
+        .catch(error => {
+          console.debug('[Wework] Local workspace listener was unavailable during cleanup', error)
+        })
     }
   }, [stableOpenStandaloneWorkspace, stableSetWorkbenchError])
   const stableSubscribeRuntimeTaskStream = useStableEvent(
@@ -1386,73 +1383,106 @@ export function WorkbenchProvider({
           const contextUsage = resolveRuntimeContextUsage(address, usage)
           setContextUsageByRuntimeTask(current => ({
             ...current,
-            [getRuntimeTaskRouteKey(address)]: contextUsage,
+            [runtimeConversationKey(address)]: contextUsage,
           }))
           handlers.onContextUsageUpdated?.(contextUsage)
-        },
-        onAssistantSettled: () => {
-          console.info('[Wework] Runtime task settlement dispatched', {
-            deviceId: address.deviceId,
-            taskId: address.taskId,
-            workspacePath: address.workspacePath ?? null,
-          })
-          lifecycleStore.turnSettled(address)
-          handlers.onAssistantSettled?.()
-        },
-        onAssistantStart: () => {
-          lifecycleStore.turnStarted(address)
-          handlers.onAssistantStart?.()
         },
       })
   )
 
-  const nextBackgroundRunningTasks = getBackgroundRunningRuntimeTasks(
-    state.runtimeWork,
-    state.currentRuntimeTask,
-    lifecycleSnapshot
+  const applyCanonicalRuntimeAction = useStableEvent(
+    (address: RuntimeTaskAddress, action: Parameters<typeof applyRuntimeConversationAction>[1]) => {
+      applyRuntimeConversationAction(address, action)
+    }
   )
-  const backgroundRunningTaskRoutes = nextBackgroundRunningTasks
-    .map(address => `${address.deviceId}:${address.taskId}`)
-    .join('|')
-  const getLatestBackgroundRunningTasks = useStableEvent(() =>
-    getBackgroundRunningRuntimeTasks(state.runtimeWork, state.currentRuntimeTask, lifecycleSnapshot)
+  const settleCanonicalRuntimeGuidance = useStableEvent(
+    (
+      address: RuntimeTaskAddress,
+      payload: Parameters<typeof settleRuntimeConversationGuidance>[1]
+    ) => settleRuntimeConversationGuidance(address, payload)
   )
-  const subscribeBackgroundRuntimeTaskStream = runtimeTasks.subscribeRuntimeTaskStream
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
+  const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
+    void stableRefreshWorkLists().catch(error => {
+      console.warn('[Wework] Runtime work list refresh failed', {
+        deviceId: address.deviceId,
+        taskId: address.taskId,
+        error,
+      })
+    })
+  })
+  const updateCanonicalRuntimeContextUsage = useStableEvent(
+    (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
+      const currentAddress =
+        state.currentRuntimeTask?.deviceId === address.deviceId &&
+        state.currentRuntimeTask.taskId === address.taskId
+          ? state.currentRuntimeTask
+          : address
+      const contextUsage = resolveRuntimeContextUsage(currentAddress, usage)
+      setContextUsageByRuntimeTask(current => ({
+        ...current,
+        [runtimeConversationKey(address)]: contextUsage,
+      }))
+    }
+  )
+
+  useEffect(
+    () =>
+      resolvedServices.chatStream.subscribe(
+        createRuntimeConversationStreamHandlers({
+          onMessageAction: applyCanonicalRuntimeAction,
+          onGuidanceApplied: settleCanonicalRuntimeGuidance,
+          onAssistantStart: address => {
+            markRuntimeConversationAssistantStarted(address)
+            lifecycleStore.turnStarted(address)
+          },
+          onAssistantSettled: address => {
+            settleRuntimeConversationSubagents(address)
+            lifecycleStore.turnSettled(address)
+          },
+          onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
+          onSubagentActivity: applyRuntimeConversationSubagentActivity,
+          onRuntimeGoalUpdated: (address, payload) => {
+            const goal = payload.goal ?? null
+            setRuntimeConversationGoal(address, goal)
+            lifecycleStore.goalStatusReceived(address, goal?.status ?? null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalCleared: address => {
+            setRuntimeConversationGoal(address, null)
+            lifecycleStore.goalStatusReceived(address, null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeGoalContinuation: (address, payload) => {
+            applyRuntimeConversationGoalContinuation(address, payload)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
+          onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
+          onRefreshWorkLists: refreshRuntimeWorkLists,
+        })
+      ),
+    [
+      applyCanonicalRuntimeAction,
+      lifecycleStore,
+      refreshRuntimeWorkLists,
+      resolvedServices.chatStream,
+      settleCanonicalRuntimeGuidance,
+      updateCanonicalRuntimeContextUsage,
+    ]
+  )
+
   useEffect(() => {
     const listener = installMainRuntimeWorkChangedListener(stableRefreshWorkLists)
 
     return () => {
-      void listener?.then(unlisten => unlisten())
+      void listener
+        ?.then(unlisten => disposeTauriListener(unlisten, 'runtime work changed'))
+        .catch(error => {
+          console.debug('[Wework] Runtime work listener was unavailable during cleanup', error)
+        })
     }
   }, [stableRefreshWorkLists])
-
-  useEffect(() => {
-    const unsubscribers = getLatestBackgroundRunningTasks().map(address =>
-      subscribeBackgroundRuntimeTaskStream(address, {
-        onMessageAction: action => applyRuntimeConversationAction(address, action),
-        onGuidanceApplied: payload => settleRuntimeConversationGuidance(address, payload),
-        onAssistantStart: () => lifecycleStore.turnStarted(address),
-        onAssistantSettled: () => lifecycleStore.turnSettled(address),
-        onRefreshWorkLists: () => {
-          void stableRefreshWorkLists().catch(error => {
-            console.warn('[Wework] Background runtime work list refresh failed', {
-              deviceId: address.deviceId,
-              taskId: address.taskId,
-              error,
-            })
-          })
-        },
-      })
-    )
-    return () => unsubscribers.forEach(unsubscribe => unsubscribe())
-  }, [
-    backgroundRunningTaskRoutes,
-    getLatestBackgroundRunningTasks,
-    lifecycleStore,
-    stableRefreshWorkLists,
-    subscribeBackgroundRuntimeTaskStream,
-  ])
   const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
   const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
@@ -2109,13 +2139,7 @@ export function WorkbenchProvider({
     <RuntimeTaskLifecycleProvider store={lifecycleStore}>
       <WorkbenchContext.Provider value={value}>
         <WorkbenchPaneContext.Provider value={paneValue}>
-          <RuntimeTaskCloseGuard />
-          <LocalExecutorCloudBridge
-            apiBaseUrl={cloudConnection.apiBaseUrl}
-            backendUrl={cloudConnection.backendUrl}
-            isConnected={cloudConnection.isConnected}
-            token={cloudConnection.token}
-          />
+          <CloudModelCatalogSyncDialogHost />
           {children}
         </WorkbenchPaneContext.Provider>
       </WorkbenchContext.Provider>
@@ -2134,39 +2158,4 @@ function getProjectChatScopeKey({
     return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
-}
-
-function getBackgroundRunningRuntimeTasks(
-  runtimeWork: RuntimeWorkListResponse | null | undefined,
-  currentRuntimeTask: RuntimeTaskAddress | null,
-  lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>
-): RuntimeTaskAddress[] {
-  if (!runtimeWork) return []
-
-  const tasks = new Map<string, RuntimeTaskAddress>()
-  const workspaces = [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-  for (const workspace of workspaces) {
-    for (const task of workspace.tasks) {
-      const key = `${workspace.deviceId}\0${task.taskId}`
-      if (!lifecycleSnapshot.runningTaskKeys.has(key)) continue
-      if (
-        currentRuntimeTask?.deviceId === workspace.deviceId &&
-        currentRuntimeTask.taskId === task.taskId
-      ) {
-        continue
-      }
-      const address = {
-        deviceId: workspace.deviceId,
-        taskId: task.taskId,
-        threadId: task.threadId,
-        workspacePath: workspace.workspacePath,
-        runtimeHandle: task.runtimeHandle,
-      }
-      tasks.set(`${address.deviceId}:${address.taskId}`, address)
-    }
-  }
-  return [...tasks.values()]
 }

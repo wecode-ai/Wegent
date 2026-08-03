@@ -77,6 +77,7 @@ impl RuntimeWorkRpcHandler {
             debug_unrouted_codex_notification(&message, "missing_thread_id");
             return;
         };
+        let notification_turn_id = codex_notification_turn_id(&message);
 
         if !self.thread_event_route_exists(&thread_id) {
             self.register_thread_event_route_from_store(&thread_id);
@@ -96,16 +97,40 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         if self.is_active_local_task(&route.local_task_id) {
-            return;
+            let Some(active_turn) = self.active_codex_turn(&route.local_task_id) else {
+                return;
+            };
+            let Some(notification_turn_id) = notification_turn_id.as_deref() else {
+                return;
+            };
+            if notification_turn_id == active_turn.turn_id {
+                return;
+            }
+            log_executor_event(
+                "runtime work routes non-active turn notification",
+                &[
+                    ("thread_id", thread_id.clone()),
+                    ("active_turn_id", active_turn.turn_id),
+                    ("notification_turn_id", notification_turn_id.to_owned()),
+                ],
+            );
         }
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
+        }
+        let mut event_request = route.request.clone();
+        if let Some(turn_id) = notification_turn_id {
+            if event_request.subtask_id != turn_id {
+                event_request.subtask_id = turn_id;
+                event_request.extra.remove("client_user_message_id");
+                event_request.extra.remove("clientUserMessageId");
+            }
         }
         route.event_mapper.map(
             &self.event_tx,
             &self.device_id,
             &route.local_task_id,
-            &route.request,
+            &event_request,
             message,
         );
     }

@@ -16,10 +16,49 @@ use zip::ZipArchive;
 
 use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MANIFEST_VERSION};
 
+const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
+const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
+const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
 const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
 const UNIX_MODE_SYMLINK: u32 = 0o120_000;
+const CODEX_MANIFEST_FIELDS: [&str; 10] = [
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "skills",
+    "mcpServers",
+];
+// Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
+const CLAUDE_MANIFEST_FIELDS: [&str; 21] = [
+    "name",
+    "version",
+    "description",
+    "author",
+    "homepage",
+    "repository",
+    "license",
+    "keywords",
+    "skills",
+    "mcpServers",
+    "commands",
+    "agents",
+    "hooks",
+    "outputStyles",
+    "lspServers",
+    "experimental",
+    "dependencies",
+    "userConfig",
+    "channels",
+    "themes",
+    "monitors",
+];
 
 pub(super) fn extract_plugin_zip(
     package: &[u8],
@@ -76,7 +115,8 @@ pub(super) fn extract_plugin_zip(
     }
     let manifest_prefix = plugin_manifest_prefix(&entries).ok_or_else(|| {
         CapabilitySyncError::invalid_payload(
-            "Plugin package is missing .codex-plugin/plugin.json or .claude-plugin/plugin.json",
+            "Plugin package is missing .codex-plugin/plugin.json or \
+             .claude-plugin/plugin.json",
         )
     })?;
 
@@ -99,12 +139,7 @@ pub(super) fn extract_plugin_zip(
             fs::write(&target, bytes)?;
             ensure_plugin_hook_executable(relative, &target)?;
         }
-        if !has_plugin_manifest(&temp_path) {
-            return Err(CapabilitySyncError::invalid_payload(
-                "Plugin package is missing .codex-plugin/plugin.json or .claude-plugin/plugin.json",
-            ));
-        }
-        Ok(())
+        ensure_dual_plugin_manifests(&temp_path).map(|_| ())
     })();
     if let Err(error) = extraction_result {
         let _ = remove_existing_path(&temp_path);
@@ -159,6 +194,143 @@ fn map_zip_read_error(error: io::Error) -> CapabilitySyncError {
         return CapabilitySyncError::invalid_payload("Encrypted files are not allowed");
     }
     CapabilitySyncError::Io(error)
+}
+
+pub(super) fn has_plugin_manifest(plugin_path: &Path) -> bool {
+    PLUGIN_MANIFEST_PATHS
+        .iter()
+        .any(|manifest_path| plugin_path.join(manifest_path).is_file())
+}
+
+pub(super) fn ensure_dual_plugin_manifests(
+    plugin_path: &Path,
+) -> Result<bool, CapabilitySyncError> {
+    let codex_path = plugin_path.join(CODEX_PLUGIN_MANIFEST_PATH);
+    let claude_path = plugin_path.join(CLAUDE_PLUGIN_MANIFEST_PATH);
+    let codex_manifest = read_plugin_manifest(&codex_path)?;
+    let claude_manifest = read_plugin_manifest(&claude_path)?;
+    validate_plugin_manifest_names(codex_manifest.as_ref(), claude_manifest.as_ref())?;
+    if codex_manifest.is_none() && claude_manifest.is_none() {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package is missing .codex-plugin/plugin.json or \
+             .claude-plugin/plugin.json",
+        ));
+    }
+
+    let codex_missing = codex_manifest.is_none();
+    let codex_manifest = codex_manifest.unwrap_or_else(|| {
+        convert_plugin_manifest(
+            claude_manifest
+                .as_ref()
+                .expect("Claude manifest exists when Codex manifest is missing"),
+            false,
+        )
+    });
+    let claude_source = claude_manifest.as_ref().unwrap_or(&codex_manifest);
+    let normalized_claude_manifest = convert_plugin_manifest(claude_source, true);
+    let claude_changed = claude_manifest.as_ref() != Some(&normalized_claude_manifest);
+    if codex_missing {
+        write_json(&codex_path, &codex_manifest)?;
+    }
+    if claude_changed {
+        write_json(&claude_path, &normalized_claude_manifest)?;
+    }
+    Ok(codex_missing || claude_changed)
+}
+
+fn read_plugin_manifest(path: &Path) -> Result<Option<Value>, CapabilitySyncError> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let manifest: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+    if !manifest.is_object() {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "{} must contain a JSON object",
+            path.display()
+        )));
+    }
+    Ok(Some(manifest))
+}
+
+fn validate_plugin_manifest_names(
+    codex_manifest: Option<&Value>,
+    claude_manifest: Option<&Value>,
+) -> Result<(), CapabilitySyncError> {
+    let codex_name = plugin_manifest_name(codex_manifest, CODEX_PLUGIN_MANIFEST_PATH)?;
+    let claude_name = plugin_manifest_name(claude_manifest, CLAUDE_PLUGIN_MANIFEST_PATH)?;
+    if codex_name
+        .as_ref()
+        .zip(claude_name.as_ref())
+        .is_some_and(|(codex, claude)| codex != claude)
+    {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Codex and Claude Code plugin manifest names must match",
+        ));
+    }
+    Ok(())
+}
+
+fn plugin_manifest_name(
+    manifest: Option<&Value>,
+    manifest_path: &str,
+) -> Result<Option<String>, CapabilitySyncError> {
+    let Some(manifest) = manifest else {
+        return Ok(None);
+    };
+    let name = value_string(manifest.get("name")).filter(|name| !name.is_empty());
+    name.map(Some).ok_or_else(|| {
+        CapabilitySyncError::invalid_payload(format!(
+            "{manifest_path} must include a non-empty name"
+        ))
+    })
+}
+
+fn convert_plugin_manifest(manifest: &Value, for_claude: bool) -> Value {
+    let fields = if for_claude {
+        CLAUDE_MANIFEST_FIELDS.as_slice()
+    } else {
+        CODEX_MANIFEST_FIELDS.as_slice()
+    };
+    let mut converted = Map::new();
+    let source = manifest.as_object().expect("plugin manifest object");
+    for field in fields {
+        if let Some(value) = source.get(*field) {
+            converted.insert((*field).to_owned(), value.clone());
+        }
+    }
+    if for_claude {
+        copy_codex_interface_metadata(source, &mut converted);
+    } else {
+        copy_claude_interface_metadata(source, &mut converted);
+    }
+    Value::Object(converted)
+}
+
+fn copy_codex_interface_metadata(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    let Some(interface) = source.get("interface").and_then(Value::as_object) else {
+        return;
+    };
+    if !target.contains_key("description") {
+        if let Some(description) = interface
+            .get("shortDescription")
+            .or_else(|| interface.get("longDescription"))
+        {
+            target.insert("description".to_owned(), description.clone());
+        }
+    }
+}
+
+fn copy_claude_interface_metadata(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    let mut interface = Map::new();
+    if let Some(display_name) = source.get("displayName") {
+        interface.insert("displayName".to_owned(), display_name.clone());
+    }
+    if let Some(description) = source.get("description") {
+        interface.insert("shortDescription".to_owned(), description.clone());
+    }
+    if !interface.is_empty() {
+        target.insert("interface".to_owned(), Value::Object(interface));
+    }
 }
 
 pub(super) fn ensure_plugin_hook_permissions(
@@ -218,25 +390,20 @@ fn is_plugin_hook_path(path: &Path) -> bool {
 }
 
 fn plugin_manifest_prefix(entries: &[(PathBuf, Vec<u8>)]) -> Option<PathBuf> {
-    [".codex-plugin/plugin.json", ".claude-plugin/plugin.json"]
-        .into_iter()
-        .find_map(|manifest_path| {
-            entries
+    entries
+        .iter()
+        .flat_map(|(path, _)| {
+            PLUGIN_MANIFEST_PATHS
                 .iter()
-                .filter(|(path, _)| path.ends_with(Path::new(manifest_path)))
-                .map(|(path, _)| {
+                .filter(move |manifest_path| path.ends_with(manifest_path))
+                .map(move |_| {
                     path.parent()
                         .and_then(Path::parent)
                         .map(Path::to_path_buf)
                         .unwrap_or_default()
                 })
-                .min_by_key(|path| path.components().count())
         })
-}
-
-pub(super) fn has_plugin_manifest(plugin_path: &Path) -> bool {
-    plugin_path.join(".codex-plugin/plugin.json").is_file()
-        || plugin_path.join(".claude-plugin/plugin.json").is_file()
+        .min_by_key(|path| path.components().count())
 }
 
 fn is_macos_metadata_path(path: &Path) -> bool {
@@ -597,6 +764,21 @@ pub(super) fn link_or_copy_dir(target: &Path, link: &Path) -> Result<(), Capabil
         Ok(()) => Ok(()),
         Err(_) => copy_dir_recursive(target, link),
     }
+}
+
+pub(super) fn copy_dir_atomic(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+    let temporary = sibling_temp_path(target);
+    remove_existing_path(&temporary)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if let Err(error) = copy_dir_recursive(source, &temporary) {
+        let _ = remove_existing_path(&temporary);
+        return Err(error);
+    }
+    remove_existing_path(target)?;
+    fs::rename(&temporary, target)?;
+    Ok(())
 }
 
 #[cfg(unix)]

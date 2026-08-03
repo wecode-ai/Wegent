@@ -17,7 +17,10 @@ let activeRuntimeChatStreamSubscriptions = 0
 const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 
 export function isRuntimeChatStreamDebugEnabled(): boolean {
-  return globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+  return (
+    import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' ||
+    globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+  )
 }
 
 export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {
@@ -67,14 +70,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
             continue
           }
           const inScope = isLocalExecutorEventInScope(event, subscription.handlers.scope)
-          if (!inScope && event.event !== 'runtime.plan.updated') {
-            continue
-          }
-          if (!inScope && import.meta.env.DEV) {
-            console.warn('[Wework] Runtime task plan event forwarded outside subscription scope', {
-              subscriptionId,
-            })
-          }
+          if (!inScope) continue
           subscription.eventCount += 1
           if (event.event === 'response.output_text.delta') {
             subscription.textDeltaCount += 1
@@ -91,9 +87,6 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
             event.payload,
             subscription.state
           )
-        }
-        if (event.event === 'runtime.plan.updated') {
-          globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
         }
       })
     )
@@ -250,10 +243,9 @@ function logRuntimeChatStreamEvent(
   textDeltaCount: number
 ): void {
   if (!isRuntimeChatStreamDebugEnabled()) return
-  if (!shouldLogRuntimeChatStreamEvent(event.event)) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
-  console.debug('[Wework] Runtime chat stream event', {
+  console.info('[Wework] Runtime chat stream event', {
     subscriptionId,
     activeSubscriptions: activeRuntimeChatStreamSubscriptions,
     event: event.event,

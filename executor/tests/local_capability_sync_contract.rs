@@ -446,7 +446,10 @@ async fn plugin_sync_accepts_a_pure_codex_plugin_package() {
     assert!(store_dir
         .join("plugins/20-wegent-gitlab-1.0.0/.codex-plugin/plugin.json")
         .is_file());
-    assert!(codex_plugins_dir.join("gitlab-wegent").is_symlink());
+    let codex_runtime = codex_plugins_dir.join("cache/wegent/gitlab/1.0.0");
+    assert!(codex_runtime.is_dir());
+    assert!(!codex_runtime.is_symlink());
+    assert!(codex_runtime.join(".codex-plugin/plugin.json").is_file());
 }
 
 #[tokio::test]

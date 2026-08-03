@@ -212,6 +212,18 @@ fn codex_notification_thread_id(message: &Value) -> Option<String> {
     codex_stream_thread_id(notification.params).or_else(|| codex_stream_thread_id(message))
 }
 
+fn codex_notification_turn_id(message: &Value) -> Option<String> {
+    let notification = codex_notification(message);
+    if !is_root_codex_turn_event(notification.params) {
+        return None;
+    }
+    let turn = notification.params.get("turn");
+    turn
+        .and_then(|turn| string_field(turn, "id"))
+        .or_else(|| string_field(notification.params, "turnId"))
+        .or_else(|| string_field(notification.params, "turn_id"))
+}
+
 fn codex_stream_thread_id(value: &Value) -> Option<String> {
     string_field(value, "threadId")
         .or_else(|| string_field(value, "thread_id"))

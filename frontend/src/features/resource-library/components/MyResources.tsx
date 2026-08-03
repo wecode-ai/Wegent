@@ -52,7 +52,7 @@ const managedResourceTypes: ManagedResourceType[] = [
   'retriever',
 ]
 
-const sourceFilters: ManagedResourceSourceFilter[] = ['all', 'personal', 'group', 'system']
+const sourceFilters: ManagedResourceSourceFilter[] = ['all', 'mine', 'personal', 'group', 'system']
 
 const resourceLibraryUrlParams = {
   type: 'type',
@@ -491,6 +491,7 @@ interface MyResourcesProps {
   onCreateRequestClose?: () => void
   creationOnly?: boolean
   leadingFilterControls?: ReactNode
+  searchQuery?: string
 }
 
 export function MyResources({
@@ -514,6 +515,7 @@ export function MyResources({
   onCreateRequestClose,
   creationOnly = false,
   leadingFilterControls,
+  searchQuery = '',
 }: MyResourcesProps = {}) {
   const allowedTypesKey = allowedTypes.join(',')
   const router = useRouter()
@@ -694,6 +696,7 @@ export function MyResources({
           }
           compact
           hideCreateActions={hideManagerCreateActions}
+          searchQuery={searchQuery}
         />
       )
     }
@@ -716,6 +719,7 @@ export function MyResources({
           onCategoryFilterChange={onModelCategoryFilterChange}
           hideCategoryFilterControls={hideModelCategoryFilter}
           compact
+          searchQuery={searchQuery}
         />
       )
     }
@@ -735,6 +739,7 @@ export function MyResources({
           creationOnly={creationOnly}
           hideCreateActions={hideManagerCreateActions}
           compact
+          searchQuery={searchQuery}
         />
       )
     }
@@ -752,7 +757,7 @@ export function MyResources({
           createRequest={createRequest?.type === 'skill' ? createRequest : undefined}
           onCreateRequestClose={onCreateRequestClose}
           creationOnly={creationOnly}
-          showAutoEnabledSkills={sourceFilter === 'all' || sourceFilter === 'personal'}
+          showAutoEnabledSkills={sourceFilter === 'all' || sourceFilter === 'mine'}
           hideCreateActions={hideManagerCreateActions}
           compact
           onCreated={
@@ -760,6 +765,7 @@ export function MyResources({
               ? skillId => onResourceCreated?.('skill', skillId)
               : undefined
           }
+          searchQuery={searchQuery}
         />
       )
     }
@@ -779,6 +785,7 @@ export function MyResources({
           creationOnly={creationOnly}
           hideCreateActions={hideManagerCreateActions}
           compact
+          searchQuery={searchQuery}
         />
       )
     }

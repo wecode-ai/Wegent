@@ -323,6 +323,38 @@ export const MessageList = memo(function MessageList({
     initialMeasurementsCache,
   })
 
+  useLayoutEffect(() => {
+    if (
+      !virtualMessages ||
+      streamingVirtualMessageIndex < 0 ||
+      streamingVirtualMessageIndex === visibleMessages.length - 1
+    ) {
+      return
+    }
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${streamingVirtualMessageIndex}"]`
+    )
+    if (!row) return
+
+    const virtualItem = messageVirtualizer
+      .getVirtualItems()
+      .find(item => item.index === streamingVirtualMessageIndex)
+    const previousSize = virtualItem?.size
+    const previousTotalSize = messageVirtualizer.getTotalSize()
+    const measuredSize = Math.ceil(row.getBoundingClientRect().height)
+    messageVirtualizer.resizeItem(streamingVirtualMessageIndex, measuredSize)
+
+    if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' && previousSize !== measuredSize) {
+      console.info('[Wework] Streaming virtual message measured', {
+        messageId: visibleMessages[streamingVirtualMessageIndex]?.id ?? null,
+        previousSize: previousSize ?? null,
+        measuredSize,
+        previousTotalSize,
+        nextTotalSize: messageVirtualizer.getTotalSize(),
+      })
+    }
+  }, [messageVirtualizer, streamingVirtualMessageIndex, virtualMessages, visibleMessages])
+
   useEffect(
     () => () => {
       if (!virtualMessages || virtualMeasurementKey === null) return
@@ -827,13 +859,14 @@ function getProcessingSummaryStartMs(
   blocks: ProcessingBlock[],
   isStreaming: boolean
 ): number | undefined {
-  if (!isStreaming) return getTurnStartMs(message.createdAt)
-
+  const turnStartedAt = getTurnStartMs(message.createdAt)
   const blockStartTimes = blocks
     .map(block => block.createdAt)
     .filter((createdAt): createdAt is number => Number.isFinite(createdAt))
+  const earliestBlockStart = blockStartTimes.length > 0 ? Math.min(...blockStartTimes) : undefined
 
-  if (blockStartTimes.length > 0) return Math.min(...blockStartTimes)
+  if (blocks.length > 0) return earliestBlockStart ?? turnStartedAt
+  if (!isStreaming) return turnStartedAt
 
   return undefined
 }
@@ -1823,17 +1856,19 @@ function getDisplayProcessingBlocks(
   if (!blocks?.length) return []
 
   return blocks
-    .filter(block => {
-      if (block.type === 'thinking') return false
-      if (block.type !== 'text') return true
-
-      return Boolean(block.content.trim())
-    })
     .map(block =>
       settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
         ? { ...block, status: 'done' as const }
         : block
     )
+    .filter(block => {
+      if (block.type === 'thinking') {
+        return block.status !== 'done' && block.status !== 'error' && Boolean(block.content.trim())
+      }
+      if (block.type !== 'text') return true
+
+      return Boolean(block.content.trim())
+    })
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1923,13 +1958,16 @@ function AssistantMessage({
     `${processingStateKey}:final-processing`
   )
   const [finalProcessingCompletedAt] = useState(() => Date.now())
+  const isProcessingOnlyBeforeGuidance =
+    Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
   const usesFinalProcessingShell =
     hasBlocks &&
-    hasVisibleContent &&
     !hasRunningBlocks &&
     !isCancelled &&
-    !message.runtimeGuidanceSplitBefore &&
-    !message.runtimeGuidanceContinuation
+    (isProcessingOnlyBeforeGuidance ||
+      (hasVisibleContent &&
+        !message.runtimeGuidanceSplitBefore &&
+        !message.runtimeGuidanceContinuation))
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
@@ -1957,7 +1995,7 @@ function AssistantMessage({
           blocks={segment.blocks}
           fileEditDurationBlocks={displayBlocks}
           isStreaming={isStreaming}
-          startedAt={segment.blocks[0]?.createdAt}
+          startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
           processingPhase={
             segment.blocks.length === 0
@@ -2015,7 +2053,10 @@ function AssistantMessage({
             </div>
           ) : null}
           {usesFinalProcessingShell ? (
-            <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
+            <div
+              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              data-testid="final-processing-timeline"
+            >
               <button
                 type="button"
                 data-testid="final-processing-toggle"

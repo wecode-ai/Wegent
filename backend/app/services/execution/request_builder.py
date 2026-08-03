@@ -1149,46 +1149,17 @@ class TaskRequestBuilder:
         if cached is not None:
             return cached
 
-        shell = None
+        from app.services.adapters.shell_utils import get_shell_by_name
 
-        # 1. Query user's private shell first
-        shell = (
-            self.db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.name == shell_ref.name,
-                Kind.namespace == shell_ref.namespace,
-                Kind.is_active,
-            )
-            .first()
+        shell = get_shell_by_name(
+            self.db,
+            shell_ref.name,
+            user_id,
+            shell_ref.namespace,
         )
-
-        # 2. If not found, try group shell (any user's shell in the namespace)
-        # This handles the case where shell belongs to another group member
-        if not shell and shell_ref.namespace != "default":
-            shell = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.name == shell_ref.name,
-                    Kind.namespace == shell_ref.namespace,
-                    Kind.is_active,
-                )
-                .first()
-            )
-
-        # 3. If still not found, try public shells (user_id = 0)
-        if not shell:
-            shell = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Shell",
-                    Kind.name == shell_ref.name,
-                    Kind.is_active,
-                )
-                .first()
+        if shell is None:
+            raise ValueError(
+                f"Shell reference '{shell_ref.namespace}/{shell_ref.name}' is unavailable"
             )
 
         # Extract shell_type and base_image from Shell CRD

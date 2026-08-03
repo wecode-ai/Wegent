@@ -52,6 +52,7 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
     }),
   }
   const runtimeWorkApi = {
+    prepareRuntimeModel: vi.fn().mockResolvedValue(true),
     listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
     prepareDeviceWorkspace: vi.fn(),
     deleteDeviceWorkspace: vi.fn(),

@@ -34,7 +34,7 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 - `https://proxy.example.com/v1` 和 Anthropic Messages 仍解析为 `/v1/messages`，不会生成 `/v1/v1/messages`。
 - 已包含 `/responses`、`/chat/completions` 或 `/v1/messages` 的地址不会重复追加端点。
 
-云端或远端设备执行任务时，模型选择器不会展示只配置在当前桌面端的本机自定义模型。本机模型只能由本机 executor 使用；Codex 内置模型和云端 Model CRD 可以用于本机或云端执行。
+云端或远端设备执行任务时，模型选择器同时展示当前桌面端配置的本地模型。首次使用或配置变化后，Wework 会要求用户确认，将自定义 Codex 模型目录同步到目标 Executor，并在设备空闲时重启其 Codex app-server、校验模型已加载，然后再发送任务。Codex 内置模型和云端 Model CRD 仍可直接用于本机或云端执行。
 
 ### 模型限流重试
 

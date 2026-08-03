@@ -135,8 +135,8 @@ export function PluginCreatePage() {
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={options => {
-            if (options?.settingsPage === 'connections') {
-              navigateTo('/settings/connections')
+            if (options?.settingsPage) {
+              navigateTo(`/settings/${options.settingsPage}`)
               return
             }
             setSettingsOpen(true)

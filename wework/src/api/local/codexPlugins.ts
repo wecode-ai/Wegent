@@ -248,6 +248,8 @@ const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplac
 const INTERNAL_DEVICE_MARKETPLACE_IDS = new Set(['wegent'])
 
 let cachedState: LocalCodexPluginsState | null = null
+let cachedStateGeneration = 0
+let nextReadStateGeneration = 1
 
 async function codexAppServerRequest<T>(
   method: string,
@@ -654,6 +656,7 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
+  const generation = nextReadStateGeneration++
   const executorStatus = await ensureLocalExecutorStarted()
   await ensureBundledPluginMarketplaceRegistered()
   const requestedMarketplaceId = params.mergeAllMarketplaces
@@ -704,8 +707,11 @@ async function readState(
     installRegistryPath: '',
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
-  cachedState = state
-  rememberSelectedMarketplaceId(selectedId)
+  if (generation >= cachedStateGeneration) {
+    cachedState = state
+    cachedStateGeneration = generation
+    rememberSelectedMarketplaceId(selectedId)
+  }
   return state
 }
 
@@ -941,10 +947,15 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return readState({ marketplaceId: id })
     },
     async readInstalledPluginForTrial(id) {
-      const currentState = cachedState ?? (await readState())
-      const installed = currentState.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(id)
-      )
+      const findInstalled = (state: LocalCodexPluginsState) =>
+        state.installedPlugins.find(plugin => String(installedPluginId(plugin)) === String(id))
+
+      let currentState = cachedState ?? (await readState())
+      let installed = findInstalled(currentState)
+      if (!installed) {
+        currentState = await readState({ refresh: true })
+        installed = findInstalled(currentState)
+      }
       if (!installed) throw new Error('Codex plugin is not installed')
       const sourcePayload = installed.spec.sourcePayload
       const payload =
@@ -1107,6 +1118,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     async uninstallInstalledPlugin(id) {
       await codexAppServerRequest('plugin/uninstall', { pluginId: String(id) })
       cachedState = null
+      cachedStateGeneration = 0
     },
   }
 }

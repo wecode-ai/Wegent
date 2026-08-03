@@ -75,9 +75,9 @@ export type ArchiveRuntimeTaskResult = {
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
-  clientMessageId?: string
   forceNewTask?: boolean
   additionalSkills?: SkillRef[]
+  clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
   onError?: (error: string) => void
@@ -98,13 +98,15 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
-  project: ProjectWithTasks
+  project?: ProjectWithTasks | null
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface RuntimePaneActionOptions {
@@ -378,4 +380,5 @@ export interface WorkbenchProviderProps {
   user: User
   services?: WorkbenchServices
   onStartupReadyChange?: (ready: boolean) => void
+  workspaceTabId?: string
 }

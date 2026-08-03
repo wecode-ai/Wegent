@@ -12,10 +12,11 @@ import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { buildChatCodeHref } from '@/config/coding-route'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getResourceSearchPlaceholderKey } from '../resourceSearch'
 import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
-import { MyResources } from './MyResources'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 
@@ -31,13 +32,24 @@ const MARKETPLACE_KEYWORD_PARAM = 'keyword'
 
 function isVisibleListing(listing: ResourceLibraryListing, targetNamespace: string) {
   if (listing.resource_type === 'mcp') return false
-  if (targetNamespace === 'default' && listing.resource_type === 'skill' && listing.is_installed) {
-    return false
-  }
   return !(
     targetNamespace !== 'default' &&
     listing.resource_type === 'agent' &&
     listing.publisher_user_id === 0
+  )
+}
+
+function buildAgentUseHref(listing: ResourceLibraryListing, teamId: number): string {
+  const isCodeOnlyAgent = listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
+  if (!isCodeOnlyAgent) {
+    return `/chat?teamId=${teamId}`
+  }
+
+  return buildChatCodeHref(
+    new URLSearchParams([
+      ['agent', 'code'],
+      ['teamId', String(teamId)],
+    ])
   )
 }
 
@@ -47,8 +59,6 @@ export function DiscoverResources({
   leadingFilterControls,
   hideSearch = false,
 }: DiscoverResourcesProps) {
-  const isMarketplaceType =
-    resourceType === 'all' || resourceType === 'agent' || resourceType === 'skill'
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -95,14 +105,6 @@ export function DiscoverResources({
 
   const loadListings = useCallback(
     async (cursor?: string, append = false) => {
-      if (!isMarketplaceType) {
-        setListings([])
-        setNextCursor(null)
-        setHasMore(false)
-        setIsLoading(false)
-        setHasError(false)
-        return
-      }
       if (append) {
         setIsLoadingMore(true)
         setLoadMoreFailed(false)
@@ -151,7 +153,7 @@ export function DiscoverResources({
         }
       }
     },
-    [isMarketplaceType, keyword, resourceType, targetNamespace]
+    [keyword, resourceType, targetNamespace]
   )
 
   useEffect(() => {
@@ -223,13 +225,20 @@ export function DiscoverResources({
   }
 
   const handleInstall = async (listing: ResourceLibraryListing) => {
+    if (
+      ['model', 'shell', 'retriever'].includes(listing.resource_type) &&
+      listing.publisher_user_id === 0
+    ) {
+      return
+    }
+
     const isDirectlyUsableSystemAgent =
       listing.resource_type === 'agent' &&
       listing.publisher_user_id === 0 &&
       targetNamespace === 'default'
 
     if (isDirectlyUsableSystemAgent) {
-      router.push(`/chat?teamId=${listing.id}`)
+      router.push(buildAgentUseHref(listing, listing.id))
       return
     }
 
@@ -257,7 +266,7 @@ export function DiscoverResources({
       await loadListings()
       const teamId = install.installed_reference.team_id
       if (listing.resource_type === 'agent' && targetNamespace === 'default' && teamId) {
-        router.push(`/chat?teamId=${teamId}`)
+        router.push(buildAgentUseHref(listing, teamId))
       }
     } catch (error) {
       toast({
@@ -268,17 +277,6 @@ export function DiscoverResources({
     } finally {
       markInstalling(listing.id, false)
     }
-  }
-
-  if (!isMarketplaceType) {
-    return (
-      <MyResources
-        allowedTypes={[resourceType]}
-        fixedSource="system"
-        hideSourceControls
-        leadingFilterControls={leadingFilterControls}
-      />
-    )
   }
 
   return (
@@ -298,7 +296,7 @@ export function DiscoverResources({
               <Input
                 value={searchInput}
                 onChange={event => setSearchInput(event.target.value)}
-                placeholder={t('search.placeholder')}
+                placeholder={t(getResourceSearchPlaceholderKey(resourceType))}
                 className="h-11 bg-base sm:h-10"
                 data-testid="resource-library-search-input"
               />
@@ -320,7 +318,7 @@ export function DiscoverResources({
       {isLoading ? (
         <div className={listingGridClassName} aria-label={t('states.loading')}>
           {Array.from({ length: 8 }).map((_, index) => (
-            <Skeleton key={index} className="h-[220px] rounded-lg" />
+            <Skeleton key={index} className="h-[180px] rounded-lg" />
           ))}
         </div>
       ) : hasError ? (

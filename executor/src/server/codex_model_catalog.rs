@@ -31,6 +31,7 @@ pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
+pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
 const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
@@ -99,6 +100,7 @@ pub(crate) fn models() -> Vec<Value> {
     let mut models = vec![
         kimi_k3_model_entry(),
         kimi_k27_model_entry(),
+        deepseek_v4_flash_model_entry(),
         gpt_56_sol_model_entry(),
         gpt_56_terra_model_entry(),
         gpt_56_luna_model_entry(),
@@ -275,6 +277,33 @@ fn kimi_k27_model_entry() -> Value {
         Value::String("Kimi K2.7 Code profile for stable agentic coding".to_owned());
     entry["context_window"] = Value::Number(262_144.into());
     entry["max_context_window"] = Value::Number(262_144.into());
+    entry
+}
+
+fn deepseek_v4_flash_model_entry() -> Value {
+    let mut entry = model_entry(
+        DEEPSEEK_V4_FLASH_MODEL,
+        "DeepSeek V4 Flash",
+        Some("freeform"),
+    );
+    entry["description"] = Value::String("DeepSeek V4 Flash profile for agentic coding".to_owned());
+    entry["support_verbosity"] = Value::Bool(true);
+    entry["default_verbosity"] = Value::String("low".to_owned());
+    entry["default_reasoning_level"] = Value::String("high".to_owned());
+    entry["supported_reasoning_levels"] = json!([
+        {"effort": "low", "description": "Fast responses with lighter reasoning"},
+        {"effort": "high", "description": "Extra high reasoning depth for complex problems"},
+        {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"}
+    ]);
+    entry["context_window"] = Value::Number(1_048_576.into());
+    entry["max_context_window"] = Value::Number(1_048_576.into());
+    entry["supports_parallel_tool_calls"] = Value::Bool(true);
+    entry["multi_agent_version"] = Value::String("v2".to_owned());
+    entry["comp_hash"] = Value::String("3000".to_owned());
+    entry["reasoning_summary_format"] = Value::String("experimental".to_owned());
+    entry["default_reasoning_summary"] = Value::String("none".to_owned());
+    entry["input_modalities"] = json!(["text"]);
+    entry["supports_search_tool"] = Value::Bool(true);
     entry
 }
 
@@ -558,6 +587,24 @@ mod tests {
     }
 
     #[test]
+    fn catalog_includes_native_deepseek_v4_flash_profile() {
+        let catalog = catalog();
+        let model = catalog["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .find(|model| model["slug"] == DEEPSEEK_V4_FLASH_MODEL)
+            .expect("DeepSeek V4 Flash entry");
+
+        assert_eq!(model["context_window"], 1_048_576);
+        assert_eq!(model["default_reasoning_level"], "high");
+        assert_eq!(model["apply_patch_tool_type"], "freeform");
+        assert_eq!(model["supports_parallel_tool_calls"], true);
+        assert_eq!(model["multi_agent_version"], "v2");
+        assert_eq!(model["visibility"], "none");
+    }
+
+    #[test]
     fn catalog_includes_wework_gpt_56_compatibility_profiles() {
         let catalog = catalog();
         let models = catalog["models"].as_array().expect("models array");
@@ -599,6 +646,7 @@ mod tests {
         for slug in [
             KIMI_K3_MODEL,
             KIMI_K27_MODEL,
+            DEEPSEEK_V4_FLASH_MODEL,
             WEWORK_GPT_56_SOL_MODEL,
             WEWORK_GPT_56_TERRA_MODEL,
             WEWORK_GPT_56_LUNA_MODEL,

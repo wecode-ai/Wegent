@@ -510,18 +510,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
-        match self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": true}),
-            )
-            .await
-        {
-            Ok(response) => {
-                let thread = response.get("thread").unwrap_or(&response);
-                transcript_messages(thread, &self.device_id)
-            }
+        match self.read_codex_thread_with_turns(thread_id).await {
+            Ok(thread) => transcript_messages(&thread, &self.device_id),
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");
                 Vec::new()
@@ -807,9 +797,31 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
+        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+    }
+
+    pub(super) fn hydrate_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+    ) {
+        self.update_runtime_task_goal_status(local_task_id, goal_status, false);
+    }
+
+    fn update_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+        update_activity_time: bool,
+    ) {
         self.store.update_task(local_task_id, |link| {
-            link.goal_status = goal_status.clone();
-            link.updated_at = now_ms();
+            if link.goal_status == goal_status {
+                return;
+            }
+            link.goal_status = goal_status;
+            if update_activity_time {
+                link.updated_at = now_ms();
+            }
         });
     }
 }
