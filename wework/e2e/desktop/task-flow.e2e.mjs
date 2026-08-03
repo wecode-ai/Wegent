@@ -2300,6 +2300,7 @@ async function createCheckpointTaskFixture(control, composerSelector) {
 }
 
 async function verifyPriorityFilter({ composerSelector, control }) {
+  let requestInputResponseReleased = false
   control.setScenario('request_user_input')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -2367,6 +2368,60 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await captureVerificationScreenshot(control, 'priority-filter-02-filtered-sidebar.png')
 
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      DEFAULT_STEP_TIMEOUT_MS,
+      'Timed out releasing the priority-filter request-user-input response'
+    )
+    requestInputResponseReleased = true
+    await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      `[data-testid="runtime-priority-list"] [data-testid="${requestInputTaskRowTestId}"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+    await captureVerificationScreenshot(
+      control,
+      'priority-filter-03-handled-task-stays-priority.png'
+    )
+
+    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command(
+      'waitFor',
+      `[data-testid^="runtime-priority-recent-list-"] [data-testid="${requestInputTaskRowTestId}"]`,
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+    const reopenedPrioritySnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="runtime-priority-section"]')
+    )
+    assert.equal(
+      reopenedPrioritySnapshot.testIds.includes('runtime-priority-empty'),
+      true,
+      'Reopening the priority filter left the handled task in the Priority group'
+    )
+    await captureVerificationScreenshot(control, 'priority-filter-04-reopened-task-in-recent.png')
+
     await control.command('press', 'body', { key: 'Meta+Alt+U' })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -2379,29 +2434,16 @@ async function verifyPriorityFilter({ composerSelector, control }) {
       false,
       'The priority shortcut did not restore the regular sidebar'
     )
-    await captureVerificationScreenshot(control, 'priority-filter-03-shortcut-restored-sidebar.png')
+    await captureVerificationScreenshot(control, 'priority-filter-05-shortcut-restored-sidebar.png')
   } finally {
-    await withTimeout(
-      control.releaseRequestUserInputResponse(),
-      DEFAULT_STEP_TIMEOUT_MS,
-      'Timed out releasing the priority-filter request-user-input response'
-    )
+    if (!requestInputResponseReleased) {
+      await withTimeout(
+        control.releaseRequestUserInputResponse(),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'Timed out releasing the priority-filter request-user-input response'
+      )
+    }
   }
-
-  await control.command('click', `[data-testid="${requestInputTaskRowTestId}"]`)
-  await control.command('waitFor', '[data-testid="request-user-input-card"]', {
-    text: REQUEST_USER_INPUT_QUESTION,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: REQUEST_USER_INPUT_COMPLETION_TEXT,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 }
 
