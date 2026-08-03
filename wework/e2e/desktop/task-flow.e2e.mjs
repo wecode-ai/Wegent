@@ -242,6 +242,10 @@ const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
 const PLUGIN_NAME = 'desktop-e2e-plugin'
 const PLUGIN_CREATOR_PROMPT = 'Create a desktop E2E verification plugin'
 const PLUGIN_CREATOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PLUGIN_CREATOR_COMPLETE'
+const PLUGIN_REFINEMENT_PROMPT =
+  'You are refining a task before the user sends it to an installed plugin.'
+const PLUGIN_REFINEMENT_COMPLETION_TEXT =
+  'Summarize the current project status, focusing on changed files, open risks, and next actions.'
 const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
 
 async function createPluginMarketplaceFixture(root) {
@@ -1658,16 +1662,19 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     'Trying the installed plugin did not expose its AI usage guide'
   )
   await control.command('click', '[data-testid="plugin-trial-ai-refine"]')
-  await control.command('waitFor', '[data-testid="plugin-trial-refined-prompt"]', {
+  await control.command('waitFor', '[data-testid="plugin-trial-ai-result"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="plugin-trial-refined-prompt"]', {
-    value: 'Use the current conversation to summarize the installed plugin rollout.',
-  })
-  await control.command('click', '[data-testid="plugin-trial-ai-apply"]')
-  assert.match(
-    await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
-    /summarize the installed plugin rollout/,
+  const refinedPluginSuggestion = await control.command(
+    'getText',
+    '[data-testid="plugin-trial-recommendation-title"]'
+  )
+  assert.ok(refinedPluginSuggestion.trim(), 'AI did not return a plugin task suggestion')
+  await control.command('click', '[data-testid="plugin-trial-recommendation-apply"]')
+  assert.ok(
+    (await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)).includes(
+      refinedPluginSuggestion.trim()
+    ),
     'The AI-refined plugin task was not applied to the composer'
   )
   await captureVerificationScreenshot(control, 'plugins-04-used-in-chat.png')
@@ -4214,6 +4221,15 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (JSON.stringify(body).includes(PLUGIN_REFINEMENT_PROMPT)) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PLUGIN_REFINEMENT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return

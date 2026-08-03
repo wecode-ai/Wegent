@@ -1,70 +1,75 @@
-# Plugin composer AI guidance design QA
+# Plugin composer recommendation design QA
 
-- Source visual truth:
-  - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-2909cb89-cbbc-448b-948b-966b07d118e1.png`
-  - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-5823212f-1096-4052-85bc-2e1937cae407.png`
-  - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-e5632fa5-cab3-4c71-ab2b-a96bfe09fd18.png`
+- Selected visual truth:
+  - `/Users/md/.codex/generated_images/019fb61a-1746-7b11-a3fe-f6318f05954e/exec-fa332845-911c-4e0c-8ab1-341eda692300.png`
 - Rendered implementation:
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-ai-guide-project.png`
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-ai-guide-result.png`
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T06-53-08-424Z-55483/plugin-guidance-recommendation-final.png`
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T06-53-08-424Z-55483/plugin-guidance-other-tasks.png`
 - Same-input comparison:
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-guide-comparison.png`
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T06-53-08-424Z-55483/plugin-guidance-visual-comparison-final.png`
+- Desktop E2E evidence:
+  - `/Users/md/Wegent/wework/test-results/desktop-e2e/2026-08-03T07-30-25-393Z-73421/plugins-04-used-in-chat.png`
 - Viewport: `1280 x 720` CSS pixels at device scale factor `1`.
-- State: light theme, local project selected, an installed plugin selected from the composer.
+- State: light theme, local project selected, installed plugin active in the composer.
 
 ## Product decision
 
-The composer popup is no longer a second plugin picker. It is a lightweight plugin-use coach with two paths:
+The three competing composer interactions were replaced with one recommendation flow:
 
-1. The primary path asks AI to turn the current draft, plugin capabilities, available examples, and inherited recent conversation into one ready-to-send task.
-2. The secondary path lets the user start from a compact plugin example when AI refinement is unnecessary.
+1. One recommended task is the only primary object and has the only strong CTA.
+2. `AI 换一个建议` replaces the recommendation using the current draft, plugin capabilities, and inherited recent conversation.
+3. `查看其他常用任务` is collapsed by default. Selecting an item replaces the recommendation instead of mutating the composer immediately.
 
-AI output is always shown in an editable preview before it can replace the composer text. Applying it preserves the plugin mention and never submits automatically.
+Only `使用这个任务` writes the recommendation into the composer. It preserves the plugin mention and never submits automatically.
 
 ## Findings
 
 No actionable P0/P1/P2 findings remain.
 
-- The old header (`<plugin> 常用场景`) read as another plugin list. The new header uses an explicit `AI 使用引导` badge, `用好 <plugin>` title, and consequence-focused helper copy.
-- Repeated plugin icons made every row look like a plugin entity. The new design uses a single AI identity at the panel and text-only examples as secondary actions.
-- The old list offered only static examples. The new primary action runs hidden ephemeral inference using the current model selection and, when available, the current runtime task as conversation context.
-- Generated text is not silently inserted. It enters an editable result state with `重新整理` and `带入输入框` actions.
-- Loading, failure, retry, close, apply, and no-auto-send consequences are visible in the same panel.
+- The header now identifies the panel as `<plugin> 使用建议`, not another plugin picker.
+- The recommendation row owns visual focus through its title, supporting description, and inverse-neutral CTA.
+- AI and static alternatives are quiet, adjacent actions with explicit outcomes rather than equal-weight rows.
+- Other tasks stay hidden until requested, reducing initial density and avoiding the expectation that every plugin must provide three examples.
+- A selected alternative replaces the recommendation and automatically collapses the list.
+- The guide is not rendered when no plugin or plugin templates are active.
+- Consequence copy appears once in the footer: the task remains editable and is not sent automatically.
 
 ## Visual comparison
 
-- Hierarchy: the AI action is the only full-width primary row; examples are lower contrast and grouped under `也可以从示例开始`.
-- Identity: the panel is visually separated from the plugin picker and explicitly states why it appeared.
-- Density: the previous three equal rows became one primary AI action plus compact example text, reducing repeated chrome and icons.
-- Borders and color: existing Wework neutral surfaces and weak borders are reused; no new saturated accent or decorative asset was introduced.
-- Composer relationship: the selected plugin mention remains inside the composer, while guidance stays above it and explains that it only improves input.
+- Hierarchy: implementation matches the selected direction of one recommended task, one primary CTA, and two secondary paths.
+- Density: implementation is compressed to the existing Wework composer width and spacing scale while preserving the selected layout hierarchy.
+- Color: existing neutral surfaces, weak borders, and inverse-neutral CTA are reused; no new accent palette was introduced.
+- Context: the plugin chip remains in the composer directly below the guide so the recommendation and its execution target read as one flow.
+- Expansion: the optional task list uses compact text rows and no repeated plugin icons.
 
 ## Interaction evidence
 
-- Component tests verify AI success, no mutation before confirmation, editable preview, preserved plugin mention, and no automatic submit.
-- Hook tests verify creation of a hidden ephemeral runtime task, inherited source conversation, output normalization, and surfaced model errors.
-- Desktop plugin E2E verifies opening the guide, AI result editing, applying the result to the composer, and no automatic send.
-- Real Tauri inspection verified the initial, loading, and inline timeout/retry states. The isolated manual session did not have a responding model, so AI success is covered by deterministic hook/component/desktop-E2E execution rather than claimed from that session.
-- Production build, strict TypeScript, focused tests, and lint completed successfully.
+- Component tests verify initial single-recommendation state, collapsed alternatives, alternative replacement, AI replacement, preserved plugin mention, no automatic submit, and no stray guide without a plugin.
+- Real Tauri inspection verified selecting another task, automatic collapse, applying the task, and the resulting composer value.
+- Desktop plugin E2E verifies the marketplace-to-chat path, deterministic AI recommendation, application to the composer, plugin picker entry, slash-command entry, and uninstall flow.
+- Production build, strict TypeScript, focused tests, lint, and formatting checks completed successfully.
 
 ## Iteration history
 
 ### Iteration 1
 
-- P1: plugin examples visually resembled installed-plugin rows.
-- P1: there was no dynamic completion path.
-- Fix: added explicit AI guide identity and promoted AI refinement over examples.
+- P1: header, AI action, and three visible examples competed at the same visual level.
+- Fix: selected the single-recommendation direction and made alternatives secondary.
 
 ### Iteration 2
 
-- P1: earlier context enhancement merely appended an instruction and did not call a model.
-- P1: an immediate model rewrite would be surprising if it replaced the composer silently.
-- Fix: replaced the fake enhancement with hidden runtime inference and introduced an editable result preview before apply.
+- P1: the guide appeared with no selected plugin because an AI refinement callback was available globally.
+- Fix: require an active plugin name or plugin-provided templates before rendering the guide.
 
 ### Iteration 3
 
-- P2: repeated icons and equal-weight rows still made the guide look like a plugin picker.
-- Fix: removed repeated plugin icons, reduced example emphasis, clarified no-auto-send behavior, and added inline retry.
+- P2: recommendation description repeated the footer's editable/no-auto-send consequence.
+- Fix: static recommendations now identify their plugin source; the consequence remains only in the footer.
+
+### Iteration 4
+
+- P1: the desktop E2E model server treated hidden AI recommendation work as a normal chat request.
+- Fix: added a deterministic plugin-recommendation response so the real desktop path verifies the intended isolated AI flow.
 
 ## Follow-up polish
 

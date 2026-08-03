@@ -3858,7 +3858,7 @@ describe('ChatInput', () => {
     expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
   })
 
-  test('shows paged plugin use cases above the composer and applies them without sending', async () => {
+  test('shows one recommended plugin task and keeps other tasks secondary', async () => {
     const applyTrialTemplate = vi.fn()
     const dismissTrialGuide = vi.fn()
     const onSubmit = vi.fn()
@@ -3882,20 +3882,43 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 1')
+    expect(screen.queryByTestId('plugin-trial-template-card')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-other-tasks-toggle'))
+
     expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(3)
-    expect(screen.getByText('Scenario 1')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('plugin-trial-template-next'))
-
-    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(1)
     expect(screen.getByText('Scenario 4')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('plugin-trial-template-card'))
+    await userEvent.click(screen.getByText('Scenario 4'))
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent('Scenario 4')
+    expect(screen.queryByTestId('plugin-trial-other-tasks')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
     expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
     expect(dismissTrialGuide).toHaveBeenCalledOnce()
+  })
+
+  test('does not show plugin guidance without a selected plugin', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          trialPluginName: undefined,
+          trialTemplates: [],
+          onRefineTrialPrompt: vi.fn().mockResolvedValue('Suggested task'),
+        })}
+      />
+    )
+
+    expect(screen.queryByTestId('plugin-trial-template-strip')).not.toBeInTheDocument()
   })
 
   test('uses AI to refine a conversation-aware plugin task before applying it', async () => {
@@ -3927,8 +3950,10 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByText('AI 使用引导')).toBeInTheDocument()
-    expect(screen.getByText('用好 Documents')).toBeInTheDocument()
+    expect(screen.getByText('Documents 使用建议')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
+      'Project memo'
+    )
     await userEvent.click(screen.getByTestId('plugin-trial-ai-refine'))
 
     expect(onRefineTrialPrompt).toHaveBeenCalledWith(
@@ -3937,12 +3962,13 @@ describe('ChatInput', () => {
         draft: expect.stringContaining('Summarize the launch notes'),
       })
     )
-    expect(await screen.findByTestId('plugin-trial-refined-prompt')).toHaveValue(
+    expect(await screen.findByTestId('plugin-trial-ai-result')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-trial-recommendation-title')).toHaveTextContent(
       'Summarize the launch notes into a concise release memo'
     )
     expect(onChange).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByTestId('plugin-trial-ai-apply'))
+    await userEvent.click(screen.getByTestId('plugin-trial-recommendation-apply'))
 
     expect(onChange).toHaveBeenCalledWith(
       '[$Documents](plugin://documents@openai-bundled) Summarize the launch notes into a concise release memo '
