@@ -568,6 +568,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
   completedAt?: string | number | null
@@ -609,6 +610,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null

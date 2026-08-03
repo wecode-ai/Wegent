@@ -8,6 +8,19 @@ import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('runtime transcript status', () => {
+  test('preserves the first transcript message index for turn ordering', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        messageIndex: 42,
+        items: [],
+        status: 'done',
+      },
+    ])
+
+    expect(turn.runtimeMessageIndex).toBe(42)
+  })
+
   test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
     const [turn] = runtimeTranscriptTurnsToConversationTurns([
       {

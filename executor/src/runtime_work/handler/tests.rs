@@ -696,6 +696,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
         &[
             json!({
                 "id": "provider-user-1",
+                "messageIndex": 8,
                 "turnId": "turn-1",
                 "clientUserMessageId": "client-user-1",
                 "role": "user",
@@ -703,6 +704,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
             }),
             json!({
                 "id": "provider-assistant-1",
+                "messageIndex": 9,
                 "turnId": "turn-1",
                 "role": "assistant",
                 "content": "First response",
@@ -731,6 +733,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
             }),
             json!({
                 "id": "provider-user-2",
+                "messageIndex": 10,
                 "turnId": "turn-2",
                 "clientUserMessageId": "client-user-2",
                 "role": "user",
@@ -743,10 +746,30 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
     assert_eq!(turns.len(), 2);
     assert_eq!(turns[0]["id"], "turn-1");
     assert_eq!(turns[1]["id"], "turn-2");
+    assert_eq!(turns[0]["messageIndex"], 8);
+    assert_eq!(turns[1]["messageIndex"], 10);
     assert_eq!(turns[0]["items"][0]["id"], "client-user-1");
     assert_eq!(turns[0]["items"][1]["id"], "assistant-item-1");
     assert_eq!(turns[0]["items"][2]["id"], "tool-call-1");
     assert_eq!(turns[1]["items"][0]["id"], "client-user-2");
+}
+
+#[test]
+fn transcript_canonical_turns_accept_snake_case_message_indexes() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "message_index": 8,
+            "turn_id": "turn-1",
+            "client_user_message_id": "client-user-1",
+            "role": "user",
+            "content": "First prompt"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["messageIndex"], 8);
 }
 
 #[test]

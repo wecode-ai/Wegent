@@ -134,6 +134,7 @@ export interface RuntimePaneTranscript {
 export interface RuntimeConversationTurn {
   id: string | null
   clientUserMessageId?: string
+  runtimeMessageIndex?: number
   items: RuntimeConversationItem[]
   status: RuntimeWorkbenchMessageStatus
   completedAt?: string | number | null

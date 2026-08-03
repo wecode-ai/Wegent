@@ -6438,8 +6438,9 @@ function snapshotHasAssistantActivity(snapshot) {
   )
 }
 
-async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }) {
+async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, executorLogPath }) {
   control.setScenario('goal_idle')
+  const executorLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => '')).length
   const taskRowsBeforeGoal = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -6502,6 +6503,17 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
     DEFAULT_STEP_TIMEOUT_MS,
     'The active Goal did not start its automatic continuation'
   )
+  const goalExecutorLog = (await readFile(executorLogPath, 'utf8')).slice(executorLogOffset)
+  assert.equal(
+    (goalExecutorLog.match(/codex shared goal turn awaiting/g) ?? []).length,
+    1,
+    `The Goal submission did not use exactly one Codex goal-started turn:\n${goalExecutorLog}`
+  )
+  assert.equal(
+    (goalExecutorLog.match(/codex shared turn request started/g) ?? []).length,
+    0,
+    `The Goal submission also issued turn/start and created an overlapping turn:\n${goalExecutorLog}`
+  )
 
   await waitForSnapshot(
     control,
@@ -6512,6 +6524,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       snapshot.testIds.includes('pause-response-button') &&
       snapshotHasAssistantActivity(snapshot) &&
       !snapshot.testIds.includes('send-message-button') &&
+      !snapshot.testIds.includes('assistant-error-card') &&
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_IDLE_PROMPT) &&
       snapshot.text.includes(GOAL_IDLE_INITIAL_TEXT),
@@ -6590,6 +6603,7 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control }
       !snapshot.testIds.includes(goalRunningTestId) &&
       !snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('thinking-indicator') &&
+      !snapshot.testIds.includes('assistant-error-card') &&
       !snapshot.testIds.includes('goal-status-bar'),
     'Opening the completed Goal task did not render a consistent final state',
     DEFAULT_STEP_TIMEOUT_MS
@@ -11609,6 +11623,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await verifyActiveGoalIdleUnreadLifecycle({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorLogPath,
       })
       console.log(`Wework desktop Goal idle-state E2E passed. Evidence: ${resultDir}`)
       return
@@ -12786,7 +12801,11 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (shouldRunDesktopCheckpoint('goal-lifecycle')) {
       phase = 'goal-idle-unread'
-      await verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control })
+      await verifyActiveGoalIdleUnreadLifecycle({
+        composerSelector,
+        control,
+        executorLogPath,
+      })
 
       phase = 'goal-restart-recovery'
       await verifyGoalRestartRecoveryLifecycle({

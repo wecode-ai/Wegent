@@ -506,6 +506,7 @@ export function runtimeTranscriptTurnsToConversationTurns(
       {
         id: turn.id,
         clientUserMessageId: items.find(item => item.type === 'user_message')?.message.id,
+        runtimeMessageIndex: typeof turn.messageIndex === 'number' ? turn.messageIndex : undefined,
         items,
         status,
         completedAt: turn.completedAt,
