@@ -694,6 +694,8 @@ semantics for all three.
 - Runtime conversation events are keyed by task address and must update the
   shared conversation cache even when that task's pane is not active or
   mounted.
+- Turn lifecycle events are additionally keyed by turn identity. A settlement
+  from an older turn must not clear the running state of a newer active turn.
 - A guidance item remains pending until a matching runtime
   `guidance_applied` event settles it. Match the client identifier first and
   use guidance content only when the runtime replaces that identifier.

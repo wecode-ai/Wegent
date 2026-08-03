@@ -211,9 +211,25 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/task-flow.e2e.mjs" \
   "wework/src/components/chat/MessageList.tsx"
 
+assert_desktop_case "turn lifecycle changes select supervisor and resilience coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimeTaskLifecycle/reducer.ts"
+
+assert_desktop_case "runtime pane events select supervisor and conversation coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/src/features/workbench/runtimePaneMessages.ts"
+
 full_desktop_expected='wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"Core / workspace-tabs","command":"e2e:desktop","segment":"workspace-tabs"},{"id":"core-priority-filter","name":"Core / priority-filter","command":"e2e:desktop","segment":"priority-filter"},{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-window-lifecycle","name":"Core / window-lifecycle","command":"e2e:desktop","segment":"window-lifecycle"},{"id":"core-goal-lifecycle","name":"Core / goal-lifecycle","command":"e2e:desktop","segment":"goal-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"},{"id":"core-workspace-attachments","name":"Core / workspace-attachments","command":"e2e:desktop","segment":"workspace-attachments"},{"id":"core-rendering-extensions","name":"Core / rendering-extensions","command":"e2e:desktop","segment":"rendering-extensions"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-workspace-tabs","name":"Core / workspace-tabs","command":"e2e:desktop","segment":"workspace-tabs"},{"id":"core-priority-filter","name":"Core / priority-filter","command":"e2e:desktop","segment":"priority-filter"},{"id":"core-core-task-flow","name":"Core / core-task-flow","command":"e2e:desktop","segment":"core-task-flow"},{"id":"core-window-lifecycle","name":"Core / window-lifecycle","command":"e2e:desktop","segment":"window-lifecycle"},{"id":"core-goal-lifecycle","name":"Core / goal-lifecycle","command":"e2e:desktop","segment":"goal-lifecycle"},{"id":"core-supervisor-lifecycle","name":"Core / supervisor-lifecycle","command":"e2e:desktop","segment":"supervisor-lifecycle"},{"id":"core-resilience","name":"Core / resilience","command":"e2e:desktop","segment":"resilience"},{"id":"core-conversation-state","name":"Core / conversation-state","command":"e2e:desktop","segment":"conversation-state"},{"id":"core-workspace-attachments","name":"Core / workspace-attachments","command":"e2e:desktop","segment":"workspace-attachments"},{"id":"core-rendering-extensions","name":"Core / rendering-extensions","command":"e2e:desktop","segment":"rendering-extensions"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","command":"e2e:desktop:plugins","segment":""},{"id":"cloud","name":"Cloud","command":"e2e:desktop:cloud","segment":""}]}'
 
