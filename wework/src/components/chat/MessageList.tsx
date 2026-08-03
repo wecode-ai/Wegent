@@ -1841,16 +1841,19 @@ function getDisplayProcessingBlocks(
   if (!blocks?.length) return []
 
   return blocks
-    .filter(block => {
-      if (block.type !== 'text') return true
-
-      return Boolean(block.content.trim())
-    })
     .map(block =>
       settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
         ? { ...block, status: 'done' as const }
         : block
     )
+    .filter(block => {
+      if (block.type === 'thinking') {
+        return block.status !== 'done' && block.status !== 'error' && Boolean(block.content.trim())
+      }
+      if (block.type !== 'text') return true
+
+      return Boolean(block.content.trim())
+    })
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
