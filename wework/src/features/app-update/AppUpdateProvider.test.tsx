@@ -60,7 +60,7 @@ describe('AppUpdateProvider', () => {
   test('persists the Beta channel and checks it immediately', async () => {
     let appUpdate: AppUpdateContextValue | null = null
 
-    function Probe() {
+    const Probe = () => {
       appUpdate = useAppUpdate()
       return null
     }
@@ -109,7 +109,7 @@ describe('AppUpdateProvider', () => {
           })
     )
 
-    function Probe() {
+    const Probe = () => {
       appUpdate = useAppUpdate()
       return null
     }
@@ -143,7 +143,7 @@ describe('AppUpdateProvider', () => {
         })
     )
 
-    function Probe() {
+    const Probe = () => {
       appUpdate = useAppUpdate()
       return null
     }
@@ -164,7 +164,10 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.status).toBe('checking')
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
 
-    finishCheck?.()
+    if (!finishCheck) {
+      throw new Error('Automatic update check resolver was not initialized')
+    }
+    finishCheck()
     await act(async () => {
       await manualCheck
     })

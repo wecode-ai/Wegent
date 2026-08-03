@@ -836,15 +836,21 @@ jobs:
             local asset_name="${channel}-darwin-aarch64.json"
             local current_manifest="$work_dir/current-${channel}.json"
             local assets_file="$work_dir/wework-updater-assets.json"
+            local required_asset
 
             if ! gh release view wework-updater --json assets > "$assets_file"; then
               echo "Failed to inspect existing Wework updater assets." >&2
               return 2
             fi
-            if ! jq -e --arg name "$asset_name" \
-              'any(.assets[]; .name == $name)' "$assets_file" >/dev/null; then
-              return 0
-            fi
+            for required_asset in \
+              "${channel}-darwin-aarch64.json" \
+              "${channel}-darwin-x86_64.json" \
+              "${channel}-windows-x86_64.json"; do
+              if ! jq -e --arg name "$required_asset" \
+                'any(.assets[]; .name == $name)' "$assets_file" >/dev/null; then
+                return 0
+              fi
+            done
             if ! gh release download wework-updater \
               --pattern "$asset_name" \
               --output "$current_manifest" \
