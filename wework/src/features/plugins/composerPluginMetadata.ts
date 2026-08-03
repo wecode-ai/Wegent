@@ -1,4 +1,5 @@
 import type { InstalledPlugin, LocalDeviceApp } from '@/types/api'
+import { pluginTrialTemplates } from './pluginTrial'
 
 function normalized(value: string | null | undefined): string {
   return (value ?? '').trim().toLowerCase()
@@ -114,6 +115,7 @@ function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp |
     pluginDisplayNames: [displayName],
     source: 'installed-plugin',
     skillPath,
+    trialTemplates: pluginTrialTemplates(plugin),
   }
 }
 
@@ -139,6 +141,7 @@ export function enrichComposerApps(
         pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
           (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
         ),
+        trialTemplates: pluginTrialTemplates(plugin),
       },
     ]
   })

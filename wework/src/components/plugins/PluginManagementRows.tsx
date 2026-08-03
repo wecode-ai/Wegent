@@ -1,4 +1,4 @@
-import { Boxes, Copy, Ellipsis, MessageCirclePlus, Trash2, UserCog } from 'lucide-react'
+import { Boxes, Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, UserCog } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
@@ -36,6 +36,7 @@ export function InstalledPluginRow({
   onCopy,
   onToggle,
   onUninstall,
+  isUninstalling = false,
 }: {
   plugin: InstalledPluginItem
   marketplaceItem?: PluginMarketplaceItem
@@ -45,6 +46,7 @@ export function InstalledPluginRow({
   onCopy?: () => void
   onToggle: () => void
   onUninstall: () => void
+  isUninstalling?: boolean
 }) {
   const { t } = useTranslation('common')
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -65,7 +67,7 @@ export function InstalledPluginRow({
         ? t('workbench.plugins_distribution_workspace', '企业内部')
         : plugin.distribution === 'personal'
           ? t('workbench.plugins_distribution_personal', '个人创建')
-          : t('workbench.plugins_distribution_public', '国内公开')
+          : t('workbench.plugins_distribution_public', 'Wework官方')
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
 
   useEffect(() => {
@@ -137,7 +139,16 @@ export function InstalledPluginRow({
         </div>
       )}
       <div ref={actionsRef} className="relative flex items-center gap-[7px]">
-        {onTry && (
+        {isUninstalling ? (
+          <span
+            role="status"
+            data-testid={`installed-plugin-uninstalling-${plugin.id}`}
+            className="inline-flex h-[30px] items-center gap-1.5 px-1.5 text-sm text-text-muted"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {t('workbench.plugins_uninstalling', '正在卸载')}
+          </span>
+        ) : onTry ? (
           <button
             type="button"
             aria-label={`${t('workbench.plugins_try_now', '立即试用')} ${plugin.name}`}
@@ -148,8 +159,8 @@ export function InstalledPluginRow({
           >
             <MessageCirclePlus className="h-[17px] w-[17px]" strokeWidth={2} />
           </button>
-        )}
-        {!shareRecipient && (
+        ) : null}
+        {!isUninstalling && !shareRecipient && (
           <button
             type="button"
             role="switch"
@@ -171,18 +182,20 @@ export function InstalledPluginRow({
             />
           </button>
         )}
-        <button
-          type="button"
-          aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${plugin.name}`}
-          aria-expanded={isMenuOpen}
-          title={t('workbench.plugins_more_actions', '更多操作')}
-          data-testid={`installed-plugin-actions-${plugin.id}`}
-          className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-          onClick={() => setIsMenuOpen(open => !open)}
-        >
-          <Ellipsis className="h-[17px] w-[17px]" strokeWidth={2} />
-        </button>
-        {isMenuOpen && (
+        {!isUninstalling && (
+          <button
+            type="button"
+            aria-label={`${t('workbench.plugins_more_actions', '更多操作')} ${plugin.name}`}
+            aria-expanded={isMenuOpen}
+            title={t('workbench.plugins_more_actions', '更多操作')}
+            data-testid={`installed-plugin-actions-${plugin.id}`}
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+            onClick={() => setIsMenuOpen(open => !open)}
+          >
+            <Ellipsis className="h-[17px] w-[17px]" strokeWidth={2} />
+          </button>
+        )}
+        {!isUninstalling && isMenuOpen && (
           <div
             data-testid={`installed-plugin-actions-menu-${plugin.id}`}
             className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"

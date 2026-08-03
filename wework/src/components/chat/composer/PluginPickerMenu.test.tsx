@@ -2,7 +2,11 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceApp } from '@/types/api'
-import { INSERT_PLUGIN_REFERENCE_EVENT, recordPluginUsage } from '@/features/plugins/pluginTrial'
+import {
+  INSERT_PLUGIN_REFERENCE_EVENT,
+  recordPluginUsage,
+  SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
+} from '@/features/plugins/pluginTrial'
 import { PluginPickerMenu } from './PluginPickerMenu'
 import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
 
@@ -23,6 +27,13 @@ const superpowersApp: LocalDeviceApp = {
   isEnabled: true,
   source: 'installed-plugin',
   skillPath: 'plugin://superpowers@openai-official',
+  trialTemplates: [
+    {
+      name: 'Plan an implementation',
+      path: 'plan-implementation',
+      description: 'Plan an implementation before changing code',
+    },
+  ],
 }
 
 const echoIdApp: LocalDeviceApp = {
@@ -49,11 +60,17 @@ describe('PluginPickerMenu', () => {
         { ...githubApp, id: 'notion', name: 'Notion' },
       ])
     const inserted: string[] = []
+    const shownGuides: string[] = []
     const onInsert = (event: Event) => {
       const detail = (event as CustomEvent<{ reference?: string }>).detail
       if (detail?.reference) inserted.push(detail.reference)
     }
     window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
+    const onShowGuide = (event: Event) => {
+      const detail = (event as CustomEvent<{ pluginName?: string }>).detail
+      if (detail?.pluginName) shownGuides.push(detail.pluginName)
+    }
+    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
 
     render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
 
@@ -87,8 +104,10 @@ describe('PluginPickerMenu', () => {
     await waitFor(() => {
       expect(inserted).toEqual(['[$superpowers](plugin://superpowers@openai-official)'])
     })
+    expect(shownGuides).toEqual(['superpowers'])
 
     window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, onInsert)
+    window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, onShowGuide)
   })
 
   test('orders available plugins by usage count then recent selection', async () => {

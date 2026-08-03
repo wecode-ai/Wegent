@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
   insertPluginReference,
+  showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
@@ -179,6 +180,7 @@ export function PluginPickerMenu({
                       const reference = appReference(app)
                       registerComposerMentionIcon(reference, logo)
                       insertPluginReference(reference)
+                      showPluginTrialGuide(displayAppName(app), app.trialTemplates)
                       const recent = JSON.parse(
                         window.localStorage.getItem(RECENT_PLUGIN_APPS_KEY) || '[]'
                       ) as string[]

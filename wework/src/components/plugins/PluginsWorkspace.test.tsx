@@ -2,20 +2,25 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
 async function installPluginFromMarketCard(testId: string) {
   await userEvent.click(screen.getByTestId(testId))
   await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
-  await waitFor(() => expect(screen.getByTestId('install-plugin-dialog-done')).toBeInTheDocument())
-  await userEvent.click(screen.getByTestId('install-plugin-dialog-done'))
+  await waitFor(() => expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument())
 }
 
 vi.mock('@tauri-apps/api/core', () => ({
   convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
+}))
+
+vi.mock('@/api/cloud/connectorApps', () => ({
+  authorizeWegentConnector: vi.fn(),
+  listWegentConnectorApps: vi.fn(),
 }))
 
 type CodexMarketplaceMock = {
@@ -326,6 +331,7 @@ function mockSystemSkillsFetch(
     marketplaceBrandColor: string
     installedMarketplaceLogo: string
     marketplaceCount: number
+    marketplaceConnectorSlug: string
   }> = {}
 ) {
   let marketplaceUpdateAvailable = false
@@ -559,6 +565,14 @@ function mockSystemSkillsFetch(
       lsps: [],
       monitors: [],
       bins: [],
+      connectors: overrides.marketplaceConnectorSlug
+        ? [
+            {
+              slug: overrides.marketplaceConnectorSlug,
+              authPolicy: 'on_install',
+            },
+          ]
+        : [],
     },
     createdAt: null,
     updatedAt: null,
@@ -873,6 +887,15 @@ describe('PluginsWorkspace', () => {
     vi.mocked(convertFileSrc).mockClear()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
+    vi.mocked(listWegentConnectorApps).mockReset()
+    vi.mocked(listWegentConnectorApps).mockResolvedValue([])
+    vi.mocked(authorizeWegentConnector).mockReset()
+    vi.mocked(authorizeWegentConnector).mockResolvedValue({
+      status: 'connected',
+      external_account_name: null,
+      granted_scopes: [],
+      expires_at: null,
+    })
     window.localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     mockSystemSkillsFetch()
@@ -885,7 +908,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('发现并接入开发工具、企业数据和专业方法。')).toBeInTheDocument()
     expect(await screen.findByTestId('plugins-search-input')).toHaveAttribute(
       'placeholder',
-      '搜索插件、品牌或能力'
+      '搜索插件'
     )
     expect(screen.getByTestId('plugins-search-input')).toHaveClass('plugin-market-search-input')
     expect(screen.getByTestId('plugins-marketplace-source-switcher')).toHaveClass('sr-only')
@@ -898,7 +921,7 @@ describe('PluginsWorkspace', () => {
     const distributionTabs = within(screen.getByTestId('plugins-market-toolbar'))
       .getAllByRole('tab')
       .map(tab => tab.textContent)
-    expect(distributionTabs).toEqual(['全部', 'OpenAI官方', '国内公开', '企业内部', '个人创建'])
+    expect(distributionTabs).toEqual(['全部', 'OpenAI官方', 'Wework官方', '企业内部', '个人创建'])
     expect(screen.getByTestId('plugins-distribution-tab-official')).toHaveTextContent('OpenAI官方')
     expect(screen.getByTestId('plugins-distribution-tab-workspace')).toHaveTextContent('企业内部')
     expect(screen.getByTestId('plugins-distribution-tab-personal')).toHaveTextContent('个人创建')
@@ -917,6 +940,40 @@ describe('PluginsWorkspace', () => {
     expect(convertFileSrc).toHaveBeenCalledWith('/Users/test/plugins/documents/assets/logo.png')
     expect(screen.getByText('OpenAI')).toBeInTheDocument()
     expect(screen.queryByText('Productivity')).not.toBeInTheDocument()
+  })
+
+  test('keeps local marketplace plugins visible when the cloud marketplace fails', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'desktop-e2e-marketplace',
+          displayName: 'Desktop E2E Marketplace',
+          path: '/tmp/desktop-e2e-marketplace',
+        },
+      ],
+    })
+    const successfulFetch = vi.mocked(fetch).getMockImplementation()
+    vi.mocked(fetch).mockImplementation((url: string, init?: RequestInit) => {
+      const requestUrl = new URL(url, 'http://localhost')
+      if (requestUrl.pathname === '/api/plugins/marketplace') {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          text: () => Promise.resolve(JSON.stringify({ detail: 'Cloud marketplace unavailable' })),
+        }) as Promise<Response>
+      }
+      return successfulFetch!(url, init)
+    })
+
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toHaveTextContent('Documents')
+    expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
   })
 
   test('renders provided plugin logos without a second brand-color backdrop', async () => {
@@ -948,6 +1005,41 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugins-installed-scroll-region')).toHaveClass(
       'plugin-installed-icons-scroller'
     )
+  })
+
+  test('aggregates installed plugins beyond the visible strip limit', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const plugins = Array.from({ length: 14 }, (_, index) => ({
+      id: String(200 + index),
+      name: `installed-plugin-${index + 1}`,
+      displayName: `Installed Plugin ${index + 1}`,
+      description: `Installed plugin ${index + 1}`,
+      logo: `/Users/test/plugins/installed-plugin-${index + 1}/assets/logo.png`,
+    }))
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-official',
+          path: 'openai-official',
+          plugins,
+        },
+      ],
+      installedPluginNames: plugins.map(plugin => plugin.name),
+    })
+
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByTestId('plugins-installed-overflow-button')).toHaveTextContent(
+      '另有 2 个'
+    )
+    expect(screen.getAllByTestId(/^plugins-installed-strip-item-/)).toHaveLength(12)
+    expect(
+      screen.getByTestId('plugins-installed-overflow-button').querySelectorAll('img')
+    ).toHaveLength(2)
   })
 
   test('reveals marketplace plugins six at a time and updates the next-item preview', async () => {
@@ -1072,6 +1164,11 @@ describe('PluginsWorkspace', () => {
     await installPluginFromMarketCard('plugin-marketplace-install-101')
 
     expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveTextContent('Documents 已安装')
+    expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+      'data-notice-kind',
+      'success'
+    )
     expect(screen.queryByTestId('plugin-marketplace-install-101')).not.toBeInTheDocument()
     expect(
       screen.getByTestId('plugins-installed-strip-item-101').querySelector('img')
@@ -1079,6 +1176,65 @@ describe('PluginsWorkspace', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  test('shows a lightweight notice while browser authorization is pending', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockSystemSkillsFetch({ marketplaceConnectorSlug: 'github' })
+    mockCodexAppServerInvoke({ deviceId: 'current-device' })
+    vi.mocked(listWegentConnectorApps).mockResolvedValue([
+      {
+        id: 1,
+        slug: 'github',
+        name: 'GitHub',
+        description: 'Connect GitHub',
+        icon_url: 'https://example.com/github.png',
+        auth_type: 'oauth2',
+        connection: {
+          status: 'disconnected',
+          external_account_name: null,
+          granted_scopes: [],
+          expires_at: null,
+        },
+      },
+    ])
+    let finishAuthorization = () => undefined
+    vi.mocked(authorizeWegentConnector).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishAuthorization = () =>
+            resolve({
+              status: 'connected',
+              external_account_name: 'octocat',
+              granted_scopes: [],
+              expires_at: null,
+            })
+        })
+    )
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-marketplace-install-101'))
+    await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
+
+    const notice = await screen.findByTestId('plugin-operation-notice')
+    expect(notice).toHaveAttribute('data-notice-kind', 'authorization')
+    expect(notice).toHaveTextContent('请在浏览器中完成 GitHub 连接')
+    expect(notice.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
+
+    finishAuthorization()
+
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-operation-notice')).toHaveAttribute(
+        'data-notice-kind',
+        'success'
+      )
     )
   })
 
@@ -1406,12 +1562,22 @@ describe('PluginsWorkspace', () => {
       ],
     })
 
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} projectName="Wegent" />)
 
     await userEvent.click((await screen.findAllByTestId(/^plugin-marketplace-row-/))[0])
 
     expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-fallback')
-    expect(screen.getByTestId('plugin-prompt-logo-0')).toHaveClass('plugin-logo-fallback')
+    expect(screen.getByText('AI 使用向导')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-prompt-0'))
+
+    expect(screen.queryByTestId('plugin-use-case-plugin-source')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
+      'Review my current working-tree changes.'
+    )
+    expect(screen.getByTestId('plugin-use-case-confirmation')).toHaveTextContent('这次最关注什么')
+    expect(screen.getByTestId('plugin-use-case-option-test-quality')).toBeChecked()
+    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveTextContent('带入聊天框')
   })
 
   test('opens marketplace plugin detail from the plugin row', async () => {
@@ -1424,12 +1590,43 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-back-button')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '安装插件' })).toBeInTheDocument()
     expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
-    expect(screen.getByText('Draft a document outline from this chat')).toBeInTheDocument()
+    expect(screen.getByText(/Draft a document outline from this chat/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /包含能力/ })).toBeInTheDocument()
     expect(screen.getByText('Documents App')).toBeInTheDocument()
     expect(screen.getByText('documents-app')).toBeInTheDocument()
     expect(screen.getByText('OpenAI官方')).toBeInTheDocument()
     expect(screen.queryByText('OpenAI官方 · Codex 官方')).not.toBeInTheDocument()
+
+    const promptCard = screen.getByTestId('plugin-prompt-0')
+    await userEvent.click(promptCard)
+
+    expect(screen.getByRole('dialog', { name: 'AI 插件使用向导' })).toHaveClass(
+      'plugin-dialog-surface',
+      'max-w-[600px]'
+    )
+    expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-use-case-plugin-source')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
+      'Draft a document outline from this chat'
+    )
+    expect(screen.getByTestId('plugin-use-case-confirmation')).toHaveTextContent('先生成到什么程度')
+    expect(screen.getByTestId('plugin-use-case-option-draft')).toBeChecked()
+    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveTextContent('安装并带入聊天框')
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-use-case-guide-initial-focus')).toHaveFocus()
+    )
+
+    await userEvent.tab()
+    expect(screen.getByTestId('plugin-use-case-guide-collapse')).toHaveFocus()
+
+    await userEvent.keyboard('{Shift>}{Tab}{/Shift}')
+    expect(screen.getByTestId('plugin-use-case-start-button')).toHaveFocus()
+    await userEvent.tab()
+    expect(screen.getByTestId('plugin-use-case-guide-collapse')).toHaveFocus()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('plugin-use-case-guide')).not.toBeInTheDocument()
+    await waitFor(() => expect(promptCard).toHaveFocus())
   })
 
   test('keeps the resolved marketplace logo on installed plugin details', async () => {
@@ -1455,10 +1652,7 @@ describe('PluginsWorkspace', () => {
     expect(detailImages.length).toBeGreaterThan(0)
     detailImages.forEach(image => expect(image).toHaveAttribute('src', marketplaceLogo))
     expect(screen.getByTestId('plugin-detail-logo')).toHaveClass('plugin-logo-provided')
-    expect(screen.getAllByTestId(/^plugin-prompt-logo-/)).not.toHaveLength(0)
-    screen
-      .getAllByTestId(/^plugin-prompt-logo-/)
-      .forEach(frame => expect(frame).toHaveClass('plugin-logo-provided'))
+    expect(screen.getByText('AI 使用向导')).toBeInTheDocument()
     expect(document.querySelector('img[src="./assets/github-small.svg"]')).toBeNull()
   })
 
@@ -1482,9 +1676,8 @@ describe('PluginsWorkspace', () => {
     )
     await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
     await waitFor(() =>
-      expect(screen.getByTestId('install-plugin-dialog-done')).toBeInTheDocument()
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
     )
-    await userEvent.click(screen.getByTestId('install-plugin-dialog-done'))
 
     await waitFor(() =>
       expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即试用')
@@ -1512,9 +1705,9 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
     await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
 
-    expect(await screen.findByTestId('plugin-detail-action-error')).toHaveTextContent(
-      'GitHub OAuth is not configured'
-    )
+    const notice = await screen.findByTestId('plugin-operation-notice')
+    expect(notice).toHaveTextContent('GitHub OAuth is not configured')
+    expect(notice).toHaveAttribute('data-notice-kind', 'error')
     expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装插件')
   })
 
@@ -1541,9 +1734,8 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
     await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
     await waitFor(() =>
-      expect(screen.getByTestId('install-plugin-dialog-done')).toBeInTheDocument()
+      expect(screen.queryByTestId('install-plugin-dialog')).not.toBeInTheDocument()
     )
-    await userEvent.click(screen.getByTestId('install-plugin-dialog-done'))
 
     await waitFor(() =>
       expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即试用')

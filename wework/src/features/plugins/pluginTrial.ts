@@ -7,11 +7,29 @@ export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
 export const LOCAL_PLUGIN_SKILLS_CHANGED_EVENT = 'wework:local-plugin-skills-changed'
 export const FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT = 'wework:focus-plugin-trial-composer'
 export const INSERT_PLUGIN_REFERENCE_EVENT = 'wework:insert-plugin-reference'
+export const SHOW_PLUGIN_TRIAL_GUIDE_EVENT = 'wework:show-plugin-trial-guide'
 
 export function insertPluginReference(reference: string) {
   window.dispatchEvent(
     new CustomEvent(INSERT_PLUGIN_REFERENCE_EVENT, {
       detail: { reference },
+    })
+  )
+}
+
+export function showPluginTrialGuide(
+  pluginName: string,
+  templates: PluginPathComponent[] | undefined
+) {
+  const normalizedName = pluginName.trim()
+  const availableTemplates = (templates ?? []).filter(template => !template.unavailableReason)
+  if (!normalizedName || availableTemplates.length === 0) return
+  window.dispatchEvent(
+    new CustomEvent(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, {
+      detail: {
+        pluginName: normalizedName,
+        templates: availableTemplates.slice(0, 6),
+      },
     })
   )
 }
@@ -89,6 +107,73 @@ function firstDefaultPrompt(value: unknown): string | null {
   return null
 }
 
+function defaultPromptTemplates(plugin: InstalledPlugin): PluginPathComponent[] {
+  const raw = plugin.spec.interface?.defaultPrompt
+  const prompts = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : [])
+    .filter((prompt): prompt is string => typeof prompt === 'string' && Boolean(prompt.trim()))
+    .map(prompt => prompt.trim())
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey || 'this plugin'
+  const guidePrompts =
+    prompts.length > 0
+      ? prompts
+      : [
+          `Use ${pluginName} to summarize the current context and propose next steps`,
+          `Use ${pluginName} to create an editable result from the current materials`,
+          `Use ${pluginName} to inspect the current work and identify issues`,
+        ]
+  return guidePrompts.map((prompt, index) => ({
+    name: prompt,
+    path: `prompt-${index}`,
+    description: prompt,
+  }))
+}
+
+export function pluginTrialTemplates(
+  plugin: InstalledPlugin,
+  selectedPrompt?: string
+): PluginPathComponent[] {
+  const nativeTemplates = (
+    plugin.spec.components.templates ??
+    plugin.spec.components.commands ??
+    []
+  ).filter(template => !template.unavailableReason)
+  const templates = nativeTemplates.length > 0 ? nativeTemplates : defaultPromptTemplates(plugin)
+  const normalizedSelectedPrompt = selectedPrompt?.trim()
+  if (!normalizedSelectedPrompt) return templates
+
+  const selectedTitle = normalizedSelectedPrompt.split(/\r?\n/, 1)[0].trim()
+  if (selectedTitle !== normalizedSelectedPrompt) {
+    return [
+      {
+        name: selectedTitle,
+        path: 'selected-use-case',
+        description: normalizedSelectedPrompt,
+      },
+      ...templates.filter(
+        template =>
+          template.name.trim() !== selectedTitle && template.description?.trim() !== selectedTitle
+      ),
+    ]
+  }
+
+  const selectedIndex = templates.findIndex(
+    template =>
+      template.description?.trim() === normalizedSelectedPrompt ||
+      template.name.trim() === normalizedSelectedPrompt
+  )
+  if (selectedIndex < 0) {
+    return [
+      {
+        name: normalizedSelectedPrompt,
+        path: 'selected-use-case',
+        description: normalizedSelectedPrompt,
+      },
+      ...templates,
+    ]
+  }
+  return [templates[selectedIndex], ...templates.filter((_, index) => index !== selectedIndex)]
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -122,7 +207,7 @@ export function queuePluginTrial(plugin: InstalledPlugin): boolean {
   return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
-    templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
+    templates: pluginTrialTemplates(plugin),
   })
 }
 
@@ -136,7 +221,7 @@ export function queuePluginPromptTrial(plugin: InstalledPlugin, prompt: string):
   return queuePendingPluginTrial({
     input: `${reference} ${normalizedPrompt}`,
     pluginName,
-    templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
+    templates: pluginTrialTemplates(plugin, normalizedPrompt),
   })
 }
 
@@ -285,4 +370,20 @@ export function buildTrialTemplatePrompt(
   const prefix = mentionMatch?.[1] ?? ''
   const templateText = template.description?.trim() || template.name.trim()
   return prefix ? `${prefix} ${templateText} ` : `${templateText} `
+}
+
+export function buildContextualPluginPrompt(
+  currentInput: string,
+  instruction: string,
+  currentIdeaLabel: string
+): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const currentIdea = mentionMatch
+    ? currentInput.slice(mentionMatch[0].length).trim()
+    : currentInput.trim()
+  const body = [instruction.trim()]
+  if (currentIdea) body.push(`${currentIdeaLabel.trim()}: ${currentIdea}`)
+  const prompt = body.filter(Boolean).join('\n\n')
+  return prefix ? `${prefix} ${prompt} ` : `${prompt} `
 }

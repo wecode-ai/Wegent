@@ -1,4 +1,6 @@
+import { Boxes, Check, ChevronLeft, ChevronRight, CornerDownLeft, Sparkles, X } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
+import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
@@ -33,6 +35,7 @@ import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
+import { buildContextualPluginPrompt } from '@/features/plugins/pluginTrial'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -46,6 +49,7 @@ export interface ProjectChatControls {
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
   trialPluginName?: string
+  hasConversationContext?: boolean
   onDismissTrialGuide?: () => void
   onApplyTrialTemplate?: (template: PluginPathComponent) => void
   dismissTrialGuide?: () => void
@@ -174,6 +178,42 @@ interface PendingModelSelection {
   options?: ModelOptions
 }
 
+function pluginTemplateDisplayTitle(template: PluginPathComponent, t: TFunction<'common'>): string {
+  const source = `${template.name} ${template.description ?? ''}`.toLowerCase()
+  if (/working[- ]tree|current workspace|当前工作区|当前改动/.test(source)) {
+    return t('workbench.plugin_trial_review_current_changes', '当前改动')
+  }
+  if (/merge base|compare.*branch|分支.*对比|合并基线/.test(source)) {
+    return t('workbench.plugin_trial_review_branch', '分支对比')
+  }
+  if (/this commit|single commit|单次提交|这次提交/.test(source)) {
+    return t('workbench.plugin_trial_review_commit', '单次提交')
+  }
+  return template.name
+}
+
+function pluginTemplateDisplayDescription(
+  template: PluginPathComponent,
+  t: TFunction<'common'>
+): string {
+  const source = `${template.name} ${template.description ?? ''}`.toLowerCase()
+  const providedDescription = template.description
+    ?.split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => line && line !== template.name.trim())
+  if (providedDescription) return providedDescription
+  if (/working[- ]tree|current workspace|当前工作区|当前改动/.test(source)) {
+    return t('workbench.plugin_trial_review_current_changes_hint', '检查未提交代码')
+  }
+  if (/merge base|compare.*branch|分支.*对比|合并基线/.test(source)) {
+    return t('workbench.plugin_trial_review_branch_hint', '与合并基线比较')
+  }
+  if (/this commit|single commit|单次提交|这次提交/.test(source)) {
+    return t('workbench.plugin_trial_review_commit_hint', '定位高风险问题')
+  }
+  return ''
+}
+
 function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel | null): boolean {
   return left?.name === right?.name && left?.type === right?.type
 }
@@ -181,84 +221,189 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function PluginTrialTemplateStrip({
   templates,
   pluginName,
+  hasConversationContext = false,
   onApplyTemplate,
+  onApplyContext,
   onDismiss,
 }: {
   templates: PluginPathComponent[]
   pluginName?: string
+  hasConversationContext?: boolean
   onApplyTemplate?: (template: PluginPathComponent) => void
+  onApplyContext?: () => void
   onDismiss?: () => void
 }) {
   const { t } = useTranslation('common')
-  const visibleTemplates = templates.filter(template => !template.unavailableReason).slice(0, 3)
-  if (visibleTemplates.length === 0) return null
+  const availableTemplates = templates.filter(template => !template.unavailableReason).slice(0, 6)
+  const [page, setPage] = useState(0)
+  const pageCount = Math.max(1, Math.ceil(availableTemplates.length / 3))
+  const visiblePage = Math.min(page, pageCount - 1)
+  const visibleTemplates = availableTemplates.slice(visiblePage * 3, visiblePage * 3 + 3)
+  const [selectedTemplatePath, setSelectedTemplatePath] = useState(
+    availableTemplates[0]?.path ?? ''
+  )
+  const [contextSuggestionApplied, setContextSuggestionApplied] = useState(false)
+
+  if (availableTemplates.length === 0) return null
 
   return (
     <section
-      className="mx-auto mb-2 max-w-[760px] overflow-hidden rounded-[14px] border border-border bg-background shadow-[0_10px_34px_rgba(0,0,0,0.07)]"
+      className="mx-auto mb-2 max-w-[760px] overflow-hidden rounded-xl border border-border/25 bg-background shadow-md"
       data-testid="plugin-trial-template-strip"
-      aria-label={t('workbench.plugin_trial_start_with', '使用该插件开始')}
+      aria-label={t('workbench.plugin_trial_guide_title', '插件使用建议')}
     >
-      <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
-        <div>
-          <div className="text-sm font-medium leading-5 text-text-primary">
-            {t('workbench.plugin_trial_start_with', '使用该插件开始')}
+      <div className="flex items-start justify-between gap-3 px-3 pb-2 pt-2.5">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-medium leading-5 text-text-primary">
+              {t('workbench.plugin_trial_guide_title', '插件使用建议')}
+            </div>
+            <p className="truncate text-xs leading-4 text-text-muted">
+              {pluginName
+                ? t('workbench.plugin_trial_guide_plugin_hint', {
+                    plugin: pluginName,
+                    defaultValue: `正在使用 ${pluginName} · 选择后仍可修改`,
+                  })
+                : t('workbench.plugin_trial_guide_hint_short', '选择后仍可修改，不会自动发送')}
+            </p>
           </div>
-          {pluginName ? (
-            <div className="text-xs leading-4 text-text-muted">{pluginName}</div>
-          ) : null}
         </div>
-        {onDismiss && (
-          <button
-            type="button"
-            data-testid="plugin-trial-template-dismiss"
-            aria-label={t('workbench.close', '关闭')}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
-            onClick={onDismiss}
-          >
-            ×
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {pageCount > 1 && (
+            <>
+              <button
+                type="button"
+                data-testid="plugin-trial-template-previous"
+                aria-label={t('workbench.plugin_trial_previous_scenarios', '上一组场景')}
+                disabled={visiblePage === 0}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
+                onClick={() => setPage(current => Math.max(0, current - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                data-testid="plugin-trial-template-next"
+                aria-label={t('workbench.plugin_trial_next_scenarios', '下一组场景')}
+                disabled={visiblePage >= pageCount - 1}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
+                onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </>
+          )}
+          {onDismiss && (
+            <button
+              type="button"
+              data-testid="plugin-trial-template-dismiss"
+              aria-label={t('workbench.close', '关闭')}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+              onClick={onDismiss}
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex gap-2 overflow-x-auto p-2.5">
-        {visibleTemplates.map(template => (
-          <button
-            key={template.path}
-            type="button"
-            className="w-[190px] shrink-0 overflow-hidden rounded-xl border border-border bg-background text-left transition-colors hover:border-border hover:bg-surface"
-            data-testid="plugin-trial-template-card"
-            onClick={() => onApplyTemplate?.(template)}
-          >
-            <div className="flex min-h-[118px] flex-col gap-2.5 bg-surface p-3">
+      <div className="px-1.5 pb-1.5">
+        {hasConversationContext && onApplyContext && (
+          <>
+            <button
+              type="button"
+              data-testid="plugin-trial-context-suggestion"
+              aria-pressed={contextSuggestionApplied}
+              className={[
+                'flex min-h-12 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20',
+                contextSuggestionApplied ? 'bg-surface text-text-primary' : 'hover:bg-surface/70',
+              ].join(' ')}
+              onClick={() => {
+                setContextSuggestionApplied(true)
+                setSelectedTemplatePath('')
+                onApplyContext()
+              }}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <strong className="block truncate text-sm font-medium leading-5 text-text-primary">
+                  {t('workbench.plugin_trial_context_action', '让 AI 结合当前对话完善')}
+                </strong>
+                <span className="block truncate text-xs leading-4 text-text-muted">
+                  {t(
+                    'workbench.plugin_trial_context_action_hint',
+                    '带入聊天后，AI 会参考近期消息和已有材料补全任务'
+                  )}
+                </span>
+              </span>
+              {contextSuggestionApplied ? (
+                <Check className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
+              ) : (
+                <CornerDownLeft className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              )}
+            </button>
+            <p className="px-2 pb-1 pt-2 text-xs leading-4 text-text-muted">
+              {t('workbench.plugin_trial_or_choose_example', '或者从插件示例开始')}
+            </p>
+          </>
+        )}
+        {visibleTemplates.map(template => {
+          const selected = selectedTemplatePath === template.path
+          const displayTitle = pluginTemplateDisplayTitle(template, t)
+          const descriptionPreview = pluginTemplateDisplayDescription(template, t)
+          const showDescription = Boolean(descriptionPreview)
+          return (
+            <button
+              key={template.path}
+              type="button"
+              className={[
+                'flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20',
+                selected ? 'bg-surface text-text-primary' : 'hover:bg-surface/70',
+              ].join(' ')}
+              data-testid="plugin-trial-template-card"
+              aria-pressed={selected}
+              onClick={() => {
+                setContextSuggestionApplied(false)
+                setSelectedTemplatePath(template.path)
+                onApplyTemplate?.(template)
+              }}
+            >
               {template.logoUrl || template.logoUrlDark ? (
                 <img
                   src={template.logoUrl || template.logoUrlDark || ''}
                   alt=""
-                  className="h-8 w-8 rounded-lg object-contain"
+                  className="h-6 w-6 shrink-0 rounded-md object-contain"
                 />
               ) : (
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-background text-sm font-medium text-text-secondary">
-                  {template.name.slice(0, 1).toUpperCase()}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background text-text-muted">
+                  <Boxes className="h-4 w-4" aria-hidden="true" />
                 </span>
               )}
-              <strong className="truncate text-xs font-medium leading-4 text-text-primary">
-                {template.name}
-              </strong>
-            </div>
-            <div className="space-y-1 px-2.5 py-2">
-              <small className="block text-xs leading-4 text-text-muted">
-                {t('workbench.plugin_template', '模板')}
-              </small>
-              <strong className="block truncate text-xs font-medium leading-4 text-text-primary">
-                {template.description?.trim() || template.name}
-              </strong>
-              <span className="block text-xs leading-4 text-text-muted">
-                {t('workbench.plugin_template_prefill_hint', '点击后预填，可继续修改')}
+              <span className="min-w-0 flex-1">
+                <strong className="block truncate text-sm font-medium leading-5 text-text-primary">
+                  {displayTitle}
+                </strong>
+                {showDescription && (
+                  <span className="block truncate text-xs leading-4 text-text-muted">
+                    {descriptionPreview}
+                  </span>
+                )}
               </span>
-            </div>
-          </button>
-        ))}
+              <CornerDownLeft className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+            </button>
+          )
+        })}
       </div>
+      <p className="border-t border-border/20 px-3 py-2 text-xs leading-4 text-text-muted">
+        {t(
+          'workbench.plugin_trial_guide_hint',
+          '以上内容只会带入输入框，你可以继续修改，不会自动发送'
+        )}
+      </p>
     </section>
   )
 }
@@ -504,9 +649,23 @@ export function ChatInput({
         {queuePanel}
         {errorBanner}
         <PluginTrialTemplateStrip
+          key={controls.trialPluginName || 'plugin-trial'}
           templates={controls.trialTemplates ?? []}
           pluginName={controls.trialPluginName}
+          hasConversationContext={controls.hasConversationContext}
           onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
+          onApplyContext={() =>
+            onChange(
+              buildContextualPluginPrompt(
+                value,
+                t(
+                  'workbench.plugin_trial_context_prompt',
+                  '请结合当前对话最近内容，理解我正在推进的目标，并使用这个插件完成最合适的下一步。信息不足时，只询问一个必要问题。'
+                ),
+                t('workbench.plugin_trial_current_idea', '我的当前想法')
+              )
+            )
+          }
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
         {displayedGoal && !goalDraftActive && (
@@ -591,9 +750,23 @@ export function ChatInput({
       {queuePanel}
       {errorBanner}
       <PluginTrialTemplateStrip
+        key={controls.trialPluginName || 'plugin-trial'}
         templates={controls.trialTemplates ?? []}
         pluginName={controls.trialPluginName}
+        hasConversationContext={controls.hasConversationContext}
         onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
+        onApplyContext={() =>
+          onChange(
+            buildContextualPluginPrompt(
+              value,
+              t(
+                'workbench.plugin_trial_context_prompt',
+                '请结合当前对话最近内容，理解我正在推进的目标，并使用这个插件完成最合适的下一步。信息不足时，只询问一个必要问题。'
+              ),
+              t('workbench.plugin_trial_current_idea', '我的当前想法')
+            )
+          )
+        }
         onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
       />
       {displayedGoal && !goalDraftActive && (

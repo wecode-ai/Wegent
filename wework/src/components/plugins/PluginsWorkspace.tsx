@@ -50,6 +50,7 @@ import { CustomMcpDialog, type CustomMcpFormState } from './McpManagementSection
 import { parseOptionalStringRecordJson } from './mcp-json-import'
 import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginDetailView } from './PluginDetailView'
+import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { PluginShareDialog } from './PluginShareDialog'
 import { PluginUploadDialog } from './PluginUploadDialog'
 import { SkillUploadDialog } from './SkillUploadDialog'
@@ -72,6 +73,8 @@ type CatalogTab = 'mcp' | 'skills' | 'plugins'
 type MarketplaceKind = 'local' | 'cloud'
 
 const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
+const INSTALLED_STRIP_VISIBLE_COUNT = 12
+const INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT = 4
 
 interface MarketplaceOption {
   key: string
@@ -776,8 +779,10 @@ function PluginMarketplaceRow({
   item,
   isLoggedIn,
   isInstalling,
+  isUninstalling,
   installLabel,
   installingLabel,
+  uninstallingLabel,
   retryLabel,
   syncingLabel,
   tryLabel,
@@ -793,8 +798,10 @@ function PluginMarketplaceRow({
   item: PluginMarketplaceItem
   isLoggedIn: boolean
   isInstalling: boolean
+  isUninstalling: boolean
   installLabel: string
   installingLabel: string
+  uninstallingLabel: string
   retryLabel: string
   syncingLabel: string
   tryLabel: string
@@ -823,7 +830,8 @@ function PluginMarketplaceRow({
     deviceState === 'downloading' ||
     deviceState === 'installing' ||
     deviceState === 'uninstalling'
-  const actionPending = isInstalling || showSyncingState
+  const uninstallPending = isUninstalling || deviceState === 'uninstalling'
+  const actionPending = isInstalling || uninstallPending || showSyncingState
   const actionLabel = showFailedState ? retryLabel : showSyncingState ? syncingLabel : installLabel
 
   useEffect(() => {
@@ -876,12 +884,14 @@ function PluginMarketplaceRow({
             className="plugin-market-card-install-status"
             role="status"
             data-testid={`${testIdPrefix}plugin-marketplace-install-${item.id}`}
-            aria-label={`${isInstalling ? installingLabel : syncingLabel} ${
-              item.displayName || item.name
-            }`}
+            aria-label={`${
+              uninstallPending ? uninstallingLabel : isInstalling ? installingLabel : syncingLabel
+            } ${item.displayName || item.name}`}
           >
             <RefreshCw className="animate-spin" aria-hidden="true" />
-            <span>{isInstalling ? installingLabel : syncingLabel}</span>
+            <span>
+              {uninstallPending ? uninstallingLabel : isInstalling ? installingLabel : syncingLabel}
+            </span>
           </span>
         ) : showInstalledState ? (
           <div ref={actionsRef} className="relative">
@@ -1062,6 +1072,8 @@ interface PluginsWorkspaceProps {
   cloudMarketplaceAvailable?: boolean
   cloudApiBaseUrl?: string
   cloudToken?: string | null
+  projectName?: string | null
+  hasConversationContext?: boolean
 }
 
 export function PluginsWorkspace({
@@ -1070,6 +1082,8 @@ export function PluginsWorkspace({
   cloudMarketplaceAvailable = true,
   cloudApiBaseUrl,
   cloudToken,
+  projectName,
+  hasConversationContext = false,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
@@ -1093,10 +1107,14 @@ export function PluginsWorkspace({
   const [installingMarketplacePluginIds, setInstallingMarketplacePluginIds] = useState<
     Set<string | number>
   >(() => new Set())
+  const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
+    () => new Set()
+  )
+  const [pluginOperationNotice, setPluginOperationNotice] =
+    useState<PluginOperationNoticeState | null>(null)
   const [pendingInstall, setPendingInstall] = useState<{
     item: PluginMarketplaceItem
     promptAfterInstall?: string
-    phase: 'confirm' | 'installing' | 'success'
   } | null>(null)
   const [pendingPluginUninstall, setPendingPluginUninstall] = useState<{
     id: string | number
@@ -1675,7 +1693,7 @@ export function PluginsWorkspace({
       })
   }
 
-  const uninstallInstalledPlugin = (id: string | number) => {
+  const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
     const clearMarketplaceInstall = (
       previous: typeof pluginMarketplaceState
@@ -1698,46 +1716,69 @@ export function PluginsWorkspace({
     if (!plugin) {
       // Local Codex marketplace installs are omitted from the merged installed list
       // once any cloud install exists, but they still appear as installed catalog rows.
-      setPluginMarketplaceState(clearMarketplaceInstall)
       void localPluginApi
         .uninstallInstalledPlugin(id)
-        .then(() => notifyLocalPluginSkillsChanged())
+        .then(() => {
+          setPluginMarketplaceState(clearMarketplaceInstall)
+          notifyLocalPluginSkillsChanged()
+          setPluginOperationNotice({
+            id: `uninstalled-${id}`,
+            kind: 'success',
+            message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+              name: pluginName,
+              defaultValue: `${pluginName} 已卸载`,
+            }),
+          })
+        })
         .catch((error: Error) => {
-          setPluginMarketplaceState(previous => ({
-            ...previous,
-            error: error.message,
-          }))
-          setMarketplaceRefreshTick(previous => previous + 1)
+          setPluginOperationNotice({
+            id: `uninstall-error-${id}`,
+            kind: 'error',
+            message: error.message,
+          })
+        })
+        .finally(() => {
+          setUninstallingPluginIds(previous => {
+            const next = new Set(previous)
+            next.delete(id)
+            return next
+          })
         })
       return
     }
 
-    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-    setPluginMarketplaceState(clearMarketplaceInstall)
     const uninstallApi =
       plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
         ? localPluginApi.uninstallInstalledPlugin(id)
         : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
     uninstallApi
-      .then(() => notifyLocalPluginSkillsChanged())
-      .catch(() => {
-        setInstalledPlugins(previous => [...previous, plugin])
-        setPluginMarketplaceState(previous => ({
-          ...previous,
-          items: previous.items.map(item =>
-            item.installedPluginId === null &&
-            (String(item.id) === String(plugin.id) ||
-              String(item.name) === String(plugin.raw.spec.source.pluginKey))
-              ? {
-                  ...item,
-                  installed: true,
-                  installedPluginId: plugin.id,
-                  enabled: plugin.enabled,
-                }
-              : item
-          ),
-        }))
+      .then(() => {
+        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+        setPluginMarketplaceState(clearMarketplaceInstall)
+        notifyLocalPluginSkillsChanged()
+        setPluginOperationNotice({
+          id: `uninstalled-${id}`,
+          kind: 'success',
+          message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+            name: pluginName,
+            defaultValue: `${pluginName} 已卸载`,
+          }),
+        })
+      })
+      .catch((error: Error) => {
+        setPluginOperationNotice({
+          id: `uninstall-error-${id}`,
+          kind: 'error',
+          message: error.message,
+        })
+      })
+      .finally(() => {
+        setUninstallingPluginIds(previous => {
+          const next = new Set(previous)
+          next.delete(id)
+          return next
+        })
       })
   }
 
@@ -1914,7 +1955,7 @@ export function PluginsWorkspace({
       return
     }
 
-    setPendingInstall({ item, promptAfterInstall, phase: 'confirm' })
+    setPendingInstall({ item, promptAfterInstall })
   }
 
   const executePendingInstall = () => {
@@ -1925,7 +1966,7 @@ export function PluginsWorkspace({
     const localMarketplaceId = localMarketplaceIdFromItem(item)
     const installFromLocal = localMarketplaceId !== null
 
-    setPendingInstall(current => (current ? { ...current, phase: 'installing' } : current))
+    setPendingInstall(null)
     setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
     setPluginMarketplaceState(previous => ({
       ...previous,
@@ -1972,11 +2013,16 @@ export function PluginsWorkspace({
           ),
           error: null,
         }))
-        setPendingInstall(current =>
-          current && current.item.id === item.id ? { ...current, phase: 'success' } : current
-        )
-        if (!pendingInstall?.promptAfterInstall && promptAfterInstall) {
-          // defer navigation until user closes success dialog
+        setPluginOperationNotice({
+          id: `installed-${item.id}`,
+          kind: 'success',
+          message: t('workbench.plugins_install_success_title', '{{name}} 已安装', {
+            name: item.displayName || item.name,
+            defaultValue: `${item.displayName || item.name} 已安装`,
+          }),
+        })
+        if (promptAfterInstall && queuePluginPromptTrial(installed.raw, promptAfterInstall)) {
+          navigateTo('/')
         }
       })
       .catch((error: Error) => {
@@ -1990,9 +2036,13 @@ export function PluginsWorkspace({
         setPluginMarketplaceState(previous => ({
           ...previous,
           items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
-          error: error.message,
+          error: null,
         }))
-        setPendingInstall(null)
+        setPluginOperationNotice({
+          id: `install-error-${item.id}`,
+          kind: 'error',
+          message: error.message,
+        })
       })
       .finally(() => {
         setInstallingMarketplacePluginIds(previous => {
@@ -2009,9 +2059,10 @@ export function PluginsWorkspace({
 
   const confirmUninstallPlugin = () => {
     if (!pendingPluginUninstall) return
-    const { id } = pendingPluginUninstall
+    const { id, name } = pendingPluginUninstall
     setPendingPluginUninstall(null)
-    uninstallInstalledPlugin(id)
+    setUninstallingPluginIds(previous => new Set(previous).add(id))
+    uninstallInstalledPlugin(id, name)
   }
 
   const ensureMarketplaceConnectors = async (item: PluginMarketplaceItem) => {
@@ -2031,12 +2082,30 @@ export function PluginsWorkspace({
         throw new Error(t('workbench.plugins_connector_unavailable', '所需应用连接暂不可用'))
       }
       if (app.connection.status === 'connected') continue
-      await authorizeWegentConnector(
-        cloudApiBaseUrl,
-        cloudToken,
-        requirement.slug,
-        openCloudAuthorizationWindow
-      )
+      const noticeId = `authorization-${requirement.slug}`
+      setPluginOperationNotice({
+        id: noticeId,
+        kind: 'authorization',
+        message: t(
+          'workbench.plugins_finish_connecting_in_browser',
+          '请在浏览器中完成 {{name}} 连接',
+          {
+            name: app.name,
+            defaultValue: `请在浏览器中完成 ${app.name} 连接`,
+          }
+        ),
+        iconUrl: app.icon_url,
+      })
+      try {
+        await authorizeWegentConnector(
+          cloudApiBaseUrl,
+          cloudToken,
+          requirement.slug,
+          openCloudAuthorizationWindow
+        )
+      } finally {
+        setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
+      }
     }
   }
 
@@ -2330,25 +2399,27 @@ export function PluginsWorkspace({
       })
       .then(state => state.marketplaceItems)
 
-    void Promise.all([cloudRequest, localRequest])
-      .then(([cloudResponse, localItems]) => {
-        if (!isCurrent) return
-        setMarketplaceLoadingMessage('')
-        setPluginMarketplaceState({
-          items: mergeMarketplaceCatalog(cloudResponse.items, localItems),
-          isLoading: false,
-          error: null,
-        })
-      })
-      .catch((error: Error) => {
-        if (!isCurrent) return
-        setMarketplaceLoadingMessage('')
+    void Promise.allSettled([cloudRequest, localRequest]).then(([cloudResult, localResult]) => {
+      if (!isCurrent) return
+      setMarketplaceLoadingMessage('')
+      if (cloudResult.status === 'rejected' && localResult.status === 'rejected') {
+        const error = localResult.reason instanceof Error ? localResult.reason : cloudResult.reason
         setPluginMarketplaceState({
           items: [],
           isLoading: false,
-          error: error.message,
+          error: error instanceof Error ? error.message : 'Failed to load plugin marketplace',
         })
+        return
+      }
+
+      const cloudItems = cloudResult.status === 'fulfilled' ? cloudResult.value.items : []
+      const localItems = localResult.status === 'fulfilled' ? localResult.value : []
+      setPluginMarketplaceState({
+        items: mergeMarketplaceCatalog(cloudItems, localItems),
+        isLoading: false,
+        error: null,
       })
+    })
 
     return () => {
       isCurrent = false
@@ -2482,7 +2553,7 @@ export function PluginsWorkspace({
       official: t('workbench.plugins_distribution_official', 'OpenAI官方'),
       workspace: t('workbench.plugins_distribution_workspace', '企业内部'),
       personal: t('workbench.plugins_distribution_personal', '个人创建'),
-      public: t('workbench.plugins_distribution_public', '国内公开'),
+      public: t('workbench.plugins_distribution_public', 'Wework官方'),
     }),
     [t]
   )
@@ -2528,10 +2599,21 @@ export function PluginsWorkspace({
       }),
     [installedPlugins, marketplaceDistributionFilter, normalizedQuery]
   )
+  const installedStripPlugins = visibleInstalledPlugins.slice(0, INSTALLED_STRIP_VISIBLE_COUNT)
+  const hiddenInstalledPlugins = visibleInstalledPlugins.slice(INSTALLED_STRIP_VISIBLE_COUNT)
 
   useEffect(() => {
     setMarketplaceVisibleCount(MARKETPLACE_INITIAL_VISIBLE_COUNT)
   }, [marketplaceDistributionFilter, marketplaceRefreshTick, normalizedQuery])
+
+  useEffect(() => {
+    if (pluginOperationNotice?.kind !== 'success') return
+    const noticeId = pluginOperationNotice.id
+    const timeoutId = window.setTimeout(() => {
+      setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
+    }, 4_000)
+    return () => window.clearTimeout(timeoutId)
+  }, [pluginOperationNotice])
 
   const pluginShareDialog = pluginShareState ? (
     <PluginShareDialog
@@ -2543,6 +2625,13 @@ export function PluginsWorkspace({
       onSave={request => void savePluginShare(request)}
       searchUsers={searchPluginShareUsers}
       searchGroups={searchPluginShareGroups}
+    />
+  ) : null
+
+  const pluginOperationNoticeOverlay = pluginOperationNotice ? (
+    <PluginOperationNotice
+      notice={pluginOperationNotice}
+      onDismiss={() => setPluginOperationNotice(null)}
     />
   ) : null
 
@@ -2562,24 +2651,8 @@ export function PluginsWorkspace({
             }).url,
             componentCount: marketplaceComponentCount(pendingInstall.item),
           }}
-          phase={pendingInstall.phase}
           onCancel={() => setPendingInstall(null)}
           onConfirm={() => executePendingInstall()}
-          onDone={() => {
-            const prompt = pendingInstall.promptAfterInstall
-            const itemId = pendingInstall.item.id
-            setPendingInstall(null)
-            if (prompt) {
-              const item = pluginMarketplaceState.items.find(candidate => candidate.id === itemId)
-              const installedId = item?.installedPluginId
-              const installed = installedPlugins.find(
-                plugin => installedId !== null && String(plugin.id) === String(installedId)
-              )
-              if (installed && queuePluginPromptTrial(installed.raw, prompt)) {
-                navigateTo('/')
-              }
-            }
-          }}
         />
       )}
       {pendingPluginUninstall && (
@@ -2597,6 +2670,8 @@ export function PluginsWorkspace({
       <>
         <PluginDetailView
           plugin={selectedPlugin}
+          projectName={projectName}
+          hasConversationContext={hasConversationContext}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           actionError={pluginMarketplaceState.error}
           primaryActionLabel={t('workbench.plugins_try_now', '立即试用')}
@@ -2661,6 +2736,7 @@ export function PluginsWorkspace({
           onManageConnector={slug => void managePluginConnector(slug)}
         />
         {pluginShareDialog}
+        {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
       </>
     )
@@ -2689,7 +2765,12 @@ export function PluginsWorkspace({
       deviceState === 'installing' ||
       deviceState === 'uninstalling'
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
-    const isActionPending = isInstalling || isDeviceSyncing
+    const detailUninstallId = installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
+    const isUninstalling =
+      detailUninstallId !== null &&
+      detailUninstallId !== undefined &&
+      uninstallingPluginIds.has(detailUninstallId)
+    const isActionPending = isInstalling || isUninstalling || isDeviceSyncing
     const canUpdate =
       Boolean(selectedMarketplacePlugin.updateAvailable) &&
       isInstalled &&
@@ -2708,6 +2789,8 @@ export function PluginsWorkspace({
       <>
         <PluginDetailView
           plugin={detailPlugin}
+          projectName={projectName}
+          hasConversationContext={hasConversationContext}
           backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
           accessRole={selectedMarketplacePlugin.accessRole}
           shareGrantUserCount={selectedMarketplacePlugin.grantUserCount ?? 0}
@@ -2728,9 +2811,11 @@ export function PluginsWorkspace({
           }
           primaryActionLabel={
             isActionPending
-              ? isInstalling
-                ? t('workbench.plugins_installing', '正在安装')
-                : t('workbench.plugins_syncing_installation', '同步中...')
+              ? isUninstalling
+                ? t('workbench.plugins_uninstalling', '正在卸载')
+                : isInstalling
+                  ? t('workbench.plugins_installing', '正在安装')
+                  : t('workbench.plugins_syncing_installation', '同步中...')
               : canUpdate
                 ? t('workbench.plugins_update', '更新')
                 : isInstalled
@@ -2809,6 +2894,7 @@ export function PluginsWorkspace({
           onManageConnector={slug => void managePluginConnector(slug)}
         />
         {pluginShareDialog}
+        {pluginOperationNoticeOverlay}
         {pluginOverlayDialogs}
       </>
     )
@@ -2959,7 +3045,7 @@ export function PluginsWorkspace({
                       setQuery(event.target.value)
                       setSystemSkillPage(1)
                     }}
-                    placeholder={t('workbench.plugins_marketplace_search', '搜索插件、品牌或能力')}
+                    placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
                     data-testid="plugins-search-input"
                     className="plugin-market-search-input"
                   />
@@ -3011,17 +3097,16 @@ export function PluginsWorkspace({
               >
                 <div
                   className={[
-                    'plugin-installed-icons-scroller scrollbar-soft',
+                    'plugin-installed-icons-scroller',
                     'px-5 md:pr-10',
                     sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
                   ].join(' ')}
                   data-testid="plugins-installed-scroll-region"
                   role="region"
                   aria-label={t('workbench.plugins_installed', '已安装')}
-                  tabIndex={0}
                 >
                   <div className="plugin-installed-icons-track">
-                    {visibleInstalledPlugins.map(plugin => {
+                    {installedStripPlugins.map(plugin => {
                       const marketplaceItem = pluginMarketplaceState.items.find(
                         item => String(item.id) === String(plugin.id)
                       )
@@ -3059,6 +3144,51 @@ export function PluginsWorkspace({
                         </button>
                       )
                     })}
+                    {hiddenInstalledPlugins.length > 0 && (
+                      <button
+                        type="button"
+                        data-testid="plugins-installed-overflow-button"
+                        className="plugin-installed-overflow-button"
+                        aria-label={t(
+                          'workbench.plugins_view_more_installed',
+                          '查看另外 {{count}} 个已安装插件',
+                          { count: hiddenInstalledPlugins.length }
+                        )}
+                        onClick={() => navigateTo('/plugins/manage')}
+                      >
+                        <span className="plugin-installed-overflow-preview" aria-hidden="true">
+                          {hiddenInstalledPlugins
+                            .slice(0, INSTALLED_STRIP_OVERFLOW_PREVIEW_COUNT)
+                            .map(plugin => {
+                              const marketplaceItem = pluginMarketplaceState.items.find(
+                                item => String(item.id) === String(plugin.id)
+                              )
+                              const logo = resolvePluginLogo({
+                                pluginKey: String(plugin.raw.spec.source?.pluginKey || plugin.id),
+                                logo:
+                                  marketplaceItem?.interface?.logo ||
+                                  plugin.raw.spec.interface?.logo,
+                                composerIcon:
+                                  marketplaceItem?.interface?.composerIcon ||
+                                  plugin.raw.spec.interface?.composerIcon,
+                              })
+                              return (
+                                <span
+                                  key={plugin.id}
+                                  className="plugin-installed-overflow-preview-logo"
+                                >
+                                  {logo.url ? <img src={logo.url} alt="" /> : <Boxes />}
+                                </span>
+                              )
+                            })}
+                        </span>
+                        <span className="plugin-installed-overflow-label">
+                          {t('workbench.plugins_more_installed_count', '另有 {{count}} 个', {
+                            count: hiddenInstalledPlugins.length,
+                          })}
+                        </span>
+                      </button>
+                    )}
                     {visibleInstalledPlugins.length === 0 && (
                       <span
                         data-testid="plugins-installed-strip-empty"
@@ -3155,8 +3285,10 @@ export function PluginsWorkspace({
                       item={item}
                       isLoggedIn={Boolean(cloudToken && currentDeviceId)}
                       isInstalling={installingMarketplacePluginIds.has(item.id)}
+                      isUninstalling={uninstallingPluginIds.has(item.installedPluginId ?? item.id)}
                       installLabel={t('workbench.plugins_install', '安装')}
                       installingLabel={t('workbench.plugins_installing', '正在安装')}
+                      uninstallingLabel={t('workbench.plugins_uninstalling', '正在卸载')}
                       retryLabel={t('workbench.plugins_retry_install', '重试安装')}
                       syncingLabel={t('workbench.plugins_syncing_installation', '同步中...')}
                       tryLabel={t('workbench.plugins_try_now', '立即试用')}
@@ -3196,6 +3328,7 @@ export function PluginsWorkspace({
         </div>
       </div>
       {pluginOverlayDialogs}
+      {pluginOperationNoticeOverlay}
       {pendingUninstallItem && (
         <ConfirmUninstallDialog
           item={pendingUninstallItem}

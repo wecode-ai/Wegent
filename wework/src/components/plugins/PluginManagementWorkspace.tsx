@@ -20,6 +20,7 @@ import {
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import { PluginDetailView } from './PluginDetailView'
+import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { PluginShareDialog } from './PluginShareDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { installedPluginDistribution } from './pluginDistribution'
@@ -91,6 +92,11 @@ export function PluginManagementWorkspace({
     id: string | number
     name: string
   } | null>(null)
+  const [uninstallingPluginIds, setUninstallingPluginIds] = useState<Set<string | number>>(
+    () => new Set()
+  )
+  const [pluginOperationNotice, setPluginOperationNotice] =
+    useState<PluginOperationNoticeState | null>(null)
   const [pluginShareError, setPluginShareError] = useState<string | null>(null)
   const [pluginSharePreparing, setPluginSharePreparing] = useState(false)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
@@ -235,23 +241,63 @@ export function PluginManagementWorkspace({
 
   const confirmUninstallPlugin = () => {
     if (!pendingUninstall) return
-    const { id } = pendingUninstall
+    const { id, name } = pendingUninstall
     setPendingUninstall(null)
-    uninstallInstalledPlugin(id)
+    setUninstallingPluginIds(previous => new Set(previous).add(id))
+    uninstallInstalledPlugin(id, name)
   }
 
-  const uninstallInstalledPlugin = (id: string | number) => {
+  const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
     const plugin = installedPlugins.find(item => String(item.id) === String(id))
-    if (!plugin) return
-    setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-    setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+    if (!plugin) {
+      setUninstallingPluginIds(previous => {
+        const next = new Set(previous)
+        next.delete(id)
+        return next
+      })
+      return
+    }
     const request = isCloudManagedInstalledPlugin(plugin.raw)
       ? cloudPluginApi.uninstallInstalledPlugin(id, currentDeviceId || undefined)
       : localPluginApi.uninstallInstalledPlugin(id)
     void request
-      .then(() => notifyLocalPluginSkillsChanged())
-      .catch(() => setInstalledPlugins(previous => [...previous, plugin]))
+      .then(() => {
+        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+        setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+        notifyLocalPluginSkillsChanged()
+        setPluginOperationNotice({
+          id: `uninstalled-${id}`,
+          kind: 'success',
+          message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+            name: pluginName,
+            defaultValue: `${pluginName} 已卸载`,
+          }),
+        })
+      })
+      .catch((error: Error) => {
+        setPluginOperationNotice({
+          id: `uninstall-error-${id}`,
+          kind: 'error',
+          message: error.message,
+        })
+      })
+      .finally(() => {
+        setUninstallingPluginIds(previous => {
+          const next = new Set(previous)
+          next.delete(id)
+          return next
+        })
+      })
   }
+
+  useEffect(() => {
+    if (pluginOperationNotice?.kind !== 'success') return
+    const noticeId = pluginOperationNotice.id
+    const timeoutId = window.setTimeout(() => {
+      setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
+    }, 4_000)
+    return () => window.clearTimeout(timeoutId)
+  }, [pluginOperationNotice])
 
   const shareInstalledPlugin = async (plugin: InstalledPluginItem) => {
     setPluginSharePreparing(true)
@@ -371,12 +417,27 @@ export function PluginManagementWorkspace({
     />
   ) : null
 
+  const pluginOperationNoticeOverlay = pluginOperationNotice ? (
+    <PluginOperationNotice
+      notice={pluginOperationNotice}
+      onDismiss={() => setPluginOperationNotice(null)}
+    />
+  ) : null
+
   if (selectedPlugin) {
+    const isUninstalling = uninstallingPluginIds.has(selectedPlugin.id)
     return (
       <>
         <PluginDetailView
           plugin={selectedPlugin}
           backLabel={t('workbench.plugins_back_to_management', '返回管理插件')}
+          primaryActionLabel={
+            isUninstalling
+              ? t('workbench.plugins_uninstalling', '正在卸载')
+              : t('workbench.plugins_try_now', '立即试用')
+          }
+          primaryActionDisabled={isUninstalling}
+          showUninstall={!isUninstalling}
           tertiaryActionLabel={
             selectedPlugin.origin === 'created' ? t('workbench.plugins_share', '分享') : undefined
           }
@@ -405,6 +466,7 @@ export function PluginManagementWorkspace({
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
         />
         {pluginShareDialog}
+        {pluginOperationNoticeOverlay}
         {pendingUninstall && (
           <UninstallPluginDialog
             pluginName={pendingUninstall.name}
@@ -491,6 +553,7 @@ export function PluginManagementWorkspace({
                     }
                     onToggle={() => toggleInstalledPlugin(plugin.id)}
                     onUninstall={() => requestUninstallPlugin(plugin.id, plugin.name)}
+                    isUninstalling={uninstallingPluginIds.has(plugin.id)}
                   />
                 </div>
               )
@@ -519,6 +582,7 @@ export function PluginManagementWorkspace({
         )}
       </div>
       {pluginShareDialog}
+      {pluginOperationNoticeOverlay}
       {pendingUninstall && (
         <UninstallPluginDialog
           pluginName={pendingUninstall.name}

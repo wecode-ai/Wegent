@@ -3858,6 +3858,83 @@ describe('ChatInput', () => {
     expect(await screen.findAllByTestId('project-worktree-branch-option')).toHaveLength(50)
   })
 
+  test('shows paged plugin use cases above the composer and applies them without sending', async () => {
+    const applyTrialTemplate = vi.fn()
+    const dismissTrialGuide = vi.fn()
+    const onSubmit = vi.fn()
+    const trialTemplates = Array.from({ length: 4 }, (_, index) => ({
+      name: `Scenario ${index + 1}`,
+      path: `scenario-${index + 1}`,
+      description: `Prompt ${index + 1}`,
+    }))
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        onSubmit={onSubmit}
+        projectChat={projectChatControls({
+          trialPluginName: 'Documents',
+          trialTemplates,
+          applyTrialTemplate,
+          dismissTrialGuide,
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('plugin-trial-template-strip')).toBeInTheDocument()
+    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(3)
+    expect(screen.getByText('Scenario 1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-template-next'))
+
+    expect(screen.getAllByTestId('plugin-trial-template-card')).toHaveLength(1)
+    expect(screen.getByText('Scenario 4')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-template-card'))
+    expect(applyTrialTemplate).toHaveBeenCalledWith(trialTemplates[3])
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-template-dismiss'))
+    expect(dismissTrialGuide).toHaveBeenCalledOnce()
+  })
+
+  test('offers a conversation-aware plugin task without sending it', async () => {
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="[$Documents](plugin://documents@openai-bundled) Summarize the launch notes"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          trialPluginName: 'Documents',
+          hasConversationContext: true,
+          trialTemplates: [
+            {
+              name: 'Project memo',
+              path: 'project-memo',
+              description: 'Draft a project memo',
+            },
+          ],
+        })}
+      />
+    )
+
+    expect(screen.getByText('插件使用建议')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-trial-context-suggestion'))
+
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('请结合当前对话最近内容'))
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('Summarize the launch notes'))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('plugin-trial-context-suggestion')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
   test('submits typed content', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()

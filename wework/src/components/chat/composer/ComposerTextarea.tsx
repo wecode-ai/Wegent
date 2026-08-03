@@ -14,6 +14,7 @@ import {
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
   INSERT_PLUGIN_REFERENCE_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -732,6 +733,9 @@ export function ComposerTextarea({
       )
 
       commitEditorValue(replacement.value, replacement.cursor)
+      if (candidate.kind === 'app') {
+        showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+      }
       closeAutocompleteMenu()
       textareaRef.current?.focus()
       editor.focus()

@@ -271,6 +271,8 @@ export function PluginsPage() {
           cloudMarketplaceAvailable={true}
           cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
           cloudToken={cloudConnection.token}
+          projectName={state.currentProject?.name}
+          hasConversationContext={Boolean(state.currentRuntimeTask)}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={
             !isMobile && sidebarCollapsed && !isTauri ? (

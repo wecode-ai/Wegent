@@ -135,6 +135,7 @@ export interface WorkbenchContextValue {
     input: string
     trialTemplates: PluginPathComponent[]
     trialPluginName?: string
+    hasConversationContext?: boolean
     dismissTrialGuide?: () => void
     applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]

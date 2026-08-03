@@ -73,6 +73,7 @@ import {
   dismissTrialGuide,
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
   LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
   PLUGIN_TRIAL_QUEUED_EVENT,
   recordPluginUsageFromInput,
   shouldShowPluginTrialGuide,
@@ -275,6 +276,35 @@ export function WorkbenchProvider({
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
   const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const trialPluginName = trialPluginNameByScope[projectChatScopeKey] ?? ''
+  useEffect(() => {
+    const showGuide = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          pluginName?: unknown
+          templates?: unknown
+        }>
+      ).detail
+      if (typeof detail?.pluginName !== 'string' || !Array.isArray(detail.templates)) return
+      const templates = detail.templates.filter(
+        (template): template is PluginPathComponent =>
+          Boolean(template) &&
+          typeof template === 'object' &&
+          typeof (template as PluginPathComponent).name === 'string' &&
+          typeof (template as PluginPathComponent).path === 'string'
+      )
+      if (templates.length === 0) return
+      setTrialPluginNameByScope(current => ({
+        ...current,
+        [projectChatScopeKey]: detail.pluginName as string,
+      }))
+      setTrialTemplatesByScope(current => ({
+        ...current,
+        [projectChatScopeKey]: templates.slice(0, 6),
+      }))
+    }
+    window.addEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
+    return () => window.removeEventListener(SHOW_PLUGIN_TRIAL_GUIDE_EVENT, showGuide)
+  }, [projectChatScopeKey])
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputByScope(current => {
@@ -333,7 +363,7 @@ export function WorkbenchProvider({
         setTrialPluginNameByScope(current => ({ ...current, [scopeKey]: trial.pluginName }))
         setTrialTemplatesByScope(current => ({
           ...current,
-          [scopeKey]: trial.templates.slice(0, 3),
+          [scopeKey]: trial.templates.slice(0, 6),
         }))
         return
       }
@@ -1585,6 +1615,7 @@ export function WorkbenchProvider({
       input: draftInput,
       trialTemplates,
       trialPluginName,
+      hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
       selectedSkills: skillSelection.selectedSkills,
@@ -1623,6 +1654,7 @@ export function WorkbenchProvider({
       draftInput,
       trialTemplates,
       trialPluginName,
+      state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
       handleBlockedModelSelect,
@@ -1659,6 +1691,7 @@ export function WorkbenchProvider({
       input: draftInput,
       trialTemplates,
       trialPluginName,
+      hasConversationContext: Boolean(state.currentRuntimeTask),
       dismissTrialGuide: dismissTrialGuideForScope,
       applyTrialTemplate,
       selectedSkills: skillSelection.selectedSkills,
@@ -1697,6 +1730,7 @@ export function WorkbenchProvider({
       draftInput,
       trialTemplates,
       trialPluginName,
+      state.currentRuntimeTask,
       dismissTrialGuideForScope,
       applyTrialTemplate,
       handleBlockedModelSelect,

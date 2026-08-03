@@ -133,6 +133,23 @@ describe('InstalledPluginRow', () => {
     expect(screen.queryByTestId('installed-plugin-toggle-59')).not.toBeInTheDocument()
     expect(screen.getByText(/创建者 明德 · 定向分享 · 仅可使用/)).toBeInTheDocument()
   })
+
+  test('replaces row actions with uninstall progress while the request is pending', () => {
+    render(
+      <InstalledPluginRow
+        plugin={createPlugin()}
+        onTry={vi.fn()}
+        onToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        isUninstalling
+      />
+    )
+
+    expect(screen.getByTestId('installed-plugin-uninstalling-59')).toHaveTextContent('正在卸载')
+    expect(screen.queryByTestId('installed-plugin-try-59')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('installed-plugin-toggle-59')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('installed-plugin-actions-59')).not.toBeInTheDocument()
+  })
 })
 
 describe('buildInstalledPluginSubtitle', () => {

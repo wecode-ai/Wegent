@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
+  buildContextualPluginPrompt,
   buildTrialTemplatePrompt,
   consumePluginTrial,
   consumePluginTrialInput,
   dismissTrialGuide,
   getPluginUseCount30d,
   pluginTrialInput,
+  pluginTrialTemplates,
+  queuePluginPromptTrial,
   queuePluginReferenceTrial,
   queuePluginTrial,
   recordPluginUsage,
@@ -147,6 +150,66 @@ describe('plugin trial state', () => {
     ])
   })
 
+  test('builds useful guide scenarios when a plugin has no templates or default prompts', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = []
+    plugin.spec.components.commands = []
+
+    expect(pluginTrialTemplates(plugin)).toEqual([
+      expect.objectContaining({
+        path: 'prompt-0',
+        description: 'Use Documents to summarize the current context and propose next steps',
+      }),
+      expect.objectContaining({ path: 'prompt-1' }),
+      expect.objectContaining({ path: 'prompt-2' }),
+    ])
+  })
+
+  test('keeps the selected detail scenario first in the chat guide', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = []
+    plugin.spec.components.commands = []
+
+    expect(queuePluginPromptTrial(plugin, 'Review the quarterly report for inconsistencies')).toBe(
+      true
+    )
+    expect(consumePluginTrial()?.templates[0]).toEqual({
+      name: 'Review the quarterly report for inconsistencies',
+      path: 'selected-use-case',
+      description: 'Review the quarterly report for inconsistencies',
+    })
+  })
+
+  test('keeps a refined detail task concise and removes the duplicate base scenario', () => {
+    const plugin = pluginWithSkill('/tmp/plugin/skills/report/SKILL.md')
+    plugin.spec.components.templates = [
+      {
+        name: 'Review my current working-tree changes.',
+        path: 'current-changes',
+        description: 'Review my current working-tree changes.',
+      },
+      {
+        name: 'Review this branch against its merge base.',
+        path: 'branch',
+        description: 'Review this branch against its merge base.',
+      },
+    ]
+
+    expect(
+      pluginTrialTemplates(
+        plugin,
+        'Review my current working-tree changes.\nFocus: inspect architecture impact'
+      )
+    ).toEqual([
+      {
+        name: 'Review my current working-tree changes.',
+        path: 'selected-use-case',
+        description: 'Review my current working-tree changes.\nFocus: inspect architecture impact',
+      },
+      expect.objectContaining({ path: 'branch' }),
+    ])
+  })
+
   test('tracks plugin usage for the 30-day guide gate', () => {
     window.localStorage.clear()
     window.sessionStorage.clear()
@@ -173,5 +236,17 @@ describe('plugin trial state', () => {
         description: 'Draft a project memo',
       })
     ).toBe('[$Sites](plugin://sites@openai-bundled) Draft a project memo ')
+  })
+
+  test('builds a conversation-aware task while preserving the plugin mention and current idea', () => {
+    expect(
+      buildContextualPluginPrompt(
+        '[$Sites](plugin://sites@openai-bundled) Build a launch page',
+        'Use the recent conversation to complete the task.',
+        'My current idea'
+      )
+    ).toBe(
+      '[$Sites](plugin://sites@openai-bundled) Use the recent conversation to complete the task.\n\nMy current idea: Build a launch page '
+    )
   })
 })

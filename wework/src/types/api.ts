@@ -1222,6 +1222,7 @@ export interface LocalDeviceApp {
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
   skillPath?: string | null
+  trialTemplates?: PluginPathComponent[]
 }
 
 export interface SkillDirectoryMove {

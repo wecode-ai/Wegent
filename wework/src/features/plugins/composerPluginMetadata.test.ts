@@ -90,6 +90,7 @@ describe('enrichComposerApps', () => {
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
         logoUrl: '/Users/test/plugins/github/assets/icon.png',
         pluginDisplayNames: ['GitHub'],
+        trialTemplates: expect.any(Array),
       }),
     ])
   })
@@ -108,6 +109,7 @@ describe('enrichComposerApps', () => {
         description: '检查仓库、处理拉取请求和 Issue，并通过 GitHub 工作流发布代码变更。',
         logoUrl: '/Users/test/plugins/github/assets/icon.png',
         pluginDisplayNames: ['GitHub', 'Wegent Cloud'],
+        trialTemplates: expect.any(Array),
       }),
     ])
   })
@@ -156,6 +158,7 @@ describe('appendInstalledPluginsAsComposerApps', () => {
         source: 'installed-plugin',
         skillPath: 'plugin://superpowers@openai-official',
         logoUrl: '/tmp/plugins/superpowers/assets/icon.png',
+        trialTemplates: expect.any(Array),
       }),
     ])
   })
