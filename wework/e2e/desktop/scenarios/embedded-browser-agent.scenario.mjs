@@ -631,7 +631,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         uiTimeoutMs,
         'Browser URL input did not receive local zip URL before submit'
       )
-      await control.command('press', BROWSER_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
       await control.command('waitFor', LOCAL_FILE_NOTICE_SELECTOR, { timeoutMs: uiTimeoutMs })
 
       await writeFile(
