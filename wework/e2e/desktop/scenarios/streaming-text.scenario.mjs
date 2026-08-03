@@ -705,28 +705,20 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-00-processing-collapsed.png')
       await control.command('click', '[data-testid="final-processing-toggle"]')
-      await control.command('waitFor', '[data-testid="thinking-toggle-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
       const expandedProcessingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
-      assert.ok(
-        expandedProcessingSnapshot.text.includes('思考过程'),
-        'The completed response did not render a reasoning disclosure'
+      assert.equal(
+        expandedProcessingSnapshot.testIds.includes('thinking-toggle-button'),
+        false,
+        'The completed response retained a reasoning placeholder'
       )
       assert.equal(
         expandedProcessingSnapshot.text.includes(REASONING_SUMMARY),
         false,
-        'The collapsed reasoning disclosure exposed its full summary'
+        'The completed response retained its reasoning summary'
       )
-      await capture(control, 'streaming-text-01-reasoning-collapsed.png')
-      await control.command('click', '[data-testid="thinking-toggle-button"]')
-      await control.command('waitFor', '[data-testid="thinking-detail"]', {
-        text: REASONING_SUMMARY,
-        timeoutMs: uiTimeoutMs,
-      })
-      await capture(control, 'streaming-text-02-reasoning-expanded.png')
+      await capture(control, 'streaming-text-01-reasoning-removed.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })

@@ -92,9 +92,7 @@ describe('ToolBlockItem', () => {
     expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
   })
 
-  test('renders completed thinking collapsed and expands on click', async () => {
-    const user = userEvent.setup()
-
+  test('does not render completed thinking placeholders', () => {
     render(
       <ToolBlockItem
         block={{
@@ -105,19 +103,11 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    const toggle = screen.getByTestId('thinking-toggle-button')
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle.firstElementChild).toHaveTextContent('思考过程')
-    expect(toggle.firstElementChild?.tagName).toBe('SPAN')
+    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
-
-    await user.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('thinking-detail')).toHaveTextContent(
-      'I will inspect the repository before answering.'
-    )
+    expect(
+      screen.queryByText('I will inspect the repository before answering.')
+    ).not.toBeInTheDocument()
   })
 
   test('renders streaming process text directly in the timeline', () => {

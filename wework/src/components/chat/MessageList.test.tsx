@@ -852,6 +852,36 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
+  test('removes an in-flight reasoning preview when its turn is cancelled', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-cancelled-reasoning',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'thinking-1',
+                type: 'thinking',
+                content: '正在检查取消前的状态。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-stopped-notice')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-live-preview')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在检查取消前的状态。')).not.toBeInTheDocument()
+  })
+
   test('renders tagged proposed plan content as regular assistant markdown', () => {
     render(
       <MessageList
@@ -1642,7 +1672,7 @@ describe('MessageList', () => {
     expect(screen.getByText('ls output')).toBeInTheDocument()
   })
 
-  test('shows completed assistant reasoning and expands its summary', () => {
+  test('does not render completed assistant reasoning placeholders', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'thinking-1',
@@ -1669,14 +1699,9 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-assistant')).toBeInTheDocument()
-    const toggle = screen.getByTestId('thinking-toggle-button')
-    expect(toggle).toHaveTextContent('思考过程')
+    expect(screen.queryByTestId('message-assistant')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
     expect(screen.queryByText('正在执行 pwd')).not.toBeInTheDocument()
-
-    fireEvent.click(toggle)
-
-    expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
   })
 
   test('shows the live reasoning summary while reasoning is streaming', () => {
