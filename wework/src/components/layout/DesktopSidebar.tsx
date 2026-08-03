@@ -1600,7 +1600,14 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
-          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+          <span className="min-w-0 flex-1 truncate">
+            <span
+              data-sidebar-drag-activator
+              data-testid={`runtime-local-task-drag-activator-${task.taskId}`}
+            >
+              {task.title}
+            </span>
+          </span>
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
             className="relative ml-1 flex h-[30px] min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]"
@@ -2146,41 +2153,47 @@ function ProjectItem({
             )}
           >
             <span
-              className="flex h-4 w-4 shrink-0 items-center justify-center"
-              style={projectAppearanceColor ? { color: projectAppearanceColor } : undefined}
+              data-sidebar-drag-activator
+              data-testid={`project-drag-activator-${project.id}`}
+              className="flex min-w-0 max-w-full items-center gap-2.5"
             >
-              {projectMarker?.kind === 'emoji' && 'emoji' in projectMarker ? (
-                <span data-testid={`project-appearance-emoji-${project.id}`} className="text-sm">
-                  {String(projectMarker.emoji)}
-                </span>
-              ) : (
-                <ProjectFolderIcon
-                  project={project}
-                  remote={isRuntimeRemoteProject(runtimeProjectWork)}
-                  className="h-3.5 w-3.5 shrink-0"
-                />
-              )}
-            </span>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5">
-              <span data-testid={`project-title-${project.id}`} className="min-w-0 truncate">
-                {project.name}
+              <span
+                className="flex h-4 w-4 shrink-0 items-center justify-center"
+                style={projectAppearanceColor ? { color: projectAppearanceColor } : undefined}
+              >
+                {projectMarker?.kind === 'emoji' && 'emoji' in projectMarker ? (
+                  <span data-testid={`project-appearance-emoji-${project.id}`} className="text-sm">
+                    {String(projectMarker.emoji)}
+                  </span>
+                ) : (
+                  <ProjectFolderIcon
+                    project={project}
+                    remote={isRuntimeRemoteProject(runtimeProjectWork)}
+                    className="h-3.5 w-3.5 shrink-0"
+                  />
+                )}
               </span>
-              <ChevronRight
-                data-testid={`project-collapsed-hover-indicator-${project.id}`}
-                className={cn(
-                  'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
-                  !expanded &&
-                    'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
-                )}
-              />
-              <ChevronDown
-                data-testid={`project-expanded-hover-indicator-${project.id}`}
-                className={cn(
-                  'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
-                  expanded &&
-                    'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
-                )}
-              />
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span data-testid={`project-title-${project.id}`} className="min-w-0 truncate">
+                  {project.name}
+                </span>
+                <ChevronRight
+                  data-testid={`project-collapsed-hover-indicator-${project.id}`}
+                  className={cn(
+                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
+                    !expanded &&
+                      'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+                  )}
+                />
+                <ChevronDown
+                  data-testid={`project-expanded-hover-indicator-${project.id}`}
+                  className={cn(
+                    'hidden h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-primary))] opacity-0 transition-opacity',
+                    expanded &&
+                      'group-hover/project:block group-hover/project:opacity-100 group-focus-within/project:block group-focus-within/project:opacity-100'
+                  )}
+                />
+              </span>
             </span>
           </button>
           {showProjectDeviceStatus && (
