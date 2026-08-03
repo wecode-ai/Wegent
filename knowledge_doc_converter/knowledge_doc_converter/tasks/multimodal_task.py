@@ -57,6 +57,7 @@ from knowledge_doc_converter.core.multimodal_metrics import (
 )
 from knowledge_doc_converter.services.callback_client import callback_client
 from knowledge_doc_converter.services.content_fetcher import content_fetcher
+from knowledge_doc_converter.services.error_mapper import map_conversion_failure
 from knowledge_doc_converter.services.errors import (
     PermanentError,
     TransientError,
@@ -723,11 +724,17 @@ def _safe_notify_failed(
 ) -> None:
     """Notify backend of failure; never raise (we're already handling an error)."""
     try:
+        failure = map_conversion_failure(error_message, provider="gemini")
         callback_client.notify_failed(
             path=path,
             document_id=document_id,
             generation=generation,
             error_message=error_message,
+            error_code=failure.code,
+            user_message=failure.user_message,
+            retryable=failure.retryable,
+            provider=failure.provider,
+            model=failure.model,
         )
     except Exception as callback_err:
         logger.error(

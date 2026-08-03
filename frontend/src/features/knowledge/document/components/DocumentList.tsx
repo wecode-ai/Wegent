@@ -615,7 +615,9 @@ export function DocumentList({
     t(
       document.index_status === 'not_indexed'
         ? 'document.document.indexStatus.notIndexedHint'
-        : 'document.document.indexStatus.unavailableHint'
+        : document.index_status === 'failed'
+          ? 'document.document.indexStatus.failedHint'
+          : 'document.document.indexStatus.unavailableHint'
     )
 
   const folderSelectionBlocksDocumentBatchActions = selectionSummary.hasFolderScopeSelection

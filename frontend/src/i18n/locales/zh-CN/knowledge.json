@@ -313,7 +313,31 @@
         "converting": "转换中",
         "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。",
         "pendingConversion": "待转换",
-        "pendingConversionHint": "文档正在等待转换为可检索的格式。"
+        "pendingConversionHint": "文档正在等待转换为可检索的格式。",
+        "failed": "失败",
+        "failedHint": "文档处理失败，请重新索引；若持续失败，请联系管理员。"
+      },
+      "processingError": {
+        "stage": {
+          "dispatch": "任务提交失败",
+          "conversion": "文档转换失败",
+          "indexing": "文档索引失败",
+          "system": "文档处理失败"
+        },
+        "codes": {
+          "modelQuotaExhausted": "所选模型额度已用完，请切换模型或联系管理员。",
+          "modelPermissionDenied": "当前账号无权使用所选模型，请检查权限或切换模型。",
+          "conversionTimeout": "文档转换超时，请重试。",
+          "conversionServiceUnavailable": "无法连接 MinerU 文档转换服务，请检查服务状态或稍后重试。",
+          "conversionLockTimeout": "文档转换任务等待超时，请重新索引。",
+          "conversionFailed": "文档转换失败，请重试。",
+          "indexingTimeout": "文档索引超时，请重试。",
+          "indexingFailed": "文档索引失败，请重试。",
+          "indexLockTimeout": "文档索引任务等待超时，请重试。",
+          "indexDispatchFailed": "无法提交文档索引任务，请稍后重试。",
+          "processingFailed": "文档处理失败，请重试。"
+        },
+        "model": "模型"
       },
       "reindex": "重新索引",
       "index": "开始索引",

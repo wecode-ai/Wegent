@@ -2003,10 +2003,25 @@ class KnowledgeOrchestrator:
                     trigger_summary=trigger_summary,
                 )
         except Exception as exc:
+            from app.schemas.knowledge import DocumentProcessingStage
+            from app.services.knowledge.processing_errors import (
+                build_processing_error,
+            )
+
             mark_document_index_enqueue_failed(
                 db=db,
                 document_id=document.id,
                 generation=generation,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.DISPATCH,
+                    code="index_dispatch_failed",
+                    message=(
+                        "The indexing task could not be submitted. "
+                        "Please retry later."
+                    ),
+                    retryable=True,
+                    generation=generation,
+                ),
             )
             logger.error(
                 f"[Orchestrator] Failed to enqueue RAG indexing task for document {document.id}: {exc}",
@@ -2489,12 +2504,17 @@ class KnowledgeOrchestrator:
 
         # Update document metadata
         document.file_size = content_size
-        document.source_config = {
-            "url": result.url,
-            "scraped_at": result.scraped_at.isoformat(),
-            "title": result.title,
-            "description": result.description,
-        }
+        source_config = dict(document.source_config or {})
+        source_config.update(
+            {
+                "url": result.url,
+                "scraped_at": result.scraped_at.isoformat(),
+                "title": result.title,
+                "description": result.description,
+            }
+        )
+        source_config.pop("processing_error", None)
+        document.source_config = source_config
         # Reset is_active to False, will be set to True after re-indexing
         document.is_active = False
 
