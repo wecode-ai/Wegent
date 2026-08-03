@@ -63,7 +63,7 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
 }
 
 function tryPluginInChat(plugin: InstalledPlugin) {
-  queuePluginTrial(plugin)
+  queuePluginTrial(plugin, { openInNewChat: true })
   navigateTo('/')
 }
 

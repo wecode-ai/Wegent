@@ -1,6 +1,7 @@
-import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceSkill, PluginPathComponent } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 import { registerComposerMentionIcon } from '@/components/chat/composer/composerMentions'
+import { localSkillReference } from '@/lib/local-skill-reference'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
 export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
@@ -38,6 +39,11 @@ interface PendingPluginTrial {
   input: string
   pluginName: string
   templates: PluginPathComponent[]
+  openInNewChat?: boolean
+}
+
+interface PluginTrialOptions {
+  openInNewChat?: boolean
 }
 
 interface PluginReferenceTrial {
@@ -201,17 +207,35 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
   return `${reference} ${defaultPrompt}`
 }
 
-export function queuePluginTrial(plugin: InstalledPlugin): boolean {
+export function queuePluginTrial(
+  plugin: InstalledPlugin,
+  { openInNewChat = false }: PluginTrialOptions = {}
+): boolean {
   const input = pluginTrialInput(plugin)
   if (!input) return false
   return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
     templates: pluginTrialTemplates(plugin),
+    openInNewChat,
   })
 }
 
-export function queuePluginPromptTrial(plugin: InstalledPlugin, prompt: string): boolean {
+export function queuePluginCreatorChat(skill: Pick<LocalDeviceSkill, 'name' | 'path'>): boolean {
+  if (skill.name !== 'plugin-creator' || !skill.path.trim()) return false
+  return queuePendingPluginTrial({
+    input: `${localSkillReference(skill, 'Plugin Creator')} `,
+    pluginName: '',
+    templates: [],
+    openInNewChat: true,
+  })
+}
+
+export function queuePluginPromptTrial(
+  plugin: InstalledPlugin,
+  prompt: string,
+  { openInNewChat = false }: PluginTrialOptions = {}
+): boolean {
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
   const normalizedPrompt = prompt.trim()
@@ -222,6 +246,7 @@ export function queuePluginPromptTrial(plugin: InstalledPlugin, prompt: string):
     input: `${reference} ${normalizedPrompt}`,
     pluginName,
     templates: pluginTrialTemplates(plugin, normalizedPrompt),
+    openInNewChat,
   })
 }
 
@@ -254,6 +279,7 @@ export function consumePluginTrial(): PendingPluginTrial | null {
       input: payload.input,
       pluginName: typeof payload.pluginName === 'string' ? payload.pluginName : '',
       templates: Array.isArray(payload.templates) ? payload.templates : [],
+      openInNewChat: payload.openInNewChat === true,
     }
   } catch {
     return null

@@ -295,6 +295,35 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('opens the native browser again when the first open fails', async () => {
+    embeddedBrowserMocks.openEmbeddedBrowser.mockRejectedValueOnce(
+      new Error('Timed out waiting for embedded browser host bounds')
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    expect(await screen.findByTestId('workspace-browser-error')).toHaveTextContent(
+      '无法打开应用内浏览器'
+    )
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
+
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2)
+    })
+    expect(embeddedBrowserMocks.reloadEmbeddedBrowser).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-error')).not.toBeInTheDocument()
+    })
+    consoleError.mockRestore()
+  })
+
   test('shows agent browser state and lets the user take over', async () => {
     let handleAgentState!: (event: {
       label: string

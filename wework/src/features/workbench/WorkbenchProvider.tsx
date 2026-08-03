@@ -382,9 +382,65 @@ export function WorkbenchProvider({
     },
     []
   )
+  const applyQueuedPluginTrialToFreshChat = useCallback(
+    (trial: NonNullable<ReturnType<typeof consumePluginTrial>>) => {
+      const nextStandaloneChatKey = state.standaloneChatKey + 1
+      const nextScopeKey = getProjectChatScopeKey({
+        currentRuntimeTask: null,
+        standaloneChatKey: nextStandaloneChatKey,
+      })
+      const project = state.currentProject
+        ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+        : null
+
+      if (project) {
+        writeLastProjectId(user.id, project.id)
+        dispatch({
+          type: 'project_workspace_selected',
+          project,
+          deviceWorkspaceId: getDefaultProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+          startFreshChat: true,
+        })
+      } else {
+        writeLastProjectId(user.id, null)
+        dispatch({
+          type: 'project_cleared',
+          standaloneDeviceId: getRememberedStandaloneDeviceId(
+            user,
+            state.devices,
+            state.standaloneDeviceId
+          ),
+          standaloneWorkspacePath: null,
+          startFreshChat: true,
+        })
+      }
+
+      applyQueuedPluginTrial(nextScopeKey, trial)
+      navigateTo('/')
+      window.dispatchEvent(
+        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
+          detail: { expectedValue: trial.input },
+        })
+      )
+    },
+    [
+      applyQueuedPluginTrial,
+      state.currentProject,
+      state.devices,
+      state.projects,
+      state.runtimeWork,
+      state.standaloneChatKey,
+      state.standaloneDeviceId,
+      user,
+    ]
+  )
   const consumeQueuedPluginTrial = useCallback(() => {
     const trial = consumePluginTrial()
     if (!trial) return
+    if (trial.openInNewChat) {
+      applyQueuedPluginTrialToFreshChat(trial)
+      return
+    }
     if (state.currentRuntimeTask) {
       const currentScopeKey = getProjectChatScopeKey({
         currentRuntimeTask: state.currentRuntimeTask,
@@ -426,6 +482,7 @@ export function WorkbenchProvider({
     )
   }, [
     applyQueuedPluginTrial,
+    applyQueuedPluginTrialToFreshChat,
     state.currentRuntimeTask,
     state.devices,
     state.standaloneChatKey,

@@ -576,7 +576,7 @@ export function PluginDetailView({
       onClick={onToggle}
     >
       {PrimaryActionIcon ? <PrimaryActionIcon className="h-4 w-4" /> : null}
-      {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '在对话中试用')}
+      {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '立即对话')}
     </button>
   )
   const secondaryActionButton =
@@ -614,10 +614,15 @@ export function PluginDetailView({
           {t('workbench.plugin_detail_get_started', '开始使用')}
         </h2>
         <p className="text-xs leading-4 text-text-muted">
-          {t(
-            'workbench.plugin_detail_get_started_hint',
-            'AI 会把你的目标整理成可执行任务，确认后再带入聊天框'
-          )}
+          {isInstalled
+            ? t(
+                'workbench.plugin_detail_get_started_installed_hint',
+                '选择模板打开新对话，可继续修改且不会自动发送'
+              )
+            : t(
+                'workbench.plugin_detail_get_started_uninstalled_hint',
+                '先预览使用方式；选择模板后将引导安装'
+              )}
         </p>
       </div>
       <button

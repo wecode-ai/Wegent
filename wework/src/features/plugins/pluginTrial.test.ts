@@ -11,6 +11,7 @@ import {
   pluginTrialInput,
   pluginTrialTemplates,
   queuePluginPromptTrial,
+  queuePluginCreatorChat,
   queuePluginReferenceTrial,
   queuePluginTrial,
   recordPluginUsage,
@@ -128,6 +129,29 @@ describe('plugin trial state', () => {
     expect(consumePluginTrialInput()).toBeNull()
   })
 
+  test('queues Plugin Creator as an inline skill mention in a new chat', () => {
+    expect(
+      queuePluginCreatorChat({
+        name: 'plugin-creator',
+        path: '/Users/test/.codex/skills/.system/plugin-creator/SKILL.md',
+      })
+    ).toBe(true)
+
+    expect(consumePluginTrial()).toEqual({
+      input: '[$Plugin Creator](/Users/test/.codex/skills/.system/plugin-creator/SKILL.md) ',
+      pluginName: '',
+      templates: [],
+      openInNewChat: true,
+    })
+  })
+
+  test('does not queue an unrelated local skill as Plugin Creator', () => {
+    expect(queuePluginCreatorChat({ name: 'documents', path: '/tmp/documents/SKILL.md' })).toBe(
+      false
+    )
+    expect(consumePluginTrial()).toBeNull()
+  })
+
   test('queues a canonical plugin reference without an installed plugin record', () => {
     expect(
       queuePluginReferenceTrial({
@@ -140,8 +164,13 @@ describe('plugin trial state', () => {
   })
 
   test('queues plugin templates for the trial composer', () => {
-    expect(queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'))).toBe(true)
-    expect(consumePluginTrial()?.templates).toEqual([
+    expect(
+      queuePluginTrial(pluginWithSkill('/tmp/plugin/skills/report/SKILL.md'), {
+        openInNewChat: true,
+      })
+    ).toBe(true)
+    const trial = consumePluginTrial()
+    expect(trial?.templates).toEqual([
       {
         name: 'Project Memo',
         path: 'project_memo',
@@ -149,6 +178,7 @@ describe('plugin trial state', () => {
         logoUrl: 'https://example.com/memo.png',
       },
     ])
+    expect(trial?.openInNewChat).toBe(true)
   })
 
   test('builds useful guide scenarios when a plugin has no templates or default prompts', () => {

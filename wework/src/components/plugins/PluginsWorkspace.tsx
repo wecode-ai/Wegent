@@ -33,6 +33,7 @@ import { navigateTo } from '@/lib/navigation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import {
   notifyLocalPluginSkillsChanged,
+  queuePluginCreatorChat,
   queuePluginPromptTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
@@ -451,7 +452,7 @@ function marketplaceRowMetaItems(
 }
 
 function tryPluginInChat(plugin: InstalledPlugin): boolean {
-  const queued = queuePluginTrial(plugin)
+  const queued = queuePluginTrial(plugin, { openInNewChat: true })
   if (queued) navigateTo('/')
   return queued
 }
@@ -1193,6 +1194,31 @@ export function PluginsWorkspace({
     isLoading: true,
     error: null,
   })
+  const openPluginCreatorChat = useCallback(async () => {
+    setIsCreateMenuOpen(false)
+    const unavailableMessage = t(
+      'workbench.plugins_creator_unavailable',
+      'Plugin Creator 暂不可用，请刷新后重试'
+    )
+    const showUnavailable = () => {
+      setPluginMarketplaceState(previous => ({
+        ...previous,
+        error: unavailableMessage,
+      }))
+    }
+    try {
+      const skills = await localPluginApi.listSkills({ forceReload: true })
+      const pluginCreator = skills.find(skill => skill.name === 'plugin-creator')
+      if (pluginCreator && queuePluginCreatorChat(pluginCreator)) {
+        navigateTo('/')
+        return
+      }
+    } catch {
+      showUnavailable()
+      return
+    }
+    showUnavailable()
+  }, [localPluginApi, t])
   const [selectedMarketplacePluginDetail, setSelectedMarketplacePluginDetail] =
     useState<InstalledPluginItem | null>(null)
 
@@ -2876,7 +2902,7 @@ export function PluginsWorkspace({
             }
           }}
           onPromptSelect={prompt => {
-            if (queuePluginPromptTrial(selectedPlugin.raw, prompt)) {
+            if (queuePluginPromptTrial(selectedPlugin.raw, prompt, { openInNewChat: true })) {
               navigateTo('/')
             }
           }}
@@ -3037,7 +3063,7 @@ export function PluginsWorkspace({
           }}
           onPromptSelect={prompt => {
             if (isInstalled && installedDetail) {
-              if (queuePluginPromptTrial(installedDetail.raw, prompt)) {
+              if (queuePluginPromptTrial(installedDetail.raw, prompt, { openInNewChat: true })) {
                 navigateTo('/')
               }
               return
@@ -3134,8 +3160,7 @@ export function PluginsWorkspace({
                 isOpen={isCreateMenuOpen}
                 onToggle={() => setIsCreateMenuOpen(previous => !previous)}
                 onCreatePlugin={() => {
-                  setIsCreateMenuOpen(false)
-                  navigateTo('/plugins/create')
+                  void openPluginCreatorChat()
                 }}
                 onAddMarket={() => {
                   setIsCreateMenuOpen(false)

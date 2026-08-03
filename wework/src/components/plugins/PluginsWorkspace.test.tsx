@@ -897,6 +897,7 @@ describe('PluginsWorkspace', () => {
       expires_at: null,
     })
     window.localStorage.clear()
+    window.sessionStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     mockSystemSkillsFetch()
   })
@@ -1136,7 +1137,7 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
-    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即试用')
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
 
     marketplace.publishMarketplaceUpdate()
     fireEvent.focus(window)
@@ -1341,7 +1342,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-marketplace-actions-101'))
 
     expect(screen.getByTestId('plugin-marketplace-actions-menu-101')).toBeInTheDocument()
-    expect(screen.getByTestId('plugin-marketplace-try-101')).toHaveTextContent('立即试用')
+    expect(screen.getByTestId('plugin-marketplace-try-101')).toHaveTextContent('立即对话')
     expect(screen.getByTestId('plugin-marketplace-manage-101')).toHaveTextContent('管理')
     expect(screen.getByTestId('plugin-marketplace-uninstall-101')).toHaveTextContent('卸载')
 
@@ -1432,6 +1433,7 @@ describe('PluginsWorkspace', () => {
       {
         input: '[$Documents](plugin://documents@default) Draft a document outline from this chat',
         pluginName: 'Documents',
+        openInNewChat: true,
       }
     )
   })
@@ -1460,6 +1462,7 @@ describe('PluginsWorkspace', () => {
     expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
       {
         pluginName: 'Documents',
+        openInNewChat: true,
       }
     )
     expect(invoke).not.toHaveBeenCalledWith(
@@ -1680,7 +1683,7 @@ describe('PluginsWorkspace', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即试用')
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
     )
   })
 
@@ -1738,7 +1741,7 @@ describe('PluginsWorkspace', () => {
     )
 
     await waitFor(() =>
-      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即试用')
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
     )
     await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
 
@@ -2230,14 +2233,52 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-marketplace-edit-local-openai')).not.toBeInTheDocument()
   })
 
-  test('opens the create menu and navigates to plugin creation', async () => {
+  test('opens Plugin Creator in a normal new chat with an inline skill mention', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    mockCodexAppServerInvoke({
+      skills: [
+        {
+          name: 'plugin-creator',
+          description: 'Create Codex plugins',
+          path: '/Users/test/.codex/skills/.system/plugin-creator/SKILL.md',
+          scope: 'system',
+          enabled: true,
+        },
+      ],
+    })
     render(<PluginsWorkspace />)
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
     await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
 
-    expect(window.location.pathname).toBe('/plugins/create')
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toEqual({
+      input: '[$Plugin Creator](/Users/test/.codex/skills/.system/plugin-creator/SKILL.md) ',
+      pluginName: '',
+      templates: [],
+      openInNewChat: true,
+    })
     expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
+  })
+
+  test('keeps the marketplace open when Plugin Creator is unavailable', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    mockCodexAppServerInvoke({ skills: [] })
+    render(<PluginsWorkspace />)
+    const initialPath = window.location.pathname
+
+    await userEvent.click(screen.getByTestId('plugins-create-button'))
+    await userEvent.click(screen.getByTestId('plugins-create-plugin-option'))
+
+    expect(await screen.findByText('Plugin Creator 暂不可用，请刷新后重试')).toBeInTheDocument()
+    expect(window.location.pathname).toBe(initialPath)
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
   })
 
   test('closes the create menu on outside click and Escape', async () => {

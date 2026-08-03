@@ -151,8 +151,8 @@ export function InstalledPluginRow({
         ) : onTry ? (
           <button
             type="button"
-            aria-label={`${t('workbench.plugins_try_now', '立即试用')} ${plugin.name}`}
-            title={t('workbench.plugins_try_now', '立即试用')}
+            aria-label={`${t('workbench.plugins_try_now', '立即对话')} ${plugin.name}`}
+            title={t('workbench.plugins_try_now', '立即对话')}
             data-testid={`installed-plugin-try-${plugin.id}`}
             className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
             onClick={onTry}
