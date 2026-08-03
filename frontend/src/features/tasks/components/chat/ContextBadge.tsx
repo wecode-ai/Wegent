@@ -5,7 +5,7 @@
 'use client'
 
 import React from 'react'
-import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
+import { X, Cloud, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -15,7 +15,6 @@ import type {
   KnowledgeBaseContext,
   QueueMessageContext,
 } from '@/types/context'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 function formatKnowledgeScopeLabel(
   context: KnowledgeBaseContext,
@@ -25,12 +24,45 @@ function formatKnowledgeScopeLabel(
   const folderCount = context.folder_ids?.length ?? 0
 
   if (folderCount > 0 && documentCount > 0) {
-    return t('picker.selectedScope', { folderCount, documentCount })
+    return t('picker.scopeMixedCompact', { folderCount, documentCount })
   }
   if (folderCount > 0) {
-    return t('picker.selectedFolders', { count: folderCount })
+    return t('picker.scopeFoldersCompact', { count: folderCount })
   }
-  return t('picker.selectedDocuments', { count: documentCount })
+  return t('picker.scopeDocumentsCompact', { count: documentCount })
+}
+
+function formatExternalScopeLabel(
+  context: ExternalKnowledgeContext,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  if (context.ref.target_type === 'document') {
+    return t('picker.scopeDocumentsCompact', {
+      count: context.selected_document_count ?? 1,
+    })
+  }
+  if (context.ref.target_type === 'folder') {
+    return t('picker.scopeFoldersCompact', { count: 1 })
+  }
+  return context.document_count !== undefined
+    ? t('picker.scopeAllDocuments', { count: context.document_count })
+    : t('picker.scopeAll')
+}
+
+function formatDingTalkScopeLabel(
+  context: DingTalkDocContext,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  const folderCount = context.selected_folder_count ?? 0
+  const documentCount = context.selected_document_count ?? (folderCount > 0 ? 0 : 1)
+
+  if (folderCount > 0 && documentCount > 0) {
+    return t('picker.scopeMixedCompact', { folderCount, documentCount })
+  }
+  if (folderCount > 0) {
+    return t('picker.scopeFoldersCompact', { count: folderCount })
+  }
+  return t('picker.scopeDocumentsCompact', { count: documentCount })
 }
 
 interface ContextBadgeProps {
@@ -54,7 +86,7 @@ const getContextIcon = (type: ContextItem['type']) => {
     case 'dingtalk_doc':
       return FileText
     case 'external_knowledge':
-      return Database
+      return Cloud
     // Future context types will be added here
     // case 'person': return User;
     // case 'bot': return Bot;
@@ -112,6 +144,17 @@ export default function ContextBadge({
       context.type === 'dingtalk_doc' &&
       !!(context as DingTalkDocContext).doc_url)
 
+  const sourceLabel =
+    context.type === 'dingtalk_doc'
+      ? t('chat:dingtalkDocs.tabTitle')
+      : context.type === 'external_knowledge'
+        ? (context as ExternalKnowledgeContext).ref.provider === 'ap'
+          ? 'WeiboAP'
+          : (context as ExternalKnowledgeContext).ref.provider
+        : context.type === 'knowledge_base'
+          ? 'Wegent'
+          : undefined
+
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
     switch (context.type) {
@@ -136,7 +179,14 @@ export default function ContextBadge({
       onClick={handleBadgeClick}
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
-      title={isClickable ? t('knowledge:document.document.openLink') : undefined}
+      title={
+        isClickable
+          ? t('knowledge:document.document.openLink')
+          : sourceLabel
+            ? `${sourceLabel} · ${context.name}`
+            : undefined
+      }
+      aria-label={sourceLabel ? `${sourceLabel} · ${context.name}` : context.name}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
       <div className="flex flex-col min-w-0 max-w-[200px]">
@@ -147,7 +197,7 @@ export default function ContextBadge({
           <span className="text-xs opacity-70">{formatKnowledgeScopeLabel(context, t)}</span>
         ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
           <span className="text-xs opacity-70">
-            {formatDocumentCount(context.document_count, t)}
+            {t('picker.scopeAllDocuments', { count: context.document_count })}
           </span>
         ) : null}
         {context.type === 'table' && context.source_config?.url && (
@@ -162,11 +212,13 @@ export default function ContextBadge({
           </span>
         )}
         {context.type === 'dingtalk_doc' && (
-          <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
+          <span className="text-xs opacity-70 truncate">
+            {formatDingTalkScopeLabel(context as DingTalkDocContext, t)}
+          </span>
         )}
         {context.type === 'external_knowledge' && (
           <span className="text-xs opacity-70 truncate">
-            {(context as ExternalKnowledgeContext).ref.provider}
+            {formatExternalScopeLabel(context as ExternalKnowledgeContext, t)}
           </span>
         )}
       </div>

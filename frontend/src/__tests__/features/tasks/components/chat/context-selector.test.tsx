@@ -250,7 +250,7 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 
-  it('selects an internal knowledge base on row click and uses the backend document limit', async () => {
+  it('opens an internal knowledge base from its row and selects it from its checkbox', async () => {
     const onSelect = jest.fn()
 
     render(
@@ -275,6 +275,7 @@ describe('ContextSelector organization grouping', () => {
     })
     await act(async () => {
       fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
       await Promise.resolve()
     })
 
@@ -444,7 +445,7 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('knowledge-picker-kb-77')).toBeInTheDocument()
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-77'))
       await Promise.resolve()
     })
     expect(onSelect).toHaveBeenCalledWith(
@@ -990,8 +991,8 @@ describe('ContextSelector organization grouping', () => {
     expect(documentColumn).toHaveClass('flex', 'h-full', 'min-h-0', 'flex-col')
   })
 
-  it('renders DingTalk docs inside the knowledge source picker with a virtual all-docs container', async () => {
-    const onSelectMultiple = jest.fn()
+  it('uses DingTalk containers for browsing and only allows selecting documents', async () => {
+    const onSelect = jest.fn()
     mockGetDingTalkDocs.mockResolvedValue({
       total_count: 2,
       nodes: [
@@ -1036,9 +1037,8 @@ describe('ContextSelector organization grouping', () => {
         open={true}
         onOpenChange={jest.fn()}
         selectedContexts={[]}
-        onSelect={jest.fn()}
+        onSelect={onSelect}
         onDeselect={jest.fn()}
-        onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -1060,21 +1060,24 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
-    ])
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(
+      screen.queryByTestId('knowledge-picker-dingtalk-all-docs-select')
+    ).not.toBeInTheDocument()
 
-    onSelectMultiple.mockClear()
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-all-docs'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'docs:folder-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'docs:file-1', type: 'dingtalk_doc' }),
-    ])
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-file-1'))
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'docs:file-1',
+        type: 'dingtalk_doc',
+        container_id: 'docs-root',
+      })
+    )
   })
 
-  it('renders DingTalk wikispace names in the second column, supports selecting a space, and opens children in the third column', async () => {
-    const onSelectMultiple = jest.fn()
+  it('opens DingTalk wikispace children without selecting the whole space', async () => {
+    const onSelect = jest.fn()
     mockGetDingTalkWikispaceNodes.mockResolvedValue({
       total_count: 2,
       nodes: [
@@ -1119,9 +1122,8 @@ describe('ContextSelector organization grouping', () => {
         open={true}
         onOpenChange={jest.fn()}
         selectedContexts={[]}
-        onSelect={jest.fn()}
+        onSelect={onSelect}
         onDeselect={jest.fn()}
-        onSelectMultiple={onSelectMultiple}
       >
         <button>trigger</button>
       </ContextSelector>
@@ -1139,16 +1141,24 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-space-1'))
-    expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'wikispace:space-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'wikispace:wiki-file-1', type: 'dingtalk_doc' }),
-    ])
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(
+      screen.queryByTestId('knowledge-picker-dingtalk-space-select-space-1')
+    ).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(
         screen.getByTestId('knowledge-picker-dingtalk-node-wikispace-wiki-file-1')
       ).toBeInTheDocument()
     })
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-wikispace-wiki-file-1'))
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'wikispace:wiki-file-1',
+        type: 'dingtalk_doc',
+        container_id: 'space-1',
+      })
+    )
   })
 
   it('auto-expands the folder path for selected internal documents', async () => {

@@ -18,7 +18,77 @@ import {
 import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, DingTalkDocContext, ExternalKnowledgeContext } from '@/types/context'
+
+interface ComposerContextGroup {
+  key: string
+  context: ContextItem
+  contextIds: Array<number | string>
+}
+
+export function groupComposerContexts(contexts: ContextItem[]): ComposerContextGroup[] {
+  const groups: ComposerContextGroup[] = []
+  const groupIndexes = new Map<string, number>()
+
+  const appendToGroup = (key: string, context: ContextItem) => {
+    const existingIndex = groupIndexes.get(key)
+    if (existingIndex === undefined) {
+      groupIndexes.set(key, groups.length)
+      groups.push({ key, context, contextIds: [context.id] })
+      return
+    }
+    groups[existingIndex].contextIds.push(context.id)
+  }
+
+  contexts.forEach(context => {
+    if (context.type === 'external_knowledge') {
+      const external = context as ExternalKnowledgeContext
+      const key = `external:${external.ref.provider}:${external.ref.mode}:${external.ref.id ?? 'all'}`
+      appendToGroup(key, external)
+      return
+    }
+    if (context.type === 'dingtalk_doc') {
+      const dingtalk = context as DingTalkDocContext
+      const containerId = dingtalk.container_id ?? `${dingtalk.source}:root`
+      appendToGroup(`dingtalk:${dingtalk.source}:${containerId}`, dingtalk)
+      return
+    }
+    appendToGroup(`context:${context.type}:${context.id}`, context)
+  })
+
+  return groups.map(group => {
+    if (
+      group.context.type === 'external_knowledge' &&
+      (group.context as ExternalKnowledgeContext).ref.target_type === 'document'
+    ) {
+      const external = group.context as ExternalKnowledgeContext
+      return {
+        ...group,
+        context: {
+          ...external,
+          name: external.ref.name ?? external.name,
+          selected_document_count: group.contextIds.length,
+        },
+      }
+    }
+    if (group.context.type === 'dingtalk_doc') {
+      const selected = contexts.filter(
+        context => context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
+      ) as DingTalkDocContext[]
+      const first = group.context as DingTalkDocContext
+      return {
+        ...group,
+        context: {
+          ...first,
+          name: first.container_name ?? first.name,
+          selected_document_count: selected.filter(item => item.node_type !== 'folder').length,
+          selected_folder_count: selected.filter(item => item.node_type === 'folder').length,
+        },
+      }
+    }
+    return group
+  })
+}
 
 interface InputBadgeDisplayProps {
   /** Selected knowledge base contexts */
@@ -26,7 +96,7 @@ interface InputBadgeDisplayProps {
   /** Current attachments state */
   attachmentState: MultiAttachmentUploadState
   /** Callback to remove a context */
-  onRemoveContext: (contextId: number | string) => void
+  onRemoveContext: (contextId: number | string | Array<number | string>) => void
   /** Callback to remove an attachment */
   onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
@@ -245,6 +315,7 @@ export default function InputBadgeDisplay({
   const hasAttachments = attachmentState.attachments.length > 0
   const isUploading = attachmentState.uploadingFiles.size > 0
   const hasErrors = attachmentState.errors.size > 0
+  const contextGroups = groupComposerContexts(contexts)
 
   // Only render if there are items to display
   if (!hasContexts && !hasAttachments && !isUploading && !hasErrors) {
@@ -269,11 +340,11 @@ export default function InputBadgeDisplay({
       {(hasContexts || hasAttachments) && (
         <div className="flex items-center gap-2 overflow-x-auto max-w-full badge-scroll">
           {/* Knowledge base badges */}
-          {contexts.map(context => (
-            <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
+          {contextGroups.map(group => (
+            <div key={group.key} className="flex-shrink-0">
               <ContextBadge
-                context={context}
-                onRemove={() => onRemoveContext(context.id)}
+                context={group.context}
+                onRemove={() => onRemoveContext(group.contextIds)}
                 disableUrlClick={true}
               />
             </div>

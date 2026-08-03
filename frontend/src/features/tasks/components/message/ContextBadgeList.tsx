@@ -5,11 +5,10 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Cloud, Database, Table2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -24,12 +23,22 @@ interface ContextPreviewBaseProps {
   subtitle?: string
   /** Optional className for customization */
   className?: string
+  /** Accessible source label kept out of the compact visual subtitle. */
+  sourceLabel?: string
 }
 
-function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
+function ContextPreviewBase({
+  icon,
+  title,
+  subtitle,
+  className = '',
+  sourceLabel,
+}: ContextPreviewBaseProps) {
   return (
     <div
       className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
+      title={sourceLabel ? `${sourceLabel} · ${title}` : undefined}
+      aria-label={sourceLabel ? `${sourceLabel} · ${title}` : title}
     >
       <div className="text-2xl flex-shrink-0">{icon}</div>
       <div className="flex-1 min-w-0 overflow-hidden">
@@ -171,13 +180,17 @@ function AttachmentContextBadge({
  */
 function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
-
-  const subtitle =
-    context.document_count !== undefined &&
-    context.document_count !== null &&
-    context.document_count > 0
-      ? formatDocumentCount(context.document_count, t)
-      : undefined
+  const documentCount = context.document_ids?.length ?? 0
+  const folderCount = context.folder_ids?.length ?? 0
+  const subtitle = context.scope_restricted
+    ? folderCount > 0 && documentCount > 0
+      ? t('picker.scopeMixedCompact', { folderCount, documentCount })
+      : folderCount > 0
+        ? t('picker.scopeFoldersCompact', { count: folderCount })
+        : t('picker.scopeDocumentsCompact', { count: documentCount })
+    : context.document_count !== undefined && context.document_count !== null
+      ? t('picker.scopeAllDocuments', { count: context.document_count })
+      : t('picker.scopeAll')
 
   return (
     <div>
@@ -185,6 +198,7 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
         icon={<Database className="text-primary" />}
         title={context.name}
         subtitle={subtitle}
+        sourceLabel="Wegent"
       />
     </div>
   )
@@ -192,22 +206,22 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
 
 function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
-  const targetLabel =
+  const subtitle =
     context.external_target_type === 'document'
-      ? t('picker.target.document')
+      ? t('picker.scopeDocumentsCompact', { count: 1 })
       : context.external_target_type === 'folder'
-        ? t('picker.target.folder')
-        : t('picker.target.knowledgeBase')
-  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
-    .filter(Boolean)
-    .join(' · ')
+        ? t('picker.scopeFoldersCompact', { count: 1 })
+        : t('picker.scopeAll')
+  const sourceLabel = context.external_provider === 'ap' ? 'WeiboAP' : context.external_provider
 
   return (
     <div>
       <ContextPreviewBase
-        icon={<Database className="text-primary" />}
+        icon={<Cloud className="text-cyan-700" />}
         title={context.name}
         subtitle={subtitle}
+        className="border-cyan-500/50 bg-cyan-500/10 text-cyan-700"
+        sourceLabel={sourceLabel ?? undefined}
       />
     </div>
   )

@@ -8,15 +8,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Check, ChevronRight, Database, FileText, Folder, FolderOpen } from 'lucide-react'
 
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
-import type { ContextItem, DingTalkDocContext } from '@/types/context'
+import type { ContextItem } from '@/types/context'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   buildDingTalkDocContext,
-  collectDescendants,
   getDingTalkSelectedIds,
   getDingTalkSelectionKey,
-  isNodeFullySelected,
 } from './DingTalkDocContextSelector'
 
 export function countDingTalkNodes(nodes: DingtalkDocNode[]): number {
@@ -42,20 +40,14 @@ function filterDingTalkNodes(nodes: DingtalkDocNode[], query: string): DingtalkD
   }, [])
 }
 
-function getDingTalkNodeState(nodes: DingtalkDocNode[], selectedIds: Set<string>) {
-  const allIds = nodes.flatMap(collectDescendants)
-  const selectedCount = allIds.filter(id => selectedIds.has(id)).length
-  return {
-    selected: allIds.length > 0 && selectedCount === allIds.length,
-  }
-}
-
 function SelectionIndicator({ selected }: { selected: boolean }) {
   return (
     <span
       className={cn(
-        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
-        selected ? 'text-primary' : 'text-transparent group-hover:text-text-muted'
+        'flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border',
+        selected
+          ? 'border-primary bg-primary/10 text-primary'
+          : 'text-transparent group-hover:border-primary/60'
       )}
     >
       <Check className="h-4 w-4 stroke-[3]" />
@@ -95,98 +87,30 @@ export function useDingTalkKnowledgeSelection({
   selectedContexts,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
 }: {
   selectedContexts: ContextItem[]
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
-  onSelectMultiple?: (contexts: ContextItem[]) => void
-  onDeselectMultiple?: (ids: (number | string)[]) => void
 }) {
   const selectedIds = getDingTalkSelectedIds(selectedContexts)
 
-  const selectMultiple = useCallback(
-    (contexts: DingTalkDocContext[]) => {
-      if (onSelectMultiple) {
-        onSelectMultiple(contexts)
-        return
-      }
-      contexts.forEach(context => onSelect(context))
-    },
-    [onSelect, onSelectMultiple]
-  )
-
-  const deselectMultiple = useCallback(
-    (ids: string[]) => {
-      if (onDeselectMultiple) {
-        onDeselectMultiple(ids)
-        return
-      }
-      ids.forEach(id => onDeselect(id))
-    },
-    [onDeselect, onDeselectMultiple]
-  )
-
-  const collectContexts = useCallback((node: DingtalkDocNode, currentSelectedIds: Set<string>) => {
-    const contexts: DingTalkDocContext[] = []
-    const visit = (item: DingtalkDocNode) => {
-      const selectionKey = getDingTalkSelectionKey(item.source, item.dingtalk_node_id)
-      if (!currentSelectedIds.has(selectionKey)) {
-        contexts.push(buildDingTalkDocContext(item))
-      }
-      item.children?.forEach(visit)
-    }
-    visit(node)
-    return contexts
-  }, [])
-
   const toggleNode = useCallback(
-    (node: DingtalkDocNode) => {
-      const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
-      if (node.node_type === 'folder') {
-        const allIds = collectDescendants(node)
-        const allSelected = allIds.every(id => selectedIds.has(id))
-        if (allSelected) {
-          deselectMultiple(allIds)
-          return
-        }
-        const contexts = collectContexts(node, selectedIds)
-        if (contexts.length > 0) {
-          selectMultiple(contexts)
-        }
-        return
-      }
+    (node: DingtalkDocNode, container?: { id?: string; name?: string }) => {
+      if (node.node_type === 'folder') return
 
+      const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
       if (selectedIds.has(selectionKey)) {
         onDeselect(selectionKey)
       } else {
-        onSelect(buildDingTalkDocContext(node))
+        onSelect(buildDingTalkDocContext(node, container))
       }
     },
-    [collectContexts, deselectMultiple, onDeselect, onSelect, selectMultiple, selectedIds]
-  )
-
-  const toggleNodeList = useCallback(
-    (nodes: DingtalkDocNode[]) => {
-      const allIds = nodes.flatMap(collectDescendants)
-      const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.has(id))
-      if (allSelected) {
-        deselectMultiple(allIds)
-        return
-      }
-      const contexts = nodes.flatMap(node => collectContexts(node, selectedIds))
-      if (contexts.length > 0) {
-        selectMultiple(contexts)
-      }
-    },
-    [collectContexts, deselectMultiple, selectMultiple, selectedIds]
+    [onDeselect, onSelect, selectedIds]
   )
 
   return {
     selectedIds,
     toggleNode,
-    toggleNodeList,
   }
 }
 
@@ -196,18 +120,14 @@ export function DingTalkDocsRootRow({
   loading,
   error,
   configured,
-  selectedIds,
   onRetry,
-  onToggle,
 }: {
   nodes: DingtalkDocNode[]
   totalCount: number
   loading: boolean
   error: string | null
   configured: boolean
-  selectedIds: Set<string>
   onRetry: () => void
-  onToggle: () => void
 }) {
   const { t } = useTranslation('chat')
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
@@ -215,20 +135,10 @@ export function DingTalkDocsRootRow({
   if (!configured) return <DingTalkPickerEmpty label={t('chat:dingtalkDocs.notConfigured')} />
   if (nodes.length === 0) return <DingTalkPickerEmpty label={t('chat:dingtalkDocs.empty')} />
 
-  const state = getDingTalkNodeState(nodes, selectedIds)
   return (
     <div className="space-y-1 p-2">
       <div
-        role="button"
-        tabIndex={0}
         className="group flex w-full items-center justify-between gap-2 rounded-md bg-primary/10 px-3 py-2 text-left text-primary hover:bg-primary/15"
-        onClick={onToggle}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            onToggle()
-          }
-        }}
         data-testid="knowledge-picker-dingtalk-all-docs"
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -242,10 +152,6 @@ export function DingTalkDocsRootRow({
             </span>
           </span>
         </span>
-        <span className="flex shrink-0 items-center gap-2">
-          {state.selected ? <SelectionIndicator selected={true} /> : null}
-          <ChevronRight className="h-4 w-4 text-text-muted" />
-        </span>
       </div>
     </div>
   )
@@ -257,22 +163,18 @@ export function DingTalkWikispaceRows({
   loading,
   error,
   configured,
-  selectedIds,
   activeNode,
   onRetry,
   onOpen,
-  onToggle,
 }: {
   nodes: DingtalkDocNode[]
   query: string
   loading: boolean
   error: string | null
   configured: boolean
-  selectedIds: Set<string>
   activeNode: DingtalkDocNode | null
   onRetry: () => void
   onOpen: (node: DingtalkDocNode) => void
-  onToggle: (node: DingtalkDocNode) => void
 }) {
   const { t } = useTranslation('chat')
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
@@ -287,31 +189,21 @@ export function DingTalkWikispaceRows({
   return (
     <div className="space-y-1 p-2">
       {visibleNodes.map(node => {
-        const selected = isNodeFullySelected(node, selectedIds)
         const active = activeNode?.dingtalk_node_id === node.dingtalk_node_id
         return (
           <div
             key={getDingTalkSelectionKey(node.source, node.dingtalk_node_id)}
-            role="button"
-            tabIndex={0}
             className={cn(
               'group flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface',
               active ? 'bg-primary/10 text-primary' : 'text-text-primary'
             )}
-            onClick={() => {
-              onToggle(node)
-              onOpen(node)
-            }}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                onToggle(node)
-                onOpen(node)
-              }
-            }}
-            data-testid={`knowledge-picker-dingtalk-space-${node.dingtalk_node_id}`}
           >
-            <span className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              onClick={() => onOpen(node)}
+              data-testid={`knowledge-picker-dingtalk-space-${node.dingtalk_node_id}`}
+            >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium">{node.name}</span>
@@ -321,11 +213,8 @@ export function DingTalkWikispaceRows({
                   })}
                 </span>
               </span>
-            </span>
-            <span className="flex shrink-0 items-center gap-2">
-              {selected ? <SelectionIndicator selected={true} /> : null}
               <ChevronRight className="h-4 w-4 text-text-muted" />
-            </span>
+            </button>
           </div>
         )
       })}
@@ -336,18 +225,11 @@ export function DingTalkWikispaceRows({
 function DingTalkDocumentHeader({
   title,
   documentCount,
-  selected,
-  disabled,
-  onToggleAll,
 }: {
   title: string
   documentCount: number
-  selected: boolean
-  disabled: boolean
-  onToggleAll: () => void
 }) {
   const { t } = useTranslation('knowledge')
-  const { t: tChat } = useTranslation('chat')
   return (
     <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-2">
       <div className="min-w-0">
@@ -356,15 +238,6 @@ function DingTalkDocumentHeader({
           {t('picker.count.documents', { count: documentCount })}
         </div>
       </div>
-      <button
-        type="button"
-        className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
-        disabled={disabled}
-        onClick={onToggleAll}
-        data-testid="knowledge-picker-dingtalk-toggle-all"
-      >
-        {selected ? tChat('dingtalkDocs.deselectAll') : tChat('dingtalkDocs.selectAll')}
-      </button>
     </div>
   )
 }
@@ -382,7 +255,6 @@ export function DingTalkDocumentColumn({
   selectedIds,
   onRetry,
   onToggle,
-  onToggleAll,
 }: {
   title: string
   nodes: DingtalkDocNode[]
@@ -396,20 +268,12 @@ export function DingTalkDocumentColumn({
   selectedIds: Set<string>
   onRetry: () => void
   onToggle: (node: DingtalkDocNode) => void
-  onToggleAll: (nodes: DingtalkDocNode[]) => void
 }) {
   const { t } = useTranslation('chat')
   const visibleNodes = filterDingTalkNodes(nodes, query)
-  const state = getDingTalkNodeState(visibleNodes, selectedIds)
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <DingTalkDocumentHeader
-        title={title}
-        documentCount={totalCount}
-        selected={state.selected}
-        disabled={visibleNodes.length === 0 || loading || Boolean(error) || !configured}
-        onToggleAll={() => onToggleAll(visibleNodes)}
-      />
+      <DingTalkDocumentHeader title={title} documentCount={totalCount} />
       {loading ? (
         <DingTalkPickerLoading label={t('common:actions.loading')} />
       ) : error ? (
@@ -458,7 +322,7 @@ function DingTalkDocumentNode({
     }
   }, [forceOpen])
   const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
-  const selected = isFolder ? isNodeFullySelected(node, selectedIds) : selectedIds.has(selectionKey)
+  const selected = !isFolder && selectedIds.has(selectionKey)
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
 
   return (
@@ -484,7 +348,7 @@ function DingTalkDocumentNode({
         <button
           type="button"
           className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 text-left"
-          onClick={() => onToggle(node)}
+          onClick={() => (isFolder ? setOpen(!open) : onToggle(node))}
           data-testid={`knowledge-picker-dingtalk-node-${node.source}-${node.dingtalk_node_id}`}
         >
           <span className="flex min-w-0 items-center gap-2">

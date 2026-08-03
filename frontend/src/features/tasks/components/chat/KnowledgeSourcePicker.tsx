@@ -478,8 +478,6 @@ export function KnowledgeSourcePicker({
   onRetry,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
   onReplaceContexts,
 }: KnowledgeSourcePickerProps) {
   const { t } = useTranslation('knowledge')
@@ -495,17 +493,12 @@ export function KnowledgeSourcePicker({
   const [activeKnowledgeBase, setActiveKnowledgeBase] = useState<ActiveKnowledgeBase | null>(null)
   const [activeDingTalkSpace, setActiveDingTalkSpace] = useState<DingtalkDocNode | null>(null)
   const dingtalkTrees = useDingTalkDocTrees({ enabled: activeSource.startsWith('dingtalk') })
-  const {
-    selectedIds: selectedDingTalkIds,
-    toggleNode: toggleDingTalkNode,
-    toggleNodeList: toggleDingTalkNodeList,
-  } = useDingTalkKnowledgeSelection({
-    selectedContexts,
-    onSelect,
-    onDeselect,
-    onSelectMultiple,
-    onDeselectMultiple,
-  })
+  const { selectedIds: selectedDingTalkIds, toggleNode: toggleDingTalkNode } =
+    useDingTalkKnowledgeSelection({
+      selectedContexts,
+      onSelect,
+      onDeselect,
+    })
 
   const externalProviderId = activeSource.startsWith('external:')
     ? activeSource.slice('external:'.length)
@@ -782,6 +775,7 @@ export function KnowledgeSourcePicker({
       id: buildExternalContextId(ref),
       name: ref.name ?? ref.id ?? ref.provider,
       ref,
+      document_count: kb.document_count ?? undefined,
     }
     const idsToRemove = childContexts.map(ctx => ctx.id)
     if (!canAddExternalRefs(source, idsToRemove, [ref])) {
@@ -1072,9 +1066,7 @@ export function KnowledgeSourcePicker({
           loading={dingtalkTrees.loading}
           error={dingtalkTrees.error}
           configured={dingtalkTrees.isConfigured}
-          selectedIds={selectedDingTalkIds}
           onRetry={dingtalkTrees.fetchDocs}
-          onToggle={() => toggleDingTalkNodeList(dingtalkTrees.nodes)}
         />
       )
     }
@@ -1087,11 +1079,9 @@ export function KnowledgeSourcePicker({
           loading={dingtalkTrees.wikispaceLoading}
           error={dingtalkTrees.wikispaceError}
           configured={dingtalkTrees.wikispaceConfigured}
-          selectedIds={selectedDingTalkIds}
           activeNode={activeDingTalkSpace}
           onRetry={dingtalkTrees.fetchWikispace}
           onOpen={setActiveDingTalkSpace}
-          onToggle={toggleDingTalkNode}
         />
       )
     }
@@ -1325,8 +1315,12 @@ export function KnowledgeSourcePicker({
           query={searchValue}
           selectedIds={selectedDingTalkIds}
           onRetry={dingtalkTrees.fetchDocs}
-          onToggle={toggleDingTalkNode}
-          onToggleAll={toggleDingTalkNodeList}
+          onToggle={node =>
+            toggleDingTalkNode(node, {
+              id: 'docs-root',
+              name: tChat('dingtalkDocs.allDocs'),
+            })
+          }
         />
       )
     }
@@ -1348,8 +1342,12 @@ export function KnowledgeSourcePicker({
           query={searchValue}
           selectedIds={selectedDingTalkIds}
           onRetry={dingtalkTrees.fetchWikispace}
-          onToggle={toggleDingTalkNode}
-          onToggleAll={toggleDingTalkNodeList}
+          onToggle={node =>
+            toggleDingTalkNode(node, {
+              id: activeDingTalkSpace.workspace_id || activeDingTalkSpace.dingtalk_node_id,
+              name: activeDingTalkSpace.name,
+            })
+          }
         />
       )
     }
@@ -1519,17 +1517,16 @@ function KnowledgeBaseRows({
       {visibleItems.map(item => {
         const existing = getKnowledgeContext(selectedContexts, item.id)
         return (
-          <button
+          <div
             key={item.id}
-            type="button"
             className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
-            onClick={() => {
-              onToggle(item)
-              onOpen(item)
-            }}
-            data-testid={`knowledge-picker-kb-${item.id}`}
           >
-            <span className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              onClick={() => onOpen(item)}
+              data-testid={`knowledge-picker-kb-${item.id}`}
+            >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-text-primary">
@@ -1539,9 +1536,25 @@ function KnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-            </span>
-            {existing ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
-          </button>
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+            </button>
+            <button
+              type="button"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md"
+              onClick={() => onToggle(item)}
+              data-testid={`knowledge-picker-kb-select-${item.id}`}
+              aria-label={`${t('picker.selectWholeKb')} ${item.name}`}
+            >
+              <span
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
+                  existing ? 'border-primary bg-primary/10 text-primary' : ''
+                )}
+              >
+                {existing ? <Check className="h-3.5 w-3.5" /> : null}
+              </span>
+            </button>
+          </div>
         )
       })}
     </div>
@@ -1580,19 +1593,16 @@ function ExternalKnowledgeBaseRows({
           getExternalChildContexts(selectedContexts, source.providerId, item.knowledge_base_id)
             .length > 0
         return (
-          <button
+          <div
             key={item.knowledge_base_id}
-            type="button"
             className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
-            onClick={() => {
-              if (canSelectKnowledgeBase) {
-                onToggle(item)
-              }
-              onOpen(item)
-            }}
-            data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
           >
-            <span className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              onClick={() => onOpen(item)}
+              data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
+            >
               <Database className="h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-text-primary">
@@ -1602,16 +1612,28 @@ function ExternalKnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-            </span>
-            {(canSelectKnowledgeBase && existing) || childSelected ? (
-              <Check
-                className={cn(
-                  'h-4 w-4 shrink-0 text-primary',
-                  !existing && childSelected ? 'opacity-50' : ''
-                )}
-              />
+              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+            </button>
+            {canSelectKnowledgeBase ? (
+              <button
+                type="button"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md"
+                onClick={() => onToggle(item)}
+                data-testid={`knowledge-picker-external-kb-select-${item.knowledge_base_id}`}
+                aria-label={`${t('picker.selectWholeKb')} ${item.knowledge_base_name}`}
+              >
+                <span
+                  className={cn(
+                    'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
+                    existing || childSelected ? 'border-primary bg-primary/10 text-primary' : '',
+                    !existing && childSelected ? 'opacity-50' : ''
+                  )}
+                >
+                  {existing || childSelected ? <Check className="h-3.5 w-3.5" /> : null}
+                </span>
+              </button>
             ) : null}
-          </button>
+          </div>
         )
       })}
     </div>

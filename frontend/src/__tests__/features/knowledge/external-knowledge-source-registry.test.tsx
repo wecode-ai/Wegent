@@ -337,6 +337,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     })
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -403,6 +404,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     )
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
@@ -428,7 +430,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
       ])
     )
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-lib-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
@@ -555,6 +557,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-lib-1'))
 
     const documentRow = await screen.findByTestId('knowledge-picker-external-node-document:doc-1')
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     expect(documentRow).toBeDisabled()
     expect(documentRow).toHaveAttribute('aria-disabled', 'true')
     fireEvent.click(documentRow)

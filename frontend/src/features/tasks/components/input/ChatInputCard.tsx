@@ -523,7 +523,8 @@ export function ChatInputCard({
           contexts={selectedContexts}
           attachmentState={attachmentState}
           onRemoveContext={contextId => {
-            setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
+            const contextIds = new Set(Array.isArray(contextId) ? contextId : [contextId])
+            setSelectedContexts(current => current.filter(ctx => !contextIds.has(ctx.id)))
           }}
           onRemoveAttachment={onAttachmentRemove}
           disabled={isStreaming}

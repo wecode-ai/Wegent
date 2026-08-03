@@ -353,7 +353,10 @@ export function useDingTalkDocTrees({ enabled = true }: { enabled?: boolean } = 
   }
 }
 
-export function buildDingTalkDocContext(node: DingtalkDocNode): DingTalkDocContext {
+export function buildDingTalkDocContext(
+  node: DingtalkDocNode,
+  container?: { id?: string; name?: string }
+): DingTalkDocContext {
   return {
     id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
     name: node.name,
@@ -362,6 +365,10 @@ export function buildDingTalkDocContext(node: DingtalkDocNode): DingTalkDocConte
     node_type: node.node_type as 'folder' | 'doc' | 'file',
     dingtalk_node_id: node.dingtalk_node_id,
     source: node.source,
+    container_id:
+      container?.id ??
+      (node.source === 'wikispace' ? node.workspace_id || node.dingtalk_node_id : 'docs-root'),
+    container_name: container?.name,
   }
 }
 

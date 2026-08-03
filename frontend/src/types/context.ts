@@ -128,6 +128,13 @@ export interface DingTalkDocContext extends BaseContextItem {
   dingtalk_node_id: string
   /** DingTalk node source to disambiguate docs and wikispace selections */
   source: 'docs' | 'wikispace'
+  /** Stable container used to aggregate selected nodes in the composer. */
+  container_id?: string
+  /** User-facing container name, for example a WikiSpace name. */
+  container_name?: string
+  /** Counts represented by an aggregated composer badge. */
+  selected_document_count?: number
+  selected_folder_count?: number
 }
 
 /**
@@ -142,6 +149,10 @@ export interface ExternalKnowledgeContext extends BaseContextItem {
   type: 'external_knowledge'
   id: string
   ref: ExternalKnowledgeRef
+  /** Total documents in a whole-KB selection, used only for compact display. */
+  document_count?: number
+  /** Selected documents represented by an aggregated composer badge. */
+  selected_document_count?: number
 }
 
 /**

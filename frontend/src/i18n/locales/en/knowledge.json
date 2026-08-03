@@ -46,6 +46,11 @@
     "selectedDocuments": "{{count}} documents selected",
     "selectedFolders": "{{count}} folders selected, including subfolders",
     "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
+    "scopeAll": "All",
+    "scopeAllDocuments": "All · {{count}} docs",
+    "scopeDocumentsCompact": "{{count}} docs",
+    "scopeFoldersCompact": "{{count}} folders",
+    "scopeMixedCompact": "{{folderCount}} folders · {{documentCount}} docs",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
