@@ -6108,6 +6108,7 @@ function assistantMessage(text) {
       role: 'assistant',
       id: 'wework-e2e-message',
       content: [{ type: 'output_text', text }],
+      phase: 'final_answer',
     },
   }
 }
