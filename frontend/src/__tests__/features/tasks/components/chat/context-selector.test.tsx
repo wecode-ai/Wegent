@@ -579,7 +579,7 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('selects internal folders as first-class knowledge scope', async () => {
+  it('shows internal knowledge selection as empty, partial, whole, then empty', async () => {
     const contextChanges = jest.fn()
     mockGetFolderTree.mockResolvedValue([
       {
@@ -640,6 +640,10 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-folder-scope-10')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
     fireEvent.click(screen.getByTestId('knowledge-picker-folder-scope-10'))
 
     await waitFor(() => {
@@ -653,6 +657,34 @@ describe('ContextSelector organization grouping', () => {
           include_subfolders: true,
         }),
       ])
+      expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
+        'aria-checked',
+        'mixed'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+    await waitFor(() => {
+      expect(contextChanges).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          id: 1,
+          type: 'knowledge_base',
+          scope_restricted: false,
+        }),
+      ])
+      expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    })
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+    await waitFor(() => {
+      expect(contextChanges).toHaveBeenLastCalledWith([])
+      expect(screen.getByTestId('knowledge-picker-kb-select-1')).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
     })
   })
 

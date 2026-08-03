@@ -16,6 +16,7 @@ import {
   FolderOpen,
   Loader2,
   MessageSquareText,
+  Minus,
   RotateCw,
   Users,
   User,
@@ -211,6 +212,54 @@ function groupMatchesSearch(text: string, query: string) {
   const normalized = query.trim().toLowerCase()
   if (!normalized) return true
   return text.toLowerCase().includes(normalized)
+}
+
+function ScopeSelectionControl({
+  checked,
+  indeterminate = false,
+  disabled = false,
+  label,
+  testId,
+  onToggle,
+}: {
+  checked: boolean
+  indeterminate?: boolean
+  disabled?: boolean
+  label: string
+  testId: string
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={indeterminate ? 'mixed' : checked}
+      aria-label={label}
+      disabled={disabled}
+      className={cn(
+        'group flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base',
+        disabled ? 'cursor-not-allowed opacity-60' : ''
+      )}
+      onClick={onToggle}
+      data-testid={testId}
+    >
+      <span
+        className={cn(
+          'flex h-5 w-5 items-center justify-center rounded-[5px] border border-border/80 bg-base text-transparent transition-all group-hover:border-primary/70',
+          checked && !indeterminate
+            ? 'border-primary bg-primary text-primary-contrast shadow-sm'
+            : '',
+          indeterminate ? 'border-primary bg-primary/15 text-primary' : ''
+        )}
+      >
+        {indeterminate ? (
+          <Minus className="h-3.5 w-3.5 stroke-[2.5]" />
+        ) : checked ? (
+          <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+        ) : null}
+      </span>
+    </button>
+  )
 }
 
 async function listAllInternalDocuments(knowledgeBaseId: number): Promise<KnowledgeDocument[]> {
@@ -1523,7 +1572,7 @@ function KnowledgeBaseRows({
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              className="group flex min-w-0 flex-1 items-center gap-2 text-left"
               onClick={() => onOpen(item)}
               data-testid={`knowledge-picker-kb-${item.id}`}
             >
@@ -1536,24 +1585,15 @@ function KnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
-            <button
-              type="button"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md"
-              onClick={() => onToggle(item)}
-              data-testid={`knowledge-picker-kb-select-${item.id}`}
-              aria-label={`${t('picker.selectWholeKb')} ${item.name}`}
-            >
-              <span
-                className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
-                  existing ? 'border-primary bg-primary/10 text-primary' : ''
-                )}
-              >
-                {existing ? <Check className="h-3.5 w-3.5" /> : null}
-              </span>
-            </button>
+            <ScopeSelectionControl
+              checked={Boolean(existing && !existing.scope_restricted)}
+              indeterminate={Boolean(existing?.scope_restricted)}
+              label={`${t('picker.selectWholeKb')} ${item.name}`}
+              testId={`knowledge-picker-kb-select-${item.id}`}
+              onToggle={() => onToggle(item)}
+            />
           </div>
         )
       })}
@@ -1599,7 +1639,7 @@ function ExternalKnowledgeBaseRows({
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              className="group flex min-w-0 flex-1 items-center gap-2 text-left"
               onClick={() => onOpen(item)}
               data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
             >
@@ -1612,26 +1652,16 @@ function ExternalKnowledgeBaseRows({
                   {t('picker.count.documents', { count: item.document_count ?? 0 })}
                 </span>
               </span>
-              <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-text-muted opacity-50 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
             </button>
             {canSelectKnowledgeBase ? (
-              <button
-                type="button"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md"
-                onClick={() => onToggle(item)}
-                data-testid={`knowledge-picker-external-kb-select-${item.knowledge_base_id}`}
-                aria-label={`${t('picker.selectWholeKb')} ${item.knowledge_base_name}`}
-              >
-                <span
-                  className={cn(
-                    'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
-                    existing || childSelected ? 'border-primary bg-primary/10 text-primary' : '',
-                    !existing && childSelected ? 'opacity-50' : ''
-                  )}
-                >
-                  {existing || childSelected ? <Check className="h-3.5 w-3.5" /> : null}
-                </span>
-              </button>
+              <ScopeSelectionControl
+                checked={Boolean(existing)}
+                indeterminate={!existing && childSelected}
+                label={`${t('picker.selectWholeKb')} ${item.knowledge_base_name}`}
+                testId={`knowledge-picker-external-kb-select-${item.knowledge_base_id}`}
+                onToggle={() => onToggle(item)}
+              />
             ) : null}
           </div>
         )
@@ -1848,31 +1878,17 @@ function InternalDocumentNode({
             <Badge variant="secondary" size="sm">
               {node.documentCount}
             </Badge>
-            <button
-              type="button"
-              className={cn(
-                'flex h-11 w-11 items-center justify-center rounded text-text-muted hover:text-primary',
-                inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
-              )}
+            <ScopeSelectionControl
+              checked={folderSelected}
               disabled={inheritedSelected}
-              aria-disabled={inheritedSelected}
-              onClick={() => {
+              label={node.name}
+              testId={`knowledge-picker-folder-scope-${node.folderId}`}
+              onToggle={() => {
                 if (!inheritedSelected) {
                   onToggleFolder(node)
                 }
               }}
-              data-testid={`knowledge-picker-folder-scope-${node.folderId}`}
-              aria-label={node.name}
-            >
-              <span
-                className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
-                  folderSelected ? 'border-primary bg-primary/10 text-primary' : ''
-                )}
-              >
-                {folderSelected ? <Check className="h-3.5 w-3.5" /> : null}
-              </span>
-            </button>
+            />
           </span>
         </div>
       ) : (
