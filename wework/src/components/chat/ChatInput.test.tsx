@@ -1698,9 +1698,10 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
