@@ -26,6 +26,8 @@ export function ContextSettingsPage() {
   const [instructionsSaving, setInstructionsSaving] = useState(false)
   const [instructionsSaved, setInstructionsSaved] = useState(false)
   const [instructionsError, setInstructionsError] = useState<string | null>(null)
+  const [supervisorPrinciples, setSupervisorPrinciples] = useState('')
+  const [savedSupervisorPrinciples, setSavedSupervisorPrinciples] = useState('')
 
   const instructionsDirty = instructions !== savedInstructions
 
@@ -37,6 +39,8 @@ export function ContextSettingsPage() {
         const nextPreferences = await getAppPreferences()
         if (!cancelled) {
           setPreferences(nextPreferences)
+          setSupervisorPrinciples(nextPreferences.supervisorPrinciples)
+          setSavedSupervisorPrinciples(nextPreferences.supervisorPrinciples)
           setError(null)
         }
       } catch (fetchError) {
@@ -114,6 +118,22 @@ export function ContextSettingsPage() {
     }
   }
 
+  const handleSaveSupervisorPrinciples = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const nextPreferences = await updateAppPreferences({ supervisorPrinciples })
+      setPreferences(nextPreferences)
+      setSupervisorPrinciples(nextPreferences.supervisorPrinciples)
+      setSavedSupervisorPrinciples(nextPreferences.supervisorPrinciples)
+    } catch (saveError) {
+      console.error('[Wework] Failed to save supervisor principles', saveError)
+      setError(t('workbench.context_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <SettingsPage data-testid="context-settings-page">
       <SettingsPageHeader
@@ -150,6 +170,43 @@ export function ContextSettingsPage() {
       </section>
 
       <CodexPersonalitySettings />
+
+      {preferences.experimentalFeaturesEnabled && (
+        <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+          <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-text-primary">
+                {t('workbench.context_settings_supervisor_title')}
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
+                {t('workbench.context_settings_supervisor_description')}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="context-supervisor-principles-save-button"
+              disabled={saving || supervisorPrinciples === savedSupervisorPrinciples}
+              onClick={() => void handleSaveSupervisorPrinciples()}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              <span>{t('workbench.context_settings_supervisor_save')}</span>
+            </button>
+          </div>
+          <div className="px-4 py-4">
+            <textarea
+              data-testid="context-supervisor-principles-textarea"
+              value={supervisorPrinciples}
+              onChange={event => setSupervisorPrinciples(event.target.value)}
+              placeholder={t('workbench.context_settings_supervisor_placeholder')}
+              className="min-h-32 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+            />
+            <p className="mt-3 text-xs leading-5 text-text-secondary">
+              {t('workbench.context_settings_supervisor_hint')}
+            </p>
+          </div>
+        </section>
+      )}
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">

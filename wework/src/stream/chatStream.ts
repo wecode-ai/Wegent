@@ -10,6 +10,7 @@ import type {
   RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
+  RuntimeSupervisorEventPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
 import type { SocketClientSocket } from '@wegent/chat-core'
@@ -42,6 +43,7 @@ export interface ChatStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void

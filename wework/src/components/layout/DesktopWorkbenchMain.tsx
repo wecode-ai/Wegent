@@ -6,6 +6,7 @@ import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCa
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
@@ -113,8 +114,14 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { SupervisorSuggestionCards, TaskSupervisorControl } from './TaskSupervisorControl'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
-import type { RuntimeAdditionalContext, RuntimeTaskAddress } from '@/types/api'
+import type {
+  RuntimeAdditionalContext,
+  RuntimeSupervisorMode,
+  RuntimeSupervisorSuggestion,
+  RuntimeTaskAddress,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
@@ -495,6 +502,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 }) {
   const paneActive = useWorkbenchPaneActive()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const appPreferences = useAppPreferencesState()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -553,9 +561,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     candidates: ComposerCloudMentionCandidate[]
   } | null>(null)
   const runtimeWork = state.runtimeWork
-  const runtimeTaskTitle = truncateRuntimeTaskTitle(
-    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title
-  )
+  const runtimeTaskSummary = findRuntimeTask(runtimeWork, currentRuntimeTask)
+  const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
+  const supervisor = runtimeTaskSummary?.supervisor ?? null
+  const currentRuntimeTaskSupportsSupervisor =
+    runtimeTaskSummary?.runtime?.toLowerCase() === 'codex'
   const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
   const composerTodoItem = currentRuntimeTask ? boundCloudItem : pendingTodoItem
   const cloudAdditionalContext = useMemo<RuntimeAdditionalContext | undefined>(() => {
@@ -607,6 +617,58 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         },
       }),
     [cloudAdditionalContext, sendPaneInput]
+  )
+
+  const runtimeWorkApi = services?.runtimeWorkApi
+  const setTaskSupervisor = useCallback(
+    async (
+      mode: RuntimeSupervisorMode,
+      instructions: string,
+      modelId: string | null,
+      intervalSeconds: number
+    ) => {
+      if (!currentRuntimeTask || !runtimeWorkApi) return null
+      const response = await runtimeWorkApi.setRuntimeSupervisor({
+        address: currentRuntimeTask,
+        mode,
+        instructions,
+        modelId,
+        intervalSeconds,
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.supervisor_set_failed'))
+      }
+      return response.supervisor
+    },
+    [currentRuntimeTask, runtimeWorkApi, t]
+  )
+
+  const clearTaskSupervisor = useCallback(async () => {
+    if (!currentRuntimeTask || !runtimeWorkApi) return
+    const response = await runtimeWorkApi.clearRuntimeSupervisor({
+      address: currentRuntimeTask,
+    })
+    if (!response.accepted) {
+      throw new Error(response.error || t('workbench.supervisor_clear_failed'))
+    }
+  }, [currentRuntimeTask, runtimeWorkApi, t])
+
+  const resolveTaskSupervisorSuggestion = useCallback(
+    async (suggestion: RuntimeSupervisorSuggestion, status: 'accepted' | 'dismissed') => {
+      if (!currentRuntimeTask || !runtimeWorkApi) return
+      if (status === 'accepted') {
+        await submitPaneInput(suggestion.message, { guideWhenBusy: true })
+      }
+      const response = await runtimeWorkApi.resolveRuntimeSupervisor({
+        address: currentRuntimeTask,
+        suggestionId: suggestion.id,
+        status,
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || t('workbench.supervisor_resolve_failed'))
+      }
+    },
+    [currentRuntimeTask, runtimeWorkApi, submitPaneInput, t]
   )
 
   useEffect(() => {
@@ -1994,7 +2056,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       environmentInfoFloatingFooter={
         !(forceEnvironmentInfoDocked ?? environmentInfoDocked) &&
         (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
-          <div data-testid="workbench-subagent-status-row">
+          <div data-testid="workbench-subagent-status-row" className="flex flex-wrap gap-2">
             <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
           </div>
         ) : undefined
@@ -2428,59 +2490,99 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   }
                                 />
                               ) : (
-                                <BufferedChatInput
-                                  insertion={conversationSelectionInsertion}
-                                  value={paneSession.input}
-                                  onChange={paneSession.setInput}
-                                  onSubmit={submitPaneInput}
-                                  disabled={composerDisabled}
-                                  submitDisabled={paneSession.status.isSubmitting}
-                                  error={paneSession.error}
-                                  disabledReason={inlineComposerDisabledReason}
-                                  placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                                  variant="desktop"
-                                  projectChat={projectChatWithModelSelectorSignal}
-                                  projectWork={paneProjectWork}
-                                  showProjectWorkBar={false}
-                                  queuedMessages={paneQueuedMessages}
-                                  guidanceMessages={paneGuidanceMessages}
-                                  codeComments={paneSession.codeCommentContexts}
-                                  cloudMentionCandidates={visibleCloudMentionCandidates}
-                                  cloudProjectCandidates={cloudProjectMentionCandidates}
-                                  cloudSpaceEnabled={
-                                    experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
-                                  }
-                                  onSelectCloudProject={handleSelectCloudProject}
-                                  isStreaming={paneIsBusy}
-                                  onPause={pauseCurrentResponse}
-                                  onCompactContext={compactCurrentContext}
-                                  goal={paneSession.goal}
-                                  goalContinuing={paneSession.goalContinuing}
-                                  taskPlan={paneSession.taskPlan}
-                                  goalDraftActive={paneSession.goalDraftActive}
-                                  onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                                  onCancelGoalDraft={paneSession.cancelGoalDraft}
-                                  onEditGoal={paneSession.editCurrentGoal}
-                                  onPauseGoal={pauseCurrentGoal}
-                                  onResumeGoal={resumeCurrentGoal}
-                                  onClearGoal={clearCurrentGoal}
-                                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                                  onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                                  queuePaused={paneSession.queuedMessagesPaused}
-                                  onResumeQueue={paneSession.resumeQueuedMessages}
-                                  onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                                  onClearQueue={paneSession.clearQueuedMessages}
-                                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                                  onInterruptAndSendQueuedMessage={
-                                    paneSession.interruptAndSendQueued
-                                  }
-                                  onEditQueuedMessage={paneSession.editQueuedMessage}
-                                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                                  onClearCodeComments={paneSession.clearCodeComments}
-                                  onOpenSkillFile={openLocalSkillFile}
-                                  workspaceTarget={composerWorkspaceTarget}
-                                  workspaceFileApi={workspaceFileApi}
-                                />
+                                <>
+                                  {experimentalFeaturesEnabled &&
+                                    currentRuntimeTaskSupportsSupervisor &&
+                                    services?.runtimeWorkApi && (
+                                      <div
+                                        data-testid="task-supervisor-composer-control"
+                                        className="mb-2 flex justify-end"
+                                      >
+                                        <TaskSupervisorControl
+                                          supervisor={supervisor}
+                                          defaultInstructions={
+                                            appPreferences?.preferences.supervisorPrinciples ?? ''
+                                          }
+                                          models={projectChat.models.filter(
+                                            model =>
+                                              model.isActive !== false &&
+                                              !model.compatibilityDisabled
+                                          )}
+                                          onSet={setTaskSupervisor}
+                                          onClear={clearTaskSupervisor}
+                                        />
+                                      </div>
+                                    )}
+                                  {experimentalFeaturesEnabled && supervisor && (
+                                    <SupervisorSuggestionCards
+                                      suggestions={supervisor.suggestions}
+                                      onAccept={suggestion =>
+                                        resolveTaskSupervisorSuggestion(suggestion, 'accepted')
+                                      }
+                                      onDismiss={suggestion =>
+                                        resolveTaskSupervisorSuggestion(suggestion, 'dismissed')
+                                      }
+                                    />
+                                  )}
+                                  <BufferedChatInput
+                                    insertion={conversationSelectionInsertion}
+                                    value={paneSession.input}
+                                    onChange={paneSession.setInput}
+                                    onSubmit={submitPaneInput}
+                                    disabled={composerDisabled}
+                                    submitDisabled={paneSession.status.isSubmitting}
+                                    error={paneSession.error}
+                                    disabledReason={inlineComposerDisabledReason}
+                                    placeholder={t(
+                                      'workbench.follow_up_placeholder',
+                                      '要求后续变更'
+                                    )}
+                                    variant="desktop"
+                                    projectChat={projectChatWithModelSelectorSignal}
+                                    projectWork={paneProjectWork}
+                                    showProjectWorkBar={false}
+                                    queuedMessages={paneQueuedMessages}
+                                    guidanceMessages={paneGuidanceMessages}
+                                    codeComments={paneSession.codeCommentContexts}
+                                    cloudMentionCandidates={visibleCloudMentionCandidates}
+                                    cloudProjectCandidates={cloudProjectMentionCandidates}
+                                    cloudSpaceEnabled={
+                                      experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
+                                    }
+                                    onSelectCloudProject={handleSelectCloudProject}
+                                    isStreaming={paneIsBusy}
+                                    onPause={pauseCurrentResponse}
+                                    onCompactContext={compactCurrentContext}
+                                    goal={paneSession.goal}
+                                    goalContinuing={paneSession.goalContinuing}
+                                    taskPlan={paneSession.taskPlan}
+                                    goalDraftActive={paneSession.goalDraftActive}
+                                    onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                                    onCancelGoalDraft={paneSession.cancelGoalDraft}
+                                    onEditGoal={paneSession.editCurrentGoal}
+                                    onPauseGoal={pauseCurrentGoal}
+                                    onResumeGoal={resumeCurrentGoal}
+                                    onClearGoal={clearCurrentGoal}
+                                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                                    queuePaused={paneSession.queuedMessagesPaused}
+                                    onResumeQueue={paneSession.resumeQueuedMessages}
+                                    onResumeQueueWithInput={
+                                      paneSession.resumeQueuedMessagesWithInput
+                                    }
+                                    onClearQueue={paneSession.clearQueuedMessages}
+                                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                                    onInterruptAndSendQueuedMessage={
+                                      paneSession.interruptAndSendQueued
+                                    }
+                                    onEditQueuedMessage={paneSession.editQueuedMessage}
+                                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                                    onClearCodeComments={paneSession.clearCodeComments}
+                                    onOpenSkillFile={openLocalSkillFile}
+                                    workspaceTarget={composerWorkspaceTarget}
+                                    workspaceFileApi={workspaceFileApi}
+                                  />
+                                </>
                               )}
                             </>
                           )}
@@ -2644,7 +2746,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (
-              <div data-testid="workbench-subagent-status-row" className="ml-2 mt-3 w-[300px]">
+              <div
+                data-testid="workbench-subagent-status-row"
+                className="ml-2 mt-3 flex w-[300px] flex-wrap gap-2"
+              >
                 <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
               </div>
             )}

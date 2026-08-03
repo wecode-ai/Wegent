@@ -681,6 +681,33 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_i
 }
 
 #[test]
+fn transcript_restores_a_missing_supervisor_generated_user_message() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "role": "assistant",
+        "content": "Corrected",
+        "createdAt": 200
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "supervisor-correction-1",
+        "content": "Use Japanese",
+        "createdAt": 100,
+        "ensureVisible": true,
+        "references": [],
+        "source": {
+            "source": "supervisor",
+            "channel_type": "task_supervisor"
+        }
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[1]["role"], "assistant");
+}
+
+#[test]
 fn transcript_only_adds_presentations_missing_from_provider_content() {
     let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
     let mut provider_messages = vec![json!({

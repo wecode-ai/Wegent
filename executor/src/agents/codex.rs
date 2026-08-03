@@ -3747,6 +3747,7 @@ fn resolve_codex_binary(value: &str) -> String {
 }
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 
 pub(crate) fn codex_runtime_approval_policy() -> Value {
     json!({
@@ -3760,10 +3761,27 @@ pub(crate) fn codex_runtime_approval_policy() -> Value {
     })
 }
 
-fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    if request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+        == Some(CODEX_READ_ONLY_PERMISSION_PROFILE)
+    {
+        CODEX_READ_ONLY_PERMISSION_PROFILE
+    } else {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+    }
+}
+
+fn insert_codex_runtime_permissions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
     params.insert(
         "permissions".to_owned(),
-        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+        Value::String(codex_runtime_permission_profile(request).to_owned()),
     );
 }
 
@@ -3817,13 +3835,14 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3845,13 +3864,14 @@ fn thread_fork_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3906,14 +3926,28 @@ fn thread_resume_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
+}
+
+fn insert_codex_developer_instructions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let instructions = request.system_prompt.trim();
+    if !instructions.is_empty() {
+        params.insert(
+            "developerInstructions".to_owned(),
+            Value::String(instructions.to_owned()),
+        );
+    }
 }
 
 fn append_thread_launch_params(
@@ -3960,7 +3994,7 @@ fn turn_start_params(
         );
     }
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -3980,7 +4014,19 @@ fn turn_start_params(
     if let Some(additional_context) = codex_additional_context(request) {
         params.insert("additionalContext".to_owned(), additional_context);
     }
+    if let Some(output_schema) = codex_output_schema(request) {
+        params.insert("outputSchema".to_owned(), output_schema);
+    }
     Value::Object(params)
+}
+
+fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("outputSchema")
+        .or_else(|| request.extra.get("output_schema"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {

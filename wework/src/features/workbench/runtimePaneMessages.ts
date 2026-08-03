@@ -15,6 +15,7 @@ import type {
   RuntimeGuidanceAppliedPayload,
   RuntimeMessagePresentationReference,
   RuntimeSubagentActivityPayload,
+  RuntimeSupervisorEventPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
   RuntimeTranscriptTurn,
@@ -44,6 +45,7 @@ export interface RuntimeTaskStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
@@ -62,6 +64,10 @@ export interface RuntimeConversationStreamHandlers {
   ) => void
   onRuntimeGoalUpdated?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeSupervisorEventPayload
+  ) => void
   onRuntimeGoalContinuation?: (
     address: RuntimeTaskAddress,
     payload: RuntimeGoalContinuationPayload
@@ -101,6 +107,8 @@ export function createRuntimeConversationStreamHandlers(
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
       onRuntimeGoalUpdated: payload => handlers.onRuntimeGoalUpdated?.(address, payload),
       onRuntimeGoalCleared: payload => handlers.onRuntimeGoalCleared?.(address, payload),
+      onRuntimeSupervisorUpdated: payload =>
+        handlers.onRuntimeSupervisorUpdated?.(address, payload),
       onRuntimeGoalContinuation: payload => handlers.onRuntimeGoalContinuation?.(address, payload),
       onRuntimePlanUpdated: payload => handlers.onRuntimePlanUpdated?.(address, payload),
       onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
@@ -119,6 +127,7 @@ export function createRuntimeConversationStreamHandlers(
     onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
     onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
     onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
+    onRuntimeSupervisorUpdated: payload => resolve(payload)?.onRuntimeSupervisorUpdated?.(payload),
     onRuntimeGoalContinuation: payload => resolve(payload)?.onRuntimeGoalContinuation?.(payload),
     onRuntimePlanUpdated: payload => resolve(payload)?.onRuntimePlanUpdated?.(payload),
     onGuidanceApplied: payload => resolve(payload)?.onGuidanceApplied?.(payload),
@@ -139,6 +148,20 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (payload.runtimeGeneratedUserMessage) {
+        handlers.onMessageAction({
+          type: 'user_added',
+          message: {
+            id: payload.runtimeGeneratedUserMessage.id,
+            taskId: address.taskId,
+            role: 'user',
+            content: payload.runtimeGeneratedUserMessage.message,
+            status: 'done',
+            source: payload.runtimeGeneratedUserMessage.source as MessageSource,
+            createdAt: new Date(payload.runtimeGeneratedUserMessage.createdAt).toISOString(),
+          },
+        })
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:start', address, payload)
@@ -394,6 +417,10 @@ export function createRuntimeTaskStreamHandlers(
     onRuntimeGoalCleared: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
+    },
+    onRuntimeSupervisorUpdated: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeSupervisorUpdated?.(payload)
     },
     onRuntimeGoalContinuation: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
