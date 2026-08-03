@@ -41,6 +41,7 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { WorkbenchMessage } from '@/types/workbench'
 import {
   defaultAppearance,
@@ -127,10 +128,14 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     tone: 'success' | 'error'
   } | null>(null)
   const currentRuntimeTask = pane.currentRuntimeTask
+  const activePaneProject = pane.currentProject
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: activePaneProject,
+  })
   const retryFailedMessage = paneSession.retryFailedMessage
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
@@ -174,6 +179,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     onModelSelectorOpenChange: open => {
       if (!open) pendingModelRetryRef.current = null
     },
+    onRefineTrialPrompt: refinePluginTrialPrompt,
   }
   const emptyTitle = activeConversationProject
     ? t('workbench.project_empty_title', {

@@ -121,6 +121,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -543,6 +544,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => cancelAnimationFrame(frame)
   }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
+  const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
+    source: currentRuntimeTask,
+    project: currentProject,
+  })
   const sendPaneInput = paneSession.send
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
   const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
@@ -1507,8 +1512,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onModelSelectorOpenChange: open => {
         if (!open) pendingModelRetryRef.current = null
       },
+      onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
-    [modelSelectorOpenSignal, projectChat, retryFailedMessageAfterModelSelect]
+    [
+      modelSelectorOpenSignal,
+      projectChat,
+      refinePluginTrialPrompt,
+      retryFailedMessageAfterModelSelect,
+    ]
   )
   const emptyProjectWork = useMemo(
     () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),

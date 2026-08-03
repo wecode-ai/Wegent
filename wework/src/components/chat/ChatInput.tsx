@@ -1,4 +1,13 @@
-import { Boxes, Check, ChevronLeft, ChevronRight, CornerDownLeft, Sparkles, X } from 'lucide-react'
+import {
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  CornerDownLeft,
+  LoaderCircle,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
@@ -35,7 +44,8 @@ import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
-import { buildContextualPluginPrompt } from '@/features/plugins/pluginTrial'
+import { buildRefinedPluginPrompt } from '@/features/plugins/pluginTrial'
+import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -52,6 +62,7 @@ export interface ProjectChatControls {
   hasConversationContext?: boolean
   onDismissTrialGuide?: () => void
   onApplyTrialTemplate?: (template: PluginPathComponent) => void
+  onRefineTrialPrompt?: (request: PluginTrialRefinementRequest) => Promise<string>
   dismissTrialGuide?: () => void
   applyTrialTemplate?: (template: PluginPathComponent) => void
   selectedSkills: SkillRef[]
@@ -221,16 +232,20 @@ function isSameModel(left: UnifiedModel | null | undefined, right: UnifiedModel 
 function PluginTrialTemplateStrip({
   templates,
   pluginName,
+  draft,
   hasConversationContext = false,
   onApplyTemplate,
-  onApplyContext,
+  onRefinePrompt,
+  onApplyRefinedPrompt,
   onDismiss,
 }: {
   templates: PluginPathComponent[]
   pluginName?: string
+  draft: string
   hasConversationContext?: boolean
   onApplyTemplate?: (template: PluginPathComponent) => void
-  onApplyContext?: () => void
+  onRefinePrompt?: (draft: string) => Promise<string>
+  onApplyRefinedPrompt?: (prompt: string) => void
   onDismiss?: () => void
 }) {
   const { t } = useTranslation('common')
@@ -239,18 +254,34 @@ function PluginTrialTemplateStrip({
   const pageCount = Math.max(1, Math.ceil(availableTemplates.length / 3))
   const visiblePage = Math.min(page, pageCount - 1)
   const visibleTemplates = availableTemplates.slice(visiblePage * 3, visiblePage * 3 + 3)
-  const [selectedTemplatePath, setSelectedTemplatePath] = useState(
-    availableTemplates[0]?.path ?? ''
-  )
-  const [contextSuggestionApplied, setContextSuggestionApplied] = useState(false)
+  const [refinedPrompt, setRefinedPrompt] = useState('')
+  const [refining, setRefining] = useState(false)
+  const [refineError, setRefineError] = useState('')
 
-  if (availableTemplates.length === 0) return null
+  if (availableTemplates.length === 0 && !onRefinePrompt) return null
+
+  const refine = async () => {
+    if (!onRefinePrompt || refining) return
+    setRefining(true)
+    setRefineError('')
+    try {
+      setRefinedPrompt(await onRefinePrompt(draft))
+    } catch (error) {
+      setRefineError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.plugin_trial_ai_error', 'AI 暂时无法完善任务，请重试')
+      )
+    } finally {
+      setRefining(false)
+    }
+  }
 
   return (
     <section
       className="mx-auto mb-2 max-w-[760px] overflow-hidden rounded-xl border border-border/25 bg-background shadow-md"
       data-testid="plugin-trial-template-strip"
-      aria-label={t('workbench.plugin_trial_guide_title', '插件使用建议')}
+      aria-label={t('workbench.plugin_trial_guide_title', '插件使用引导')}
     >
       <div className="flex items-start justify-between gap-3 px-3 pb-2 pt-2.5">
         <div className="flex min-w-0 items-start gap-2">
@@ -258,44 +289,30 @@ function PluginTrialTemplateStrip({
             <Sparkles className="h-4 w-4" aria-hidden="true" />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-medium leading-5 text-text-primary">
-              {t('workbench.plugin_trial_guide_title', '插件使用建议')}
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium leading-4 text-text-secondary">
+                {t('workbench.plugin_trial_guide_badge', 'AI 使用引导')}
+              </span>
+              <span className="truncate text-sm font-medium leading-5 text-text-primary">
+                {pluginName
+                  ? `${t('workbench.plugin_trial_guide_use_well', '用好')} ${pluginName}`
+                  : t('workbench.plugin_trial_guide_title', '插件使用引导')}
+              </span>
             </div>
-            <p className="truncate text-xs leading-4 text-text-muted">
-              {pluginName
-                ? t('workbench.plugin_trial_guide_plugin_hint', {
-                    plugin: pluginName,
-                    defaultValue: `正在使用 ${pluginName} · 选择后仍可修改`,
-                  })
-                : t('workbench.plugin_trial_guide_hint_short', '选择后仍可修改，不会自动发送')}
+            <p className="mt-0.5 truncate text-xs leading-4 text-text-muted">
+              {hasConversationContext
+                ? t(
+                    'workbench.plugin_trial_guide_context_hint',
+                    'AI 可参考近期对话，帮你整理成可直接使用的任务'
+                  )
+                : t(
+                    'workbench.plugin_trial_guide_draft_hint',
+                    '先说你想做什么，AI 会结合当前输入和插件能力补全'
+                  )}
             </p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {pageCount > 1 && (
-            <>
-              <button
-                type="button"
-                data-testid="plugin-trial-template-previous"
-                aria-label={t('workbench.plugin_trial_previous_scenarios', '上一组场景')}
-                disabled={visiblePage === 0}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
-                onClick={() => setPage(current => Math.max(0, current - 1))}
-              >
-                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                data-testid="plugin-trial-template-next"
-                aria-label={t('workbench.plugin_trial_next_scenarios', '下一组场景')}
-                disabled={visiblePage >= pageCount - 1}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
-                onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
-              >
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </>
-          )}
           {onDismiss && (
             <button
               type="button"
@@ -309,100 +326,161 @@ function PluginTrialTemplateStrip({
           )}
         </div>
       </div>
-      <div className="px-1.5 pb-1.5">
-        {hasConversationContext && onApplyContext && (
-          <>
+      <div className="space-y-2 px-2 pb-2">
+        {refinedPrompt ? (
+          <div
+            className="rounded-lg border border-border/20 bg-surface/55 p-2.5"
+            data-testid="plugin-trial-ai-result"
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label
+                htmlFor="plugin-trial-refined-prompt"
+                className="text-xs font-medium leading-4 text-text-secondary"
+              >
+                {t('workbench.plugin_trial_ai_result', 'AI 整理的任务')}
+              </label>
+              <span className="text-xs leading-4 text-text-muted">
+                {t('workbench.plugin_trial_ai_result_hint', '可修改后再带入输入框')}
+              </span>
+            </div>
+            <textarea
+              id="plugin-trial-refined-prompt"
+              data-testid="plugin-trial-refined-prompt"
+              value={refinedPrompt}
+              onChange={event => setRefinedPrompt(event.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-border/25 bg-background px-2.5 py-2 text-sm leading-5 text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus/40 focus:ring-2 focus:ring-focus/10"
+            />
+            <div className="mt-2 flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                data-testid="plugin-trial-ai-regenerate"
+                className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary transition-colors hover:bg-background hover:text-text-primary"
+                onClick={() => void refine()}
+                disabled={refining}
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('workbench.plugin_trial_ai_regenerate', '重新整理')}
+              </button>
+              <button
+                type="button"
+                data-testid="plugin-trial-ai-apply"
+                className="inline-flex h-7 items-center gap-1.5 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+                onClick={() => onApplyRefinedPrompt?.(refinedPrompt)}
+                disabled={!refinedPrompt.trim()}
+              >
+                {t('workbench.plugin_trial_ai_apply', '带入输入框')}
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            data-testid="plugin-trial-ai-refine"
+            className="flex min-h-12 w-full items-center gap-2.5 rounded-lg border border-border/20 bg-surface/55 px-2.5 py-2 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20 disabled:cursor-not-allowed disabled:opacity-55"
+            onClick={() => void refine()}
+            disabled={!onRefinePrompt || refining}
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary shadow-sm">
+              {refining ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <strong className="block truncate text-sm font-medium leading-5 text-text-primary">
+                {refining
+                  ? t('workbench.plugin_trial_ai_refining', 'AI 正在整理任务…')
+                  : t('workbench.plugin_trial_ai_action', 'AI 帮我补全任务')}
+              </strong>
+              <span className="block truncate text-xs leading-4 text-text-muted">
+                {hasConversationContext
+                  ? t(
+                      'workbench.plugin_trial_ai_action_context_hint',
+                      '读取近期对话、当前输入和插件能力'
+                    )
+                  : t('workbench.plugin_trial_ai_action_draft_hint', '根据当前输入和插件能力整理')}
+              </span>
+            </span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+          </button>
+        )}
+        {refineError && (
+          <div
+            className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs leading-4 text-red-700"
+            role="alert"
+            data-testid="plugin-trial-ai-error"
+          >
+            <span>{refineError}</span>
             <button
               type="button"
-              data-testid="plugin-trial-context-suggestion"
-              aria-pressed={contextSuggestionApplied}
-              className={[
-                'flex min-h-12 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20',
-                contextSuggestionApplied ? 'bg-surface text-text-primary' : 'hover:bg-surface/70',
-              ].join(' ')}
-              onClick={() => {
-                setContextSuggestionApplied(true)
-                setSelectedTemplatePath('')
-                onApplyContext()
-              }}
+              className="shrink-0 font-medium hover:underline"
+              onClick={() => void refine()}
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
-                <Sparkles className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <strong className="block truncate text-sm font-medium leading-5 text-text-primary">
-                  {t('workbench.plugin_trial_context_action', '让 AI 结合当前对话完善')}
-                </strong>
-                <span className="block truncate text-xs leading-4 text-text-muted">
-                  {t(
-                    'workbench.plugin_trial_context_action_hint',
-                    '带入聊天后，AI 会参考近期消息和已有材料补全任务'
-                  )}
-                </span>
-              </span>
-              {contextSuggestionApplied ? (
-                <Check className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
-              ) : (
-                <CornerDownLeft className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-              )}
+              {t('workbench.retry', '重试')}
             </button>
-            <p className="px-2 pb-1 pt-2 text-xs leading-4 text-text-muted">
-              {t('workbench.plugin_trial_or_choose_example', '或者从插件示例开始')}
-            </p>
+          </div>
+        )}
+        {availableTemplates.length > 0 && (
+          <>
+            <div className="flex items-center justify-between gap-2 px-0.5 pt-0.5">
+              <p className="text-xs font-medium leading-4 text-text-muted">
+                {t('workbench.plugin_trial_or_choose_example', '也可以从示例开始')}
+              </p>
+              {pageCount > 1 && (
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    data-testid="plugin-trial-template-previous"
+                    aria-label={t('workbench.plugin_trial_previous_scenarios', '上一组场景')}
+                    disabled={visiblePage === 0}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
+                    onClick={() => setPage(current => Math.max(0, current - 1))}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="plugin-trial-template-next"
+                    aria-label={t('workbench.plugin_trial_next_scenarios', '下一组场景')}
+                    disabled={visiblePage >= pageCount - 1}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface hover:text-text-primary disabled:opacity-35"
+                    onClick={() => setPage(current => Math.min(pageCount - 1, current + 1))}
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-1 sm:grid-cols-3">
+              {visibleTemplates.map(template => {
+                const displayTitle = pluginTemplateDisplayTitle(template, t)
+                const descriptionPreview = pluginTemplateDisplayDescription(template, t)
+                return (
+                  <button
+                    key={template.path}
+                    type="button"
+                    className="flex min-h-9 min-w-0 items-center gap-1.5 rounded-lg px-2 py-1 text-left text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                    data-testid="plugin-trial-template-card"
+                    title={descriptionPreview || displayTitle}
+                    onClick={() => onApplyTemplate?.(template)}
+                  >
+                    <span className="truncate text-xs font-medium leading-4">{displayTitle}</span>
+                    <CornerDownLeft
+                      className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                      aria-hidden="true"
+                    />
+                  </button>
+                )
+              })}
+            </div>
           </>
         )}
-        {visibleTemplates.map(template => {
-          const selected = selectedTemplatePath === template.path
-          const displayTitle = pluginTemplateDisplayTitle(template, t)
-          const descriptionPreview = pluginTemplateDisplayDescription(template, t)
-          const showDescription = Boolean(descriptionPreview)
-          return (
-            <button
-              key={template.path}
-              type="button"
-              className={[
-                'flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20',
-                selected ? 'bg-surface text-text-primary' : 'hover:bg-surface/70',
-              ].join(' ')}
-              data-testid="plugin-trial-template-card"
-              aria-pressed={selected}
-              onClick={() => {
-                setContextSuggestionApplied(false)
-                setSelectedTemplatePath(template.path)
-                onApplyTemplate?.(template)
-              }}
-            >
-              {template.logoUrl || template.logoUrlDark ? (
-                <img
-                  src={template.logoUrl || template.logoUrlDark || ''}
-                  alt=""
-                  className="h-6 w-6 shrink-0 rounded-md object-contain"
-                />
-              ) : (
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background text-text-muted">
-                  <Boxes className="h-4 w-4" aria-hidden="true" />
-                </span>
-              )}
-              <span className="min-w-0 flex-1">
-                <strong className="block truncate text-sm font-medium leading-5 text-text-primary">
-                  {displayTitle}
-                </strong>
-                {showDescription && (
-                  <span className="block truncate text-xs leading-4 text-text-muted">
-                    {descriptionPreview}
-                  </span>
-                )}
-              </span>
-              <CornerDownLeft className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-            </button>
-          )
-        })}
       </div>
       <p className="border-t border-border/20 px-3 py-2 text-xs leading-4 text-text-muted">
-        {t(
-          'workbench.plugin_trial_guide_hint',
-          '以上内容只会带入输入框，你可以继续修改，不会自动发送'
-        )}
+        {t('workbench.plugin_trial_guide_hint', 'AI 和示例只会帮你完善输入，不会自动发送')}
       </p>
     </section>
   )
@@ -652,20 +730,20 @@ export function ChatInput({
           key={controls.trialPluginName || 'plugin-trial'}
           templates={controls.trialTemplates ?? []}
           pluginName={controls.trialPluginName}
+          draft={value}
           hasConversationContext={controls.hasConversationContext}
           onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
-          onApplyContext={() =>
-            onChange(
-              buildContextualPluginPrompt(
-                value,
-                t(
-                  'workbench.plugin_trial_context_prompt',
-                  '请结合当前对话最近内容，理解我正在推进的目标，并使用这个插件完成最合适的下一步。信息不足时，只询问一个必要问题。'
-                ),
-                t('workbench.plugin_trial_current_idea', '我的当前想法')
-              )
-            )
+          onRefinePrompt={
+            controls.onRefineTrialPrompt
+              ? draft =>
+                  controls.onRefineTrialPrompt?.({
+                    pluginName: controls.trialPluginName ?? '',
+                    draft,
+                    templates: controls.trialTemplates ?? [],
+                  }) ?? Promise.reject(new Error('AI refinement unavailable'))
+              : undefined
           }
+          onApplyRefinedPrompt={prompt => onChange(buildRefinedPluginPrompt(value, prompt))}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
         {displayedGoal && !goalDraftActive && (
@@ -753,20 +831,20 @@ export function ChatInput({
         key={controls.trialPluginName || 'plugin-trial'}
         templates={controls.trialTemplates ?? []}
         pluginName={controls.trialPluginName}
+        draft={value}
         hasConversationContext={controls.hasConversationContext}
         onApplyTemplate={controls.onApplyTrialTemplate ?? controls.applyTrialTemplate}
-        onApplyContext={() =>
-          onChange(
-            buildContextualPluginPrompt(
-              value,
-              t(
-                'workbench.plugin_trial_context_prompt',
-                '请结合当前对话最近内容，理解我正在推进的目标，并使用这个插件完成最合适的下一步。信息不足时，只询问一个必要问题。'
-              ),
-              t('workbench.plugin_trial_current_idea', '我的当前想法')
-            )
-          )
+        onRefinePrompt={
+          controls.onRefineTrialPrompt
+            ? draft =>
+                controls.onRefineTrialPrompt?.({
+                  pluginName: controls.trialPluginName ?? '',
+                  draft,
+                  templates: controls.trialTemplates ?? [],
+                }) ?? Promise.reject(new Error('AI refinement unavailable'))
+            : undefined
         }
+        onApplyRefinedPrompt={prompt => onChange(buildRefinedPluginPrompt(value, prompt))}
         onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
       />
       {displayedGoal && !goalDraftActive && (

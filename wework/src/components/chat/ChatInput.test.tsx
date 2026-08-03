@@ -3898,9 +3898,12 @@ describe('ChatInput', () => {
     expect(dismissTrialGuide).toHaveBeenCalledOnce()
   })
 
-  test('offers a conversation-aware plugin task without sending it', async () => {
+  test('uses AI to refine a conversation-aware plugin task before applying it', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()
+    const onRefineTrialPrompt = vi
+      .fn()
+      .mockResolvedValue('Summarize the launch notes into a concise release memo')
 
     render(
       <ChatInput
@@ -3912,6 +3915,7 @@ describe('ChatInput', () => {
         projectChat={projectChatControls({
           trialPluginName: 'Documents',
           hasConversationContext: true,
+          onRefineTrialPrompt,
           trialTemplates: [
             {
               name: 'Project memo',
@@ -3923,16 +3927,27 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByText('插件使用建议')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugin-trial-context-suggestion'))
+    expect(screen.getByText('AI 使用引导')).toBeInTheDocument()
+    expect(screen.getByText('用好 Documents')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-trial-ai-refine'))
 
-    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('请结合当前对话最近内容'))
-    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('Summarize the launch notes'))
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(screen.getByTestId('plugin-trial-context-suggestion')).toHaveAttribute(
-      'aria-pressed',
-      'true'
+    expect(onRefineTrialPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginName: 'Documents',
+        draft: expect.stringContaining('Summarize the launch notes'),
+      })
     )
+    expect(await screen.findByTestId('plugin-trial-refined-prompt')).toHaveValue(
+      'Summarize the launch notes into a concise release memo'
+    )
+    expect(onChange).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('plugin-trial-ai-apply'))
+
+    expect(onChange).toHaveBeenCalledWith(
+      '[$Documents](plugin://documents@openai-bundled) Summarize the launch notes into a concise release memo '
+    )
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 
   test('submits typed content', async () => {

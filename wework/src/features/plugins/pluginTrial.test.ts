@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
 import {
   buildContextualPluginPrompt,
+  buildRefinedPluginPrompt,
   buildTrialTemplatePrompt,
   consumePluginTrial,
   consumePluginTrialInput,
@@ -248,5 +249,14 @@ describe('plugin trial state', () => {
     ).toBe(
       '[$Sites](plugin://sites@openai-bundled) Use the recent conversation to complete the task.\n\nMy current idea: Build a launch page '
     )
+  })
+
+  test('applies an AI-refined task while preserving the plugin mention', () => {
+    expect(
+      buildRefinedPluginPrompt(
+        '[$Sites](plugin://sites@openai-bundled) rough idea',
+        'Build a launch page for the Q4 campaign'
+      )
+    ).toBe('[$Sites](plugin://sites@openai-bundled) Build a launch page for the Q4 campaign ')
   })
 })

@@ -1653,15 +1653,22 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     control,
     snapshot =>
       snapshot.testIds.includes('plugin-trial-template-strip') &&
-      snapshot.testIds.includes('plugin-trial-context-suggestion') &&
+      snapshot.testIds.includes('plugin-trial-ai-refine') &&
       snapshot.text.includes(PLUGIN_DISPLAY_NAME),
-    'Trying the installed plugin did not expose its composer templates'
+    'Trying the installed plugin did not expose its AI usage guide'
   )
-  await control.command('click', '[data-testid="plugin-trial-context-suggestion"]')
+  await control.command('click', '[data-testid="plugin-trial-ai-refine"]')
+  await control.command('waitFor', '[data-testid="plugin-trial-refined-prompt"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="plugin-trial-refined-prompt"]', {
+    value: 'Use the current conversation to summarize the installed plugin rollout.',
+  })
+  await control.command('click', '[data-testid="plugin-trial-ai-apply"]')
   assert.match(
     await control.command('getValue', ACTIVE_COMPOSER_SELECTOR),
-    /recent conversation|当前对话/,
-    'The context-aware plugin suggestion did not fill a conversation-aware task'
+    /summarize the installed plugin rollout/,
+    'The AI-refined plugin task was not applied to the composer'
   )
   await captureVerificationScreenshot(control, 'plugins-04-used-in-chat.png')
 

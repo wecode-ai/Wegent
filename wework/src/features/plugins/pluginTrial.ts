@@ -387,3 +387,11 @@ export function buildContextualPluginPrompt(
   const prompt = body.filter(Boolean).join('\n\n')
   return prefix ? `${prefix} ${prompt} ` : `${prompt} `
 }
+
+export function buildRefinedPluginPrompt(currentInput: string, refinedPrompt: string): string {
+  const mentionMatch = currentInput.match(/^(\[\$[^\]]+\]\([^)]+\))\s*/)
+  const prefix = mentionMatch?.[1] ?? ''
+  const prompt = refinedPrompt.trim()
+  if (!prompt) return currentInput
+  return prefix ? `${prefix} ${prompt} ` : `${prompt} `
+}

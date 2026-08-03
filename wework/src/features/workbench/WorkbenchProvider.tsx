@@ -1470,6 +1470,9 @@ export function WorkbenchProvider({
   const stableCreateTemporaryRuntimeTask = useStableEvent(
     runtimeMessaging.createTemporaryRuntimeTask
   )
+  const stableCreateEphemeralRuntimeTask = useStableEvent(
+    runtimeMessaging.createEphemeralRuntimeTask
+  )
   const stableCreateProjectRuntimeTask = useStableEvent(runtimeMessaging.createProjectRuntimeTask)
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
@@ -1835,6 +1838,7 @@ export function WorkbenchProvider({
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
     createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
+    createEphemeralRuntimeTask: runtimeMessaging.createEphemeralRuntimeTask,
     createProjectRuntimeTask: runtimeMessaging.createProjectRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
@@ -1921,6 +1925,7 @@ export function WorkbenchProvider({
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
       createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
+      createEphemeralRuntimeTask: stableCreateEphemeralRuntimeTask,
       createProjectRuntimeTask: stableCreateProjectRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
@@ -1951,6 +1956,7 @@ export function WorkbenchProvider({
       stableEditLastUserMessage,
       stableCreateGitWorkspaceProject,
       stableCreateProject,
+      stableCreateEphemeralRuntimeTask,
       stableCreateTemporaryRuntimeTask,
       stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,

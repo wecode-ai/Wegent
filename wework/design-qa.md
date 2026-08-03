@@ -1,77 +1,73 @@
-# Plugin guidance design QA
+# Plugin composer AI guidance design QA
 
 - Source visual truth:
+  - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-2909cb89-cbbc-448b-948b-966b07d118e1.png`
   - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-5823212f-1096-4052-85bc-2e1937cae407.png`
-  - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-c5035f5e-6689-4ddf-b18f-e396bfd16588.png`
   - `/var/folders/01/4sjfpdwj1ls3k91ykpx3rpd80000gn/T/codex-clipboard-e5632fa5-cab3-4c71-ab2b-a96bfe09fd18.png`
 - Rendered implementation:
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-01-40-048Z-90474/plugin-detail.png`
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-01-40-048Z-90474/plugin-guide.png`
-  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-01-40-048Z-90474/plugin-composer-guide.png`
-- Viewport: `1280 × 720` CSS pixels at device scale factor `1`.
-- Source pixels: dialog `773 × 792`; detail entry `1071 × 218`; composer guidance `812 × 395`.
-- Implementation pixels: `1280 × 720` for all three captures.
-- Normalization: each annotated source and its corresponding implementation capture were opened together in one comparison input. The sources are cropped annotations rather than full product frames, so hierarchy, density, affordance, spacing, and copy were compared at the component level rather than by shell geometry.
-- State: light theme; Code Review marketplace detail and guide dialog; Data Analytics selected from the composer plugin picker.
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-ai-guide-project.png`
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-ai-guide-result.png`
+- Same-input comparison:
+  - `/Users/md/Wegent/wework/test-results/ai-verify/2026-08-03T04-57-34-498Z-15264/plugin-guide-comparison.png`
+- Viewport: `1280 x 720` CSS pixels at device scale factor `1`.
+- State: light theme, local project selected, an installed plugin selected from the composer.
+
+## Product decision
+
+The composer popup is no longer a second plugin picker. It is a lightweight plugin-use coach with two paths:
+
+1. The primary path asks AI to turn the current draft, plugin capabilities, available examples, and inherited recent conversation into one ready-to-send task.
+2. The secondary path lets the user start from a compact plugin example when AI refinement is unnecessary.
+
+AI output is always shown in an editable preview before it can replace the composer text. Applying it preserves the plugin mention and never submits automatically.
 
 ## Findings
 
 No actionable P0/P1/P2 findings remain.
 
-- The detail entry is intentionally not a literal reproduction of the three-card source. The source annotation identifies those cards as too heavy and difficult to populate consistently; the implementation replaces them with one lightweight AI guide row and one recommended starting point.
-- The dialog now establishes guidance before plugin content, makes the editable task goal primary, places the preview before optional supplement, and collapses supplement by default.
-- The composer panel is visually and verbally separated from the plugin picker: it has a Sparkles guide icon, “插件使用建议” title, active plugin helper, editable-example affordances, and a no-auto-send footer.
+- The old header (`<plugin> 常用场景`) read as another plugin list. The new header uses an explicit `AI 使用引导` badge, `用好 <plugin>` title, and consequence-focused helper copy.
+- Repeated plugin icons made every row look like a plugin entity. The new design uses a single AI identity at the panel and text-only examples as secondary actions.
+- The old list offered only static examples. The new primary action runs hidden ephemeral inference using the current model selection and, when available, the current runtime task as conversation context.
+- Generated text is not silently inserted. It enters an editable result state with `重新整理` and `带入输入框` actions.
+- Loading, failure, retry, close, apply, and no-auto-send consequences are visible in the same panel.
 
-## Full-view comparison evidence
+## Visual comparison
 
-- Detail: the original three equal cards consumed a full section and implied every plugin must provide three scenarios. The implementation uses a single neutral row with a concise explanation and one recommended example, reducing visual weight and removing the fixed-count assumption.
-- Dialog: the annotated source placed optional supplement above the task preview and gave both equal emphasis. The implementation puts the editable goal and one key preference first, promotes the exact composer draft, and moves supplement into a low-emphasis disclosure after the preview.
-- Composer: the annotated source could be mistaken for another plugin menu. The implementation clearly labels the panel as plugin guidance, names the active plugin, and explains that selection only fills the composer.
+- Hierarchy: the AI action is the only full-width primary row; examples are lower contrast and grouped under `也可以从示例开始`.
+- Identity: the panel is visually separated from the plugin picker and explicitly states why it appeared.
+- Density: the previous three equal rows became one primary AI action plus compact example text, reducing repeated chrome and icons.
+- Borders and color: existing Wework neutral surfaces and weak borders are reused; no new saturated accent or decorative asset was introduced.
+- Composer relationship: the selected plugin mention remains inside the composer, while guidance stays above it and explains that it only improves input.
 
-## Focused-region comparison evidence
+## Interaction evidence
 
-- Dialog header, goal input, selected preference, preview, supplement disclosure, footer consequence copy, and primary CTA were inspected at full capture resolution. Text remains legible without overflow at `1280 × 720`.
-- Composer header, selected example row, plugin mention, close control, enter affordances, and the relationship between guide panel and composer were inspected at full capture resolution.
-- The active-conversation enhancement is covered by component and desktop E2E interaction evidence: it appears only when an active conversation exists, preserves the plugin mention and current draft, inserts a context-aware instruction, and does not submit.
+- Component tests verify AI success, no mutation before confirmation, editable preview, preserved plugin mention, and no automatic submit.
+- Hook tests verify creation of a hidden ephemeral runtime task, inherited source conversation, output normalization, and surfaced model errors.
+- Desktop plugin E2E verifies opening the guide, AI result editing, applying the result to the composer, and no automatic send.
+- Real Tauri inspection verified the initial, loading, and inline timeout/retry states. The isolated manual session did not have a responding model, so AI success is covered by deterministic hook/component/desktop-E2E execution rather than claimed from that session.
+- Production build, strict TypeScript, focused tests, and lint completed successfully.
 
-## Required fidelity surfaces
-
-- Fonts and typography: existing Wework semantic type roles, weights, line heights, wrapping, and truncation are used. Primary labels remain visually distinct from helper copy. Passed.
-- Spacing and layout rhythm: the detail entry is compact; the dialog retains the shared 600px overlay and readable section rhythm; the composer guide stays within the 760px composer column. Passed.
-- Colors and visual tokens: neutral surfaces, weak borders, restrained selected states, and the existing inverse primary action are used. No new decorative color system was introduced. Passed.
-- Image quality and asset fidelity: existing plugin assets and Lucide product icons are reused. No generated placeholder, inline SVG artwork, CSS drawing, or fake logo was added. Passed.
-- Copy and content: every entry explains its consequence; “AI 插件使用向导” and “插件使用建议” distinguish guidance from plugin selection; context-aware copy states when recent messages will be used; all actions explicitly avoid automatic sending. Passed.
-- Responsiveness and accessibility: dialog focus trap, Escape close, focus restoration, labeled controls, `aria-pressed`, disclosure state, and keyboard-reachable actions are covered by tests. No visible clipping or persistent-control overflow was found. Passed.
-
-## Primary interactions tested
-
-- Opened the single guide entry from marketplace detail.
-- Edited the task goal and changed the plugin-specific preference.
-- Verified that the task preview updates before confirmation.
-- Expanded optional supplement only on demand.
-- Verified active-conversation enhancement preserves the current idea and only fills the composer.
-- Selected plugin examples from the composer without submitting.
-- Verified close, Escape, focus trap, and focus restoration behavior.
-- Ran the real desktop plugin flow: install, try, composer selection, slash-command selection, and uninstall.
-- Isolated Tauri debug state contained no captured application console errors. The unrelated local cloud API `HTTP 502` status does not affect this local plugin flow.
-
-## Comparison history
+## Iteration history
 
 ### Iteration 1
 
-- P1: detail used three equally prominent scenario cards and forced a fixed scenario count.
-- P1: dialog made optional supplement compete with the generated task preview.
-- P1: composer guidance resembled another plugin list and did not explain why it appeared.
-- Fixes: consolidated detail to one AI guide entry; reordered dialog around editable goal → key choice → preview → optional supplement; added explicit guidance identity and consequence copy to composer.
+- P1: plugin examples visually resembled installed-plugin rows.
+- P1: there was no dynamic completion path.
+- Fix: added explicit AI guide identity and promoted AI refinement over examples.
 
 ### Iteration 2
 
-- P2: “AI 结合当前对话生成任务” implied an immediate hidden generation step.
-- Fix: changed the action to “让 AI 结合当前对话完善” and made the actual behavior explicit: recent conversation is used after the task enters chat, current draft is preserved, and nothing is sent automatically.
-- Post-fix evidence: current implementation captures plus passing component and real desktop plugin E2E.
+- P1: earlier context enhancement merely appended an instruction and did not call a model.
+- P1: an immediate model rewrite would be surprising if it replaced the composer silently.
+- Fix: replaced the fake enhancement with hidden runtime inference and introduced an editable result preview before apply.
+
+### Iteration 3
+
+- P2: repeated icons and equal-weight rows still made the guide look like a plugin picker.
+- Fix: removed repeated plugin icons, reduced example emphasis, clarified no-auto-send behavior, and added inline retry.
 
 ## Follow-up polish
 
-- P3: plugin-provided English scenario prompts remain English when localized metadata is unavailable. This preserves source instructions and can be improved when plugin manifests support localized prompts.
+- P3: plugin-provided examples remain in their manifest language when localized metadata is unavailable.
 
 final result: passed

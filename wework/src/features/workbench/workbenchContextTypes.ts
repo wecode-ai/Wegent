@@ -327,6 +327,10 @@ export interface WorkbenchContextValue {
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
+  createEphemeralRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
   createProjectRuntimeTask: (
     input: string,
     options: CreateProjectRuntimeTaskOptions
