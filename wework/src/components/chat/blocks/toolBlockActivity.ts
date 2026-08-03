@@ -10,6 +10,7 @@ import {
   isGuidanceToolName,
   isContextCompactionToolName,
   isPatchApplyToolName,
+  isNodeReplToolName,
 } from './toolBlockKinds'
 
 export type ProcessingDisplayRow =
@@ -263,6 +264,7 @@ export function getToolActivityKind(block: ToolBlock): ToolActivityKind {
   if (isFileEditToolName(name)) return 'edit'
   if (isGuidanceToolName(name)) return 'guidance'
   if (SEARCH_TOOL_HINTS.some(hint => name.includes(hint))) return 'search'
+  if (isNodeReplToolName(name)) return 'command'
   if (isCommandToolName(name)) {
     return getCommandActivityKind(getInputField(block, 'command', 'cmd', 'commandLine'))
   }
