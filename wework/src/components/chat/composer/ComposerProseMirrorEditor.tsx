@@ -1,4 +1,11 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { RefObject } from 'react'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
@@ -38,6 +45,7 @@ interface ComposerProseMirrorEditorProps {
   onKeyUp: (event: KeyboardEvent) => void
   onCompositionStart: () => void
   onCompositionEnd: () => void
+  onBlur?: () => void
   onPaste: (event: ClipboardEvent) => boolean
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
@@ -63,6 +71,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   const textareaRefRef = useRef(props.textareaRef)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
+  const [hasContent, setHasContent] = useState(props.value !== '')
   callbacksRef.current = props
 
   useLayoutEffect(() => {
@@ -139,6 +148,7 @@ export const ComposerProseMirrorEditor = forwardRef<
         view.updateState(nextState)
         const snapshot = readComposerSnapshot(nextState)
         internalValueRef.current = snapshot.value
+        setHasContent(snapshot.value !== '')
         if (transaction.docChanged && !transaction.getMeta(EXTERNAL_VALUE_META)) {
           callbacksRef.current.onChange(snapshot.value)
         }
@@ -187,6 +197,10 @@ export const ComposerProseMirrorEditor = forwardRef<
         },
         focus() {
           callbacksRef.current.onFocus()
+          return false
+        },
+        blur() {
+          callbacksRef.current.onBlur?.()
           return false
         },
       },
@@ -261,13 +275,14 @@ export const ComposerProseMirrorEditor = forwardRef<
     const view = viewRef.current
     if (!view || props.value === internalValueRef.current) return
     const selectionOffset = view.hasFocus() ? props.value.length : undefined
+    setHasContent(props.value !== '')
     replaceComposerValue(view, props.value, selectionOffset, true)
   }, [props.value])
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <div ref={mountRef} />
-      {!props.value && (
+      {!hasContent && (
         <div
           className={`${props.className} pointer-events-none absolute inset-0 !text-text-muted/55`}
         >

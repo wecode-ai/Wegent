@@ -15,6 +15,8 @@ export interface ComposerSubmitOptions {
 export interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   canSend: boolean
   disabled?: boolean
