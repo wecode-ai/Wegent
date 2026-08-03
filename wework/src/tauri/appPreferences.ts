@@ -10,6 +10,7 @@ export interface AppPreferences {
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
   experimentalFeaturesEnabled: boolean
+  supervisorPrinciples: string
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
@@ -64,6 +65,7 @@ export interface AppPreferencesPatch {
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
   experimentalFeaturesEnabled?: boolean
+  supervisorPrinciples?: string
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
@@ -108,6 +110,7 @@ export const defaultAppPreferences: AppPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   experimentalFeaturesEnabled: false,
+  supervisorPrinciples: '',
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -181,6 +184,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
         : defaultAppPreferences.experimentalFeaturesEnabled,
+    supervisorPrinciples:
+      typeof record.supervisorPrinciples === 'string'
+        ? record.supervisorPrinciples
+        : defaultAppPreferences.supervisorPrinciples,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled

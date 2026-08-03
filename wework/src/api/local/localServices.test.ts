@@ -2140,6 +2140,39 @@ describe('createLocalAppServices', () => {
     })
   })
 
+  test('normalizes local task supervisor requests before IPC', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      supervisor: {
+        mode: 'suggest',
+        status: 'active',
+        instructions: 'Keep scope focused',
+        suggestions: [],
+      },
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
+    })
+  })
+
   test('adapts executor runtime workspace list to workbench shape', async () => {
     const request = vi.fn().mockResolvedValue({
       success: true,

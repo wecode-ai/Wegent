@@ -590,6 +590,8 @@ struct AppPreferences {
     #[serde(default)]
     experimental_features_enabled: bool,
     #[serde(default)]
+    supervisor_principles: String,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -694,6 +696,7 @@ impl Default for AppPreferences {
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
             experimental_features_enabled: false,
+            supervisor_principles: String::new(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -743,6 +746,7 @@ struct AppPreferencesPatch {
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
     experimental_features_enabled: Option<bool>,
+    supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1208,6 +1212,9 @@ fn update_app_preferences(
     if let Some(value) = patch.experimental_features_enabled {
         preferences.experimental_features_enabled = value;
     }
+    if let Some(value) = patch.supervisor_principles {
+        preferences.supervisor_principles = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -1265,6 +1272,7 @@ struct AppPreferences {
     language: String,
     terminal_context_injection_enabled: bool,
     experimental_features_enabled: bool,
+    supervisor_principles: String,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -1289,6 +1297,7 @@ struct AppPreferencesPatch {
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
     experimental_features_enabled: Option<bool>,
+    supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -1313,6 +1322,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
         experimental_features_enabled: false,
+        supervisor_principles: String::new(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -1343,6 +1353,7 @@ fn update_app_preferences(
             .terminal_context_injection_enabled
             .unwrap_or(true),
         experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
+        supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),

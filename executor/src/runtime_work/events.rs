@@ -108,6 +108,14 @@ pub(crate) fn emit_response_event(
             payload_object.insert("source".to_owned(), source.clone());
         }
     }
+    if let Some(generated_user_message) = request.extra.get("runtime_generated_user_message") {
+        if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
+            payload_object.insert(
+                "runtimeGeneratedUserMessage".to_owned(),
+                generated_user_message.clone(),
+            );
+        }
+    }
     let receiver_count = event_tx.receiver_count();
     let delivery = event_tx.send(payload);
     if terminal {

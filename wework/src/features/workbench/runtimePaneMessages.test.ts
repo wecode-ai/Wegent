@@ -160,6 +160,45 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('inserts an idle supervisor correction before its assistant turn starts', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'supervisor-correction-1',
+      runtimeGeneratedUserMessage: {
+        id: 'supervisor-correction-1',
+        message: 'Return to scope.',
+        createdAt: 1_700_000_000_000,
+        source: { source: 'supervisor' },
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'user_added',
+        message: expect.objectContaining({
+          id: 'supervisor-correction-1',
+          content: 'Return to scope.',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_started',
+        subtaskId: 'turn-1',
+        clientUserMessageId: 'supervisor-correction-1',
+      }),
+    ])
+  })
+
   test('preserves completed item snapshot semantics', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',

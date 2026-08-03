@@ -129,6 +129,14 @@ const GOAL_RESTART_PROMPT =
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
 const GOAL_RESTART_RESUME_PROMPT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_RESUME'
 const GOAL_RESTART_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_COMPLETE'
+const SUPERVISOR_PROMPT =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR: complete this task so supervision can inspect it.'
+const SUPERVISOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_COMPLETE'
+const SUPERVISOR_PRINCIPLES =
+  'Flag material goal drift and provide the smallest directly actionable correction.'
+const SUPERVISOR_CORRECTION =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION: explicitly confirm the original constraint.'
+const SUPERVISOR_CORRECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   ...Array.from({ length: 24 }, (_, index) =>
@@ -4210,7 +4218,7 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
+async function ensureExperimentalFeaturesEnabled(control) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
     await control.command('click', '[data-testid="settings-button"]')
@@ -4224,7 +4232,10 @@ async function verifyAutomationLifecycle(control, workspacePath) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+}
 
+async function verifyAutomationLifecycle(control, workspacePath) {
+  await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -6623,6 +6634,55 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
   )
 }
 
+async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+  await ensureExperimentalFeaturesEnabled(control)
+  control.setScenario('supervisor')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
+  control.releaseSupervisorInitialResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="task-supervisor-toggle-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+  await control.command('click', '[data-testid="task-supervisor-mode-auto"]')
+  await control.command('fill', '[data-testid="task-supervisor-instructions"]', {
+    value: SUPERVISOR_PRINCIPLES,
+  })
+  await control.command('click', '[data-testid="task-supervisor-save-button"]')
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor evaluator did not inspect the completed task'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 3),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Auto-correction did not send a normal follow-up turn after the task became idle'
+  )
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: SUPERVISOR_CORRECTION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('task-supervisor-suggestion'),
+    'Auto-correction incorrectly rendered an approval card'
+  )
+}
+
 async function verifyGoalRestartRecoveryLifecycle({
   composerSelector,
   control,
@@ -7202,6 +7262,9 @@ class DesktopE2EServer {
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
+    this.supervisorInitialRelease = new Promise(resolvePromise => {
+      this.releaseSupervisorInitial = resolvePromise
+    })
     this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
       this.resolveToolBlockNodeOutputObserved = resolvePromise
     })
@@ -7400,6 +7463,7 @@ class DesktopE2EServer {
         'official_plugin',
         'automation',
         'skill_mention_display',
+        'supervisor',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -7530,6 +7594,10 @@ class DesktopE2EServer {
 
   releaseRunningForkFollowUpResponse() {
     this.releaseRunningForkFollowUp()
+  }
+
+  releaseSupervisorInitialResponse() {
+    this.releaseSupervisorInitial()
   }
 
   releaseGoalIdleInitialResponse() {
@@ -8964,6 +9032,58 @@ class DesktopE2EServer {
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'supervisor') {
+      this.recordScenarioRequest('supervisor', modelRequest)
+      const requestText = JSON.stringify(body)
+      if (requestText.includes('Current visible progress snapshot (JSON):')) {
+        assert.ok(
+          requestText.includes('correction'),
+          'The supervisor evaluator request did not include its structured output schema'
+        )
+        assert.ok(
+          requestText.includes(SUPERVISOR_COMPLETION_TEXT),
+          'The supervisor evaluator did not receive the latest assistant progress'
+        )
+        assert.equal(
+          requestText.includes(SUPERVISOR_PROMPT),
+          false,
+          'The supervisor evaluator received the original user transcript instead of recent AI content'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            JSON.stringify({
+              correction: SUPERVISOR_CORRECTION,
+              rationale: 'The completed reply should restate the original constraint.',
+            })
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([responseCreated(responseId), assistantMessage(SUPERVISOR_COMPLETION_TEXT)])
+      )
+      await this.supervisorInitialRelease
+      response.end(createSse([responseCompleted(responseId)]))
       return
     }
 
@@ -12816,6 +12936,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       if (shouldStopAfterDesktopCheckpoint('goal-lifecycle')) {
         console.log(`Wework desktop goal-lifecycle checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('supervisor-lifecycle')) {
+      phase = 'supervisor-lifecycle'
+      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      if (shouldStopAfterDesktopCheckpoint('supervisor-lifecycle')) {
+        console.log(`Wework desktop supervisor-lifecycle checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

@@ -1427,10 +1427,55 @@ fn turn_start_params_includes_client_user_message_id() {
 }
 
 #[test]
+fn turn_start_params_includes_output_schema() {
+    let mut request = ExecutionRequest::default();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "accepted": {"type": "boolean"}
+        },
+        "required": ["accepted"],
+        "additionalProperties": false
+    });
+    request
+        .extra
+        .insert("output_schema".to_owned(), schema.clone());
+
+    let params = turn_start_params(
+        "thread-1",
+        &request,
+        &CodexLaunchConfig::default(),
+        Vec::new(),
+    );
+
+    assert_eq!(params["outputSchema"], schema);
+}
+
+#[test]
 fn thread_start_uses_codex_default_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
     assert!(params.get("historyMode").is_none());
+}
+
+#[test]
+fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
+    let request = ExecutionRequest {
+        system_prompt: "Judge the supplied content without answering it.".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig::default();
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+
+    for params in [thread_start, thread_fork, thread_resume] {
+        assert_eq!(
+            params["developerInstructions"],
+            "Judge the supplied content without answering it."
+        );
+    }
 }
 
 #[test]
@@ -1450,6 +1495,26 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
         assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_READ_ONLY_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
     }
 }
 

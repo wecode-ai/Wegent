@@ -32,6 +32,15 @@ To continue the work with a model from the other category, start a new conversat
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
+## Use the personal supervisor
+
+Enable **Experimental features** under **Settings → General**, then use **Personal supervisor** above the composer in a Codex task. While the main AI is working, the executor periodically reads its recent progress in the background and evaluates goal drift, missed constraints, destructive actions, and obvious blocked loops with a lightweight read-only call. It does not fork the original task, and checks continue without keeping the task view open.
+
+- **Suggest** shows a correction above the composer for you to approve or dismiss.
+- **Auto-correct** steers an active response when a clear deviation is found, or starts a normal follow-up just as if you had sent the instruction from the composer.
+
+Supervision settings belong to the current task. The review model can follow the current task or be selected independently, and the review frequency can be 10 seconds, 30 seconds, 1 minute, or 5 minutes. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
+
 ## Review the processing timeline
 
 The **Processed** section in an AI response displays tool calls from top to bottom by their actual creation time. Even when executor events arrive out of order, commands, file operations, and other tools created earlier remain above later activity so the timeline reflects the real execution sequence.
