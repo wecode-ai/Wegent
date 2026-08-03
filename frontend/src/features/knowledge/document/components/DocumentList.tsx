@@ -504,6 +504,33 @@ export function DocumentList({
     setInitialDocPathHandled(false)
   }, [initialDocPath, initialDocumentId, knowledgeBase.id])
 
+  // A deep-linked document can be selected from another page in a paginated
+  // list. Refresh that snapshot by ID so the detail dialog does not show stale
+  // processing state while the current page is being viewed.
+  useEffect(() => {
+    const viewingDocId = viewingDoc?.id
+    const viewingDocName = viewingDoc?.name
+    if (
+      !viewingDocId ||
+      !viewingDocName ||
+      documents.some(document => document.id === viewingDocId)
+    ) {
+      return
+    }
+
+    const controller = new AbortController()
+    void findDocumentForDeepLink(
+      knowledgeBase.id,
+      viewingDocName,
+      viewingDocId,
+      controller.signal
+    ).then(found => {
+      if (!controller.signal.aborted && found) setViewingDoc(found)
+    })
+
+    return () => controller.abort()
+  }, [documents, knowledgeBase.id, viewingDoc?.id, viewingDoc?.name])
+
   useEffect(() => {
     if (
       (!initialDocPath && initialDocumentId === undefined) ||
