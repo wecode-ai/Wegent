@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { BufferedChatInput } from './BufferedChatInput'
@@ -66,9 +66,13 @@ describe('BufferedChatInput', () => {
     const onChange = vi.fn()
     render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
 
-    await userEvent.type(screen.getByTestId('chat-message-input'), 'unfinished draft')
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'unfinished draft')
+    fireEvent.blur(input)
 
-    expect(onChange).toHaveBeenLastCalledWith('unfinished draft')
+    await waitFor(() => {
+      expect(onChange).toHaveBeenLastCalledWith('unfinished draft')
+    })
   })
 
   test('restores a buffered draft after switching chat scopes', async () => {
