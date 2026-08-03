@@ -747,6 +747,11 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-01-reasoning-hidden-during-text.png')
       releaseToolFinalCompletion()
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       const toolRegressionSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
