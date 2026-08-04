@@ -24,6 +24,7 @@ const DEFAULT_RECONNECT_MAX_DELAY_SECONDS: u64 = 30;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalBackendConfig {
     pub backend_url: String,
+    pub socket_url: String,
     pub auth_token: String,
     pub device_id: String,
     pub runtime_instance_id: String,
@@ -53,6 +54,17 @@ impl LocalBackendConfig {
             .trim()
             .trim_end_matches('/')
             .to_owned();
+        let socket_url = config
+            .connection
+            .socket_url
+            .trim()
+            .trim_end_matches('/')
+            .to_owned();
+        let socket_url = if socket_url.is_empty() {
+            backend_url.clone()
+        } else {
+            socket_url
+        };
         let client_ip = detect_client_ip(&backend_url);
         let runtime_transfer_host = env::var("RUNTIME_TRANSFER_HOST")
             .ok()
@@ -62,6 +74,7 @@ impl LocalBackendConfig {
 
         Self {
             backend_url,
+            socket_url,
             auth_token: normalize_token(&config.connection.auth_token),
             device_id: normalize_nonempty(config.device_id, "local-device"),
             runtime_instance_id: normalize_nonempty(config.runtime_instance_id, "runtime-local"),
