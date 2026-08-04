@@ -39,12 +39,11 @@ const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fix
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
 const VIEWPORT_ANCHOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${VIEWPORT_ANCHOR_E2E_ID}"]`
-const HISTORY_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
-  if (index === 11) {
-    return VIEWPORT_ANCHOR_TEXT
-  }
-  return `Completed history paragraph ${index + 1}: this content belongs to the previous assistant turn.`
-})
+const HISTORY_PARAGRAPHS = Array.from(
+  { length: 28 },
+  (_, index) =>
+    `Completed history paragraph ${index + 1}: this content belongs to the previous assistant turn.`
+)
 const INITIAL_COMPLETION = `WEWORK_DESKTOP_E2E_STREAMING_TEXT_INITIAL_COMPLETE\n\n${HISTORY_PARAGRAPHS.join('\n\n')}`
 const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
   prompt: `${HISTORY_PROMPT_PREFIX}_${index + 1}`,
@@ -56,9 +55,11 @@ const HISTORY_TURNS = Array.from({ length: 4 }, (_, index) => ({
 }))
 const STREAMING_TURN_INDEX = HISTORY_TURNS.length + 1
 const PANE_EVICTION_BLANK_COUNT = 4
-const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) => {
-  return `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
-})
+const INITIAL_PARAGRAPHS = Array.from({ length: 28 }, (_, index) =>
+  index === 26
+    ? VIEWPORT_ANCHOR_TEXT
+    : `Initial streaming paragraph ${index + 1}: enough text keeps the response taller than the desktop chat viewport.`
+)
 const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
   index === 0
     ? `${APPEND_MARKER}: later streamed content is now visible in the response.`
@@ -695,10 +696,14 @@ export function createDesktopScenario({
         response.write(sse(stream.start))
         await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
         await appendRelease
-        await writeSseEvents(
-          response,
-          textDeltaEvents(stream.itemId, APPENDED_TEXT, PARTIAL_TEXT.length)
-        )
+        await new Promise(resolve => setTimeout(resolve, 100))
+        let appendOffset = PARTIAL_TEXT.length
+        for (const chunk of APPENDED_TEXT.match(/[\s\S]{1,48}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, appendOffset)))
+          response.flush?.()
+          appendOffset += [...chunk].length
+          await new Promise(resolve => setTimeout(resolve, 40))
+        }
         resolveAppendWritten()
         await responseRelease
         response.end(sse(stream.finish))
@@ -1062,7 +1067,6 @@ export function createDesktopScenario({
         !streamingSnapshot.text.includes(APPEND_MARKER),
         'The later assistant delta was visible before the runtime released it'
       )
-      await control.command('scrollToRatioAsUser', SCROLLER_SELECTOR, { value: '0.18' })
       await control.command('waitFor', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
         text: VIEWPORT_ANCHOR_TEXT,
         stableMs: 750,
@@ -1078,6 +1082,8 @@ export function createDesktopScenario({
         VIEWPORT_ANCHOR_TEXT,
         'The viewport anchor paragraph was not rendered at the expected position'
       )
+      await control.command('focusMainWindow', 'body')
+      await control.command('scrollFromBottomAsUser', SCROLLER_SELECTOR, { value: '160' })
       const userScrollPosition = await getSingleElementMetrics(
         control,
         SCROLLER_SELECTOR,
@@ -1103,7 +1109,6 @@ export function createDesktopScenario({
         'The composer after the user scrolled the streaming conversation'
       )
 
-      await control.command('scrollIntoViewAsUser', VIEWPORT_ANCHOR_SELECTOR)
       await new Promise(resolve => setTimeout(resolve, 250))
       const scrollerBeforeAppend = await getSingleElementMetrics(
         control,
@@ -1134,8 +1139,63 @@ export function createDesktopScenario({
         previousContentLength !== null,
         'The streaming response disappeared before the later content arrived'
       )
+      await control.command('startScrollStabilitySampling', VIEWPORT_ANCHOR_SCOPE_SELECTOR, {
+        value: JSON.stringify({
+          anchorText: VIEWPORT_ANCHOR_TEXT,
+          durationMs: 2_000,
+          scrollerSelector: SCROLLER_SELECTOR,
+        }),
+        timeoutMs: 6_000,
+      })
       releaseAppend()
       await appendWritten
+      let stabilitySamples
+      const stabilityDeadline = Date.now() + 6_000
+      while (Date.now() < stabilityDeadline) {
+        stabilitySamples = JSON.parse(
+          await control.command('getScrollStabilitySample', VIEWPORT_ANCHOR_SCOPE_SELECTOR)
+        )
+        if (stabilitySamples.done) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      assert.ok(
+        stabilitySamples?.done,
+        `The streaming scroll stability sampler did not finish: ${JSON.stringify({
+          frames: stabilitySamples?.frames.length ?? 0,
+          missingFrames: stabilitySamples?.missingFrames ?? 0,
+          scrollEvents: stabilitySamples?.scrollEvents.length ?? 0,
+        })}`
+      )
+      assert.ok(
+        stabilitySamples.frames.length >= 12,
+        `The WebView captured only ${stabilitySamples.frames.length} streaming stability samples`
+      )
+      assert.equal(
+        stabilitySamples.missingFrames,
+        0,
+        'The user-selected text disappeared while the streaming response rerendered'
+      )
+      const anchorTops = stabilitySamples.frames.map(sample => sample.anchorTop)
+      const anchorRange = Math.max(...anchorTops) - Math.min(...anchorTops)
+      const scrollDirections = stabilitySamples.scrollEvents
+        .slice(1)
+        .map((sample, index) =>
+          Math.abs(sample.scrollTop - stabilitySamples.scrollEvents[index].scrollTop) < 0.5
+            ? 0
+            : Math.sign(sample.scrollTop - stabilitySamples.scrollEvents[index].scrollTop)
+        )
+        .filter(direction => direction !== 0)
+      const directionReversals = scrollDirections.filter(
+        (direction, index) => index > 0 && direction !== scrollDirections[index - 1]
+      ).length
+      assert.ok(
+        anchorRange <= 8 && directionReversals === 0 && stabilitySamples.scrollEvents.length === 0,
+        `The user-selected text jittered while chunks streamed: ${JSON.stringify({
+          anchorRange,
+          directionReversals,
+          stabilitySamples,
+        })}`
+      )
       const scrollerAfterAppend = await waitForRenderedAppend(
         control,
         previousContentLength,
