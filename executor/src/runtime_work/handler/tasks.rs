@@ -272,13 +272,8 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
-        if existing_link
-            .as_ref()
-            .is_some_and(|link| runtime_model_selection_changed(link, &payload))
-        {
-            request
-                .extra
-                .insert("wework_model_switched".to_owned(), Value::Bool(true));
+        if let Some(link) = existing_link.as_ref() {
+            mark_runtime_model_switch(&mut request, link, &payload);
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
@@ -412,6 +407,7 @@ impl RuntimeWorkRpcHandler {
         let workspace_path =
             workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
         apply_runtime_payload_metadata(&mut request, &payload);
+        mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
@@ -824,6 +820,18 @@ pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &
             .or_else(|| payload.get("model_selection")),
     );
     previous.is_some() && next.is_some() && previous != next
+}
+
+pub(super) fn mark_runtime_model_switch(
+    request: &mut ExecutionRequest,
+    link: &RuntimeTaskLink,
+    payload: &Value,
+) {
+    if runtime_model_selection_changed(link, payload) {
+        request
+            .extra
+            .insert("wework_model_switched".to_owned(), Value::Bool(true));
+    }
 }
 
 fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option<String>)> {

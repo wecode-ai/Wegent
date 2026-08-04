@@ -4997,16 +4997,12 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', officialModelSelector)
-  const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
-    await control.command(
-      'clickWhenEnabled',
-      '[data-testid="model-switch-warning-confirm-button"]',
-      {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      }
-    )
-  }
+  await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PROVIDER_SWITCH_COMPLETION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

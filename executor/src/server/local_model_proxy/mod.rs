@@ -675,9 +675,7 @@ fn begin_model_request(registered: &RegisteredUpstream, body: &[u8]) -> ModelReq
     let Some(current_model) = current_model else {
         return ModelRequestRouting::default();
     };
-    if registered.pending_model_switch_cleanup
-        && (request_contains_model_switch_marker(body) || request_has_encrypted_model_state(body))
-    {
+    if registered.pending_model_switch_cleanup {
         return ModelRequestRouting {
             model_switched: true,
             model_to_commit: Some(current_model),
@@ -738,16 +736,19 @@ fn prepare_model_switch_request(
     let Some(object) = request.as_object_mut() else {
         return Ok(body);
     };
-    let Some(items) = object.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok(body);
-    };
-    let before = items.len();
-    items.retain(|item| !has_encrypted_model_state(item));
-    let removed_items = before.saturating_sub(items.len());
-    if removed_items == 0 {
+    let removed_previous_response_id = object.remove("previous_response_id").is_some();
+    let removed_items = object
+        .get_mut("input")
+        .and_then(Value::as_array_mut)
+        .map(|items| {
+            let before = items.len();
+            items.retain(|item| !has_encrypted_model_state(item));
+            before.saturating_sub(items.len())
+        })
+        .unwrap_or_default();
+    if removed_items == 0 && !removed_previous_response_id {
         return Ok(body);
     }
-    let removed_previous_response_id = object.remove("previous_response_id").is_some();
     log_executor_event(
         "local model proxy removed encrypted history for model switch",
         &[
@@ -770,13 +771,6 @@ fn prepare_model_switch_request(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to encode model switch request: {error}"),
     })
-}
-
-fn request_has_encrypted_model_state(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|request| request.get("input").and_then(Value::as_array).cloned())
-        .is_some_and(|items| items.iter().any(has_encrypted_model_state))
 }
 
 fn request_contains_model_switch_marker(body: &[u8]) -> bool {
@@ -1941,6 +1935,83 @@ mod tests {
             );
         }
         unregister(&token);
+    }
+
+    #[test]
+    fn consumes_pending_model_switch_cleanup_on_the_first_plain_request() {
+        let token = register(
+            "first-plain-request-after-switch",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("kimi-k3".to_owned()),
+                routing_model_id: Some("wework-kimi-k3".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        mark_model_switch(&token);
+        let body = br#"{
+            "model":"stale-codex-model",
+            "input":[{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"continue"}]
+            }]
+        }"#;
+
+        let routing = {
+            let entries = registry().lock().expect("registry lock");
+            begin_model_request(entries.routes.get(&token).expect("registered route"), body)
+        };
+        assert!(routing.model_switched);
+        assert!(routing.clear_pending_model_switch);
+
+        commit_model_request(&token, &routing);
+        {
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("registered route");
+            assert!(!route.pending_model_switch_cleanup);
+            assert!(!begin_model_request(route, body).model_switched);
+        }
+        unregister(&token);
+    }
+
+    #[test]
+    fn removes_previous_response_id_from_a_switched_request_without_encrypted_items() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("kimi-k3".to_owned()),
+            routing_model_id: Some("wework-kimi-k3".to_owned()),
+            max_output_tokens: None,
+        };
+        let body = serde_json::to_vec(&json!({
+            "model": "stale-codex-model",
+            "previous_response_id": "resp_old_provider",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }]
+        }))
+        .expect("request body");
+
+        let prepared =
+            prepare_model_switch_request(&upstream, body, true).expect("request preparation");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared request");
+
+        assert!(prepared.get("previous_response_id").is_none());
+        assert_eq!(prepared["input"].as_array().unwrap().len(), 1);
     }
 
     #[test]
