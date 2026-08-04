@@ -188,6 +188,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       block: WorkbenchProcessingBlock<TFileChanges>
+      replaceAssistantTextItemId?: string
     }
   | {
       type: 'block_updated'

@@ -20,6 +20,7 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -3343,6 +3344,56 @@ describe('DesktopSidebar', () => {
       opener: 'finder',
       path: '/Users/alice/dev/Wegent',
     })
+  })
+
+  test('hides automatic project-space joining when experimental features are disabled', async () => {
+    experimentalFeatures.enabled = false
+    const user = userEvent.setup()
+    const projectSpaceApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
+    } as unknown as ProjectSpaceApi
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: 'project:7',
+              name: 'Wegent',
+              source: 'local_project',
+              stateDeviceId: 'local-device',
+              roots: [{ kind: 'local', path: '/Users/alice/dev/Wegent' }],
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      projectSpaceApis: [projectSpaceApi],
+      onUpdateLocalRuntimeProject: vi.fn().mockResolvedValue(undefined),
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('edit-project-7'))
+
+    expect(screen.queryByTestId('local-project-auto-join-space-select')).not.toBeInTheDocument()
+    expect(projectSpaceApi.listCloudProjects).not.toHaveBeenCalled()
   })
 
   test('creates a permanent worktree from a runtime project', async () => {

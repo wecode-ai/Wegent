@@ -107,7 +107,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 
 矩阵提交等待上限为 10 秒。如果编辑器已经显示提交错误，runner 会立即抛出该错误；否则在协议阶段未按时推进时输出当前阶段和已捕获请求，避免失败后长时间无反馈。
 
-`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先验证流式推理显示“正在思考 · 摘要”，并在响应完成后移除推理摘要及其占位，再启动长命令，确认工具行耗时在切换任务后连续递增，同时工具分组标题不显示整轮累计耗时。随后场景构造超过虚拟化阈值的多轮长对话，验证“正在思考”位置、用户滚动锚点、流式增长和任务重开后的视口稳定性，并在响应完成后确认等待状态消失。该场景会保存推理、工具计时、就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态。场景先让同一个 assistant item 以 `final_answer` 开始流式输出、再以 `commentary` 完成，验证 Executor 通过 `response.block.created.replacesItemId` 通知前端把已显示正文原子迁移到过程块，页面只保留一份过程文本且最终回答区为空。随后场景验证流式推理显示“正在思考 · 摘要”，并在响应完成后移除推理摘要及其占位，再启动长命令，确认工具行耗时在切换任务后连续递增，同时工具分组标题不显示整轮累计耗时。场景还会构造超过虚拟化阈值的多轮长对话，验证“正在思考”位置、用户滚动锚点、流式增长和任务重开后的视口稳定性，并在响应完成后确认等待状态消失。该场景会保存阶段改判、推理、工具计时、就绪、流式和完成阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
 
 `e2e:desktop:embedded-browser` 通过场景模块运行内置浏览器 Agent 操作回归。它使用真实 Tauri WebView、Executor、Codex app-server 和 browser MCP server，打开本地 fixture 页面并通过当前 WKWebView bridge 验证浏览器控制链路。场景覆盖 bridge identity 读取、认证 bridge 请求、打开页面、结构化 `inspect`、`fill`、`click`、`wait`、`scroll`、`screenshot`、`capabilities`、高风险动作确认，以及 MCP 组合工具 `open_and_inspect` 和 `wait_and_inspect`。它还会启动一个长时间 `waitFor`，再验证独立 `click` 不会被阻塞，用于防止 bridge 并发退化。测试结果会写入 `embedded-browser-agent-result.json`。
 

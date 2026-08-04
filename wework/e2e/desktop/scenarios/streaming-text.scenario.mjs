@@ -6,6 +6,8 @@ const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-messa
 const TOOL_REGRESSION_PROMPT = 'WEWORK_DESKTOP_E2E_TOOL_TEXT_OFFSET'
 const TOOL_PREAMBLE = '找到了关键错误。看一下失败前后的上下文：'
 const TOOL_COMPLETION = '本地分支落后于 main，CI 跑的提交是 719f99694。'
+const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_FINAL_TO_COMMENTARY'
+const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_COMMENTARY'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
 const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
@@ -225,6 +227,53 @@ function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'final_an
   }
 }
 
+function phaseFlipEvents(id) {
+  const itemId = `${id}-phase-flip-message`
+  return [
+    responseCreated(id),
+    {
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        id: itemId,
+        type: 'message',
+        status: 'in_progress',
+        role: 'assistant',
+        content: [],
+        phase: 'final_answer',
+      },
+    },
+    {
+      type: 'response.content_part.added',
+      item_id: itemId,
+      output_index: 0,
+      content_index: 0,
+      part: { type: 'output_text', text: '', annotations: [] },
+    },
+    ...textDeltaEvents(itemId, PHASE_FLIP_TEXT),
+    {
+      type: 'response.output_text.done',
+      item_id: itemId,
+      output_index: 0,
+      content_index: 0,
+      text: PHASE_FLIP_TEXT,
+    },
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        id: itemId,
+        type: 'message',
+        status: 'completed',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: PHASE_FLIP_TEXT, annotations: [] }],
+        phase: 'commentary',
+      },
+    },
+    responseCompleted(id),
+  ]
+}
+
 function textDeltaEvents(itemId, text, initialOffset = 0) {
   return [
     {
@@ -267,6 +316,10 @@ function findHistoryTurn(body) {
 
 function requestContainsToolRegressionPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TOOL_REGRESSION_PROMPT)
+}
+
+function requestContainsPhaseFlipPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(PHASE_FLIP_PROMPT)
 }
 
 function requestContainsTimerPrompt(body) {
@@ -729,6 +782,12 @@ export function createDesktopScenario({
         throw new Error(`Unexpected tool-text-offset stage: ${toolRegressionStage}`)
       }
 
+      if (requestContainsPhaseFlipPrompt(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(sse(phaseFlipEvents(responseId)))
+        return true
+      }
+
       const historyTurn = findHistoryTurn(body)
       if (historyTurn) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -772,6 +831,34 @@ export function createDesktopScenario({
         active = false
         return
       }
+      await control.command('fill', COMPOSER_SELECTOR, { value: PHASE_FLIP_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: PHASE_FLIP_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        0,
+        'The reclassified commentary remained visible as final assistant content'
+      )
+      const phaseFlipSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.equal(
+        phaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
+        1,
+        'The reclassified commentary was rendered more than once'
+      )
+      await capture(control, 'streaming-text-00-reclassified-commentary-once.png')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: TOOL_REGRESSION_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       try {

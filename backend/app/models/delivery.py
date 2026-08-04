@@ -198,14 +198,6 @@ class LoopItem(LoopNode):
         return [str(tag) for tag in tags]
 
 
-class CloudProjectLocalBinding(LoopNode):
-    __mapper_args__ = {"polymorphic_identity": "local_binding"}
-
-    def __init__(self, **kwargs: object) -> None:
-        kwargs.setdefault("is_default", False)
-        super().__init__(**kwargs)
-
-
 class LoopItemTaskBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "execution"}
 
