@@ -132,6 +132,7 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
   SupervisorSuggestionCards,
   TaskSupervisorControl,
@@ -583,6 +584,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     startNewChat,
   } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
+  const workspaceTabs = useOptionalWorkspaceTabs()
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
@@ -1269,6 +1271,30 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
       ? deliveryItem
       : null
+
+  const openBoundProjectSpaceTask = useCallback(() => {
+    if (!boundCloudProject || !boundCloudItem) return
+    const params = new URLSearchParams()
+    params.set('projectId', String(boundCloudProject.id))
+    params.set('itemId', boundCloudItem.id)
+    const contentRoute = `/todo?${params.toString()}`
+    const boardTab = workspaceTabs?.tabs.find(tab => tab.kind === 'board')
+    if (boardTab && workspaceTabs) {
+      workspaceTabs.selectTab(boardTab.id, {
+        title: boundCloudProject.name,
+        contentRoute,
+      })
+      return
+    }
+    if (workspaceTabs) {
+      workspaceTabs.openTab('board', {
+        title: boundCloudProject.name,
+        contentRoute,
+      })
+      return
+    }
+    navigateTo(contentRoute)
+  }, [boundCloudItem, boundCloudProject, workspaceTabs])
 
   const finishLocalDelivery = useCallback(async () => {
     if (!activeDeliveryItem) return
@@ -2408,10 +2434,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       onManageTodo={
         experimentalFeaturesEnabled && currentRuntimeTask && services?.deliveryApi
-          ? () => {
-              setDeliverAfterBinding(false)
-              setTodoBindingPickerOpen(true)
-            }
+          ? boundCloudItem
+            ? openBoundProjectSpaceTask
+            : () => {
+                setDeliverAfterBinding(false)
+                setTodoBindingPickerOpen(true)
+              }
           : undefined
       }
       supervisor={supervisorFeatureAvailable ? supervisor : null}
