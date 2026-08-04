@@ -12,7 +12,7 @@ The bell button at the top of the Wework sidebar opens a temporary **Priority** 
 - On macOS, press <kbd>Option</kbd><kbd>Command</kbd><kbd>U</kbd>. On other platforms, press <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>U</kbd>.
 - Click the button or use the shortcut a second time to return to the normal project and task lists.
 
-The filter keeps primary navigation—such as **New Task**, **Plugins**, **Scheduled**, **Sites**, and cloud connection—available. Only the project and task tree is replaced with cross-project priority results.
+The filter keeps primary navigation—such as **New Task**, **Plugins**, **Scheduled**, **Applications**, and cloud connection—available. Only the project and task tree is replaced with cross-project priority results.
 
 ## Which tasks are shown
 
