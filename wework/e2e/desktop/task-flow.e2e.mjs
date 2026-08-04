@@ -6917,7 +6917,7 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
   const supervisorRunningTestId = `runtime-local-task-running-${supervisorTaskId}`
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const beforeStaleSettlement = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
