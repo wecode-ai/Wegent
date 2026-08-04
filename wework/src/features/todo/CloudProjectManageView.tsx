@@ -5,12 +5,17 @@ import type { DwsApi, DwsAuthStatus } from '@/api/dws'
 import type {
   CloudLoopItem,
   CloudProject,
+  CloudProjectLocalBinding,
   CloudProjectMember,
   CloudUserSearchItem,
 } from '@/api/deliveries'
+import { PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT } from '@/api/deliveries'
+import { cacheAutoJoinProjectSpace } from './projectSpaceLocalBindings'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { ProjectWithTasks } from '@/types/api'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
 import {
@@ -58,6 +63,7 @@ export function CloudProjectManageView({
   aitableApi,
   dwsApi,
   project,
+  localProjects,
   boardCardDisplay,
   onProjectUpdated,
 }: {
@@ -65,9 +71,11 @@ export function CloudProjectManageView({
   aitableApi?: AITableApi
   dwsApi?: DwsApi
   project: CloudProject
+  localProjects: ProjectWithTasks[]
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [version, setVersion] = useState(project.version)
   const [error, setError] = useState<string | null>(null)
   const [members, setMembers] = useState<CloudProjectMember[]>([])
@@ -76,6 +84,11 @@ export function CloudProjectManageView({
   const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
   const [statuses, setStatuses] = useState<BoardStatuses>(project.board_config?.statuses ?? [])
   const [visibility, setVisibility] = useState(project.visibility ?? 'private')
+  const [localBindings, setLocalBindings] = useState<CloudProjectLocalBinding[]>([])
+  const [selectedLocalProjectId, setSelectedLocalProjectId] = useState<number | null>(
+    localProjects[0]?.id ?? null
+  )
+  const [bindingBusyId, setBindingBusyId] = useState<number | null>(null)
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
@@ -110,17 +123,66 @@ export function CloudProjectManageView({
 
   useEffect(() => {
     let active = true
-    void Promise.all([api.listCloudProjectMembers(project.id), api.listLoopItems(project.id)])
-      .then(([nextMembers, response]) => {
+    void Promise.all([
+      api.listCloudProjectMembers(project.id),
+      api.listLoopItems(project.id),
+      typeof api.listLocalBindings === 'function'
+        ? api.listLocalBindings(project.id)
+        : Promise.resolve([]),
+    ])
+      .then(([nextMembers, response, bindings]) => {
         if (!active) return
         setMembers(nextMembers)
         setItems(response.items)
+        setLocalBindings(bindings)
       })
       .catch(cause => active && setError(cause instanceof Error ? cause.message : '加载项目失败'))
     return () => {
       active = false
     }
   }, [api, project.id])
+
+  async function addLocalProjectBinding() {
+    if (!selectedLocalProjectId || bindingBusyId !== null) return
+    setBindingBusyId(selectedLocalProjectId)
+    try {
+      const created = await api.addLocalBinding(project.id, {
+        local_project_id: selectedLocalProjectId,
+        is_default: false,
+      })
+      setLocalBindings(current => [...current, created])
+      window.dispatchEvent(new Event(PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT))
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('todo.local_binding_link_failed', '关联本地项目失败')
+      )
+    } finally {
+      setBindingBusyId(null)
+    }
+  }
+
+  async function removeLocalProjectBinding(binding: CloudProjectLocalBinding) {
+    if (bindingBusyId !== null) return
+    setBindingBusyId(binding.local_project_id)
+    try {
+      await api.deleteLocalBinding(project.id, binding.id)
+      if (binding.is_default) {
+        cacheAutoJoinProjectSpace(binding.local_project_id, binding.device_id, null)
+      }
+      setLocalBindings(current => current.filter(candidate => candidate.id !== binding.id))
+      window.dispatchEvent(new Event(PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT))
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('todo.local_binding_unlink_failed', '解除本地项目关联失败')
+      )
+    } finally {
+      setBindingBusyId(null)
+    }
+  }
 
   useEffect(() => {
     if (!isAITable || !aitableApi) return
@@ -391,6 +453,101 @@ export function CloudProjectManageView({
           <h1 className="text-heading-lg font-semibold">管理项目</h1>
           <p className="mt-1 text-sm text-text-muted">管理项目成员、标签和看板布局。</p>
         </header>
+
+        <section className="border-t border-border py-6">
+          <div>
+            <h2 className="text-heading-md font-semibold">
+              {t('todo.local_binding_title', '关联本地项目')}
+            </h2>
+            <p className="mt-1 text-sm text-text-muted">
+              {t(
+                'todo.local_binding_description',
+                '关联后可从任务输入框的“+”菜单选择当前项目空间；自动加入请在本地项目设置中配置。'
+              )}
+            </p>
+          </div>
+          <div className="mt-4 space-y-2">
+            {localBindings.map(binding => {
+              const localProject = localProjects.find(
+                candidate => candidate.id === binding.local_project_id
+              )
+              return (
+                <div
+                  key={binding.id}
+                  data-testid={`cloud-project-local-binding-${binding.local_project_id}`}
+                  className="flex items-center gap-3 rounded-xl border border-border px-3 py-2.5"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {localProject?.name ??
+                        t('todo.local_binding_project_fallback', '本地项目 #{{id}}', {
+                          id: binding.local_project_id,
+                        })}
+                    </span>
+                    <span className="block text-xs text-text-muted">
+                      {binding.device_id
+                        ? t('todo.local_binding_device', '设备 {{device}}', {
+                            device: binding.device_id,
+                          })
+                        : t('todo.local_binding_all_devices', '所有设备')}
+                    </span>
+                  </span>
+                  {binding.is_default && (
+                    <span
+                      data-testid={`cloud-project-local-binding-default-${binding.local_project_id}`}
+                      className="rounded-lg border border-text-primary bg-text-primary px-3 py-1.5 text-xs text-background"
+                    >
+                      {t('todo.local_binding_default', '自动加入')}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    data-testid={`cloud-project-local-binding-remove-${binding.local_project_id}`}
+                    aria-label={t('todo.local_binding_unlink', '解除关联')}
+                    disabled={bindingBusyId !== null}
+                    onClick={() => void removeLocalProjectBinding(binding)}
+                    className="grid size-8 place-items-center rounded-lg text-text-muted hover:bg-muted hover:text-danger disabled:opacity-50"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              )
+            })}
+            {localProjects.some(
+              localProject =>
+                !localBindings.some(binding => binding.local_project_id === localProject.id)
+            ) ? (
+              <div className="flex gap-2 rounded-xl bg-muted p-2">
+                <select
+                  data-testid="cloud-project-local-binding-project"
+                  value={selectedLocalProjectId ?? ''}
+                  onChange={event => setSelectedLocalProjectId(Number(event.target.value) || null)}
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm outline-none"
+                >
+                  {localProjects
+                    .filter(
+                      localProject =>
+                        !localBindings.some(binding => binding.local_project_id === localProject.id)
+                    )
+                    .map(localProject => (
+                      <option key={localProject.id} value={localProject.id}>
+                        {localProject.name}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="cloud-project-local-binding-add"
+                  disabled={!selectedLocalProjectId || bindingBusyId !== null}
+                  onClick={() => void addLocalProjectBinding()}
+                  className="h-9 rounded-lg px-3 text-xs text-text-secondary hover:bg-background disabled:opacity-50"
+                >
+                  {t('todo.local_binding_link', '关联')}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </section>
 
         <section className="border-t border-border py-6">
           <div className="flex items-start justify-between gap-4">

@@ -219,6 +219,7 @@ export function WorkbenchProvider({
   }, [resolvedServices])
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user.id), [user.id])
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(lifecycleStore)
+  const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
   const remoteProjectSyncSignatureRef = useRef('')
   const projectActivationSignatureRef = useRef('')
@@ -242,6 +243,41 @@ export function WorkbenchProvider({
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask])
+  useEffect(() => {
+    const trackingApis = [
+      resolvedServices.projectSpaceApis?.local,
+      resolvedServices.projectSpaceApis?.cloud ?? resolvedServices.deliveryApi,
+    ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
+    if (!trackingApis.length) return
+    for (const [key, lifecycle] of lifecycleSnapshot.tasks) {
+      const taskStatus = lifecycle.task?.status?.toLowerCase() ?? ''
+      const executionStatus = lifecycle.derived.isRunning
+        ? 'running'
+        : taskStatus === 'failed'
+          ? 'failed'
+          : taskStatus === 'cancelled' || taskStatus === 'canceled'
+            ? 'cancelled'
+            : lifecycle.execution.known && taskStatus === 'done'
+              ? 'succeeded'
+              : null
+      if (!executionStatus) continue
+      const signature = `${executionStatus}:${taskStatus}`
+      if (trackingStatusSignaturesRef.current.get(key) === signature) continue
+      trackingStatusSignaturesRef.current.set(key, signature)
+      void Promise.allSettled(
+        trackingApis.map(api => api!.updateTaskTrackingStatus(lifecycle.address, executionStatus))
+      ).then(results => {
+        if (results.every(result => result.status === 'rejected')) {
+          trackingStatusSignaturesRef.current.delete(key)
+          console.warn('[Wework] Failed to synchronize project board task status', {
+            address: lifecycle.address,
+            executionStatus,
+            errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
+          })
+        }
+      })
+    }
+  }, [lifecycleSnapshot, resolvedServices.deliveryApi, resolvedServices.projectSpaceApis])
   const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork: state.runtimeWork,
     lifecycleStore,

@@ -228,6 +228,10 @@ class LocalBindingCreate(BaseModel):
     is_default: bool = False
 
 
+class LocalBindingUpdate(BaseModel):
+    is_default: bool | None = None
+
+
 class LocalBindingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

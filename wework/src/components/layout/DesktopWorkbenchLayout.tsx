@@ -35,6 +35,7 @@ import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
+import { projectSpaceBindingApis } from '@/features/todo/projectSpaceLocalBindings'
 import { WorkbenchBackground } from '@/features/appearance'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { useResizableSidebar } from './useResizableSidebar'
@@ -117,6 +118,10 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const localTodoProjects = useMemo(
     () => resolveLocalTodoProjects(state.projects, state.runtimeWork),
     [state.projects, state.runtimeWork]
+  )
+  const availableProjectSpaceBindingApis = useMemo(
+    () => projectSpaceBindingApis(services),
+    [services]
   )
   const workspaceTabs = useOptionalWorkspaceTabs()
   const initialPath = stripAppBasePath(window.location.pathname)
@@ -608,6 +613,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
+      projectSpaceBindingApis={availableProjectSpaceBindingApis}
       onOpenSettings={options => {
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)

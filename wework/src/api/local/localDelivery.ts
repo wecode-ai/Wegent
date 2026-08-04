@@ -1,16 +1,18 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 
-import type {
-  CloudLoopItemAttachment,
-  CloudLoopItem,
-  CloudProject,
-  CloudProjectFile,
-  CloudProjectId,
-  CloudProjectMember,
-  Delivery,
-  DeliveryAsset,
-  DeliveryCreateInput,
-  DeliveryDetail,
+import {
+  createProjectTaskTrackingSingleFlight,
+  type CloudLoopItemAttachment,
+  type CloudLoopItem,
+  type CloudProject,
+  type CloudProjectFile,
+  type CloudProjectId,
+  type CloudProjectLocalBinding,
+  type CloudProjectMember,
+  type Delivery,
+  type DeliveryAsset,
+  type DeliveryCreateInput,
+  type DeliveryDetail,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
@@ -304,6 +306,21 @@ export function createLocalDeliveryApi(
   request: LocalRequest
 ): NonNullable<WorkbenchServices['deliveryApi']> {
   const taskProjects = new Map<string, CloudProjectId>()
+  const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
+  const bindingStorageKey = 'wework.local-project-space-bindings'
+
+  const readLocalBindings = (): CloudProjectLocalBinding[] => {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(bindingStorageKey) ?? '[]')
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+
+  const writeLocalBindings = (bindings: CloudProjectLocalBinding[]) => {
+    window.localStorage.setItem(bindingStorageKey, JSON.stringify(bindings))
+  }
 
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
     for (const record of records) taskProjects.set(record.id, projectId)
@@ -525,6 +542,59 @@ export function createLocalDeliveryApi(
         task: { ...task, ...(taskTitle ? { taskTitle } : {}) },
       })
     },
+    async trackProjectTask(
+      projectId: CloudProjectId,
+      task: RuntimeTaskAddress,
+      taskTitle: string,
+      description: string
+    ) {
+      return trackProjectTaskOnce(projectId, task, async () => {
+        try {
+          const existing = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+          if (existing.loop_item_id) {
+            return { item: await api.getLoopItem(existing.loop_item_id) }
+          }
+        } catch {
+          // Missing context is the expected first-run path.
+        }
+        const item = await api.createLoopItem(projectId, {
+          title: taskTitle,
+          description,
+          status: 'in_progress',
+        })
+        await api.bindTask(item.id, task, taskTitle)
+        return { item }
+      })
+    },
+    async updateTaskTrackingStatus(
+      task: RuntimeTaskAddress,
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    ) {
+      let binding: LocalTaskBindingRecord
+      try {
+        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          device_id: task.deviceId,
+          task_id: task.taskId,
+        })
+      } catch {
+        return null
+      }
+      if (!binding.loop_item_id) return null
+      const item = await api.getLoopItem(binding.loop_item_id)
+      const nextStatus =
+        executionStatus === 'running' &&
+        (item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review')
+          ? 'in_progress'
+          : executionStatus === 'succeeded' && item.status === 'in_progress'
+            ? 'in_review'
+            : null
+      return nextStatus
+        ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
+        : item
+    },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,
@@ -536,6 +606,40 @@ export function createLocalDeliveryApi(
         device_id: task.deviceId,
         task_id: task.taskId,
       })
+    },
+    async updateLocalBinding(
+      projectId: CloudProjectId,
+      bindingId: string,
+      data: { is_default?: boolean }
+    ) {
+      const bindings = readLocalBindings()
+      const binding = bindings.find(
+        candidate => candidate.id === bindingId && candidate.cloud_project_id === projectId
+      )
+      if (!binding) throw new Error('Local binding not found')
+      if (data.is_default) {
+        for (const candidate of bindings) {
+          if (
+            candidate.id !== binding.id &&
+            candidate.local_project_id === binding.local_project_id &&
+            candidate.device_id === binding.device_id
+          ) {
+            candidate.is_default = false
+          }
+        }
+      }
+      if (data.is_default !== undefined) binding.is_default = data.is_default
+      binding.updated_at = new Date().toISOString()
+      writeLocalBindings(bindings)
+      return binding
+    },
+    async deleteLocalBinding(projectId: CloudProjectId, bindingId: string) {
+      const bindings = readLocalBindings()
+      const nextBindings = bindings.filter(
+        candidate => candidate.id !== bindingId || candidate.cloud_project_id !== projectId
+      )
+      if (nextBindings.length === bindings.length) throw new Error('Local binding not found')
+      writeLocalBindings(nextBindings)
     },
     async findLoopItemForTask(task: RuntimeTaskAddress) {
       const binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
@@ -562,13 +666,58 @@ export function createLocalDeliveryApi(
         loop_item: loopItem,
       }
     },
-    listLocalBindings: async () => [],
+    async listLocalBindings(projectId: CloudProjectId) {
+      return readLocalBindings().filter(binding => binding.cloud_project_id === projectId)
+    },
     listCloudProjectMembers: async (): Promise<CloudProjectMember[]> => [],
     addCloudProjectMember: async () => unsupported('Project members'),
     updateCloudProjectMember: async () => unsupported('Project members'),
     removeCloudProjectMember: async () => unsupported('Project members'),
     searchCloudProjectUsers: async () => ({ users: [], total: 0 }),
-    addLocalBinding: async () => unsupported('Local bindings'),
+    async addLocalBinding(
+      projectId: CloudProjectId,
+      data: {
+        local_project_id: number
+        device_id?: string
+        is_default?: boolean
+      }
+    ) {
+      const bindings = readLocalBindings()
+      if (
+        bindings.some(
+          binding =>
+            binding.cloud_project_id === projectId &&
+            binding.local_project_id === data.local_project_id &&
+            binding.device_id === (data.device_id ?? null)
+        )
+      ) {
+        throw new Error('Local project is already linked')
+      }
+      if (data.is_default) {
+        for (const candidate of bindings) {
+          if (
+            candidate.local_project_id === data.local_project_id &&
+            candidate.device_id === (data.device_id ?? null)
+          ) {
+            candidate.is_default = false
+          }
+        }
+      }
+      const now = new Date().toISOString()
+      const binding: CloudProjectLocalBinding = {
+        id: crypto.randomUUID(),
+        cloud_project_id: projectId,
+        local_project_id: data.local_project_id,
+        user_id: 0,
+        device_id: data.device_id ?? null,
+        is_default: data.is_default ?? false,
+        created_at: now,
+        updated_at: now,
+      }
+      bindings.push(binding)
+      writeLocalBindings(bindings)
+      return binding
+    },
     async listCloudFiles(projectId: CloudProjectId) {
       const records = await request<LocalProjectFileRecord[]>('files.list', {
         project_id: projectId,

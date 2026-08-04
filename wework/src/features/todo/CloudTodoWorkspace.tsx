@@ -1909,6 +1909,7 @@ export function CloudTodoWorkspace({
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
                   project={selectedProject}
+                  localProjects={localProjects}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated =>
                     setProjects(current =>

@@ -27,6 +27,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
     LocalBindingCreate,
+    LocalBindingUpdate,
     default_board_statuses,
     normalize_provider_config,
 )
@@ -291,14 +292,16 @@ class CloudProjectService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Local project not found")
         if values.is_default:
             db.query(CloudProjectLocalBinding).filter(
-                CloudProjectLocalBinding.cloud_project_id == cloud_project_id,
                 CloudProjectLocalBinding.user_id == user_id,
+                CloudProjectLocalBinding.local_project_id == values.local_project_id,
                 CloudProjectLocalBinding.device_id == values.device_id,
             ).update({"is_default": False})
         binding = CloudProjectLocalBinding(
             cloud_project_id=cloud_project_id,
             user_id=user_id,
-            **values.model_dump(),
+            local_project_id=values.local_project_id,
+            device_id=values.device_id,
+            is_default=values.is_default,
         )
         db.add(binding)
         try:
@@ -310,6 +313,62 @@ class CloudProjectService:
             ) from exc
         db.refresh(binding)
         return binding
+
+    def update_local_binding(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        binding_id: int,
+        user_id: int,
+        values: LocalBindingUpdate,
+    ) -> CloudProjectLocalBinding:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        binding = (
+            db.query(CloudProjectLocalBinding)
+            .filter(
+                CloudProjectLocalBinding.id == binding_id,
+                CloudProjectLocalBinding.cloud_project_id == cloud_project_id,
+                CloudProjectLocalBinding.user_id == user_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if binding is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Local binding not found")
+        if values.is_default is True:
+            db.query(CloudProjectLocalBinding).filter(
+                CloudProjectLocalBinding.user_id == user_id,
+                CloudProjectLocalBinding.local_project_id == binding.local_project_id,
+                CloudProjectLocalBinding.device_id == binding.device_id,
+                CloudProjectLocalBinding.id != binding.id,
+            ).update({"is_default": False})
+        if values.is_default is not None:
+            binding.is_default = values.is_default
+        db.commit()
+        db.refresh(binding)
+        return binding
+
+    def delete_local_binding(
+        self,
+        db: Session,
+        cloud_project_id: int,
+        binding_id: int,
+        user_id: int,
+    ) -> None:
+        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
+        binding = (
+            db.query(CloudProjectLocalBinding)
+            .filter(
+                CloudProjectLocalBinding.id == binding_id,
+                CloudProjectLocalBinding.cloud_project_id == cloud_project_id,
+                CloudProjectLocalBinding.user_id == user_id,
+            )
+            .first()
+        )
+        if binding is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Local binding not found")
+        db.delete(binding)
+        db.commit()
 
     def list_local_bindings(
         self, db: Session, cloud_project_id: int, user_id: int

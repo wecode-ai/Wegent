@@ -158,6 +158,7 @@ import {
 } from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
+import type { ProjectSpaceBindingApi } from '@/features/todo/projectSpaceLocalBindings'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -250,6 +251,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  projectSpaceBindingApis?: ProjectSpaceBindingApi[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
@@ -2583,6 +2585,7 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  projectSpaceBindingApis,
   onOpenSettings,
   onLogout,
   collapsed = false,
@@ -4132,6 +4135,7 @@ export function DesktopSidebar({
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
+            projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceBindingApis : undefined}
             onClose={() => setEditingLocalProject(null)}
             onSave={data =>
               onUpdateLocalRuntimeProject

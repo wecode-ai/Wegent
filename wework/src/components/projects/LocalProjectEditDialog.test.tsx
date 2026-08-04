@@ -1,7 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import type { ProjectSpaceBindingApi } from '@/features/todo/projectSpaceLocalBindings'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import { LocalProjectEditDialog } from './LocalProjectEditDialog'
 
 const pickerMocks = vi.hoisted(() => ({
@@ -87,5 +89,65 @@ describe('LocalProjectEditDialog', () => {
     expect(screen.getByTestId('remove-local-project-root-0')).toBeDisabled()
     await userEvent.click(screen.getByTestId('delete-local-project-button'))
     expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+
+  test('configures whether new conversations automatically join a project space', async () => {
+    const localProjectId = runtimeProjectUiId(projectWork.project)
+    const binding = {
+      id: 'binding-1',
+      cloud_project_id: 'space-1',
+      local_project_id: localProjectId,
+      device_id: 'local-device',
+      is_default: true,
+      created_at: '2026-08-04T00:00:00Z',
+      updated_at: '2026-08-04T00:00:00Z',
+    }
+    const updateLocalBinding = vi.fn().mockResolvedValue({ ...binding, is_default: false })
+    const projectSpaceApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: 'space-1',
+            public_id: 'space-public-1',
+            project_key: 'FOLLOWUP',
+            name: 'Task Follow-up Board',
+            description: '',
+            project_store: 'local',
+            task_provider: 'local',
+            provider_config: {},
+            created_by_user_id: 1,
+            status: 'active',
+            tags: [],
+            version: 1,
+            created_at: '2026-08-04T00:00:00Z',
+            updated_at: '2026-08-04T00:00:00Z',
+          },
+        ],
+      }),
+      listLocalBindings: vi.fn().mockResolvedValue([binding]),
+      updateLocalBinding,
+      addLocalBinding: vi.fn(),
+    } as unknown as ProjectSpaceBindingApi
+
+    render(
+      <LocalProjectEditDialog
+        {...folderPickerProps}
+        open
+        projectWork={projectWork}
+        projectSpaceApis={[projectSpaceApi]}
+        onClose={vi.fn()}
+        onSave={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn()}
+      />
+    )
+
+    const select = await screen.findByTestId('local-project-auto-join-space-select')
+    await waitFor(() => expect(select).toHaveValue('local:space-1'))
+    await userEvent.selectOptions(select, '')
+    await userEvent.click(screen.getByTestId('save-local-project-button'))
+
+    expect(updateLocalBinding).toHaveBeenCalledWith('space-1', 'binding-1', {
+      is_default: false,
+    })
   })
 })
