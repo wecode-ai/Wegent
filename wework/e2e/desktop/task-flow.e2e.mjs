@@ -1102,8 +1102,16 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     text: TASK_PLAN_STEP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: TASK_PLAN_STEP,
+    value: 'background-task-plan-message',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   assert.equal(
-    await control.command('getElementCount', '[data-testid="final-processing-toggle"]'),
+    await control.command(
+      'getElementCount',
+      '[data-e2e-anchor-id="background-task-plan-message"] [data-testid="final-processing-toggle"]'
+    ),
     '0',
     'The completed task plan was collapsed into the final processing summary'
   )
