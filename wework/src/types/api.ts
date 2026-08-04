@@ -2113,6 +2113,7 @@ export interface ChatBlockCreatedPayload {
   subtaskId?: string
   block: ChatBlock
   deviceId?: string
+  replacesItemId?: string
 }
 
 export interface ChatBlockUpdatedPayload {

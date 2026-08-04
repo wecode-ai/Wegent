@@ -522,6 +522,44 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
   })
 
+  test('passes reclassified assistant text identity to the conversation reducer', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      replacesItemId: 'msg-progress',
+      block: {
+        id: 'msg-progress',
+        type: 'text',
+        content: 'I will inspect.',
+        status: 'done',
+        timestamp: 1770000000000,
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        replaceAssistantTextItemId: 'msg-progress',
+        block: expect.objectContaining({
+          id: 'msg-progress',
+          type: 'text',
+          content: 'I will inspect.',
+        }),
+      }),
+    ])
+  })
+
   test('does not finish an active assistant turn for automatic context compaction', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
