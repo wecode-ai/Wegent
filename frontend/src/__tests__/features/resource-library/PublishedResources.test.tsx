@@ -261,7 +261,6 @@ describe('PublishedResources', () => {
       expect(mockResourceLibraryApi.updatePublication).toHaveBeenCalledWith(7, {
         display_name: 'H52 WBox Cloud',
         description: '新版云端发布技能',
-        tags: ['wbox'],
         version: '2.0.0',
         status: 'published',
       })

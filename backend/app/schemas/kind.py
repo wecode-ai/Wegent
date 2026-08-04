@@ -1243,6 +1243,10 @@ class GitImportRequest(BaseModel):
         None,
         description="List of skill names that can be overwritten if they already exist",
     )
+    marketplace_tags: Optional[List[str]] = Field(
+        None,
+        description="Marketplace tags required when importing public skills",
+    )
 
 
 class GitImportSuccessItem(BaseModel):

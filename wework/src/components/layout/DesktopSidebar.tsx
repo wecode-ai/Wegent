@@ -3391,7 +3391,7 @@ export function DesktopSidebar({
               {experimentalFeaturesEnabled && (
                 <DesktopSidebarNavItem
                   icon={Grid3X3}
-                  label={t('workbench.sites', '站点')}
+                  label={t('workbench.sites', '应用')}
                   testId="sites-button"
                   selected={activeItem === 'sites'}
                   onClick={onOpenSites ?? (() => navigateTo('/sites'))}

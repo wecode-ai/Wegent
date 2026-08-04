@@ -3,19 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ReactNode } from 'react'
-import { format } from 'date-fns'
 import { ChatBubbleLeftEllipsisIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
-import {
-  Bot,
-  BrainCircuit,
-  Check,
-  Database,
-  Loader2,
-  Plus,
-  Server,
-  Sparkles,
-  SquareTerminal,
-} from 'lucide-react'
+import { Check, Loader2, Plus } from 'lucide-react'
 
 import {
   getResourceCardActionsClassName,
@@ -26,7 +15,8 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ResourceLibraryListing, ResourceLibraryResourceType } from '../types'
+import type { ResourceLibraryListing } from '../types'
+import { ResourceIcon } from './ResourceIcon'
 
 interface ResourceListingCardProps {
   listing: ResourceLibraryListing
@@ -38,16 +28,8 @@ interface ResourceListingCardProps {
   presentation?: 'discovery' | 'management'
   managementAction?: ReactNode
   managementFooterAction?: ReactNode
+  tagLabels?: Record<string, string>
 }
-
-const typeIcons = {
-  agent: Bot,
-  skill: Sparkles,
-  model: BrainCircuit,
-  shell: SquareTerminal,
-  retriever: Database,
-  mcp: Server,
-} satisfies Record<ResourceLibraryResourceType, typeof Bot>
 
 function getListingTitle(listing: ResourceLibraryListing) {
   return listing.display_name || listing.name
@@ -75,9 +57,9 @@ export function ResourceListingCard({
   presentation = 'discovery',
   managementAction,
   managementFooterAction,
+  tagLabels = {},
 }: ResourceListingCardProps) {
   const { t } = useTranslation('resource-library')
-  const TypeIcon = typeIcons[listing.resource_type]
   const title = getListingTitle(listing)
   const isAgent = listing.resource_type === 'agent'
   const isDirectlyUsableSystemCapability =
@@ -87,19 +69,18 @@ export function ResourceListingCard({
   const isCodeOnlyAgent =
     isAgent && listing.bind_modes.length === 1 && listing.bind_modes.includes('code')
   const publisher = getPublisher(listing, t('fields.official_publisher'))
-  const isOfficial = listing.publisher_user_id === 0
-  const isOfficialAgent = isAgent && isOfficial
+  const usesFeatureTagFallback =
+    listing.resource_type === 'skill' &&
+    listing.tags.length === 0 &&
+    Boolean(listing.feature_tags?.length)
+  const displayedTags = usesFeatureTagFallback ? listing.feature_tags || [] : listing.tags
   const isManagementPresentation = presentation === 'management'
   const isFloatingAgentAction = isAgent && isPersonalTarget && !isManagementPresentation
   const isManagementAgentAction = isAgent && isManagementPresentation
   const isTopRightSkillAction =
     listing.resource_type === 'skill' && isPersonalTarget && !isManagementPresentation
   const isTopRightAction = isFloatingAgentAction || isTopRightSkillAction
-  const updatedDate = new Date(listing.updated_at)
-  const hasUpdatedDate = !Number.isNaN(updatedDate.getTime())
-  const updatedDateLabel = hasUpdatedDate ? format(updatedDate, 'yyyy-MM-dd') : null
-  const updatedDateTitle = hasUpdatedDate ? format(updatedDate, 'yyyy-MM-dd HH:mm:ss') : undefined
-  const showInstallCount = !isOfficialAgent && listing.install_count > 0
+  const showInstallCount = listing.install_count > 0
   const installDisabled = (!isAgent && listing.is_installed && isPersonalTarget) || isInstalling
   const actionLabel = isAgent
     ? isPersonalTarget
@@ -119,6 +100,9 @@ export function ResourceListingCard({
       className={cn(
         'relative z-20 h-9 shrink-0 px-3 text-xs',
         isTopRightSkillAction && 'absolute right-3 top-3 h-11 w-11 px-0 md:h-8 md:w-8',
+        isTopRightSkillAction &&
+          !listing.is_installed &&
+          'border-primary/20 bg-primary/[0.04] text-primary shadow-sm transition-[background-color,border-color,box-shadow] duration-150 hover:border-primary/40 hover:bg-primary/[0.1] hover:shadow-md',
         isFloatingAgentAction &&
           'absolute right-3 top-3 h-11 min-w-[44px] px-2.5 shadow-sm transition-opacity md:h-7 md:min-w-0 md:pointer-events-none md:opacity-0 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100',
         isManagementAgentAction &&
@@ -157,13 +141,8 @@ export function ResourceListingCard({
       className={cn(
         isManagementPresentation
           ? getResourceCardClassName(true)
-          : 'flex flex-col overflow-hidden rounded-xl border-border bg-surface px-4 pt-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md',
-        'group relative',
-        isManagementPresentation
-          ? 'gap-3'
-          : isAgent
-            ? 'h-full gap-2.5 pb-3'
-            : 'min-h-[190px] gap-3 pb-4'
+          : 'flex h-full flex-col overflow-hidden rounded-xl border-border bg-surface p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md',
+        'group relative gap-3'
       )}
       data-testid={`resource-listing-card-${listing.id}`}
     >
@@ -175,15 +154,20 @@ export function ResourceListingCard({
         data-testid={`view-resource-${listing.id}-button`}
       />
       {isTopRightAction && actionButton}
-      <div className={cn('flex min-w-0 items-start gap-3', isTopRightSkillAction && 'pr-16')}>
-        <div
-          className={cn(
-            'flex shrink-0 items-center justify-center border border-primary/10 bg-primary/5 text-primary',
-            isAgent ? 'h-10 w-10 rounded-lg' : 'h-11 w-11 rounded-xl'
-          )}
-        >
-          <TypeIcon className="h-5 w-5" aria-hidden="true" />
-        </div>
+      <div
+        className={cn(
+          'flex min-w-0 items-start gap-3',
+          isTopRightSkillAction && 'pr-14',
+          isFloatingAgentAction && 'pr-20'
+        )}
+      >
+        <ResourceIcon
+          resourceType={listing.resource_type}
+          name={title}
+          icon={listing.icon}
+          marketplaceTags={listing.tags}
+          size={isAgent ? 'sm' : 'md'}
+        />
         <div className="min-w-0 flex-1">
           <h3
             className={cn(
@@ -193,18 +177,7 @@ export function ResourceListingCard({
           >
             {title}
           </h3>
-          {(listing.current_version?.version || isOfficial) && (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              {listing.current_version?.version && (
-                <span className="text-xs text-text-muted">v{listing.current_version.version}</span>
-              )}
-              {isOfficial && (
-                <Badge variant="success" size="sm">
-                  {t('fields.official_badge')}
-                </Badge>
-              )}
-            </div>
-          )}
+          {publisher && <p className="mt-0.5 truncate text-xs text-text-muted">{publisher}</p>}
         </div>
         {showManagementHeaderAction && (
           <div
@@ -216,11 +189,28 @@ export function ResourceListingCard({
         )}
       </div>
 
-      <p
-        className={cn('line-clamp-2 text-sm leading-5 text-text-secondary', !isAgent && 'min-h-10')}
-      >
+      <p className="line-clamp-2 min-h-10 text-sm leading-5 text-text-secondary">
         {listing.description || listing.name}
       </p>
+
+      {displayedTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" data-testid={`resource-listing-tags-${listing.id}`}>
+          {displayedTags.slice(0, 3).map(tag => (
+            <Badge
+              key={tag}
+              variant="secondary"
+              size="sm"
+              title={
+                usesFeatureTagFallback
+                  ? t('marketplace_tags.skill_keywords_fallback')
+                  : t('marketplace_tags.field_label')
+              }
+            >
+              {usesFeatureTagFallback ? tag : tagLabels[tag] || tag}
+            </Badge>
+          ))}
+        </div>
+      )}
 
       {isManagementAgentAction && (
         <div
@@ -240,36 +230,20 @@ export function ResourceListingCard({
         </div>
       )}
 
-      {!isManagementPresentation && (
-        <div
-          className={cn(
-            'mt-auto flex min-w-0 items-center justify-between gap-3 border-t border-border',
-            isAgent ? 'pt-2' : 'pt-3'
-          )}
-          data-testid={`resource-listing-footer-${listing.id}`}
-        >
-          <div className="flex min-w-0 items-center gap-1 text-xs text-text-muted">
-            {publisher && <span className="min-w-0 truncate">{publisher}</span>}
-            {updatedDateLabel && (
-              <>
-                {publisher && <span className="shrink-0">·</span>}
-                <time className="shrink-0" dateTime={listing.updated_at} title={updatedDateTitle}>
-                  {updatedDateLabel}
-                </time>
-              </>
-            )}
-            {showInstallCount && (
-              <>
-                {(publisher || updatedDateLabel) && <span className="shrink-0">·</span>}
-                <span className="shrink-0">
-                  {formatInstallCount(listing.install_count)} {t('fields.people_added')}
-                </span>
-              </>
-            )}
+      {!isManagementPresentation &&
+        (showInstallCount || (!isTopRightAction && Boolean(actionButton))) && (
+          <div
+            className="mt-auto flex min-w-0 items-center justify-between gap-3 pt-1"
+            data-testid={`resource-listing-footer-${listing.id}`}
+          >
+            <span className="min-w-0 truncate text-xs text-text-muted">
+              {showInstallCount
+                ? `${formatInstallCount(listing.install_count)} ${t('fields.people_added')}`
+                : null}
+            </span>
+            {!isTopRightAction && actionButton}
           </div>
-          {!isTopRightAction && actionButton}
-        </div>
-      )}
+        )}
     </Card>
   )
 }

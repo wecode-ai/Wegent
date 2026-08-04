@@ -946,7 +946,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -120,
         })
       )
-      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      element.scrollIntoView({
+        block: command.value === 'start' ? 'start' : 'center',
+        inline: 'nearest',
+      })
       return text
     }
     case 'scrollToBottomAsUser': {

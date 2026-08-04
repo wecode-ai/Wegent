@@ -211,7 +211,7 @@ http://127.0.0.1:9998/v1
 
 Wework E2E also starts two local loopback upstream mocks. They replace only services outside Wegent; they do not replace Wegent Backend, Executor, Codex, `/api/sites`, `/api/apps/installed`, or connector runtime APIs.
 
-`wework/e2e/utils/mock-sites-upstream-server.mjs` simulates the Sites project API:
+`wework/e2e/utils/mock-sites-upstream-server.mjs` simulates the Sites project API and returns Sites or Mini Programs according to `app_type`:
 
 - `GET /api/v1/projects/search`: returns deterministic projects and supports `username`, `limit`, `sitename`, and `cursor`.
 - `POST /api/v1/projects/deploy/network`: updates project network visibility.

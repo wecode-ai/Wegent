@@ -170,7 +170,6 @@ export function PublishedResources({ resourceType }: PublishedResourcesProps) {
       await update(pendingUpdate.listing, {
         display_name: skill.spec.displayName || skill.metadata.name,
         description: skill.spec.description || null,
-        tags: skill.spec.tags || [],
         version: skill.spec.version || pendingUpdate.listing.current_version?.version || '1.0.0',
         status: 'published',
       })
