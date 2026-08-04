@@ -544,7 +544,7 @@ export function ModelSelector({
     )
   }
 
-  function renderDesktopModelOptions(modelsToRender: UnifiedModel[]) {
+  function renderDesktopModelOptions(modelsToRender: UnifiedModel[], indented = false) {
     if (modelsToRender.length === 0) {
       return (
         <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
@@ -574,7 +574,7 @@ export function ModelSelector({
             handleSelectModel(model)
           }}
           className={[
-            'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-sm leading-[18px]',
+            `flex h-8 w-full items-center gap-2 rounded-lg ${indented ? 'pl-5 pr-2' : 'px-2'} text-left text-sm leading-[18px]`,
             modelDisabled
               ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
               : 'text-text-primary hover:bg-muted',
@@ -1007,18 +1007,15 @@ export function ModelSelector({
                   styles.submenu
                 )}
               >
-                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
-                  {t('workbench.model_version', '模型')}
-                </div>
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 py-0.5">
                   {familyGroups.length <= 1
                     ? renderDesktopModelOptions(desktopModels)
                     : familyGroups.map(group => (
-                        <div key={group.config.id} className="pb-1 last:pb-0">
-                          <div className="px-3 pb-1 pt-2 text-xs font-medium text-text-muted first:pt-0">
+                        <div key={group.config.id}>
+                          <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
                             {group.config.label}
                           </div>
-                          {renderDesktopModelOptions(group.models)}
+                          {renderDesktopModelOptions(group.models, true)}
                         </div>
                       ))}
                 </div>

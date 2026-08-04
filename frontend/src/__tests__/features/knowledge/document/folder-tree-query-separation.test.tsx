@@ -13,6 +13,7 @@ import { FolderTree } from '@/features/knowledge/document/components/FolderTree'
 import {
   deletedFolderAffectsActiveFolder,
   folderTreeContainsId,
+  resolveCurrentDocumentSnapshot,
   shouldDisableDocumentBatchActions,
 } from '@/features/knowledge/document/components/DocumentList'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
@@ -372,5 +373,25 @@ describe('DocumentList folder navigation guard helpers', () => {
         selectedFolderCount: 0,
       })
     ).toBe(false)
+  })
+})
+
+describe('DocumentList current document snapshot', () => {
+  it('uses the refreshed processing state while the detail dialog stays open', () => {
+    const selected = createDocument({ id: 11, index_status: 'indexing' })
+    const failed = createDocument({
+      id: 11,
+      index_status: 'failed',
+      processing_error: {
+        stage: 'indexing',
+        code: 'indexing_failed',
+        message: 'Document indexing failed. Please retry.',
+        retryable: true,
+        generation: 1,
+        occurred_at: '2026-01-01T00:01:00Z',
+      },
+    })
+
+    expect(resolveCurrentDocumentSnapshot(selected, [failed])).toBe(failed)
   })
 })

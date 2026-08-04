@@ -136,6 +136,12 @@ class CallbackClient:
         document_id: int,
         generation: int,
         error_message: str,
+        *,
+        error_code: Optional[str] = None,
+        user_message: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> dict:
         """Notify backend that conversion has failed.
 
@@ -148,14 +154,25 @@ class CallbackClient:
         Returns:
             Backend response with {"ok": bool, "document_exists": bool}.
         """
+        payload = {
+            "action": "conversion_failed",
+            "document_id": document_id,
+            "generation": generation,
+            "error_message": error_message,
+        }
+        optional_fields = {
+            "error_code": error_code,
+            "user_message": user_message,
+            "retryable": retryable,
+            "provider": provider,
+            "model": model,
+        }
+        payload.update(
+            {key: value for key, value in optional_fields.items() if value is not None}
+        )
         return self.call(
             path,
-            {
-                "action": "conversion_failed",
-                "document_id": document_id,
-                "generation": generation,
-                "error_message": error_message,
-            },
+            payload,
             callback_type="failed",
         )
 

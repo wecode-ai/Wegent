@@ -1248,13 +1248,13 @@ export function WorkbenchProvider({
         createRuntimeConversationStreamHandlers({
           onMessageAction: applyCanonicalRuntimeAction,
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
-          onAssistantStart: address => {
+          onAssistantStart: (address, turnId) => {
             markRuntimeConversationAssistantStarted(address)
-            lifecycleStore.turnStarted(address)
+            lifecycleStore.turnStarted(address, turnId)
           },
-          onAssistantSettled: address => {
+          onAssistantSettled: (address, turnId) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address)
+            lifecycleStore.turnSettled(address, turnId)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1267,6 +1267,9 @@ export function WorkbenchProvider({
           onRuntimeGoalCleared: address => {
             setRuntimeConversationGoal(address, null)
             lifecycleStore.goalStatusReceived(address, null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeSupervisorUpdated: address => {
             refreshRuntimeWorkLists(address)
           },
           onRuntimeGoalContinuation: (address, payload) => {

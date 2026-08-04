@@ -1,5 +1,5 @@
-import { ChevronDown, Download, Gauge, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronDown, Download, Gauge, Info, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   emptyCodexUsageDisplay,
@@ -8,8 +8,14 @@ import {
   type CodexUsageDisplay,
   type CodexUsageWindowDisplay,
 } from '@/api/local/codexUsage'
+import {
+  emptyWegentUsageDisplay,
+  getWegentUsageDisplay,
+  type WegentUsageDisplay,
+} from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
@@ -44,6 +50,7 @@ function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
+  onOpenAbout: () => void
   onLogout: () => void
   onLogin?: () => void
   showLogout?: boolean
@@ -51,16 +58,24 @@ interface DesktopSettingsMenuProps {
 
 export function DesktopSettingsMenu({
   onOpenSettings,
+  onOpenAbout,
   onLogout,
   onLogin,
   showLogout,
 }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
-  const [isUsageExpanded, setIsUsageExpanded] = useState(false)
+  const cloudConnection = useOptionalCloudConnection()
+  const [isCodexUsageExpanded, setIsCodexUsageExpanded] = useState(false)
+  const [isWegentUsageExpanded, setIsWegentUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
-  const [isQuotaLoading, setIsQuotaLoading] = useState(false)
-  const [quotaError, setQuotaError] = useState<string | null>(null)
+  const [wegentUsage, setWegentUsage] = useState<WegentUsageDisplay>(() =>
+    emptyWegentUsageDisplay()
+  )
+  const [codexQuotaLoading, setCodexQuotaLoading] = useState(false)
+  const [wegentQuotaLoading, setWegentQuotaLoading] = useState(false)
+  const [codexQuotaError, setCodexQuotaError] = useState<string | null>(null)
+  const [wegentQuotaError, setWegentQuotaError] = useState<string | null>(null)
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
@@ -70,32 +85,84 @@ export function DesktopSettingsMenu({
   const installUpdate = appUpdate?.installUpdate
 
   const loadCodexUsage = () => {
-    if (isQuotaLoading) {
+    if (codexQuotaLoading) {
       return
     }
 
-    setIsQuotaLoading(true)
-    setQuotaError(null)
+    setCodexQuotaLoading(true)
+    setCodexQuotaError(null)
     getLocalCodexUsageDisplay()
       .then(data => {
         setCodexUsage(data)
       })
       .catch(() => {
-        setQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
+        setCodexQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
       })
       .finally(() => {
-        setIsQuotaLoading(false)
+        setCodexQuotaLoading(false)
       })
   }
 
-  const handleUsageClick = () => {
-    const shouldExpand = !isUsageExpanded
-    setIsUsageExpanded(shouldExpand)
+  const loadWegentUsage = () => {
+    if (wegentQuotaLoading) {
+      return
+    }
+
+    setWegentQuotaLoading(true)
+    setWegentQuotaError(null)
+    getWegentUsageDisplay(cloudConnection)
+      .then(data => {
+        setWegentUsage(data)
+      })
+      .catch(() => {
+        setWegentQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
+      })
+      .finally(() => {
+        setWegentQuotaLoading(false)
+      })
+  }
+
+  const handleCodexUsageClick = () => {
+    const shouldExpand = !isCodexUsageExpanded
+    setIsCodexUsageExpanded(shouldExpand)
 
     if (shouldExpand) {
       loadCodexUsage()
     }
   }
+
+  const handleWegentUsageClick = () => {
+    const shouldExpand = !isWegentUsageExpanded
+    setIsWegentUsageExpanded(shouldExpand)
+
+    if (shouldExpand) {
+      loadWegentUsage()
+    }
+  }
+
+  useEffect(() => {
+    if (!cloudConnection.isConnected) return
+
+    let cancelled = false
+    getWegentUsageDisplay({
+      isConnected: cloudConnection.isConnected,
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    })
+      .then(data => {
+        if (!cancelled) setWegentUsage(data)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.serviceKey,
+    cloudConnection.token,
+  ])
 
   const handleUpdateClick = async () => {
     if (availableUpdate && installUpdate) {
@@ -185,6 +252,12 @@ export function DesktopSettingsMenu({
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
       />
+      <SettingsMenuItem
+        testId="about-menu-button"
+        icon={<Info className="h-4 w-4 shrink-0 text-text-secondary" />}
+        label={t('workbench.settings_nav_about', '关于')}
+        onClick={onOpenAbout}
+      />
       {downloadMessage ? (
         <div
           data-testid="app-update-download-progress"
@@ -218,38 +291,94 @@ export function DesktopSettingsMenu({
         testId="usage-menu-button"
         icon={<Gauge className="h-4 w-4 shrink-0 text-text-secondary" />}
         label={t('workbench.remaining_usage', 'Codex 剩余额度')}
-        onClick={handleUsageClick}
-        ariaExpanded={isUsageExpanded}
-        ariaControls="remaining-usage-panel"
+        onClick={handleCodexUsageClick}
+        ariaExpanded={isCodexUsageExpanded}
+        ariaControls="codex-remaining-usage-panel"
         trailing={
           <ChevronDown
             className={`h-4 w-4 shrink-0 text-text-secondary transition-transform ${
-              isUsageExpanded ? 'rotate-180' : ''
+              isCodexUsageExpanded ? 'rotate-180' : ''
             }`}
           />
         }
       />
-      {isUsageExpanded ? (
+      {isCodexUsageExpanded ? (
         <div
-          id="remaining-usage-panel"
+          id="codex-remaining-usage-panel"
           data-testid="usage-detail-panel"
           className="pb-2 pl-8 pr-3 pt-1"
         >
-          {isQuotaLoading ? (
+          {codexQuotaLoading ? (
             <div className="py-1 text-sm leading-[18px] text-text-secondary">
               {t('common.loading', '加载中...')}
             </div>
           ) : null}
-          {quotaError ? (
-            <div className="py-1 text-sm leading-[18px] text-text-secondary">{quotaError}</div>
+          {codexQuotaError ? (
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">{codexQuotaError}</div>
           ) : null}
-          {!isQuotaLoading && !quotaError ? (
+          {!codexQuotaLoading && !codexQuotaError ? (
             <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
               {codexUsage.fiveHour.percent !== null ? (
                 <UsageWindowRow window={codexUsage.fiveHour} />
               ) : null}
               <UsageWindowRow window={codexUsage.sevenDay} />
             </div>
+          ) : null}
+        </div>
+      ) : null}
+      <SettingsMenuItem
+        testId="wegent-usage-menu-button"
+        icon={<Gauge className="h-4 w-4 shrink-0 text-text-secondary" />}
+        label={
+          wegentUsage.status === 'available'
+            ? wegentUsage.sourceText
+            : t('workbench.wegent_remaining_usage', '云端额度')
+        }
+        onClick={handleWegentUsageClick}
+        ariaExpanded={isWegentUsageExpanded}
+        ariaControls="wegent-remaining-usage-panel"
+        trailing={
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-text-secondary transition-transform ${
+              isWegentUsageExpanded ? 'rotate-180' : ''
+            }`}
+          />
+        }
+      />
+      {isWegentUsageExpanded ? (
+        <div
+          id="wegent-remaining-usage-panel"
+          data-testid="wegent-usage-detail-panel"
+          className="pb-2 pl-8 pr-3 pt-1"
+        >
+          {wegentQuotaLoading ? (
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">
+              {t('common.loading', '加载中...')}
+            </div>
+          ) : null}
+          {wegentQuotaError ? (
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">
+              {wegentQuotaError}
+            </div>
+          ) : null}
+          {!wegentQuotaLoading && !wegentQuotaError ? (
+            wegentUsage.status === 'available' ? (
+              <div className="space-y-0.5 text-xs leading-5 text-text-secondary">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 whitespace-nowrap">{wegentUsage.sourceText}</span>
+                  <span className="shrink-0 whitespace-nowrap font-semibold text-text-primary">
+                    {wegentUsage.value}
+                  </span>
+                </div>
+                <div className="text-text-muted">{wegentUsage.detail}</div>
+              </div>
+            ) : (
+              <div className="py-1 text-sm leading-[18px] text-text-secondary">
+                {cloudConnection.isConnected
+                  ? t('workbench.quota_load_failed', '额度信息获取失败')
+                  : t('workbench.account_cloud_login', '登录 Wegent')}
+              </div>
+            )
           ) : null}
         </div>
       ) : null}

@@ -313,7 +313,35 @@
         "converting": "Converting",
         "convertingHint": "Document is being converted to a searchable format. This may take a few minutes.",
         "pendingConversion": "Pending Conversion",
-        "pendingConversionHint": "Document is waiting to be converted to a searchable format."
+        "pendingConversionHint": "Document is waiting to be converted to a searchable format.",
+        "failed": "Failed",
+        "failedHint": "Document processing failed. Reindex the document, or contact an administrator if the problem continues."
+      },
+      "processingError": {
+        "stage": {
+          "dispatch": "Task submission failed",
+          "conversion": "Document conversion failed",
+          "indexing": "Document indexing failed",
+          "system": "Document processing failed"
+        },
+        "codes": {
+          "modelQuotaExhausted": "The selected model quota has been exhausted. Switch models or contact an administrator.",
+          "modelPermissionDenied": "The selected model is not available to the current account. Check its permissions or select another model.",
+          "conversionTimeout": "Document conversion timed out. Please retry.",
+          "conversionServiceUnavailable": "Could not connect to the MinerU document conversion service. Check the service status or retry later.",
+          "conversionLockTimeout": "The document conversion task waited too long. Reindex the document.",
+          "conversionFailed": "Document conversion failed. Please retry.",
+          "conversionConfigurationError": "The document conversion service is not configured correctly. Contact an administrator.",
+          "multimodalEmptyResponse": "The multimodal model returned no usable content. Check the document or select another model.",
+          "multimodalModelUnavailable": "The multimodal model is not configured or available. Check the knowledge base model settings.",
+          "multimodalFileTooLarge": "The media file is too large for multimodal processing.",
+          "indexingTimeout": "Document indexing timed out. Please retry.",
+          "indexingFailed": "Document indexing failed. Please retry.",
+          "indexLockTimeout": "The document indexing task waited too long. Please retry.",
+          "indexDispatchFailed": "The document indexing task could not be submitted. Please retry later.",
+          "processingFailed": "Document processing failed. Please retry."
+        },
+        "model": "Model"
       },
       "reindex": "Reindex",
       "index": "Start Indexing",

@@ -535,6 +535,12 @@ recipe closely:
   than roughly `440px–475px`;
 - drag state uses a subtle neutral overlay; blocked/submitting state dims and
   becomes inert without destroying entered content.
+- In an active desktop thread, the workbench viewport owns vertical scrolling.
+  Its conversation column must be a `min-height: 100%`, non-shrinking flex
+  column, with the composer rendered as the sticky footer inside that flow.
+  Short threads therefore fill the viewport while long and virtualized threads
+  grow naturally. Keep bottom following stable across delayed virtual
+  measurements, but stop following immediately after an explicit user scroll.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
@@ -688,6 +694,8 @@ semantics for all three.
 - Runtime conversation events are keyed by task address and must update the
   shared conversation cache even when that task's pane is not active or
   mounted.
+- Turn lifecycle events are additionally keyed by turn identity. A settlement
+  from an older turn must not clear the running state of a newer active turn.
 - A guidance item remains pending until a matching runtime
   `guidance_applied` event settles it. Match the client identifier first and
   use guidance content only when the runtime replaces that identifier.

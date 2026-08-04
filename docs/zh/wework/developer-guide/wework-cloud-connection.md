@@ -93,7 +93,7 @@ wework /path/to/project
 
 ## 本地模型配置
 
-本地模型的非敏感元数据存储在浏览器本机存储中，不作为 Model CRD 写入 Backend，也不会成为账号级持久化配置。API Key 不写入浏览器存储，而是通过桌面系统凭据库保存：macOS 使用 Keychain，Windows 使用 Credential Manager，Linux 使用 Secret Service。Wework 启动时会把凭据恢复到当前渲染进程内存；升级后首次读取旧配置时，会先把已有的本地存储 API Key 迁入系统凭据库，再立即清除浏览器存储中的明文副本。配置字段包括：
+本地模型配置（包括 API Key）仅存储在 Wework 的浏览器本机存储中，不作为 Model CRD 写入 Backend，也不会成为账号级持久化配置或参与云端同步。Wework 运行时不访问桌面系统凭据库；如果旧版本只把某个 API Key 保存在系统凭据库中，升级后需要在“设置 → 模型”中重新填写该 API Key。配置字段包括：
 
 - 显示名。
 - 模型 ID。

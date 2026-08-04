@@ -148,6 +148,14 @@ export async function createDocument(
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
 }
 
+/** Get the latest metadata and processing state for one document. */
+export async function getDocument(
+  documentId: number,
+  signal?: AbortSignal
+): Promise<KnowledgeDocument> {
+  return apiClient.get<KnowledgeDocument>(`/knowledge-documents/${documentId}`, { signal })
+}
+
 export interface CreateTextKnowledgeDocumentRequest {
   knowledge_base_id: number
   name: string

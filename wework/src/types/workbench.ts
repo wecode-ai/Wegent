@@ -141,6 +141,7 @@ export interface RuntimeConversationTurn {
   error?: string
   errorType?: string
   stoppedNotice?: boolean | null
+  streamingThinkingContent?: string
   fileChanges?: TurnFileChangesSummary
   references?: CodexReference[]
   memoryCitations?: CodexMemoryCitation[]

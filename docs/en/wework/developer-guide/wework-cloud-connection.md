@@ -93,7 +93,7 @@ The local Codex model catalog follows only the active provider in the current Co
 
 ## Local Model Configs
 
-Non-secret local model metadata is stored in local browser storage. It is not written to Backend as a Model CRD and does not become account-level persistent configuration. API keys are never written to browser storage; the desktop app stores them in the operating system credential store: Keychain on macOS, Credential Manager on Windows, and Secret Service on Linux. Wework restores credentials into renderer memory during startup. On the first read after upgrading, it migrates any legacy browser-stored API key into the operating system credential store and immediately removes the plaintext browser copy. Each config includes:
+Local model configs, including API keys, are stored only in Wework's local browser storage. They are not written to Backend as Model CRDs, do not become account-level persistent configuration, and are not cloud-synchronized. The Wework runtime does not access the desktop operating system credential store. If an older version stored an API key only in the system credential store, enter that key again under **Settings → Models** after upgrading. Each config includes:
 
 - Display name.
 - Model ID.

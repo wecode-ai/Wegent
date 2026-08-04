@@ -323,47 +323,91 @@ fn user_message_presentation(payload: &Value) -> Option<Value> {
     let content = payload
         .get("message")
         .or_else(|| payload.get("content"))
-        .and_then(Value::as_str)?;
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let references = local_presentation_reference_descriptors(content);
-    (!references.is_empty()).then(|| {
-        json!({
-            "clientUserMessageId": client_user_message_id,
-            "references": references,
-        })
-    })
+    let source = payload.get("source").filter(|value| value.is_object()).cloned();
+    if references.is_empty() && source.is_none() {
+        return None;
+    }
+    let mut presentation = json!({
+        "clientUserMessageId": client_user_message_id,
+        "references": references,
+        "source": source,
+    });
+    let supervisor_generated = presentation
+        .get("source")
+        .and_then(|source| source.get("source"))
+        .and_then(Value::as_str)
+        == Some("supervisor");
+    if supervisor_generated {
+        presentation["content"] = Value::String(content.to_owned());
+        presentation["createdAt"] = json!(now_ms());
+        presentation["ensureVisible"] = Value::Bool(true);
+    }
+    Some(presentation)
 }
 
-fn attach_user_message_presentations(messages: &mut [Value], presentations: Vec<Value>) {
+fn attach_user_message_presentations(messages: &mut Vec<Value>, presentations: Vec<Value>) {
     for presentation in presentations {
         let Some(client_user_message_id) = string_field(&presentation, "clientUserMessageId")
             .or_else(|| string_field(&presentation, "client_user_message_id"))
         else {
             continue;
         };
-        let Some(message) = messages.iter_mut().find(|message| {
+        let message_index = messages.iter().position(|message| {
             string_field(message, "clientUserMessageId")
                 .or_else(|| string_field(message, "client_user_message_id"))
                 .as_deref()
                 == Some(client_user_message_id.as_str())
-        }) else {
-            continue;
+        });
+        let message_index = match message_index {
+            Some(index) => index,
+            None if bool_field(&presentation, "ensureVisible") == Some(true) => {
+                let content = string_field(&presentation, "content").unwrap_or_default();
+                if content.trim().is_empty() {
+                    continue;
+                }
+                let created_at =
+                    timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
+                let synthetic = json!({
+                    "id": client_user_message_id,
+                    "clientUserMessageId": client_user_message_id,
+                    "role": "user",
+                    "content": content,
+                    "status": "done",
+                    "createdAt": created_at,
+                    "source": presentation.get("source").cloned(),
+                });
+                let index = messages
+                    .iter()
+                    .position(|message| {
+                        timestamp_ms_field(message, "createdAt")
+                            .is_some_and(|message_at| message_at > created_at)
+                    })
+                    .unwrap_or(messages.len());
+                messages.insert(index, synthetic);
+                index
+            }
+            None => continue,
         };
-        let Some(content) = string_field(message, "content") else {
-            continue;
-        };
+        let message = &mut messages[message_index];
+        let content = string_field(message, "content").unwrap_or_default();
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
             .map(|references| presentation_reference_ranges(references, &content))
             .unwrap_or_default();
-        if references.is_empty() {
-            continue;
-        }
         if let Some(message) = message.as_object_mut() {
-            message.insert(
-                "presentationReferences".to_owned(),
-                Value::Array(references),
-            );
+            if !references.is_empty() {
+                message.insert(
+                    "presentationReferences".to_owned(),
+                    Value::Array(references),
+                );
+            }
+            if let Some(source) = presentation.get("source").filter(|value| value.is_object()) {
+                message.insert("source".to_owned(), source.clone());
+            }
         }
     }
 }

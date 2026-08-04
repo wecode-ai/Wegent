@@ -267,7 +267,7 @@ function getRuntimeTaskPinOverrideKey(deviceId: string, threadId: string) {
 
 interface OpenSettingsOptions {
   autoOpenAddCloudDeviceDialog?: boolean
-  settingsPage?: 'connections'
+  settingsPage?: 'about' | 'connections'
 }
 
 type ProjectCreateMenuPosition = {
@@ -3981,6 +3981,10 @@ export function DesktopSidebar({
                   onOpenSettings={() => {
                     setSettingsMenuOpen(false)
                     onOpenSettings()
+                  }}
+                  onOpenAbout={() => {
+                    setSettingsMenuOpen(false)
+                    onOpenSettings({ settingsPage: 'about' })
                   }}
                   onLogin={
                     requiresCloudLogin

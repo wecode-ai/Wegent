@@ -10,10 +10,12 @@ export interface AppPreferences {
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
   experimentalFeaturesEnabled: boolean
+  supervisorPrinciples: string
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
   trayUsageEnabled: boolean
+  trayWegentUsageEnabled: boolean
   browserExternalLinkTarget: BrowserLinkTarget
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
@@ -64,10 +66,12 @@ export interface AppPreferencesPatch {
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
   experimentalFeaturesEnabled?: boolean
+  supervisorPrinciples?: string
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
   trayUsageEnabled?: boolean
+  trayWegentUsageEnabled?: boolean
   browserExternalLinkTarget?: BrowserLinkTarget
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
@@ -108,10 +112,12 @@ export const defaultAppPreferences: AppPreferences = {
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
   experimentalFeaturesEnabled: false,
+  supervisorPrinciples: '',
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  trayWegentUsageEnabled: true,
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
@@ -181,6 +187,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled
         : defaultAppPreferences.experimentalFeaturesEnabled,
+    supervisorPrinciples:
+      typeof record.supervisorPrinciples === 'string'
+        ? record.supervisorPrinciples
+        : defaultAppPreferences.supervisorPrinciples,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled
@@ -197,6 +207,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.trayUsageEnabled === 'boolean'
         ? record.trayUsageEnabled
         : defaultAppPreferences.trayUsageEnabled,
+    trayWegentUsageEnabled:
+      typeof record.trayWegentUsageEnabled === 'boolean'
+        ? record.trayWegentUsageEnabled
+        : defaultAppPreferences.trayWegentUsageEnabled,
     browserExternalLinkTarget:
       typeof record.browserExternalLinkTarget === 'string' &&
       supportedBrowserLinkTargets.has(record.browserExternalLinkTarget as BrowserLinkTarget)

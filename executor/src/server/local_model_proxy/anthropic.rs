@@ -193,6 +193,8 @@ struct AnthropicStreamState<S> {
     response_id: String,
     model: String,
     input_tokens: u64,
+    cached_input_tokens: u64,
+    cache_creation_input_tokens: u64,
     output_tokens: u64,
     output_observed: bool,
 }
@@ -213,6 +215,8 @@ where
         response_id: "msg_wework_anthropic".to_owned(),
         model: String::new(),
         input_tokens: 0,
+        cached_input_tokens: 0,
+        cache_creation_input_tokens: 0,
         output_tokens: 0,
         output_observed: false,
     };
@@ -261,6 +265,7 @@ pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
         .get("stop_reason")
         .and_then(Value::as_str)
         .unwrap_or("end_turn");
+    let usage = anthropic_usage_to_chat(response.get("usage"));
     json!({
         "id": response.get("id").cloned().unwrap_or_else(|| json!("msg_wework_anthropic")),
         "model": response.get("model").cloned().unwrap_or(Value::Null),
@@ -268,10 +273,35 @@ pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
             "message": message,
             "finish_reason": if stop_reason == "max_tokens" { "length" } else if stop_reason == "tool_use" { "tool_calls" } else { "stop" }
         }],
-        "usage": {
-            "prompt_tokens": response.pointer("/usage/input_tokens").cloned().unwrap_or_else(|| json!(0)),
-            "completion_tokens": response.pointer("/usage/output_tokens").cloned().unwrap_or_else(|| json!(0))
-        }
+        "usage": usage
+    })
+}
+
+fn anthropic_usage_to_chat(usage: Option<&Value>) -> Value {
+    let input_tokens = usage
+        .and_then(|value| value.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cached_input_tokens = usage
+        .and_then(|value| value.get("cache_read_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_input_tokens = usage
+        .and_then(|value| value.get("cache_creation_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .and_then(|value| value.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let prompt_tokens = input_tokens
+        .saturating_add(cached_input_tokens)
+        .saturating_add(cache_creation_input_tokens);
+
+    json!({
+        "prompt_tokens": prompt_tokens,
+        "prompt_tokens_details": {"cached_tokens": cached_input_tokens},
+        "completion_tokens": output_tokens
     })
 }
 
@@ -342,6 +372,14 @@ impl<S> AnthropicStreamState<S> {
                     .pointer("/usage/input_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
+                self.cached_input_tokens = message
+                    .pointer("/usage/cache_read_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                self.cache_creation_input_tokens = message
+                    .pointer("/usage/cache_creation_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 self.emit(json!({"choices": [{"delta": {}}]}));
             }
             Some("content_block_start") => self.start_content_block(event),
@@ -382,9 +420,17 @@ impl<S> AnthropicStreamState<S> {
                         ],
                     );
                 }
+                let prompt_tokens = self
+                    .input_tokens
+                    .saturating_add(self.cached_input_tokens)
+                    .saturating_add(self.cache_creation_input_tokens);
                 self.emit(json!({
                     "choices": [{"delta": {}, "finish_reason": stop}],
-                    "usage": {"prompt_tokens": self.input_tokens, "completion_tokens": self.output_tokens}
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "prompt_tokens_details": {"cached_tokens": self.cached_input_tokens},
+                        "completion_tokens": self.output_tokens
+                    }
                 }));
             }
             Some("error") => self.emit(json!({"error": event.get("error")})),
@@ -589,10 +635,39 @@ mod tests {
         assert!(output.contains("call `apply_patch` again"));
     }
 
+    #[test]
+    fn converts_anthropic_cached_usage_to_full_chat_prompt_usage() {
+        let response = json!({
+            "id": "msg_1",
+            "model": "kimi-for-coding",
+            "content": [{"type": "text", "text": "Done"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 90,
+                "cache_creation_input_tokens": 20,
+                "output_tokens": 7
+            }
+        });
+
+        let converted = anthropic_response_to_chat(&response);
+
+        assert_eq!(converted["usage"]["prompt_tokens"], json!(120));
+        assert_eq!(
+            converted["usage"]["prompt_tokens_details"]["cached_tokens"],
+            json!(90)
+        );
+        assert_eq!(converted["usage"]["completion_tokens"], json!(7));
+    }
+
     #[tokio::test]
     async fn converts_anthropic_text_and_tool_stream() {
         let events = [
-            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":10}}}),
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{
+                "input_tokens":10,
+                "cache_read_input_tokens":90,
+                "cache_creation_input_tokens":20
+            }}}),
             json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Plan"}}),
             json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}}),
             json!({"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tool_1","name":"apply_patch","input":{}}}),
@@ -619,7 +694,8 @@ mod tests {
         assert!(output.contains("response.reasoning_summary_text.delta"));
         assert!(output.contains("response.output_text.delta"));
         assert!(output.contains("response.custom_tool_call_input.done"));
-        assert!(output.contains("\"input_tokens\":10"));
+        assert!(output.contains("\"input_tokens\":120"));
+        assert!(output.contains("\"cached_tokens\":90"));
     }
 
     #[tokio::test]

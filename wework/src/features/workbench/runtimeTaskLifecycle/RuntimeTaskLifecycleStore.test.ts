@@ -282,6 +282,32 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.execution.running).toBe(false)
   })
 
+  test('ignores a settled event from an older turn after a newer turn starts', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.turnStarted(address, 'turn-1')
+    store.turnStarted(address, 'turn-2')
+
+    store.turnSettled(address, 'turn-1')
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('keeps a live stream when an idle executor snapshot lags behind it', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+
+    store.turnStarted(address)
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'active' })))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
   test('marks only background non-Goal completion unread and clears it when opened', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))

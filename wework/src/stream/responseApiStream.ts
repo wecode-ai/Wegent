@@ -3,6 +3,7 @@ import type {
   RuntimeContextUsage,
   RuntimeGoal,
   RuntimeGoalContinuationPayload,
+  RuntimeSupervisorState,
   RuntimeTokenUsageBreakdown,
 } from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
@@ -48,6 +49,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'runtime.goal.updated',
   'runtime.goal.cleared',
   'runtime.goal.continuation',
+  'runtime.supervisor.updated',
   'runtime.plan.updated',
   'thread/tokenUsage/updated',
   'thread.tokenUsage.updated',
@@ -656,9 +658,21 @@ export function emitResponseApiEvent(
   const data = eventResult(payload)
 
   if (eventName === 'response.created' || eventName === 'response.in_progress') {
+    const generatedUserMessage = asRecord(payload.runtimeGeneratedUserMessage)
+    const generatedUserMessageId = stringField(generatedUserMessage, 'id')
+    const generatedUserMessageContent = stringField(generatedUserMessage, 'message')
     handlers.onChatStart?.({
       ...base,
       shellType: stringField(payload, 'runtime'),
+      ...(generatedUserMessageId &&
+        generatedUserMessageContent && {
+          runtimeGeneratedUserMessage: {
+            id: generatedUserMessageId,
+            message: generatedUserMessageContent,
+            createdAt: optionalNumberField(generatedUserMessage, 'createdAt') ?? Date.now(),
+            source: asRecord(generatedUserMessage.source),
+          },
+        }),
     })
     return
   }
@@ -760,6 +774,14 @@ export function emitResponseApiEvent(
       ...base,
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
+    })
+    return
+  }
+
+  if (eventName === 'runtime.supervisor.updated') {
+    handlers.onRuntimeSupervisorUpdated?.({
+      ...base,
+      supervisor: (data.supervisor ?? null) as RuntimeSupervisorState | null,
     })
     return
   }
