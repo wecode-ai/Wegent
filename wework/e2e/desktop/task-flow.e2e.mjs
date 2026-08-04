@@ -1047,6 +1047,17 @@ async function verifyQueuedFollowUpNavigation({
   )
 }
 
+async function ensurePlanMode(control) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('plan-mode-pill')) return
+
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-plan-mode-button"]')
+  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
@@ -1055,11 +1066,7 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     'The task-plan verification did not start from a ready workbench'
   )
   control.setScenario('task_plan')
-  await control.command('click', '[data-testid="add-context-button"]')
-  await control.command('click', '[data-testid="set-plan-mode-button"]')
-  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await ensurePlanMode(control)
   await sendPromptUntilScenarioRequest(control, composerSelector, TASK_PLAN_PROMPT, 'task_plan')
   const taskPlanDebugSnapshot = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -1091,6 +1098,19 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     text: TASK_PLAN_STEP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: TASK_PLAN_STEP,
+    value: 'background-task-plan-message',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      '[data-e2e-anchor-id="background-task-plan-message"] [data-testid="final-processing-toggle"]'
+    ),
+    '0',
+    'The completed task plan was collapsed into the final processing summary'
+  )
   await captureVerificationScreenshot(control, '01-background-task-plan-restored.png')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -2334,11 +2354,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await control.command('click', '[data-testid="add-context-button"]')
-  await control.command('click', '[data-testid="set-plan-mode-button"]')
-  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await ensurePlanMode(control)
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -3939,6 +3955,7 @@ async function verifyWorkspaceTabIsolation(control) {
     false,
     'The transferred task tab remained open in the source window'
   )
+  control.activateWindow('main')
 }
 
 async function verifyCloudWorkPage(control) {
@@ -7963,6 +7980,12 @@ class DesktopE2EServer {
   async command(action, selector, options = {}) {
     assert.ok(this.activeControlClientId, 'No active desktop control client is registered')
     return this.commandForClient(this.activeControlClientId, action, selector, options)
+  }
+
+  activateWindow(windowLabel) {
+    const clientId = this.controlClientsByWindow.get(windowLabel)
+    assert.ok(clientId, `No desktop control client is registered for window ${windowLabel}`)
+    this.activeControlClientId = clientId
   }
 
   async commandForWindow(windowLabel, action, selector, options = {}) {
@@ -12466,14 +12489,23 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     phase = 'secondary-project-create'
+    const projectMenusBeforeSecondaryCreate = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
     const secondaryProjectSnapshot = await waitForSnapshot(
       control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      snapshot =>
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('project-menu-') && !projectMenusBeforeSecondaryCreate.has(testId)
+        ),
       'The standalone secondary project was not shown in the sidebar'
     )
-    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
+    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeSecondaryCreate.has(testId)
     )
     assert.ok(secondaryProjectMenuTestId, 'The standalone secondary project identity was not found')
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
@@ -12484,6 +12516,11 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     phase = 'composer-project-folder-select'
+    const projectMenusBeforeComposerCreate = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
@@ -12555,12 +12592,13 @@ last_updated = "2026-07-30T00:00:00Z"`
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+          testId =>
+            testId.startsWith('project-menu-') && !projectMenusBeforeComposerCreate.has(testId)
         ),
       'The newly opened folder project was not shown in the sidebar'
     )
     let projectMenuTestId = openedProjectSnapshot.testIds.find(
-      testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeComposerCreate.has(testId)
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     let projectId = projectMenuTestId.slice('project-menu-'.length)
@@ -12610,6 +12648,11 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     phase = 'project-folder-reopen'
+    const projectMenusBeforeReopen = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
@@ -12677,18 +12720,12 @@ last_updated = "2026-07-30T00:00:00Z"`
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId =>
-            testId.startsWith('project-menu-') &&
-            testId !== projectMenuTestId &&
-            testId !== secondaryProjectMenuTestId
+          testId => testId.startsWith('project-menu-') && !projectMenusBeforeReopen.has(testId)
         ),
       'The reopened folder project was not shown with its current identity'
     )
     const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
-      testId =>
-        testId.startsWith('project-menu-') &&
-        testId !== projectMenuTestId &&
-        testId !== secondaryProjectMenuTestId
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeReopen.has(testId)
     )
     assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
     projectMenuTestId = reopenedProjectMenuTestId
@@ -13319,11 +13356,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'background-request-user-input'
       control.setScenario('request_user_input')
-      await control.command('click', '[data-testid="add-context-button"]')
-      await control.command('click', '[data-testid="set-plan-mode-button"]')
-      await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
+      await ensurePlanMode(control)
       await sendPromptUntilScenarioRequest(
         control,
         composerSelector,

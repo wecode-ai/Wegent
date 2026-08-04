@@ -53,6 +53,8 @@ The **Processed** section in an AI response displays tool calls from top to bott
 
 Completed processing activity is summarized by type. Terminal commands and Node.js REPL JavaScript calls count as commands, MCP and other capabilities count as tools, and file reads or edits use their own categories. Expand the processing area, then select a row or its chevron to inspect the details. The collapsed row uses a readable short name; the detail view shows the full tool name, invocation input, and returned output. Status-only activity without input or output does not show an empty disclosure control.
 
+A plan generated in Plan mode remains part of the visible response instead of being placed inside the completed **Processed** disclosure. It stays directly visible after restoring a background task or reopening the conversation. Ordinary commands, file operations, and tool calls continue to use the summary and disclosure behavior described above.
+
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
 
 To branch from a completed AI response, move the pointer to its message actions and choose **Continue in new task**. The new task keeps the conversation context through that response and uses the same workspace. The source task and later messages remain unchanged. The action is hidden for streaming, cancelled, or unmappable Codex turns.
