@@ -16,6 +16,9 @@ use tokio::sync::Semaphore;
 
 use super::{proxy_client_without_redirects, VisionSidecarUpstream};
 use crate::logging::log_executor_event;
+use crate::protocol::{
+    CODEX_FILES_MENTIONED_HEADER, CODEX_IMAGE_REFERENCE_PREFIX, CODEX_REQUEST_MARKER,
+};
 use crate::server::HttpError;
 
 const DESCRIPTION_MAX_CHARS: usize = 2_000;
@@ -371,18 +374,23 @@ fn sha256_hex(value: &[u8]) -> String {
 async fn describe_image(sidecar: &VisionSidecarUpstream, job: &ImageJob) -> Result<String, String> {
     validate_image_url(&job.image_url)?;
     validate_vision_request_url(&sidecar.request_url)?;
-    let _permit = tokio::time::timeout(sidecar.timeout, vision_concurrency_limiter().acquire())
+    let deadline = tokio::time::Instant::now() + sidecar.timeout;
+    let _permit = tokio::time::timeout_at(deadline, vision_concurrency_limiter().acquire())
         .await
         .map_err(|_| "vision model queue wait timed out".to_owned())?
         .expect("vision concurrency limiter should remain open");
     let client = proxy_client_without_redirects(sidecar.proxy_url.as_deref())
         .map_err(|error| error.detail)?;
     let body = vision_request_body(sidecar, job);
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        return Err("vision model queue wait timed out".to_owned());
+    }
     let mut request = client
         .post(&sidecar.request_url)
         .bearer_auth(&sidecar.api_key)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .timeout(sidecar.timeout)
+        .timeout(remaining)
         .json(&body);
     if sidecar.api_format == "anthropic-messages" {
         request = request
@@ -615,12 +623,12 @@ fn strip_generated_attachment_markup(value: &str) -> String {
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
-            if trimmed == "# Files mentioned by the user:" {
+            if trimmed == CODEX_FILES_MENTIONED_HEADER {
                 inside_file_references = true;
                 return false;
             }
             if inside_file_references {
-                if trimmed == "## My request for Codex:" {
+                if trimmed == CODEX_REQUEST_MARKER {
                     inside_file_references = false;
                 }
                 return false;
@@ -631,7 +639,7 @@ fn strip_generated_attachment_markup(value: &str) -> String {
                 }
                 return false;
             }
-            if trimmed.starts_with("<image ") {
+            if trimmed.starts_with(CODEX_IMAGE_REFERENCE_PREFIX) {
                 inside_image = !trimmed.contains("</image>");
                 return false;
             }
@@ -744,6 +752,8 @@ mod tests {
         assert!(validate_vision_request_url("http://127.0.0.1:8080/v1/responses").is_ok());
         assert!(validate_vision_request_url("http://[::1]:8080/v1/responses").is_ok());
         assert!(validate_vision_request_url("http://vision.example/v1/responses").is_err());
+        assert!(validate_vision_request_url("http://127.0.0.1.vision.example/v1").is_err());
+        assert!(validate_vision_request_url("http://169.254.169.254/latest/meta-data").is_err());
         assert!(validate_vision_request_url("file:///tmp/vision").is_err());
     }
 
@@ -778,7 +788,7 @@ mod tests {
                     "content": [{
                         "type": "input_text",
                         "text": format!(
-                            "# Files mentioned by the user:\n\n## vision-sidecar.png: {path}\n\n## My request for Codex:\nDescribe this image.\n\n<image name=[Image #1] path=\"{path}\">\n</image>"
+                            "{CODEX_FILES_MENTIONED_HEADER}\n\n## vision-sidecar.png: {path}\n\n{CODEX_REQUEST_MARKER}\nDescribe this image.\n\n{CODEX_IMAGE_REFERENCE_PREFIX}name=[Image #1] path=\"{path}\">\n</image>"
                         )
                     }]
                 }]

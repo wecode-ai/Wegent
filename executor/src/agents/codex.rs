@@ -29,7 +29,7 @@ use crate::{
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
-    protocol::ExecutionRequest,
+    protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::{AgentEngine, ExecutionOutcome},
     server::{
         codex_model_catalog, executor_loopback_base_url,
@@ -3621,7 +3621,7 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
         .join("\n");
     let request_text = extract_user_request_text(text_parts);
     format!(
-        "\n# Files mentioned by the user:\n\n{file_lines}\n\n## My request for Codex:\n{request_text}\n"
+        "\n{CODEX_FILES_MENTIONED_HEADER}\n\n{file_lines}\n\n{CODEX_REQUEST_MARKER}\n{request_text}\n"
     )
 }
 
