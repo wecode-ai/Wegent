@@ -202,7 +202,7 @@ http://127.0.0.1:9998/v1
 
 Wework E2E 还会启动两个本机 loopback upstream mock。它们只替代 Wegent 之外的外部服务，不替代 Wegent Backend、Executor、Codex、`/api/sites`、`/api/apps/installed` 或 connector runtime API。
 
-`wework/e2e/utils/mock-sites-upstream-server.mjs` 模拟 Sites project API：
+`wework/e2e/utils/mock-sites-upstream-server.mjs` 模拟 Sites project API，并根据 `app_type` 返回站点或小程序列表：
 
 - `GET /api/v1/projects/search`：返回确定性的项目列表，支持 `username`、`limit`、`sitename` 和 `cursor`。
 - `POST /api/v1/projects/deploy/network`：更新项目内外网状态。

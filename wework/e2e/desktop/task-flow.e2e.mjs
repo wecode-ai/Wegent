@@ -4520,23 +4520,35 @@ async function verifySitesPluginAutoInstall(control) {
   await control.command('waitFor', '[data-testid="sites-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="applications-tab-mini-program"]')
+  await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
+    text: 'E2E Mini Program',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'plugins-05-applications-mini-program-list.png')
 
   await control.command('clickWhenEnabled', '[data-testid="sites-create-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('clickWhenEnabled', '[data-testid="sites-create-mini-program-menu-item"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
-    snapshot => snapshot.text.includes('站点'),
-    'Creating a site did not place the bundled Sites plugin in the composer',
+    snapshot => snapshot.text.includes('创建并发布一个小程序'),
+    'Creating a Mini Program did not place the requested application prompt in the composer',
     WORKBENCH_READY_TIMEOUT_MS,
     ACTIVE_COMPOSER_SELECTOR
   )
   const composerText = await control.command('getText', ACTIVE_COMPOSER_SELECTOR)
   assert.match(
     composerText,
-    /站点/,
-    'Creating a site did not place the bundled Sites plugin in the composer'
+    /创建并发布一个小程序/,
+    'Creating a Mini Program did not place the requested application prompt in the composer'
   )
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.equal(
@@ -4546,22 +4558,22 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await captureVerificationScreenshot(control, 'plugins-05-sites-auto-installed.png')
 
-  const sitesPluginSelector = '[data-testid="composer-plugin-chip-wegent-sites"]'
-  await control.command('waitFor', sitesPluginSelector, {
+  const miniProgramPluginSelector = '[data-testid="composer-plugin-chip-wegent-mini-program"]'
+  await control.command('waitFor', miniProgramPluginSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', sitesPluginSelector)
+  await control.command('click', miniProgramPluginSelector)
   await control.command('waitFor', '[data-testid="plugin-detail-back-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await waitForSnapshot(
     control,
     detailSnapshot =>
-      detailSnapshot.text.includes('站点') &&
+      detailSnapshot.text.includes('小程序') &&
       detailSnapshot.testIds.includes('plugin-detail-back-button'),
-    'Clicking the Sites plugin mention did not open its plugin detail page'
+    'Clicking the Mini Program plugin mention did not open its plugin detail page'
   )
-  await captureVerificationScreenshot(control, 'plugins-06-sites-detail.png')
+  await captureVerificationScreenshot(control, 'plugins-06-mini-program-detail.png')
 }
 
 function sitesMarketplacePlugin(installed) {
@@ -4640,6 +4652,87 @@ function installedSitesPlugin() {
         sizeBytes: 1024,
       },
       sourcePayload: { filename: 'wegent-sites.zip' },
+    },
+    status: { state: 'Available' },
+  }
+}
+
+function miniProgramMarketplacePlugin(installed) {
+  return {
+    id: 502,
+    remotePluginId: 'wegent~Plugin_502',
+    name: 'wegent-mini-program',
+    displayName: '小程序',
+    description: 'Build and publish mini programs',
+    version: '0.1.0',
+    author: 'Wegent Team',
+    visibility: 'public',
+    featured: true,
+    installed,
+    enabled: installed,
+    installedPluginId: installed ? 602 : null,
+    sourceType: 'marketplace',
+    interface: {
+      displayName: '小程序',
+      shortDescription: 'Build and publish mini programs with Wegent',
+      category: 'Productivity',
+      defaultPrompt: ['创建并发布一个小程序'],
+    },
+    components: {
+      skills: [
+        {
+          name: 'mini-program:building',
+          description: 'Build and publish mini programs',
+          path: 'skills/building/SKILL.md',
+        },
+      ],
+      commands: [],
+      agents: [],
+      hooks: [],
+      mcps: [],
+      lsps: [],
+      monitors: [],
+      bins: [],
+    },
+    manifest: { name: 'wegent-mini-program' },
+    ownerUserId: 0,
+  }
+}
+
+function installedMiniProgramPlugin() {
+  const marketplacePlugin = miniProgramMarketplacePlugin(true)
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'wegent-mini-program',
+      namespace: 'default',
+      labels: { id: '602' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent-marketplace',
+        pluginKey: 'wegent-mini-program',
+        catalogItemId: '502',
+        marketplace: 'wegent',
+      },
+      displayName: '小程序',
+      description: marketplacePlugin.description,
+      version: marketplacePlugin.version,
+      author: marketplacePlugin.author,
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: marketplacePlugin.manifest,
+      components: marketplacePlugin.components,
+      interface: marketplacePlugin.interface,
+      packageRef: {
+        storageKey: 'skill-binaries/602',
+        checksum: 'sha256:desktop-e2e-mini-program',
+        sizeBytes: 1024,
+      },
+      sourcePayload: { filename: 'wegent-mini-program.zip' },
     },
     status: { state: 'Available' },
   }
@@ -7298,6 +7391,7 @@ class DesktopE2EServer {
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
+    this.miniProgramPluginInstalled = false
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
@@ -7848,41 +7942,126 @@ class DesktopE2EServer {
       return
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+    if (request.method === 'GET' && url.pathname === '/api/sites/app-types') {
       json(response, 200, {
-        items: this.sitesPluginInstalled ? [installedSitesPlugin()] : [],
+        items: [
+          {
+            app_type: 'site',
+            enabled: true,
+            order: 10,
+            capabilities: ['create', 'publish', 'delete'],
+          },
+          {
+            app_type: 'mini_program',
+            enabled: true,
+            order: 20,
+            capabilities: ['create', 'open_experience'],
+          },
+        ],
       })
       return
     }
 
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/plugins/builtin/wegent-sites/ensure-installed'
-    ) {
+    if (request.method === 'GET' && url.pathname === '/api/sites') {
+      const appType = url.searchParams.get('app_type') || 'site'
+      const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
+      const items =
+        appType === 'mini_program'
+          ? [
+              {
+                app_type: 'mini_program',
+                siteid: 'prj_e2e_mini',
+                taskid: 'prj_e2e_mini',
+                username: 'wework-desktop-e2e-cloud-user',
+                name: 'E2E Mini Program',
+                slug: 'prj_e2e_mini',
+                app_id: 'wx-e2e-mini',
+                status: 'experience',
+                version: '1.0.0',
+                experience_url: 'https://example.test/mini-experience',
+                thumbnail_url: null,
+                created_at: '2026-07-22T00:10:00Z',
+                updated_at: '2026-07-22T00:12:00Z',
+              },
+            ]
+          : [
+              {
+                app_type: 'site',
+                siteid: 'prj_e2e_product',
+                taskid: 'prj_e2e_product',
+                username: 'wework-desktop-e2e-cloud-user',
+                name: 'E2E Product Site',
+                slug: 'prj_e2e_product',
+                internal_url: 'https://sites.internal/e2e-product',
+                external_url: null,
+                publish_status: 'unpublished',
+                last_publish_error: null,
+                thumbnail_url: null,
+                created_at: '2026-07-22T00:00:00Z',
+                updated_at: '2026-07-22T00:00:00Z',
+                published_at: null,
+              },
+            ]
+      const filteredItems = query
+        ? items.filter(item => item.name.toLowerCase().includes(query))
+        : items
+      json(response, 200, {
+        items: filteredItems,
+        total: filteredItems.length,
+        offset: Number.parseInt(url.searchParams.get('offset') || '0', 10),
+        limit: Number.parseInt(url.searchParams.get('limit') || '20', 10),
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+      json(response, 200, {
+        items: [
+          ...(this.sitesPluginInstalled ? [installedSitesPlugin()] : []),
+          ...(this.miniProgramPluginInstalled ? [installedMiniProgramPlugin()] : []),
+        ],
+      })
+      return
+    }
+
+    const builtinPluginMatch = url.pathname.match(
+      /^\/api\/plugins\/builtin\/(wegent-sites|wegent-mini-program)\/ensure-installed$/
+    )
+    if (request.method === 'POST' && builtinPluginMatch) {
       const body = await readRequestBody(request)
-      this.sitesPluginInstalled = true
+      const pluginName = builtinPluginMatch[1]
+      const isSitesPlugin = pluginName === 'wegent-sites'
+      const installedPlugin = isSitesPlugin ? installedSitesPlugin() : installedMiniProgramPlugin()
+      const installedPluginId = isSitesPlugin ? 601 : 602
+      if (isSitesPlugin) {
+        this.sitesPluginInstalled = true
+      } else {
+        this.miniProgramPluginInstalled = true
+      }
       if (!body.device_id) {
-        this.sitesConnectionBootstrapRequests += 1
+        if (isSitesPlugin) {
+          this.sitesConnectionBootstrapRequests += 1
+        }
         json(response, 200, {
-          plugin: installedSitesPlugin(),
+          plugin: installedPlugin,
           sync: null,
         })
         return
       }
       if (body.device_id !== 'local-device') {
         json(response, 422, {
-          detail: 'A matching target device is required for Sites synchronization',
+          detail: 'A matching target device is required for application plugin synchronization',
         })
         return
       }
       json(response, 200, {
-        plugin: installedSitesPlugin(),
+        plugin: installedPlugin,
         sync: {
           success: true,
           device_id: 'local-device',
           mode: 'merge',
           skills: [],
-          plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+          plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
           mcps: [],
           errors: [],
           synced: 1,
@@ -7894,7 +8073,7 @@ class DesktopE2EServer {
               success: true,
               error: null,
               skills: [],
-              plugins: [{ id: 601, name: 'wegent-sites', status: 'synced' }],
+              plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
               mcps: [],
               errors: [],
             },
@@ -7905,7 +8084,12 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/plugins/marketplace') {
-      json(response, 200, { items: [sitesMarketplacePlugin(true)] })
+      json(response, 200, {
+        items: [
+          sitesMarketplacePlugin(this.sitesPluginInstalled),
+          miniProgramMarketplacePlugin(this.miniProgramPluginInstalled),
+        ],
+      })
       return
     }
 
