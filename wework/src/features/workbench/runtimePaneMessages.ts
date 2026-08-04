@@ -339,6 +339,7 @@ export function createRuntimeTaskStreamHandlers(
         type: 'block_created',
         subtaskId: identity.subtaskId,
         block,
+        replaceAssistantTextItemId: payload.replacesItemId,
       })
       if (isStandaloneCompletedContextCompaction(identity.subtaskId, block)) {
         handlers.onMessageAction({

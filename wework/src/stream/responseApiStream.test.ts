@@ -637,4 +637,39 @@ describe('emitResponseApiEvent', () => {
       })
     )
   })
+
+  test('preserves the assistant item replaced by a reclassified process block', () => {
+    const onBlockCreated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockCreated },
+      'response.block.created',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: {
+          replacesItemId: 'msg-progress',
+          block: {
+            id: 'msg-progress',
+            type: 'text',
+            content: 'I will inspect.',
+            status: 'done',
+            timestamp: 1770000000000,
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockCreated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      replacesItemId: 'msg-progress',
+      block: expect.objectContaining({
+        id: 'msg-progress',
+        type: 'text',
+        content: 'I will inspect.',
+      }),
+    })
+  })
 })

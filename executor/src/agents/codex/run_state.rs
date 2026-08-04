@@ -225,6 +225,7 @@ impl CodexRunState {
         }
         if codex_phase_is_process(phase.as_deref()) {
             let text = extract_text(item).unwrap_or_default();
+            self.clear_reclassified_final_message(codex_item_id(params));
             log_codex_run_state_text(
                 "completed",
                 "skip_process",
@@ -304,6 +305,15 @@ impl CodexRunState {
             self.final_text = text;
             self.final_message_saw_delta = false;
         }
+    }
+
+    fn clear_reclassified_final_message(&mut self, item_id: Option<&str>) {
+        if !final_message_ids_match(self.final_message_id.as_deref(), item_id) {
+            return;
+        }
+        self.final_text.clear();
+        self.final_message_id = None;
+        self.final_message_saw_delta = false;
     }
 
     fn begin_final_message(&mut self, item_id: Option<&str>, clear_on_change: bool) {

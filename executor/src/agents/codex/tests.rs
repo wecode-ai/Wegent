@@ -1090,6 +1090,63 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
 }
 
 #[test]
+fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": ""
+                }
+            }
+        }),
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-progress",
+                "delta": "I will inspect."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+}
+
+#[test]
 fn goal_created_during_turn_keeps_notification_reader_alive() {
     let mut state = CodexRunState::default();
 
