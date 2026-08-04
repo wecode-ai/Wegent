@@ -124,7 +124,7 @@ For a project bound to the local macOS device, the project row menu includes **S
 
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
-When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
+When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines. When you are reading the middle of a long conversation, opening or closing the file panel, dragging the split, and resizing the window still resize the conversation normally. After the text reflows, Wework keeps the first visible line at the same screen position so your reading place is not interrupted.
 
 Streaming progress text shown before the assistant's final response uses the same file-link behavior. Absolute paths are not resolved as web links against the Wework page URL; clicking a link with line numbers opens the workspace file directly at the referenced lines.
 
