@@ -9724,7 +9724,7 @@ class DesktopE2EServer {
     if (promptRequestCount === 2) {
       assert.equal(
         body.model,
-        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+        PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
         `The provider-switch retry was routed to ${String(body.model)} instead of official GPT`
       )
       const responseId = 'provider-switch-gpt-complete'
