@@ -65,6 +65,8 @@ pub struct ConnectionConfig {
     #[serde(default)]
     pub backend_url: String,
     #[serde(default)]
+    pub socket_url: String,
+    #[serde(default)]
     pub auth_token: String,
 }
 
@@ -195,6 +197,7 @@ impl DeviceConfig {
     fn apply_env_overrides(&mut self) {
         set_from_env(&mut self.mode, "EXECUTOR_MODE");
         set_from_env(&mut self.connection.backend_url, "WEGENT_BACKEND_URL");
+        set_from_env(&mut self.connection.socket_url, "WEGENT_SOCKET_URL");
         set_from_env(&mut self.connection.auth_token, "WEGENT_AUTH_TOKEN");
         set_from_env(&mut self.device_id, "DEVICE_ID");
         set_from_env(&mut self.runtime_instance_id, "WEGENT_RUNTIME_INSTANCE_ID");

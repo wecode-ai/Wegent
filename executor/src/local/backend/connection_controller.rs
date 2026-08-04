@@ -62,6 +62,7 @@ impl LocalBackendConnectionController {
             let mut config = self.base_config.clone();
             config.connection = connection.clone();
             let backend_url = connection.backend_url.clone();
+            let socket_url = resolved_socket_url(connection);
             let transport = SocketIoTransport::default();
             let runner = LocalBackendRunner::new(
                 LocalBackendConfig::from_device_config(config),
@@ -72,7 +73,11 @@ impl LocalBackendConnectionController {
                 if let Err(error) = runner.run_forever().await {
                     write_executor_error_line(&format_executor_log(
                         "local backend runner stopped",
-                        &[("backend_url", backend_url), ("error", error)],
+                        &[
+                            ("backend_url", backend_url),
+                            ("socket_url", socket_url),
+                            ("error", error),
+                        ],
                     ));
                 }
             }));
@@ -88,6 +93,13 @@ impl LocalBackendConnectionController {
                     connection
                         .as_ref()
                         .map(|value| value.backend_url.clone())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "socket_url",
+                    connection
+                        .as_ref()
+                        .map(resolved_socket_url)
                         .unwrap_or_default(),
                 ),
             ],
@@ -107,7 +119,8 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
             Ok(json!({
                 "changed": changed,
                 "connected": connection.is_some(),
-                "backend_url": connection.map(|value| value.backend_url),
+                "backend_url": connection.as_ref().map(|value| &value.backend_url),
+                "socket_url": connection.as_ref().map(resolved_socket_url),
             }))
         })
     }
@@ -121,8 +134,22 @@ fn normalized_connection(connection: &ConnectionConfig) -> Option<ConnectionConf
     }
     Some(ConnectionConfig {
         backend_url: backend_url.to_owned(),
+        socket_url: resolved_socket_url(connection),
         auth_token: auth_token.to_owned(),
     })
+}
+
+fn resolved_socket_url(connection: &ConnectionConfig) -> String {
+    let socket_url = connection.socket_url.trim().trim_end_matches('/');
+    if socket_url.is_empty() {
+        connection
+            .backend_url
+            .trim()
+            .trim_end_matches('/')
+            .to_owned()
+    } else {
+        socket_url.to_owned()
+    }
 }
 
 fn connection_from_params(params: &Value) -> Result<Option<ConnectionConfig>, AppIpcError> {
@@ -133,16 +160,21 @@ fn connection_from_params(params: &Value) -> Result<Option<ConnectionConfig>, Ap
         ));
     };
     let backend_url = optional_connection_field(params.get("backend_url"), "backend_url")?;
+    let socket_url = optional_connection_field(params.get("socket_url"), "socket_url")?;
     let auth_token = optional_connection_field(params.get("auth_token"), "auth_token")?;
-    match (backend_url, auth_token) {
-        (None, None) => Ok(None),
-        (Some(backend_url), Some(auth_token)) => Ok(Some(ConnectionConfig {
+    match (backend_url, socket_url, auth_token) {
+        (None, None, None) => Ok(None),
+        (Some(backend_url), socket_url, Some(auth_token)) => Ok(Some(ConnectionConfig {
             backend_url: backend_url.trim_end_matches('/').to_owned(),
+            socket_url: socket_url
+                .unwrap_or_else(|| backend_url.clone())
+                .trim_end_matches('/')
+                .to_owned(),
             auth_token,
         })),
         _ => Err(AppIpcError::new(
             "bad_request",
-            "backend_url and auth_token must be provided together",
+            "socket_url requires backend_url and auth_token",
         )),
     }
 }
@@ -158,5 +190,51 @@ fn optional_connection_field(
             "bad_request",
             format!("{name} must be a non-empty string or null"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{connection_from_params, normalized_connection};
+    use crate::config::device::ConnectionConfig;
+
+    #[test]
+    fn dynamic_connection_preserves_distinct_socket_url() {
+        let connection = connection_from_params(&json!({
+            "backend_url": "https://backend.example.com/",
+            "socket_url": "wss://socket.example.com/",
+            "auth_token": "wg-token",
+        }))
+        .expect("connection should parse")
+        .expect("connection should be configured");
+
+        assert_eq!(connection.backend_url, "https://backend.example.com");
+        assert_eq!(connection.socket_url, "wss://socket.example.com");
+        assert_eq!(connection.auth_token, "wg-token");
+    }
+
+    #[test]
+    fn static_connection_defaults_socket_url_to_backend_url() {
+        let connection = normalized_connection(&ConnectionConfig {
+            backend_url: "https://backend.example.com/".to_owned(),
+            socket_url: String::new(),
+            auth_token: "wg-token".to_owned(),
+        })
+        .expect("connection should be configured");
+
+        assert_eq!(connection.backend_url, "https://backend.example.com");
+        assert_eq!(connection.socket_url, "https://backend.example.com");
+    }
+
+    #[test]
+    fn dynamic_connection_rejects_socket_url_without_credentials() {
+        let error = connection_from_params(&json!({
+            "socket_url": "wss://socket.example.com",
+        }))
+        .expect_err("socket-only connection should be rejected");
+
+        assert_eq!(error.code, "bad_request");
     }
 }

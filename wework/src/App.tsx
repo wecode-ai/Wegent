@@ -421,6 +421,7 @@ function AppShell() {
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
     backendUrl: cloudConnection.backendUrl,
+    socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
   }
@@ -674,6 +675,7 @@ function AppShell() {
           <LocalExecutorCloudBridge
             apiBaseUrl={cloudConnection.apiBaseUrl}
             backendUrl={cloudConnection.backendUrl}
+            socketBaseUrl={cloudConnection.socketBaseUrl}
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />
