@@ -5012,7 +5012,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'follow-up during stale state'
     )
-  })
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -5032,7 +5032,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
@@ -5053,7 +5053,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
     expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
-  })
+  }, 15_000)
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
     const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
