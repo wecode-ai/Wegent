@@ -776,6 +776,8 @@ export interface RuntimeSupervisorSetRequest {
   intervalSeconds: number
 }
 
+export type RuntimeSupervisorCreateInput = Omit<RuntimeSupervisorSetRequest, 'address'>
+
 export interface RuntimeSupervisorClearRequest {
   address: RuntimeTaskAddress
 }
@@ -1163,6 +1165,7 @@ export interface RuntimeTaskCreateRequest {
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string

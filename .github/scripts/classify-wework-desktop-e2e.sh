@@ -8,6 +8,7 @@ core_segments=(
   core-task-flow
   window-lifecycle
   goal-lifecycle
+  supervisor-lifecycle
   resilience
   conversation-state
   workspace-attachments
@@ -108,8 +109,12 @@ classify_wework_path() {
 
     # Queueing, cancellation, retry, rate-limit, and reconnect behavior.
     wework/src/components/chat/ConversationQueuePanel* | \
-      wework/src/lib/chat-error* | \
-      wework/src/features/workbench/runtimeTaskLifecycle/*)
+      wework/src/lib/chat-error*)
+      select_target "core:resilience"
+      return
+      ;;
+    wework/src/features/workbench/runtimeTaskLifecycle/*)
+      select_target "core:supervisor-lifecycle"
       select_target "core:resilience"
       return
       ;;
@@ -126,6 +131,9 @@ classify_wework_path() {
       wework/src/components/chat/MessageTurnNavigation* | \
       wework/src/components/chat/ScrollableMessageArea*)
       select_target "core:conversation-state"
+      if [[ "$path" == wework/src/features/workbench/runtimePaneMessages* ]]; then
+        select_target "core:supervisor-lifecycle"
+      fi
       return
       ;;
     wework/src/components/chat/MessageList*)

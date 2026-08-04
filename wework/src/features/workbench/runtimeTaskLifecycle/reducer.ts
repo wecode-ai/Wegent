@@ -23,6 +23,8 @@ export function reduceRuntimeTaskLifecycle(
               : 'idle'
       const turnPhase =
         snapshotRunning === false && !shouldIgnoreStaleSnapshot ? 'idle' : state.turnPhase
+      const activeTurnId =
+        snapshotRunning === false && !shouldIgnoreStaleSnapshot ? null : state.activeTurnId
 
       return {
         ...state,
@@ -30,6 +32,7 @@ export function reduceRuntimeTaskLifecycle(
         task: event.task,
         executionPhase,
         turnPhase,
+        activeTurnId,
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
@@ -96,6 +99,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'idle',
         turnPhase: 'idle',
+        activeTurnId: null,
         expectedExecutorRunning: false,
       }
 
@@ -104,18 +108,24 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: 'streaming',
+        activeTurnId: event.turnId ?? null,
         expectedExecutorRunning: true,
         unread: false,
       }
 
-    case 'turn_settled':
+    case 'turn_settled': {
+      if (event.turnId && state.activeTurnId && event.turnId !== state.activeTurnId) {
+        return state
+      }
       return {
         ...state,
         executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
         turnPhase: 'idle',
+        activeTurnId: null,
         expectedExecutorRunning:
           state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
       }
+    }
 
     case 'turn_recovered':
       return event.streaming
@@ -123,6 +133,7 @@ export function reduceRuntimeTaskLifecycle(
             ...state,
             executionPhase: 'running',
             turnPhase: 'streaming',
+            activeTurnId: event.turnId ?? null,
             expectedExecutorRunning: true,
           }
         : state

@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, combined_codex_developer_instructions,
-        strip_wework_browser_instructions, CodexActiveTurnCallback,
-        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},

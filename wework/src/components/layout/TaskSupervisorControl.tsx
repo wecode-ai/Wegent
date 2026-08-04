@@ -1,6 +1,8 @@
-import { AlertCircle, Check, Eye, Loader2, MessageSquareText, ShieldCheck, X } from 'lucide-react'
+import { AlertCircle, Check, Loader2, MessageSquareText, ShieldCheck, X } from 'lucide-react'
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -10,10 +12,20 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 
+export interface TaskSupervisorConfig {
+  mode: RuntimeSupervisorMode
+  instructions: string
+  modelId: string | null
+  intervalSeconds: number
+}
+
 interface TaskSupervisorControlProps {
+  open: boolean
   supervisor?: RuntimeSupervisorState | null
+  initialConfig?: TaskSupervisorConfig | null
   defaultInstructions?: string
   models?: UnifiedModel[]
+  onOpenChange: (open: boolean) => void
   onSet: (
     mode: RuntimeSupervisorMode,
     instructions: string,
@@ -25,39 +37,111 @@ interface TaskSupervisorControlProps {
 }
 
 export function TaskSupervisorControl({
+  open,
   supervisor,
+  initialConfig,
   defaultInstructions = '',
   models = [],
+  onOpenChange,
   onSet,
   onClear,
   className,
 }: TaskSupervisorControlProps) {
-  const { t } = useTranslation('common')
-  const [open, setOpen] = useState(false)
-  const [mode, setMode] = useState<RuntimeSupervisorMode>(supervisor?.mode ?? 'suggest')
-  const [instructions, setInstructions] = useState(supervisor?.instructions ?? defaultInstructions)
-  const [modelId, setModelId] = useState(supervisor?.modelId ?? '')
-  const [intervalSeconds, setIntervalSeconds] = useState(supervisor?.intervalSeconds ?? 30)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  if (!open) return null
 
-  const pendingCount =
-    supervisor?.suggestions.filter(suggestion => suggestion.status === 'pending').length ?? 0
-  const latestSuggestionAt = supervisor?.suggestions.reduce(
+  return (
+    <TaskSupervisorDialogContent
+      key={`${supervisor?.mode ?? initialConfig?.mode ?? 'disabled'}:${supervisor?.modelId ?? initialConfig?.modelId ?? ''}:${supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30}`}
+      supervisor={supervisor}
+      initialConfig={initialConfig}
+      defaultInstructions={defaultInstructions}
+      models={models}
+      onOpenChange={onOpenChange}
+      onSet={onSet}
+      onClear={onClear}
+      className={className}
+    />
+  )
+}
+
+interface TaskSupervisorStatusButtonProps {
+  supervisor: RuntimeSupervisorState
+  onClick: () => void
+}
+
+export function TaskSupervisorStatusButton({
+  supervisor,
+  onClick,
+}: TaskSupervisorStatusButtonProps) {
+  const { t } = useTranslation('common')
+  const pendingCount = supervisor.suggestions.filter(
+    suggestion => suggestion.status === 'pending'
+  ).length
+  const latestSuggestionAt = supervisor.suggestions.reduce(
     (latest, suggestion) => Math.max(latest, suggestion.createdAt),
     0
   )
   const latestCheckFoundNoCorrection =
-    Boolean(supervisor?.lastEvaluatedAt) &&
-    (latestSuggestionAt ?? 0) < (supervisor?.lastEvaluatedAt ?? 0)
+    Boolean(supervisor.lastEvaluatedAt) && latestSuggestionAt < (supervisor.lastEvaluatedAt ?? 0)
   const statusLabel =
-    supervisor?.status === 'checking'
+    supervisor.status === 'checking'
       ? t('workbench.supervisor_checking')
-      : supervisor?.status === 'error'
+      : supervisor.status === 'error'
         ? t('workbench.supervisor_error')
         : latestCheckFoundNoCorrection
           ? t('workbench.supervisor_aligned')
           : t('workbench.supervisor_active')
+
+  return (
+    <button
+      type="button"
+      data-testid="task-supervisor-toggle-button"
+      onClick={onClick}
+      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+    >
+      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+        {supervisor.status === 'error' ? (
+          <AlertCircle className="h-[18px] w-[18px] text-amber-600" />
+        ) : supervisor.status === 'checking' ? (
+          <Loader2 className="h-[18px] w-[18px] animate-spin" />
+        ) : (
+          <ShieldCheck className="h-[18px] w-[18px]" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{t('workbench.supervisor_title')}</span>
+      <span className="shrink-0 text-xs text-text-muted">{statusLabel}</span>
+      {pendingCount > 0 && (
+        <span className="rounded-full bg-text-primary px-1.5 text-xs text-background">
+          {pendingCount}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function TaskSupervisorDialogContent({
+  supervisor,
+  initialConfig,
+  defaultInstructions = '',
+  models = [],
+  onOpenChange,
+  onSet,
+  onClear,
+  className,
+}: Omit<TaskSupervisorControlProps, 'open'>) {
+  const { t } = useTranslation('common')
+  const [mode, setMode] = useState<RuntimeSupervisorMode>(
+    supervisor?.mode ?? initialConfig?.mode ?? 'suggest'
+  )
+  const [instructions, setInstructions] = useState(
+    supervisor?.instructions ?? initialConfig?.instructions ?? defaultInstructions
+  )
+  const [modelId, setModelId] = useState(supervisor?.modelId ?? initialConfig?.modelId ?? '')
+  const [intervalSeconds, setIntervalSeconds] = useState(
+    supervisor?.intervalSeconds ?? initialConfig?.intervalSeconds ?? 30
+  )
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const lastCheckedAt = supervisor?.lastEvaluatedAt
     ? new Date(supervisor.lastEvaluatedAt).toLocaleTimeString([], {
         hour: '2-digit',
@@ -65,12 +149,16 @@ export function TaskSupervisorControl({
       })
     : null
 
+  useEscapeKey(() => {
+    if (!saving) onOpenChange(false)
+  })
+
   const save = async () => {
     setSaving(true)
     setError(null)
     try {
       await onSet(mode, instructions, modelId || null, intervalSeconds)
-      setOpen(false)
+      onOpenChange(false)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
@@ -83,7 +171,7 @@ export function TaskSupervisorControl({
     setError(null)
     try {
       await onClear()
-      setOpen(false)
+      onOpenChange(false)
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : String(clearError))
     } finally {
@@ -91,72 +179,61 @@ export function TaskSupervisorControl({
     }
   }
 
-  return (
-    <div className={cn('relative flex shrink-0 items-center', className)}>
-      <button
-        type="button"
-        data-testid="task-supervisor-toggle-button"
+  return createPortal(
+    <div
+      data-testid="task-supervisor-dialog-overlay"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4"
+      onMouseDown={event => {
+        if (event.target === event.currentTarget && !saving) {
+          onOpenChange(false)
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-supervisor-dialog-title"
         className={cn(
-          'flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs shadow-sm transition-colors',
-          supervisor
-            ? 'border-border/70 bg-surface text-text-secondary hover:bg-background'
-            : 'border-dashed border-border/70 bg-background text-text-muted hover:bg-surface'
+          'max-h-[calc(100vh-2rem)] w-full max-w-[420px] overflow-y-auto rounded-2xl border border-border/80 bg-background p-5 text-text-primary shadow-xl',
+          className
         )}
-        aria-label={t('workbench.supervisor_title')}
-        aria-expanded={open}
-        onClick={() => {
-          if (!open) {
-            setMode(supervisor?.mode ?? 'suggest')
-            setInstructions(supervisor?.instructions ?? defaultInstructions)
-            setModelId(supervisor?.modelId ?? '')
-            setIntervalSeconds(supervisor?.intervalSeconds ?? 30)
-          }
-          setOpen(value => !value)
-        }}
       >
-        {supervisor?.status === 'error' ? (
-          <AlertCircle className="h-4 w-4 text-amber-600" />
-        ) : supervisor?.status === 'checking' ? (
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
-        ) : supervisor ? (
-          <ShieldCheck className="h-4 w-4 text-primary" />
-        ) : (
-          <Eye className="h-4 w-4" />
-        )}
-        <span>{supervisor ? statusLabel : t('workbench.supervisor_enable')}</span>
-        {pendingCount > 0 && (
-          <span className="rounded-full bg-text-primary px-1.5 text-background">
-            {pendingCount}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <div
-          data-testid="task-supervisor-panel"
-          className="absolute bottom-[calc(100%+0.5rem)] right-0 z-popover max-h-[calc(100vh-8rem)] w-80 overflow-y-auto rounded-lg border border-border/80 bg-background p-3 shadow-lg"
-        >
-          <div className="mb-3">
-            <div className="text-sm font-medium text-text-primary">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 id="task-supervisor-dialog-title" className="text-sm font-medium text-text-primary">
               {t('workbench.supervisor_title')}
-            </div>
+            </h2>
             <p className="mt-1 text-xs leading-5 text-text-muted">
               {t('workbench.supervisor_description')}
             </p>
-            {supervisor && (
-              <p
-                data-testid="task-supervisor-status"
-                className="mt-1 text-xs leading-5 text-text-secondary"
-              >
-                {supervisor.status === 'checking'
-                  ? t('workbench.supervisor_checking_detail')
-                  : lastCheckedAt
-                    ? t('workbench.supervisor_last_checked', { time: lastCheckedAt })
-                    : t('workbench.supervisor_waiting_first_check')}
-              </p>
-            )}
           </div>
+          <button
+            type="button"
+            data-testid="task-supervisor-close-button"
+            autoFocus
+            disabled={saving}
+            onClick={() => onOpenChange(false)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary disabled:opacity-40"
+            aria-label={t('common.close', '关闭')}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
+        {supervisor && (
+          <p
+            data-testid="task-supervisor-status"
+            className="mb-3 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-secondary"
+          >
+            {supervisor.status === 'checking'
+              ? t('workbench.supervisor_checking_detail')
+              : lastCheckedAt
+                ? t('workbench.supervisor_last_checked', { time: lastCheckedAt })
+                : t('workbench.supervisor_waiting_first_check')}
+          </p>
+        )}
+
+        <div data-testid="task-supervisor-panel" className="w-full">
           <label className="block text-xs font-medium text-text-secondary">
             {t('workbench.supervisor_mode')}
           </label>
@@ -234,7 +311,7 @@ export function TaskSupervisorControl({
           {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
 
           <div className="mt-3 flex items-center justify-between gap-2">
-            {supervisor ? (
+            {supervisor || initialConfig ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -261,8 +338,9 @@ export function TaskSupervisorControl({
             </Button>
           </div>
         </div>
-      )}
-    </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 

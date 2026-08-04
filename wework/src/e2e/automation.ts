@@ -759,6 +759,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'dispatchRuntimeLifecycleEvent':
+      window.dispatchEvent(
+        new CustomEvent('wework:e2e:runtime-task-lifecycle', {
+          detail: JSON.parse(command.value ?? '{}'),
+        })
+      )
+      return ''
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':

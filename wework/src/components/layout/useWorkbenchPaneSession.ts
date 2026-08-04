@@ -43,6 +43,7 @@ import type {
   RuntimeGoalContinuationPayload,
   RuntimeAdditionalContext,
   RuntimeRollbackRequest,
+  RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
@@ -97,7 +98,9 @@ interface RuntimePaneSendOptions {
   interruptWhenBusy?: boolean
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
+  onRuntimeTaskReady?: (address: RuntimeTaskAddress) => void
 }
 
 interface SendRuntimeMessageOptions {
@@ -1610,6 +1613,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             initialGoal,
             additionalContext: options.additionalContext,
             cloudProjectId: options.cloudProjectId,
+            initialSupervisor: options.initialSupervisor,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
               setPendingGoalState(current =>
@@ -1645,6 +1649,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 runtimeGoalRequest: true,
               })
             } else {
+              options.onRuntimeTaskReady?.(sent)
               setPendingGoalState(current =>
                 current
                   ? {
@@ -1731,6 +1736,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             initialGoal: pendingInitialGoal,
             additionalContext: resolvedAdditionalContext,
             cloudProjectId: options.cloudProjectId,
+            initialSupervisor: options.initialSupervisor,
             onError: setError,
             onRuntimeTaskOptimisticOpen: (address, context) => {
               options.onRuntimeTaskCreated?.(address)
@@ -1771,6 +1777,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 codeComments: codeCommentContexts,
               })
             } else {
+              options.onRuntimeTaskReady?.(sent)
               if (pendingInitialGoal) {
                 setPendingGoalState(current =>
                   current

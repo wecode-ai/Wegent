@@ -145,6 +145,9 @@ export interface ChatInputProps {
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
   onCancelGoalDraft?: () => void
   onEditGoal?: () => void
   onPauseGoal?: () => void
@@ -264,6 +267,9 @@ export function ChatInput({
   taskPlan,
   goalDraftActive = false,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
   onCancelGoalDraft,
   onEditGoal,
   onPauseGoal,
@@ -491,6 +497,9 @@ export function ChatInput({
           onSetPlanMode={handleSetPlanMode}
           onClearPlanMode={handleClearPlanMode}
           onSetGoal={onSetGoal}
+          onConfigureSupervisor={onConfigureSupervisor}
+          supervisorEnabled={supervisorEnabled}
+          supervisorPending={supervisorPending}
           onCompactContext={handleCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}

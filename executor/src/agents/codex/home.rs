@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{combined_codex_developer_instructions, strip_wework_browser_instructions};
+use super::strip_wework_browser_instructions;
 
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
@@ -51,15 +51,15 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
         .get("developer_instructions")
         .and_then(|item| item.as_str())
         .unwrap_or_default();
-    let user_instructions = if legacy_instructions.trim().is_empty() {
-        strip_wework_browser_instructions(developer_instructions).to_owned()
-    } else {
-        legacy_instructions.trim().to_owned()
-    };
+    let user_instructions =
+        select_wework_codex_user_instructions(legacy_instructions, developer_instructions);
 
     document.remove("instructions");
-    document["developer_instructions"] =
-        value(combined_codex_developer_instructions(&user_instructions));
+    if user_instructions.is_empty() {
+        document.remove("developer_instructions");
+    } else {
+        document["developer_instructions"] = value(user_instructions);
+    }
     if document
         .get("personality")
         .and_then(|item| item.as_str())
@@ -73,6 +73,51 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
         return Ok(());
     }
     replace_config(&config_path, next_content)
+}
+
+pub(crate) fn read_wework_codex_user_instructions(codex_home: &Path) -> Result<String, String> {
+    use toml_edit::DocumentMut;
+
+    let config_path = codex_home.join("config.toml");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => {
+            return Err(format!(
+                "failed to read Codex config {}: {error}",
+                config_path.display()
+            ));
+        }
+    };
+    let document = content.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "failed to parse Codex config {}: {error}",
+            config_path.display()
+        )
+    })?;
+    let legacy_instructions = document
+        .get("instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    let developer_instructions = document
+        .get("developer_instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    Ok(select_wework_codex_user_instructions(
+        legacy_instructions,
+        developer_instructions,
+    ))
+}
+
+pub(crate) fn select_wework_codex_user_instructions(
+    legacy_instructions: &str,
+    developer_instructions: &str,
+) -> String {
+    let legacy_instructions = legacy_instructions.trim();
+    if !legacy_instructions.is_empty() {
+        return legacy_instructions.to_owned();
+    }
+    strip_wework_browser_instructions(developer_instructions).to_owned()
 }
 
 fn replace_config(config_path: &Path, content: String) -> Result<(), String> {

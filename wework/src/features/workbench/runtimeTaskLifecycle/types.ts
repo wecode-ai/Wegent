@@ -9,6 +9,7 @@ export interface RuntimeTaskLifecycleState {
   task: RuntimeTaskSummary | null
   executionPhase: RuntimeTaskExecutionPhase
   turnPhase: RuntimeTaskTurnPhase
+  activeTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
   continuable: boolean
   unread: boolean
@@ -59,9 +60,9 @@ export type RuntimeTaskLifecycleEvent =
   | { type: 'stop_rejected' }
   | { type: 'executor_started' }
   | { type: 'executor_settled' }
-  | { type: 'turn_started' }
-  | { type: 'turn_settled' }
-  | { type: 'turn_recovered'; streaming: boolean }
+  | { type: 'turn_started'; turnId?: string | null }
+  | { type: 'turn_settled'; turnId?: string | null }
+  | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }
   | { type: 'marked_read' }
   | { type: 'marked_unread' }

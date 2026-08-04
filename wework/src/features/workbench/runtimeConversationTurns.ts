@@ -100,16 +100,23 @@ export function reduceRuntimeConversationTurns(
         streamingThinkingContent: undefined,
       }))
     case 'assistant_done':
-      return updateTurn(turns, action.subtaskId, turn => ({
-        ...turn,
-        items: upsertBlocks(turn.items, action.blocks),
-        status: 'done',
-        streamingThinkingContent: undefined,
-        completedAt: new Date().toISOString(),
-        fileChanges: action.fileChanges ?? turn.fileChanges,
-        error: undefined,
-        errorType: undefined,
-      }))
+      return updateTurn(turns, action.subtaskId, turn => {
+        const items = applyCompletedAssistantContent(
+          upsertBlocks(turn.items, action.blocks),
+          turn.id,
+          action.content
+        )
+        return {
+          ...turn,
+          items,
+          status: 'done',
+          streamingThinkingContent: undefined,
+          completedAt: new Date().toISOString(),
+          fileChanges: action.fileChanges ?? turn.fileChanges,
+          error: undefined,
+          errorType: undefined,
+        }
+      })
     case 'assistant_cancelled':
       return updateTurn(turns, action.subtaskId, turn => ({
         ...turn,
@@ -503,6 +510,31 @@ function upsertAssistantText(
     content: mergedContent,
     streamTextOffset: offset === undefined ? undefined : offset + content.length,
   })
+}
+
+function applyCompletedAssistantContent(
+  items: RuntimeConversationItem[],
+  turnId: string | null,
+  content: string | undefined
+): RuntimeConversationItem[] {
+  if (!content) return items
+  const lastUserIndex = items.findLastIndex(item => item.type === 'user_message')
+  const hasStreamedAssistantText = items.some(
+    (item, index) => index > lastUserIndex && item.type === 'assistant_text'
+  )
+  if (hasStreamedAssistantText) return items
+  const retained = items.filter(
+    (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
+  )
+  return [
+    ...retained,
+    {
+      id: `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
+      content,
+      createdAt: new Date().toISOString(),
+    },
+  ]
 }
 
 function upsertReasoningChunk(

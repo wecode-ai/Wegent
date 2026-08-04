@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import { SupervisorSuggestionCards, TaskSupervisorControl } from './TaskSupervisorControl'
+import {
+  SupervisorSuggestionCards,
+  TaskSupervisorControl,
+  TaskSupervisorStatusButton,
+} from './TaskSupervisorControl'
 import type { RuntimeSupervisorState } from '@/types/api'
 
 const supervisor: RuntimeSupervisorState = {
@@ -22,9 +26,16 @@ describe('TaskSupervisorControl', () => {
   test('configures a disabled task supervisor independently', async () => {
     const onSet = vi.fn().mockResolvedValue(supervisor)
 
-    render(<TaskSupervisorControl supervisor={null} onSet={onSet} onClear={vi.fn()} />)
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={null}
+        onOpenChange={vi.fn()}
+        onSet={onSet}
+        onClear={vi.fn()}
+      />
+    )
 
-    fireEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
     expect(screen.queryByTestId('task-supervisor-mode-observe')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('task-supervisor-mode-auto'))
     fireEvent.change(screen.getByTestId('task-supervisor-instructions'), {
@@ -42,13 +53,13 @@ describe('TaskSupervisorControl', () => {
     render(
       <TaskSupervisorControl
         supervisor={null}
+        open
+        onOpenChange={vi.fn()}
         models={[{ name: 'gpt-5.6-luna', type: 'codex', displayName: 'GPT 5.6 Luna' }]}
         onSet={onSet}
         onClear={vi.fn()}
       />
     )
-
-    fireEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
     fireEvent.change(screen.getByTestId('task-supervisor-model'), {
       target: { value: 'gpt-5.6-luna' },
     })
@@ -60,21 +71,50 @@ describe('TaskSupervisorControl', () => {
     await waitFor(() => expect(onSet).toHaveBeenCalledWith('suggest', '', 'gpt-5.6-luna', 60))
   })
 
-  test('opens the configuration panel above the trigger', () => {
-    render(<TaskSupervisorControl supervisor={null} onSet={vi.fn()} onClear={vi.fn()} />)
-
-    fireEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
-
-    expect(screen.getByTestId('task-supervisor-panel')).toHaveClass(
-      'bottom-[calc(100%+0.5rem)]',
-      'max-h-[calc(100vh-8rem)]',
-      'overflow-y-auto'
+  test('reopens supervision configured before the task starts', () => {
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={null}
+        initialConfig={{
+          mode: 'auto',
+          instructions: 'Review from the first turn',
+          modelId: 'gpt-5.6-luna',
+          intervalSeconds: 60,
+        }}
+        models={[{ name: 'gpt-5.6-luna', type: 'codex', displayName: 'GPT 5.6 Luna' }]}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
     )
+
+    expect(screen.getByTestId('task-supervisor-mode-auto')).toHaveClass('bg-text-primary')
+    expect(screen.getByTestId('task-supervisor-instructions')).toHaveValue(
+      'Review from the first turn'
+    )
+    expect(screen.getByTestId('task-supervisor-model')).toHaveValue('gpt-5.6-luna')
+    expect(screen.getByTestId('task-supervisor-frequency')).toHaveValue('60')
+    expect(screen.getByTestId('task-supervisor-disable-button')).toBeInTheDocument()
+  })
+
+  test('renders configuration in an accessible dialog', () => {
+    render(
+      <TaskSupervisorControl
+        open
+        supervisor={null}
+        onOpenChange={vi.fn()}
+        onSet={vi.fn()}
+        onClear={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('task-supervisor-panel'))
   })
 
   test('distinguishes an active supervisor from an in-progress check', () => {
     const { rerender } = render(
-      <TaskSupervisorControl supervisor={supervisor} onSet={vi.fn()} onClear={vi.fn()} />
+      <TaskSupervisorStatusButton supervisor={supervisor} onClick={vi.fn()} />
     )
 
     expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent(
@@ -82,10 +122,9 @@ describe('TaskSupervisorControl', () => {
     )
 
     rerender(
-      <TaskSupervisorControl
+      <TaskSupervisorStatusButton
         supervisor={{ ...supervisor, status: 'checking' }}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
+        onClick={vi.fn()}
       />
     )
 
@@ -96,10 +135,9 @@ describe('TaskSupervisorControl', () => {
 
   test('shows when the latest check found no correction', () => {
     render(
-      <TaskSupervisorControl
+      <TaskSupervisorStatusButton
         supervisor={{ ...supervisor, lastEvaluatedAt: 100, suggestions: [] }}
-        onSet={vi.fn()}
-        onClear={vi.fn()}
+        onClick={vi.fn()}
       />
     )
 

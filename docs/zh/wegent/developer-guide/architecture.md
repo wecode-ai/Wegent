@@ -372,13 +372,24 @@ Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍
 
 Codex 运行时在 `executor/src/agents/codex/` 下按职责拆分：`home` 管理隔离的 Codex Home、认证链接和配置归一化，`interaction` 路由用户输入与 MCP 交互响应，`run_state` 将 app-server 事件归约为轮次结果，`diagnostics` 负责日志裁剪与敏感输出摘要，`tests` 保存模块级回归测试。`codex.rs` 保留对外 API、共享 app-server 生命周期和轮次编排。新增行为应进入对应职责模块，避免把配置、协议状态和诊断逻辑重新耦合到编排层。
 
+Codex agent message 的实时文本必须按显式 phase 分类：只有 `final` 或 `final_answer` 才能进入最终回答，`analysis`、`commentary` 以及缺失 phase 的文本都先进入 processing。缺失 phase 的文本可能出现在工具调用前后，不能因为默认值而触发 Wework 的 final-processing 折叠；轮次结束时，executor 使用明确的 final 文本，若模型始终没有发送 phase，则使用最后一段未标 phase 的文本作为终态回答。转录恢复沿用同一规则，并根据后续是否存在工具或其他过程项判断未标文本属于 processing 还是 final。
+
 Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
+
+Wework 的 Codex 自定义指令配置只持久化用户输入；内置浏览器路由规则不写入该字段。executor 在每次创建、继续或 fork Codex 线程前，将用户自定义指令、任务级系统指令和内置浏览器规则组合为该线程的 `developerInstructions` 请求参数。配置归一化会移除历史版本遗留的全部浏览器规则，避免设置页显示重复内容，同时新线程仍始终获得浏览器工具的使用约束。
 
 Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `turn/interrupt` 的确认，再向调用方报告已取消。`turn/start` 返回后到首个轮次进度事件到达前，app-server 的活动轮次索引可能尚未完成注册；executor 在这个启动窗口必须发送空 `turnId` 的线程级启动中断，收到首个进度事件后再使用具体 turn ID。这样停止操作不会遗漏刚启动的轮次，重试也只会在前一轮真正停止后创建，避免上一轮的中断和新轮请求交错，从而恢复已取消的输入或丢失重试消息。
 
 Codex 失败轮次不保证在线程 transcript 中生成 assistant item。executor 因此会在轮次失败时，将带稳定消息 ID、错误类型和原始错误文本的 failed assistant message 写入本地 runtime handle；读取失败任务时，如果 Codex transcript 缺少该消息，再按稳定 ID 合并本地记录。Wework 重开或切回任务后仍能恢复错误卡片及重试入口，同时避免重复展示 Codex 已经持久化的失败消息。
 
-Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。未配置时，Codex 上下文窗口默认为 256K（262144 tokens），代理输出限制默认为 96000 tokens。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
+Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。Anthropic Messages 的总输入用量必须包含 `input_tokens`、`cache_read_input_tokens` 和 `cache_creation_input_tokens`；缓存读取量同时映射为 Responses 的 cached token 明细，确保 Codex 的上下文余量和自动压缩判断使用完整输入量。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。未配置时，Codex 上下文窗口默认为 256K（262144 tokens），代理输出限制默认为 96000 tokens。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
+
+#### 任务监督与运行时就绪
+
+Wework 允许用户在发送首条消息前配置任务监督。该配置作为 `RuntimeTaskCreateRequest.initialSupervisor` 随任务创建请求传入 executor，并在创建任务、写入 runtime 索引之前原子保存；不要在任务地址尚未生成时调用独立的监督设置接口，否则会产生 `thread_id=none` 或 `session_id=none` 的无效状态，并可能被后续任务写入覆盖。
+
+监督评估器只能在 runtime session 已经建立后启动。任务创建和 Codex session 建立之间的窗口属于正常初始化状态，executor 应等待 session 就绪，而不是将其报告为监督异常。任务创建完成后，Wework 清除输入区的待生效提示，并从任务状态与右侧信息面板展示已启用的监督状态。
+
 
 Codex fork 会重建父线程的历史请求。`reasoning`、`compaction`、`compaction_summary`、`context_compaction` 和 `agent_message` 中的 `encrypted_content` 是绑定实际上游加密上下文的非便携状态；即使逻辑模型和路由名称不变，模型网关背后的凭据或项目上下文也可能无法验证父线程生成的密文。executor 通过 Codex 的 fork 元数据识别这类请求，仅在 fork 边界递归移除上述历史条目中的 `encrypted_content`，同时保留消息、工具调用、工具结果和 reasoning summary。普通继续对话不会执行该清理，也不会通过重试、fallback 或模型切换掩盖上游错误。
 

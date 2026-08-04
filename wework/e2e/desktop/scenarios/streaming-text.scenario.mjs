@@ -29,10 +29,12 @@ const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-wo
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
+const TOOL_THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
 const USER_MESSAGE_E2E_ID = 'streaming-text-latest-user-message'
 const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${USER_MESSAGE_E2E_ID}"]`
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
+const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"] [data-scroll-anchor]`
@@ -170,8 +172,9 @@ function reasoningEvents(itemId, text) {
   ]
 }
 
-function streamingEvents(id, completionText = COMPLETION_TEXT) {
+function streamingEvents(id, completionText = COMPLETION_TEXT, phase = 'final_answer') {
   const itemId = `${id}-message`
+  const phaseFields = phase ? { phase } : {}
   return {
     itemId,
     start: [
@@ -185,6 +188,7 @@ function streamingEvents(id, completionText = COMPLETION_TEXT) {
           status: 'in_progress',
           role: 'assistant',
           content: [],
+          ...phaseFields,
         },
       },
       {
@@ -212,6 +216,7 @@ function streamingEvents(id, completionText = COMPLETION_TEXT) {
           status: 'completed',
           role: 'assistant',
           content: [{ type: 'output_text', text: completionText, annotations: [] }],
+          ...phaseFields,
         },
       },
       responseCompleted(id),
@@ -592,7 +597,7 @@ export function createDesktopScenario({
       0,
       'The latest transcript position remained on the older stopped turn'
     )
-    await capture(control, 'streaming-text-16-stopped-turn-order-restored.png')
+    await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
 
   return {
@@ -643,7 +648,7 @@ export function createDesktopScenario({
         toolRegressionStage = 'awaiting-completion-release'
         resolveToolFollowUp()
         await toolCompletionRelease
-        const stream = streamingEvents(responseId, TOOL_COMPLETION)
+        const stream = streamingEvents(responseId, TOOL_COMPLETION, null)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -779,14 +784,44 @@ export function createDesktopScenario({
         releaseToolFinalCompletion()
         throw error
       }
-      await control.command('waitFor', THINKING_INDICATOR_SELECTOR, {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: TOOL_PREAMBLE,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        0,
+        'The unphased pre-tool process text was exposed as final assistant content'
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
+          )
+        ),
+        0,
+        'The tool timeline collapsed before authoritative final content arrived'
+      )
+      await capture(control, 'streaming-text-00-unphased-process-before-tool.png')
+      await control.command('waitFor', TOOL_THINKING_INDICATOR_SELECTOR, {
         text: `正在思考 · ${REASONING_PREVIEW}`,
         timeoutMs: uiTimeoutMs,
       })
-      await capture(control, 'streaming-text-00-live-reasoning-summary.png')
+      await capture(control, 'streaming-text-01-live-reasoning-summary.png')
       releaseToolCompletion()
       await toolFinalTextStarted
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: TOOL_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
+        0,
+        'The unphased post-tool text became final before the turn completed'
+      )
+      releaseToolFinalCompletion()
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: TOOL_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
@@ -798,8 +833,7 @@ export function createDesktopScenario({
         false,
         'The stale reasoning summary remained visible after assistant text started streaming'
       )
-      await capture(control, 'streaming-text-01-reasoning-hidden-during-text.png')
-      releaseToolFinalCompletion()
+      await capture(control, 'streaming-text-02-reasoning-hidden-during-text.png')
       await control.command(
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
@@ -817,7 +851,7 @@ export function createDesktopScenario({
         false,
         'The collapsed reasoning disclosure exposed its full summary'
       )
-      await capture(control, 'streaming-text-02-processing-collapsed.png')
+      await capture(control, 'streaming-text-03-processing-collapsed.png')
       await control.command('click', '[data-testid="final-processing-toggle"]')
       const expandedProcessingSnapshot = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
@@ -832,7 +866,7 @@ export function createDesktopScenario({
         false,
         'The completed response retained its reasoning summary'
       )
-      await capture(control, 'streaming-text-03-reasoning-removed.png')
+      await capture(control, 'streaming-text-04-reasoning-removed.png')
       const shortConversationScroller = await waitForBottom(
         control,
         'The short control conversation',
@@ -843,7 +877,7 @@ export function createDesktopScenario({
         shortConversationScroller,
         'The composer in the short control conversation'
       )
-      await capture(control, 'streaming-text-04-short-control-composer-docked.png')
+      await capture(control, 'streaming-text-05-short-control-composer-docked.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -867,7 +901,7 @@ export function createDesktopScenario({
         0,
         `The tool summary exposed an aggregate duration: ${summaryBeforeSwitch}`
       )
-      await capture(control, 'streaming-text-05-running-tool.png')
+      await capture(control, 'streaming-text-06-running-tool.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
@@ -884,13 +918,13 @@ export function createDesktopScenario({
         0,
         `The restored tool summary exposed an aggregate duration: ${summaryAfterSwitch}`
       )
-      await capture(control, 'streaming-text-06-running-tool-restored.png')
+      await capture(control, 'streaming-text-07-running-tool-restored.png')
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: TIMER_COMPLETION,
         timeoutMs: 25_000,
       })
       const completedDurationBeforeSwitch = await completedToolDuration(control, uiTimeoutMs)
-      await capture(control, 'streaming-text-07-tool-completed.png')
+      await capture(control, 'streaming-text-08-tool-completed.png')
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('clickWhenEnabled', `[data-testid="${timerTaskRowTestId}"]`, {
@@ -907,7 +941,7 @@ export function createDesktopScenario({
         completedDurationBeforeSwitch,
         `The completed tool duration changed from ${completedDurationBeforeSwitch}s to ${completedDurationAfterSwitch}s after switching conversations`
       )
-      await capture(control, 'streaming-text-08-tool-duration-restored.png')
+      await capture(control, 'streaming-text-09-tool-duration-restored.png')
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -936,7 +970,7 @@ export function createDesktopScenario({
           timeoutMs: uiTimeoutMs,
         })
       }
-      await capture(control, 'streaming-text-10-ready-to-send.png')
+      await capture(control, 'streaming-text-11-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
         mimeType: 'image/png',
@@ -1090,7 +1124,7 @@ export function createDesktopScenario({
           anchorBeforeAppend.bottom <= scrollerBeforeAppend.bottom,
         `The viewport anchor was not visible after the user scroll (top=${anchorBeforeAppend.top}px, bottom=${anchorBeforeAppend.bottom}px)`
       )
-      await capture(control, 'streaming-text-11-user-scrolled-up.png')
+      await capture(control, 'streaming-text-12-user-scrolled-up.png')
 
       const streamingBeforeAppend = JSON.parse(
         await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -1125,7 +1159,7 @@ export function createDesktopScenario({
         scrollerAfterAppend,
         'The composer after streamed content changed the virtualized conversation height'
       )
-      await capture(control, 'streaming-text-12-anchor-stable-after-append.png')
+      await capture(control, 'streaming-text-13-anchor-stable-after-append.png')
 
       await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
       const pinnedBeforeSwitch = await waitForBottom(
@@ -1167,7 +1201,7 @@ export function createDesktopScenario({
         pinnedAfterSwitch,
         'The composer after reopening the long virtualized conversation'
       )
-      await capture(control, 'streaming-text-13-bottom-restored-after-task-switch.png')
+      await capture(control, 'streaming-text-14-bottom-restored-after-task-switch.png')
 
       for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
         await control.command('click', '[data-testid="new-chat-button"]')
@@ -1191,7 +1225,7 @@ export function createDesktopScenario({
         remountedScroller,
         'The composer after remounting the long virtualized conversation'
       )
-      await capture(control, 'streaming-text-14-composer-docked-after-pane-remount.png')
+      await capture(control, 'streaming-text-15-composer-docked-after-pane-remount.png')
       assert.equal(
         Number(await control.command('getElementCount', TURN_NAVIGATION_MARKER_SELECTOR)),
         HISTORY_TURNS.length + 2,
@@ -1230,7 +1264,7 @@ export function createDesktopScenario({
         !streamingTurnPreview.includes('application_context'),
         'The streaming turn preview exposed injected application context'
       )
-      await capture(control, 'streaming-text-15-thinking-below-partial-response.png')
+      await capture(control, 'streaming-text-16-thinking-below-partial-response.png')
 
       releaseResponse()
       await control.command(
@@ -1262,7 +1296,7 @@ export function createDesktopScenario({
         !completedSnapshot.testIds.includes('pause-response-button'),
         'The pause button remained after completion'
       )
-      await capture(control, 'streaming-text-16-response-completed.png')
+      await capture(control, 'streaming-text-17-response-completed.png')
       await verifyStoppedTurnOrder(control)
       active = false
     },

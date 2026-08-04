@@ -85,7 +85,6 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
-const WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR: &str = "\n\nWework 内置浏览器 routing:";
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -102,10 +101,11 @@ mod diagnostics;
 mod home;
 
 use diagnostics::{json_scalar_field, json_string_field};
+pub(crate) use home::select_wework_codex_user_instructions;
 pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-use home::{prepare_wework_codex_home, CODEX_HOME_ENV};
+use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -1176,7 +1176,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         active_turn_started,
         active_turn_finished,
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -1437,7 +1437,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         ..
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2121,22 +2121,23 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
-    let user_instructions = user_instructions.trim();
-    if user_instructions.is_empty() {
-        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
-    }
-    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+    [
+        user_instructions.trim(),
+        task_instructions.trim(),
+        WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
+    ]
+    .into_iter()
+    .filter(|instructions| !instructions.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
     let instructions = instructions.trim();
-    if instructions.starts_with("Wework 内置浏览器 routing:") {
-        return "";
-    }
     instructions
-        .rsplit_once(WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR)
-        .map(|(user_instructions, _)| user_instructions)
+        .find("Wework 内置浏览器 routing:")
+        .map(|index| &instructions[..index])
         .unwrap_or(instructions)
         .trim()
 }
@@ -2284,6 +2285,7 @@ struct CodexLaunchConfig {
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
     env: BTreeMap<String, String>,
+    user_developer_instructions: String,
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
@@ -2325,13 +2327,14 @@ struct CodexLocalImage {
     source_path: String,
 }
 
-fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
+fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
     let mut launch_config = CodexLaunchConfig {
         thread_config,
+        user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
@@ -2402,7 +2405,26 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    launch_config
+    Ok(launch_config)
+}
+
+fn build_codex_launch_config_for_prepared_request(
+    prepared: &PreparedCodexExecutionRequest,
+) -> Result<CodexLaunchConfig, String> {
+    cleanup_generated_files_on_error(
+        &prepared.generated_files,
+        build_codex_launch_config(&prepared.request),
+    )
+}
+
+fn cleanup_generated_files_on_error<T>(
+    generated_files: &[PathBuf],
+    result: Result<T, String>,
+) -> Result<T, String> {
+    if result.is_err() {
+        cleanup_generated_files(generated_files);
+    }
+    result
 }
 
 fn configure_codex_router(
@@ -3835,7 +3857,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -3864,7 +3886,7 @@ fn thread_fork_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -3926,7 +3948,7 @@ fn thread_resume_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
-    insert_codex_developer_instructions(&mut params, request);
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
@@ -3940,14 +3962,16 @@ fn thread_resume_params(
 fn insert_codex_developer_instructions(
     params: &mut serde_json::Map<String, Value>,
     request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
 ) {
-    let instructions = request.system_prompt.trim();
-    if !instructions.is_empty() {
-        params.insert(
-            "developerInstructions".to_owned(),
-            Value::String(instructions.to_owned()),
-        );
-    }
+    let instructions = codex_thread_developer_instructions(
+        &launch_config.user_developer_instructions,
+        &request.system_prompt,
+    );
+    params.insert(
+        "developerInstructions".to_owned(),
+        Value::String(instructions),
+    );
 }
 
 fn append_thread_launch_params(

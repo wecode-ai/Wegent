@@ -84,9 +84,20 @@ fn transcript_messages_with_options(
         let mut assistant_segment_index = 0;
         let mut assistant = AssistantTurnAccumulation::new(turn_file_changes.clone());
         let mut seen_user_messages = HashMap::new();
-        for item in canonical_turn_items(turn, &turn_id, root_thread_id.as_deref()) {
+        let turn_items = canonical_turn_items(turn, &turn_id, root_thread_id.as_deref());
+        let has_later_process_by_index: Vec<bool> = turn_items
+            .iter()
+            .enumerate()
+            .map(|(item_index, _)| {
+                turn_items[item_index + 1..]
+                    .iter()
+                    .any(is_substantive_process_item)
+            })
+            .collect();
+        for (item_index, item) in turn_items.into_iter().enumerate() {
             let previous_block_count = assistant.blocks.len();
             let previous_assistant_part_count = assistant.assistant_parts.len();
+            let has_later_process = has_later_process_by_index[item_index];
             match item_type(&item).as_str() {
                 "usermessage" => {
                     if is_internal_turn_abort_message(&item) {
@@ -215,6 +226,7 @@ fn transcript_messages_with_options(
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
+                        has_later_process,
                         &mut assistant,
                         options,
                     );
@@ -270,6 +282,7 @@ fn transcript_messages_with_options(
                             created_at,
                             fold_commentary,
                             turn_cancelled && fold_commentary,
+                            has_later_process,
                             &mut assistant,
                             options,
                         );
@@ -286,6 +299,7 @@ fn transcript_messages_with_options(
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
+                        has_later_process,
                         &mut assistant,
                         options,
                     );
@@ -759,6 +773,12 @@ fn is_substantive_process_item_type(item_type: &str) -> bool {
             "reasoning" | "plan" | "filechange" | "patchapplyend"
         )
         || is_codex_context_compaction_item_type(item_type)
+}
+
+fn is_substantive_process_item(item: &Value) -> bool {
+    is_substantive_process_item_type(&item_type(item))
+        || is_default_tool_item(item)
+        || is_default_tool_output_item(item)
 }
 
 fn is_default_tool_item(item: &Value) -> bool {
@@ -1380,6 +1400,7 @@ fn collect_assistant_message(
     fallback_timestamp: i64,
     fold_commentary: bool,
     interleave_visible_text: bool,
+    has_later_process: bool,
     assistant: &mut AssistantTurnAccumulation,
     options: TranscriptBuildOptions,
 ) {
@@ -1392,7 +1413,7 @@ fn collect_assistant_message(
                 options,
             ));
         } else {
-            match assistant_message_phase(item, fold_commentary) {
+            match assistant_message_phase(item, fold_commentary, has_later_process) {
                 AssistantMessagePhase::Process => {
                     assistant.blocks.push(process_text_block(
                         item,
@@ -1440,10 +1461,15 @@ enum AssistantMessagePhase {
     Process,
 }
 
-fn assistant_message_phase(item: &Value, fold_commentary: bool) -> AssistantMessagePhase {
+fn assistant_message_phase(
+    item: &Value,
+    fold_commentary: bool,
+    has_later_process: bool,
+) -> AssistantMessagePhase {
     match assistant_message_phase_name(item).as_deref() {
         Some("analysis") => AssistantMessagePhase::Process,
         Some("commentary") if fold_commentary => AssistantMessagePhase::Process,
+        None if has_later_process => AssistantMessagePhase::Process,
         _ => AssistantMessagePhase::Final,
     }
 }
@@ -3144,6 +3170,66 @@ mod tests {
             messages[3]["runtimeItems"][3]["createdAt"],
             1_780_000_005_000_i64
         );
+    }
+
+    #[test]
+    fn transcript_keeps_unphased_text_before_tools_in_processing() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "completed",
+                "items": [
+                    {
+                        "id": "user-1",
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "inspect runtime"}]
+                    },
+                    {
+                        "id": "process-1",
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": "I will inspect the runtime."
+                    },
+                    {
+                        "id": "call-1",
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "exec_command",
+                        "arguments": "{\"cmd\":\"rg runtime\"}"
+                    },
+                    {
+                        "id": "call-output-1",
+                        "type": "function_call_output",
+                        "call_id": "call-1",
+                        "output": "runtime.rs"
+                    },
+                    {
+                        "id": "final-1",
+                        "type": "agentMessage",
+                        "role": "assistant",
+                        "text": "The runtime is correct."
+                    }
+                ]
+            }]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "The runtime is correct.");
+        assert_eq!(messages[1]["blocks"][0]["type"], "text");
+        assert_eq!(
+            messages[1]["blocks"][0]["content"],
+            "I will inspect the runtime."
+        );
+        assert_eq!(messages[1]["blocks"][1]["type"], "tool");
+        assert_eq!(messages[1]["blocks"][1]["tool_name"], "exec_command");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { ClipboardList, Paperclip, Plus, Target } from 'lucide-react'
+import { ClipboardList, Eye, Paperclip, Plus, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -11,6 +11,9 @@ interface AddContextMenuProps {
   onFileSelect: (files: File | File[]) => void
   onSetPlanMode?: () => void
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
 }
 
 export function AddContextMenu({
@@ -18,6 +21,9 @@ export function AddContextMenu({
   onFileSelect,
   onSetPlanMode,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
 }: AddContextMenuProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -74,6 +80,11 @@ export function AddContextMenu({
     setOpen(false)
     onSetPlanMode?.()
   }, [onSetPlanMode])
+
+  const handleConfigureSupervisor = useCallback(() => {
+    setOpen(false)
+    onConfigureSupervisor?.()
+  }, [onConfigureSupervisor])
 
   return (
     <div ref={containerRef} className="relative">
@@ -140,6 +151,27 @@ export function AddContextMenu({
                   <span>{t('workbench.goal_chip', '目标')}</span>
                   <span className="ml-2 text-text-muted">
                     {t('workbench.pursue_goal_description', '设置 WeWork 将持续努力实现的目标')}
+                  </span>
+                </span>
+              </button>
+            )}
+            {onConfigureSupervisor && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="task-supervisor-toggle-button"
+                onClick={handleConfigureSupervisor}
+                className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-normal leading-[18px] text-text-primary hover:bg-muted"
+              >
+                <Eye className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
+                <span className="min-w-0 truncate">
+                  <span>{t('workbench.supervisor_title')}</span>
+                  <span className="ml-2 text-text-muted">
+                    {supervisorPending
+                      ? t('workbench.supervisor_pending_menu')
+                      : supervisorEnabled
+                        ? t('workbench.supervisor_configure')
+                        : t('workbench.supervisor_enable')}
                   </span>
                 </span>
               </button>

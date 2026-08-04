@@ -106,12 +106,12 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'executor_settled' })
   }
 
-  turnStarted(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'turn_started' })
+  turnStarted(address: RuntimeTaskAddress, turnId?: string | null): void {
+    this.dispatch(address, { type: 'turn_started', turnId })
   }
 
-  turnSettled(address: RuntimeTaskAddress): void {
-    this.dispatch(address, { type: 'turn_settled' })
+  turnSettled(address: RuntimeTaskAddress, turnId?: string | null): void {
+    this.dispatch(address, { type: 'turn_settled', turnId })
   }
 
   syncTranscript(
@@ -119,9 +119,10 @@ export class RuntimeTaskLifecycleStore {
     transcript: RuntimePaneTranscript,
     options: SyncTranscriptOptions = {}
   ): void {
-    const hasStreamingTurn = transcript.turns.some(
+    const streamingTurn = transcript.turns.findLast(
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
+    const hasStreamingTurn = Boolean(streamingTurn)
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
       options.preserveActiveTurn === true &&
@@ -134,7 +135,11 @@ export class RuntimeTaskLifecycleStore {
     }
 
     if (hasStreamingTurn && transcript.running !== false) {
-      this.dispatch(address, { type: 'turn_recovered', streaming: true })
+      this.dispatch(address, {
+        type: 'turn_recovered',
+        streaming: true,
+        turnId: streamingTurn?.id,
+      })
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.turnSettled(address)
     }
@@ -179,7 +184,7 @@ export class RuntimeTaskLifecycleStore {
       nextMachine.dispatch({ type: 'executor_started' })
     }
     if (previousState.turnPhase === 'streaming') {
-      nextMachine.dispatch({ type: 'turn_started' })
+      nextMachine.dispatch({ type: 'turn_started', turnId: previousState.activeTurnId })
     } else if (previousState.turnPhase === 'submitting') {
       nextMachine.dispatch({ type: 'send_requested' })
     } else if (previousState.turnPhase === 'awaiting') {

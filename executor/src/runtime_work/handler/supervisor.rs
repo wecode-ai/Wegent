@@ -26,46 +26,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn set_task_supervisor(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let mode = string_field(&payload, "mode").unwrap_or_else(|| "suggest".to_owned());
-        if !SUPERVISOR_MODES.contains(&mode.as_str()) {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "supervisor mode must be suggest or auto",
-            ));
-        }
-        let instructions = string_field(&payload, "instructions").unwrap_or_default();
-        let model_id =
-            string_field(&payload, "modelId").or_else(|| string_field(&payload, "model_id"));
-        let interval_seconds = payload
-            .get("intervalSeconds")
-            .or_else(|| payload.get("interval_seconds"))
-            .and_then(Value::as_u64)
-            .unwrap_or(SUPERVISOR_DEFAULT_INTERVAL_SECONDS);
-        if !SUPERVISOR_INTERVAL_SECONDS.contains(&interval_seconds) {
-            return Err(AppIpcError::new(
-                "bad_request",
-                "supervisor interval must be 10, 30, 60, or 300 seconds",
-            ));
-        }
+        let existing = link.supervisor.clone();
+        let supervisor = configured_supervisor(&payload, existing)?;
         self.store.update_task(&link.local_task_id, |task| {
-            let existing = task.supervisor.take();
-            task.supervisor = Some(RuntimeSupervisorState {
-                mode: mode.clone(),
-                status: "active".to_owned(),
-                instructions: instructions.clone(),
-                model_id: model_id.clone().or_else(|| {
-                    existing
-                        .as_ref()
-                        .and_then(|supervisor| supervisor.model_id.clone())
-                }),
-                interval_seconds,
-                last_evaluated_at: None,
-                last_content_hash: None,
-                last_error: None,
-                suggestions: existing
-                    .map(|supervisor| supervisor.suggestions)
-                    .unwrap_or_default(),
-            });
+            task.supervisor = Some(supervisor);
             task.updated_at = now_ms();
         });
         self.emit_supervisor_updated(&link.local_task_id);
@@ -131,10 +95,12 @@ impl RuntimeWorkRpcHandler {
         local_task_id: String,
         source_turn_id: Option<String>,
     ) {
-        let enabled = self
-            .local_task_link(&local_task_id)
-            .and_then(|link| link.supervisor)
-            .is_some_and(|supervisor| supervisor.status != "disabled");
+        let enabled = self.local_task_link(&local_task_id).is_some_and(|link| {
+            runtime_session_id_from_link(&link).is_some()
+                && link
+                    .supervisor
+                    .is_some_and(|supervisor| supervisor.status != "disabled")
+        });
         if !enabled {
             return;
         }
@@ -537,6 +503,51 @@ impl RuntimeWorkRpcHandler {
             json!({"supervisor": link.supervisor}),
         );
     }
+}
+
+pub(super) fn configured_supervisor(
+    payload: &Value,
+    existing: Option<RuntimeSupervisorState>,
+) -> Result<RuntimeSupervisorState, AppIpcError> {
+    let mode = string_field(payload, "mode").unwrap_or_else(|| "suggest".to_owned());
+    if !SUPERVISOR_MODES.contains(&mode.as_str()) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "supervisor mode must be suggest or auto",
+        ));
+    }
+    let instructions = string_field(payload, "instructions").unwrap_or_default();
+    let model_id = string_field(payload, "modelId")
+        .or_else(|| string_field(payload, "model_id"))
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|supervisor| supervisor.model_id.clone())
+        });
+    let interval_seconds = payload
+        .get("intervalSeconds")
+        .or_else(|| payload.get("interval_seconds"))
+        .and_then(Value::as_u64)
+        .unwrap_or(SUPERVISOR_DEFAULT_INTERVAL_SECONDS);
+    if !SUPERVISOR_INTERVAL_SECONDS.contains(&interval_seconds) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            "supervisor interval must be 10, 30, 60, or 300 seconds",
+        ));
+    }
+    Ok(RuntimeSupervisorState {
+        mode,
+        status: "active".to_owned(),
+        instructions,
+        model_id,
+        interval_seconds,
+        last_evaluated_at: None,
+        last_content_hash: None,
+        last_error: None,
+        suggestions: existing
+            .map(|supervisor| supervisor.suggestions)
+            .unwrap_or_default(),
+    })
 }
 
 #[derive(Deserialize)]

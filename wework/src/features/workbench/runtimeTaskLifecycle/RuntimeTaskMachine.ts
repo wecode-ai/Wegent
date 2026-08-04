@@ -15,6 +15,7 @@ export class RuntimeTaskMachine {
       task: null,
       executionPhase: 'unknown',
       turnPhase: 'idle',
+      activeTurnId: null,
       goalStatus: null,
       continuable: false,
       unread,

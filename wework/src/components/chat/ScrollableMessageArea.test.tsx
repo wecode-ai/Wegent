@@ -1672,6 +1672,9 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
     fireEvent.click(screen.getAllByTestId('message-turn-navigation-marker')[0])
     expect(scroller.scrollTop).toBe(24)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    fireEvent.scroll(scroller)
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
 
     Object.defineProperty(scroller, 'scrollHeight', { value: 1600, configurable: true })
     act(() => {
@@ -2376,6 +2379,67 @@ describe('ScrollableMessageArea', () => {
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 1000,
+      behavior: 'auto',
+    })
+  })
+
+  test('follows an assistant response that started while auto-scroll was suspended', () => {
+    const initialMessages = [
+      {
+        id: 'suspended-user',
+        role: 'user' as const,
+        content: '请处理这个问题',
+        status: 'done' as const,
+        createdAt: '2026-05-29T00:00:00.000Z',
+      },
+    ]
+    const assistantMessage = {
+      id: 'suspended-assistant',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:01.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="suspended-assistant-start"
+        messages={initialMessages}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 600, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 400,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    flushScheduledTimers()
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="suspended-assistant-start"
+        messages={[...initialMessages, assistantMessage]}
+        autoScrollSuspended
+      />
+    )
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="suspended-assistant-start"
+        messages={[...initialMessages, assistantMessage]}
+      />
+    )
+    flushScheduledTimers()
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 600,
       behavior: 'auto',
     })
   })

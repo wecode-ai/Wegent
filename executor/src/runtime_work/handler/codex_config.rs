@@ -124,19 +124,16 @@ impl RuntimeWorkRpcHandler {
             .get("developer_instructions")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
         let legacy_instructions = config
             .get("instructions")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let instructions =
-            if user_developer_instructions.is_empty() && !legacy_instructions.trim().is_empty() {
-                self.write_codex_developer_instructions(legacy_instructions)
-                    .await?;
-                legacy_instructions
-            } else {
-                user_developer_instructions
-            };
+            select_wework_codex_user_instructions(legacy_instructions, developer_instructions);
+        if !legacy_instructions.trim().is_empty() {
+            self.write_codex_developer_instructions(&instructions)
+                .await?;
+        }
         Ok(json!({ "instructions": instructions }))
     }
 
@@ -169,7 +166,12 @@ impl RuntimeWorkRpcHandler {
         &self,
         instructions: &str,
     ) -> Result<Value, AppIpcError> {
-        let value = Value::String(combined_codex_developer_instructions(instructions));
+        let instructions = instructions.trim();
+        let value = if instructions.is_empty() {
+            Value::Null
+        } else {
+            Value::String(instructions.to_owned())
+        };
         self.codex_app_server
             .request(
                 "config/batchWrite",

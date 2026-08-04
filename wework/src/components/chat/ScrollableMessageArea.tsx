@@ -246,6 +246,7 @@ function ScrollableMessagePaneContent({
   const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
+  const pendingAssistantResponseStartRef = useRef(false)
   const previousLatestUserMessageIdRef = useRef<string | null>(null)
   const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
@@ -651,6 +652,20 @@ function ScrollableMessagePaneContent({
       previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
     const waitingForAssistantStarted =
       !conversationChanged && !previousWaitingForAssistantRef.current && isWaitingForAssistant
+    const assistantResponseStarted =
+      !conversationChanged &&
+      lastMessageChanged &&
+      lastMessage?.role === 'assistant' &&
+      !userScrollPausedAutoFollowRef.current
+    const autoScrollIsSuspended = autoScrollSuspended || isTurnNavigationAutoScrollSuspended()
+    if (conversationChanged) {
+      pendingAssistantResponseStartRef.current = false
+    }
+    if (assistantResponseStarted && autoScrollIsSuspended) {
+      pendingAssistantResponseStartRef.current = true
+    }
+    const pendingAssistantResponseStarted =
+      pendingAssistantResponseStartRef.current && !autoScrollIsSuspended
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -664,6 +679,8 @@ function ScrollableMessagePaneContent({
         guidanceMessageApplied ||
         waitingForAssistantStarted ||
         latestUserMessageChanged ||
+        assistantResponseStarted ||
+        pendingAssistantResponseStarted ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
@@ -686,7 +703,7 @@ function ScrollableMessagePaneContent({
       return
     }
 
-    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+    if (autoScrollIsSuspended) {
       clearScheduledScrolls()
       return
     }
@@ -697,6 +714,7 @@ function ScrollableMessagePaneContent({
     }
 
     if (shouldForceBottom) {
+      pendingAssistantResponseStartRef.current = false
       setScrollToBottom('auto', { saveSnapshot: false })
       if (preserveLatestUserTurnRef.current) {
         scheduleStableScrollToBottom('auto', {
@@ -745,6 +763,31 @@ function ScrollableMessagePaneContent({
     scheduleStableScrollToBottom,
     scrollToBottom,
     setScrollToBottom,
+  ])
+
+  useLayoutEffect(() => {
+    const turnNavigationSettled = !turnNavigationLoading && turnNavigationTargetMessageId === null
+    if (
+      !pendingAssistantResponseStartRef.current ||
+      messages.length === 0 ||
+      autoScrollSuspended ||
+      !turnNavigationSettled ||
+      isTurnNavigationAutoScrollSuspended()
+    ) {
+      return
+    }
+
+    pendingAssistantResponseStartRef.current = false
+    setScrollToBottom('auto', { saveSnapshot: false })
+    scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+  }, [
+    autoScrollSuspended,
+    isTurnNavigationAutoScrollSuspended,
+    messages.length,
+    scheduleStableScrollToBottom,
+    setScrollToBottom,
+    turnNavigationLoading,
+    turnNavigationTargetMessageId,
   ])
 
   useLayoutEffect(() => {
@@ -867,6 +910,10 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const handleScroll = useCallback(() => {
+    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+      return
+    }
+
     const userInitiated = userScrollIntentRef.current
     userScrollIntentRef.current = false
     if (userInitiated) {
@@ -901,9 +948,11 @@ function ScrollableMessagePaneContent({
       captureUserViewportAnchor()
     }
   }, [
+    autoScrollSuspended,
     captureUserViewportAnchor,
     clearScheduledScrolls,
     currentScrollKey,
+    isTurnNavigationAutoScrollSuspended,
     setScrollToBottom,
     updateScrollState,
   ])

@@ -708,6 +708,31 @@ describe('createRuntimeTaskStreamHandlers', () => {
     ).toBeUndefined()
   })
 
+  test('uses completed runtime content as the authoritative final answer', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: '最终回答。',
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'assistant_done',
+        subtaskId: 'subtask-9',
+        content: '最终回答。',
+      }),
+    ])
+  })
+
   test('builds the completed turn file changes summary from streamed blocks', () => {
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(

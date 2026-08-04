@@ -169,6 +169,12 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        if let Some(supervisor) = payload
+            .get("initialSupervisor")
+            .or_else(|| payload.get("initial_supervisor"))
+        {
+            link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+        }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
