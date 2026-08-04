@@ -2,7 +2,10 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
+  Cookie,
+  Database,
   Download,
+  EllipsisVertical,
   ExternalLink,
   Globe2,
   CircleAlert,
@@ -18,8 +21,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { FormEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { TransientNotice } from '@/components/common/TransientNotice'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import {
   canUseEmbeddedBrowser,
+  clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
@@ -42,6 +47,7 @@ import {
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserAgentStateEvent,
+  type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
@@ -743,6 +749,12 @@ export function WorkspaceBrowserPanel({
     id: number
     message: string
   } | null>(null)
+  const [clearDataNotice, setClearDataNotice] = useState<{
+    id: number
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
@@ -1670,6 +1682,37 @@ export function WorkspaceBrowserPanel({
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
+  const clearBrowserData = useCallback(
+    async (kind: EmbeddedBrowserDataKind) => {
+      if (clearingDataKind) return
+      setClearingDataKind(kind)
+      setClearDataNotice({
+        id: Date.now(),
+        message: t('workbench.browser_clear_started'),
+        tone: 'success',
+      })
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0))
+      try {
+        await clearEmbeddedBrowserData([kind])
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_completed'),
+          tone: 'success',
+        })
+      } catch (error) {
+        console.error('Failed to clear embedded browser data:', error)
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_failed'),
+          tone: 'error',
+        })
+      } finally {
+        setClearingDataKind(null)
+      }
+    },
+    [clearingDataKind, t]
+  )
+
   const setAgentControlPaused = useCallback(
     (paused: boolean) => {
       void setEmbeddedBrowserAgentControlPaused(paused, label).catch(error => {
@@ -1870,6 +1913,39 @@ export function WorkspaceBrowserPanel({
           >
             <ExternalLink className="h-4 w-4" />
           </BrowserToolbarButton>
+          {embeddedBrowserAvailable ? (
+            <ActionMenu
+              ariaLabel={t('workbench.browser_more_actions')}
+              testId="workspace-browser-more-button"
+              icon={EllipsisVertical}
+              placement="bottom-end"
+              triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.browser_clear_data'),
+                  icon: Trash2,
+                  testId: 'workspace-browser-clear-data-item',
+                  disabled: Boolean(clearingDataKind),
+                  children: [
+                    {
+                      label: t('workbench.browser_clear_cookies'),
+                      icon: Cookie,
+                      testId: 'workspace-browser-clear-cookies-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData('cookies'),
+                    },
+                    {
+                      label: t('workbench.browser_clear_cache'),
+                      icon: Database,
+                      testId: 'workspace-browser-clear-cache-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData('cache'),
+                    },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
         </div>
       )}
       {shouldShowAgentState(agentState) ? (
@@ -2046,6 +2122,12 @@ export function WorkspaceBrowserPanel({
         message={localFilePreviewToast?.message ?? null}
         tone="error"
         onClear={() => setLocalFilePreviewToast(null)}
+      />
+      <TransientNotice
+        key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
+        message={clearDataNotice?.message ?? null}
+        tone={clearDataNotice?.tone}
+        onClear={() => setClearDataNotice(null)}
       />
       {invalidTlsCertificate ? (
         <div

@@ -33,6 +33,15 @@ const LOCAL_MARKDOWN_TEXT = 'Local Markdown Browser Fixture'
 const LOCAL_PLAINTEXT_TEXT = '中文无扩展名文本'
 const LOCAL_TOAST_TEXT = '此文件无法预览'
 const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
+const BROWSER_DATA_COOKIE_PATH = '/embedded-browser-data-cookie-fixture'
+const BROWSER_DATA_CACHE_PATH = '/embedded-browser-data-cache-fixture'
+const BROWSER_DATA_CACHE_RESOURCE_PATH = '/embedded-browser-data-cache-resource.js'
+const BROWSER_MORE_BUTTON_SELECTOR = '[data-testid="workspace-browser-more-button"]'
+const BROWSER_CLEAR_DATA_SELECTOR = '[data-testid="workspace-browser-clear-data-item"]'
+const BROWSER_CLEAR_COOKIES_SELECTOR = '[data-testid="workspace-browser-clear-cookies-item"]'
+const BROWSER_CLEAR_CACHE_SELECTOR = '[data-testid="workspace-browser-clear-cache-item"]'
+const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
+const BROWSER_CLEAR_COMPLETED_TEXT = '浏览数据已清除'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
 
@@ -106,6 +115,29 @@ function localFixtureHtml() {
   <body>
     <h1>${LOCAL_FILE_TEXT}</h1>
   </body>
+</html>`
+}
+
+function browserDataCookieFixtureHtml() {
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>Browser data Cookie fixture</title></head>
+  <body>
+    <h1>Browser data Cookie fixture</h1>
+    <script>document.cookie = 'wework_browser_data_e2e=present; Path=/';</script>
+  </body>
+</html>`
+}
+
+function browserDataCacheFixtureHtml() {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Browser data cache fixture</title>
+    <script src="${BROWSER_DATA_CACHE_RESOURCE_PATH}"></script>
+  </head>
+  <body><h1>Browser data cache fixture</h1></body>
 </html>`
 }
 
@@ -288,11 +320,32 @@ function parseToolJson(text) {
 }
 
 export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+  let cacheResourceRequests = 0
+
   return {
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
         response.end()
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === BROWSER_DATA_COOKIE_PATH) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(browserDataCookieFixtureHtml())
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === BROWSER_DATA_CACHE_PATH) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(browserDataCacheFixtureHtml())
+        return true
+      }
+      if (request.method === 'GET' && url.pathname === BROWSER_DATA_CACHE_RESOURCE_PATH) {
+        cacheResourceRequests += 1
+        response.writeHead(200, {
+          'cache-control': 'public, max-age=3600',
+          'content-type': 'application/javascript; charset=utf-8',
+        })
+        response.end(`window.__weworkBrowserDataCacheResource = ${cacheResourceRequests}`)
         return true
       }
       if (request.method !== 'GET' || url.pathname !== FIXTURE_PATH) return false
@@ -353,6 +406,60 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.equal(pausedClick.error?.code, 'user_control')
       await control.command('click', BROWSER_AGENT_RESUME_SELECTOR)
       await pendingAgentWait
+
+      const cookieFixtureUrl = `${control.url}${BROWSER_DATA_COOKIE_PATH}`
+      await bridgeCall({ action: 'open', url: cookieFixtureUrl, timeoutMs: 8_000 })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'Browser data Cookie fixture' } },
+        timeoutMs: 5_000,
+      })
+      const cookieBeforeClear = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.cookie.includes('wework_browser_data_e2e=present')",
+        timeoutMs: 5_000,
+      })
+      assert.equal(cookieBeforeClear, true, 'Cookie fixture did not set its test cookie')
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: BROWSER_CLEAR_STARTED_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      const cookieAfterClear = await bridgeCall({
+        action: 'evaluate',
+        expression: "document.cookie.includes('wework_browser_data_e2e=present')",
+        timeoutMs: 5_000,
+      })
+      assert.equal(cookieAfterClear, false, 'Cookie clear did not remove the fixture cookie')
+
+      const cacheFixtureUrl = `${control.url}${BROWSER_DATA_CACHE_PATH}`
+      await bridgeCall({ action: 'open', url: cacheFixtureUrl, timeoutMs: 8_000 })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'Browser data cache fixture' } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(cacheResourceRequests, 1, 'Cache fixture did not request its resource once')
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
+      await control.command('click', BROWSER_CLEAR_CACHE_SELECTOR)
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: BROWSER_CLEAR_COMPLETED_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
+      await bridgeCall({ action: 'open', url: cacheFixtureUrl, timeoutMs: 8_000 })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: 'Browser data cache fixture' } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(cacheResourceRequests, 2, 'Cache clear did not force a resource request')
 
       await writeStaleBridgeRuntime(bridgeIdentity)
       const mcpResult = await withBrowserMcp(bridgeIdentity, async callTool => {

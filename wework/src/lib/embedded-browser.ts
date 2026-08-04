@@ -43,6 +43,8 @@ export interface EmbeddedBrowserOpenRequest {
   label: string
 }
 
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache'
+
 export interface EmbeddedBrowserDownloadEvent {
   id: string
   label: string
@@ -290,8 +292,8 @@ export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABE
   await invoke('embedded_browser_close', browserArgs(label))
 }
 
-export async function clearEmbeddedBrowserData(): Promise<number> {
-  return invoke<number>('embedded_browser_clear_data')
+export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
+  return invoke<number>('embedded_browser_clear_data', { dataKinds: kinds ?? null })
 }
 
 export function requestEmbeddedBrowserOpen(

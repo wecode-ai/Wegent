@@ -62,14 +62,18 @@ block2 = "0.6.2"
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDate", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSSet", "NSString", "std"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataRecord", "WKWebsiteDataStore", "block2", "objc2-app-kit", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
 keyring = { version = "3.6.3", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
+webview2-com = "0.38.2"
+windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
 
 # Wry prints an expected WKDownload cancellation to stderr whenever Wework takes

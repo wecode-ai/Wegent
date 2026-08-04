@@ -23,6 +23,7 @@ vi.mock('@extensions/cloud-desktop', () => ({
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   canUseEmbeddedBrowser: vi.fn(),
+  clearEmbeddedBrowserData: vi.fn(),
   closeEmbeddedBrowser: vi.fn(),
   consumeEmbeddedBrowserLabelTransfer: vi.fn(),
   deleteEmbeddedBrowserDownload: vi.fn(),
@@ -102,6 +103,7 @@ describe('WorkspaceBrowserPanel', () => {
       url: 'https://example.com/',
     })
     embeddedBrowserMocks.closeEmbeddedBrowser.mockResolvedValue(undefined)
+    embeddedBrowserMocks.clearEmbeddedBrowserData.mockResolvedValue(1)
     embeddedBrowserMocks.evalEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue([])
     embeddedBrowserMocks.goBackEmbeddedBrowser.mockResolvedValue(undefined)
@@ -112,6 +114,34 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.resolveEmbeddedBrowserAgentApproval.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
+  })
+
+  test('clears cookies from the browser actions submenu and reports completion', async () => {
+    render(<WorkspaceBrowserPanel active />)
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-cookies-item'))
+
+    expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cookies'])
+    expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('浏览数据已清除')
+    })
+  })
+
+  test('reports a failed browser data clear', async () => {
+    embeddedBrowserMocks.clearEmbeddedBrowserData.mockRejectedValueOnce(new Error('failed'))
+    render(<WorkspaceBrowserPanel active />)
+
+    fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
+    fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('清除失败，请重试')
+    })
   })
 
   test('embeds a native browser webview and syncs its bounds', async () => {

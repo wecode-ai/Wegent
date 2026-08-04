@@ -21,6 +21,7 @@ mod agent_control;
 mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
+mod data_clearing;
 mod local_file_preview;
 mod popup;
 mod screenshot;
@@ -45,6 +46,7 @@ use browser_runtime::{
     script_browser_action, script_expression, script_resolve_inspect_target,
     wait_for_embedded_browser,
 };
+use data_clearing::{clear_embedded_browser_data, EmbeddedBrowserDataKind};
 #[cfg(test)]
 pub(crate) use local_file_preview::{
     browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
@@ -1919,67 +1921,7 @@ pub async fn embedded_browser_close(
 pub async fn embedded_browser_clear_data(
     app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
+    data_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
-    let _lifecycle = state.lifecycle.lock().await;
-    let webviews = {
-        let webviews = state
-            .webviews
-            .lock()
-            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        if webviews
-            .values()
-            .any(|entry| entry.readiness() == EmbeddedBrowserReadiness::Opening)
-        {
-            return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
-        }
-        webviews
-            .values()
-            .map(EmbeddedBrowserEntry::ready_webview)
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    if !webviews.is_empty() {
-        for webview in &webviews {
-            webview
-                .clear_all_browsing_data()
-                .map_err(|error| format!("Failed to clear embedded browser data: {error}"))?;
-        }
-        return Ok(webviews.len());
-    }
-
-    let window = app
-        .get_window(MAIN_WINDOW_LABEL)
-        .ok_or_else(|| "Main window not found".to_string())?;
-    let cleanup_label = format!(
-        "browser-data-cleanup-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
-    let cleanup_url = tauri::Url::parse("about:blank")
-        .map_err(|error| format!("Failed to create browser cleanup URL: {error}"))?;
-    let builder =
-        tauri::webview::WebviewBuilder::new(&cleanup_label, WebviewUrl::External(cleanup_url))
-            .data_directory(browser_data_directory(&app)?)
-            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID);
-    let webview = window
-        .add_child(
-            builder,
-            LogicalPosition::new(-10_000.0, -10_000.0),
-            LogicalSize::new(1.0, 1.0),
-        )
-        .map_err(|error| format!("Failed to create browser data cleanup view: {error}"))?;
-    webview
-        .hide()
-        .map_err(|error| format!("Failed to hide browser data cleanup view: {error}"))?;
-    let clear_result = webview
-        .clear_all_browsing_data()
-        .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
-    let close_result = webview
-        .close()
-        .map_err(|error| format!("Failed to close browser data cleanup view: {error}"));
-    clear_result?;
-    close_result?;
-    Ok(0)
+    clear_embedded_browser_data(app, state, data_kinds).await
 }

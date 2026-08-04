@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+  clearEmbeddedBrowserData,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
@@ -75,6 +76,26 @@ describe('embedded-browser', () => {
     expect(invokeMock).toHaveBeenCalledWith('embedded_browser_relabel', {
       fromLabel: 'workspace-browser-blank-0',
       toLabel: 'workspace-browser-task-1',
+    })
+  })
+
+  test('clears selected embedded browser data through Tauri', async () => {
+    invokeMock.mockResolvedValue(1)
+
+    await expect(clearEmbeddedBrowserData(['cookies'])).resolves.toBe(1)
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: ['cookies'],
+    })
+  })
+
+  test('preserves the full-clear call when no data kinds are provided', async () => {
+    invokeMock.mockResolvedValue(0)
+
+    await clearEmbeddedBrowserData()
+
+    expect(invokeMock).toHaveBeenCalledWith('embedded_browser_clear_data', {
+      dataKinds: null,
     })
   })
 

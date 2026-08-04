@@ -1,7 +1,12 @@
-import type { ComponentType, MouseEvent } from 'react'
+import type {
+  ComponentType,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent,
+  MutableRefObject,
+} from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreHorizontal } from 'lucide-react'
+import { ChevronRight, MoreHorizontal } from 'lucide-react'
 import { KeyboardShortcut } from './KeyboardShortcut'
 
 const MENU_GAP = 8
@@ -30,11 +35,12 @@ function formatActionMenuShortcut(shortcut: string): string {
 export interface ActionMenuItem {
   label: string
   icon: ComponentType<{ className?: string }>
-  onSelect: () => void | Promise<void>
+  onSelect?: () => void | Promise<void>
   testId: string
   danger?: boolean
   disabled?: boolean
   shortcut?: string
+  children?: ActionMenuItem[]
 }
 
 interface ActionMenuProps {
@@ -68,15 +74,23 @@ export function ActionMenu({
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const submenuRef = useRef<HTMLDivElement>(null)
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const submenuItemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const pointerSelectionRef = useRef(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
+  const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null)
+  const [submenuPosition, setSubmenuPosition] = useState<MenuPosition | null>(null)
 
   const closeMenu = useCallback(() => {
     setOpen(false)
     setMenuPosition(null)
+    setOpenSubmenuId(null)
+    setSubmenuPosition(null)
     onContextMenuClose?.()
   }, [onContextMenuClose])
   const menuOpen = open || Boolean(contextMenuPosition)
+  const openSubmenuItem = items.find(item => item.testId === openSubmenuId)
 
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -91,9 +105,66 @@ export function ActionMenu({
   }
 
   const handleItemSelect = async (item: ActionMenuItem) => {
-    if (item.disabled) return
+    if (item.disabled || item.children?.length || !item.onSelect) return
     closeMenu()
     await item.onSelect()
+  }
+
+  const openSubmenu = useCallback((item: ActionMenuItem) => {
+    if (item.disabled || !item.children?.length) return
+    setOpenSubmenuId(item.testId)
+    setSubmenuPosition(null)
+  }, [])
+
+  const focusAdjacentItem = (
+    menuItems: ActionMenuItem[],
+    currentId: string,
+    refs: MutableRefObject<Record<string, HTMLButtonElement | null>>,
+    direction: 1 | -1
+  ) => {
+    const availableItems = menuItems.filter(item => !item.disabled)
+    const currentIndex = availableItems.findIndex(item => item.testId === currentId)
+    if (currentIndex < 0 || availableItems.length === 0) return
+    const nextIndex = (currentIndex + direction + availableItems.length) % availableItems.length
+    refs.current[availableItems[nextIndex].testId]?.focus()
+  }
+
+  const handleItemKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    item: ActionMenuItem,
+    submenu = false
+  ) => {
+    if (item.disabled) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusAdjacentItem(
+        submenu ? (openSubmenuItem?.children ?? []) : items,
+        item.testId,
+        submenu ? submenuItemRefs : itemRefs,
+        event.key === 'ArrowDown' ? 1 : -1
+      )
+      return
+    }
+    if (!submenu && event.key === 'ArrowRight' && item.children?.length) {
+      event.preventDefault()
+      openSubmenu(item)
+      return
+    }
+    if (submenu && event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setOpenSubmenuId(null)
+      setSubmenuPosition(null)
+      itemRefs.current[openSubmenuId ?? '']?.focus()
+      return
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (item.children?.length) {
+        openSubmenu(item)
+      } else {
+        void handleItemSelect(item)
+      }
+    }
   }
 
   useLayoutEffect(() => {
@@ -153,17 +224,68 @@ export function ActionMenu({
     }
   }, [contextMenuPosition, menuOpen, placement])
 
+  useLayoutEffect(() => {
+    if (!menuOpen || !openSubmenuId) return
+
+    const updatePosition = () => {
+      const parentItem = itemRefs.current[openSubmenuId]
+      const submenu = submenuRef.current
+      if (!parentItem || !submenu) return
+
+      const parentRect = parentItem.getBoundingClientRect()
+      const submenuRect = submenu.getBoundingClientRect()
+      const submenuWidth = Math.max(submenuRect.width, MIN_MENU_WIDTH)
+      const maxLeft = window.innerWidth - submenuWidth - VIEWPORT_PADDING
+      const maxTop = window.innerHeight - submenuRect.height - VIEWPORT_PADDING
+      const right = parentRect.right + MENU_GAP
+      const left =
+        right + submenuWidth <= window.innerWidth - VIEWPORT_PADDING
+          ? right
+          : parentRect.left - submenuWidth - MENU_GAP
+      setSubmenuPosition({
+        left: Math.max(VIEWPORT_PADDING, Math.min(left, maxLeft)),
+        top: Math.max(VIEWPORT_PADDING, Math.min(parentRect.top, maxTop)),
+      })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [menuOpen, openSubmenuId])
+
+  useEffect(() => {
+    if (!openSubmenuId) return
+    const parentItem = items.find(item => item.testId === openSubmenuId)
+    const firstChild = parentItem?.children?.find(item => !item.disabled)
+    submenuItemRefs.current[firstChild?.testId ?? '']?.focus()
+  }, [items, openSubmenuId])
+
   useEffect(() => {
     if (!menuOpen) return
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
-      if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
+      if (
+        !containerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target) &&
+        !submenuRef.current?.contains(target)
+      ) {
         closeMenu()
       }
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
+      if (event.key !== 'Escape') return
+      if (openSubmenuId) {
+        setOpenSubmenuId(null)
+        setSubmenuPosition(null)
+        itemRefs.current[openSubmenuId]?.focus()
+        return
+      }
+      closeMenu()
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
@@ -172,7 +294,7 @@ export function ActionMenu({
       document.removeEventListener('pointerdown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [closeMenu, menuOpen])
+  }, [closeMenu, menuOpen, openSubmenuId])
 
   return (
     <div
@@ -199,6 +321,7 @@ export function ActionMenu({
         createPortal(
           <div
             ref={menuRef}
+            role="menu"
             data-testid={`${testId}-menu`}
             data-embedded-browser-occlusion
             style={{
@@ -213,21 +336,37 @@ export function ActionMenu({
                 key={item.testId}
                 type="button"
                 data-testid={item.testId}
+                ref={element => {
+                  itemRefs.current[item.testId] = element
+                }}
+                role="menuitem"
                 disabled={item.disabled}
+                aria-haspopup={item.children?.length ? 'menu' : undefined}
+                aria-expanded={item.children?.length ? openSubmenuId === item.testId : undefined}
+                onPointerEnter={() => openSubmenu(item)}
                 onPointerDown={event => {
                   if (item.disabled) return
                   event.preventDefault()
                   event.stopPropagation()
                   pointerSelectionRef.current = true
-                  void handleItemSelect(item)
+                  if (item.children?.length) {
+                    openSubmenu(item)
+                  } else {
+                    void handleItemSelect(item)
+                  }
                 }}
                 onClick={() => {
                   if (pointerSelectionRef.current) {
                     pointerSelectionRef.current = false
                     return
                   }
-                  void handleItemSelect(item)
+                  if (item.children?.length) {
+                    openSubmenu(item)
+                  } else {
+                    void handleItemSelect(item)
+                  }
                 }}
+                onKeyDown={event => handleItemKeyDown(event, item)}
                 className={[
                   'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                   item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
@@ -242,11 +381,73 @@ export function ActionMenu({
                     className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
                   />
                 ) : null}
+                {item.children?.length ? <ChevronRight className="ml-auto h-4 w-4" /> : null}
               </button>
             ))}
           </div>,
           document.body
         )}
+      {menuOpen && openSubmenuItem?.children?.length
+        ? createPortal(
+            <div
+              ref={submenuRef}
+              role="menu"
+              data-testid={`${openSubmenuItem.testId}-submenu`}
+              data-embedded-browser-occlusion
+              style={{
+                left: submenuPosition?.left ?? 0,
+                top: submenuPosition?.top ?? 0,
+                visibility: submenuPosition ? 'visible' : 'hidden',
+              }}
+              className="fixed z-[71] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            >
+              {openSubmenuItem.children.map(item => (
+                <button
+                  key={item.testId}
+                  type="button"
+                  data-testid={item.testId}
+                  ref={element => {
+                    submenuItemRefs.current[item.testId] = element
+                  }}
+                  role="menuitem"
+                  disabled={item.disabled}
+                  onPointerDown={event => {
+                    if (item.disabled) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    pointerSelectionRef.current = true
+                    void handleItemSelect(item)
+                  }}
+                  onClick={() => {
+                    if (pointerSelectionRef.current) {
+                      pointerSelectionRef.current = false
+                      return
+                    }
+                    void handleItemSelect(item)
+                  }}
+                  onKeyDown={event => handleItemKeyDown(event, item, true)}
+                  className={[
+                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                    item.danger
+                      ? 'text-red-500 hover:bg-red-50'
+                      : 'text-text-primary hover:bg-muted',
+                    item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                  ].join(' ')}
+                >
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                  {item.shortcut ? (
+                    <KeyboardShortcut
+                      value={formatActionMenuShortcut(item.shortcut)}
+                      className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
+                    />
+                  ) : null}
+                </button>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }
