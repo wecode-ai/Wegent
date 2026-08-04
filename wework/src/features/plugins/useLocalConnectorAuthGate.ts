@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   localConnectorAuthHealth,
   type LocalConnectorAuthTarget,
@@ -27,14 +28,20 @@ export interface PendingConnectorAuth {
   retryMessage?: WorkbenchMessage
 }
 
-function requirementTitle(requirement: LocalConnectorRequirement): string {
+function requirementTitle(
+  requirement: LocalConnectorRequirement,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
   return requirement.localAuth.kind === 'browser_oauth'
-    ? `授权 ${requirement.displayName}`
-    : `扫码登录 ${requirement.displayName}`
+    ? t('workbench.plugins_local_browser_login_title', { name: requirement.displayName })
+    : t('workbench.plugins_local_qr_login_title', { name: requirement.displayName })
 }
 
-function hintTitle(displayName: string): string {
-  return `扫码登录 ${displayName}`
+function hintTitle(
+  displayName: string,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  return t('workbench.plugins_local_qr_login_title', { name: displayName })
 }
 
 function installedPluginLookupId(plugin: InstalledPlugin): string {
@@ -94,6 +101,7 @@ export function useLocalConnectorAuthGate(options: {
   onResumeSend: (input: string) => Promise<void> | void
   onRetryMessage: (message: WorkbenchMessage) => Promise<boolean> | boolean
 }) {
+  const { t } = useTranslation('common')
   const [pending, setPending] = useState<PendingConnectorAuth | null>(null)
   const pluginsRef = useRef<InstalledPlugin[] | null>(null)
   const handledResumeKeysRef = useRef<Set<string>>(new Set())
@@ -127,7 +135,7 @@ export function useLocalConnectorAuthGate(options: {
           if (!(await targetNeedsLogin(target))) return 'send'
           setPending({
             target,
-            title: hintTitle(hint.displayName),
+            title: hintTitle(hint.displayName, t),
             mode: 'preflight',
             pendingInput: input,
           })
@@ -137,7 +145,7 @@ export function useLocalConnectorAuthGate(options: {
         if (!needing) return 'send'
         setPending({
           target: toLocalConnectorAuthTarget(needing),
-          title: requirementTitle(needing),
+          title: requirementTitle(needing, t),
           mode: 'preflight',
           pendingInput: input,
         })
@@ -147,7 +155,7 @@ export function useLocalConnectorAuthGate(options: {
         return 'send'
       }
     },
-    [refreshPlugins]
+    [refreshPlugins, t]
   )
 
   useEffect(() => {
@@ -173,7 +181,7 @@ export function useLocalConnectorAuthGate(options: {
           handledResumeKeysRef.current.add(key)
           setPending({
             target: toLocalConnectorAuthTarget(needing),
-            title: requirementTitle(needing),
+            title: requirementTitle(needing, t),
             mode: 'resume',
             retryMessage: latest,
           })
@@ -190,7 +198,7 @@ export function useLocalConnectorAuthGate(options: {
         handledResumeKeysRef.current.add(key)
         setPending({
           target,
-          title: hintTitle(hint.displayName),
+          title: hintTitle(hint.displayName, t),
           mode: 'resume',
           retryMessage: latest,
         })
@@ -198,7 +206,7 @@ export function useLocalConnectorAuthGate(options: {
         // ignore detection failures; leave unhandled so a later refresh can retry
       }
     })()
-  }, [options.messages, pending, refreshPlugins])
+  }, [options.messages, pending, refreshPlugins, t])
 
   const clearPending = useCallback(() => setPending(null), [])
 

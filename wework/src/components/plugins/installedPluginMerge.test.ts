@@ -50,19 +50,22 @@ function localCodexPlugin(overrides?: {
   id?: string
   name?: string
   pluginKey?: string
+  marketplace?: string
 }): InstalledPlugin {
   const id = overrides?.id ?? 'superpowers-local-id'
   const name = overrides?.name ?? 'superpowers'
+  const marketplace = overrides?.marketplace ?? 'openai-bundled'
   return {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
-    metadata: { name, namespace: 'openai-official', labels: { id } },
+    metadata: { name, namespace: marketplace, labels: { id } },
     spec: {
       source: {
         type: 'marketplace',
-        providerKey: 'openai-official',
+        providerKey: marketplace,
         pluginKey: overrides?.pluginKey ?? name,
         catalogItemId: id,
+        marketplace,
       },
       origin: 'market',
       sourceProvider: 'codex',
@@ -84,7 +87,7 @@ function localCodexPlugin(overrides?: {
       },
       interface: null,
       packageRef: null,
-      sourcePayload: { localId: null },
+      sourcePayload: { localId: null, marketplaceName: marketplace },
     },
     status: { state: 'enabled' },
   }
@@ -97,16 +100,34 @@ describe('mergeInstalledPlugins', () => {
     expect(merged.map(item => item.spec.displayName)).toEqual(['GitHub', 'superpowers'])
   })
 
-  test('prefers the cloud install when the local Codex plugin has the same key', () => {
+  test('keeps same-name plugins from a different marketplace', () => {
     const merged = mergeInstalledPlugins(
       [cloudPlugin()],
       [localCodexPlugin({ id: 'github-local', name: 'github', pluginKey: 'github' })],
       'current-device'
     )
 
+    expect(merged).toHaveLength(2)
+    expect(merged[0]?.spec.pluginId).toBe(4)
+    expect(merged[1]?.spec.source.marketplace).toBe('openai-bundled')
+  })
+
+  test('prefers the cloud install over its local Wegent materialization', () => {
+    const merged = mergeInstalledPlugins(
+      [cloudPlugin()],
+      [
+        localCodexPlugin({
+          id: 'github-local',
+          name: 'github',
+          pluginKey: 'github',
+          marketplace: 'wegent',
+        }),
+      ],
+      'current-device'
+    )
+
     expect(merged).toHaveLength(1)
     expect(merged[0]?.spec.pluginId).toBe(4)
-    expect(merged[0]?.spec.sourceLabel).toBe('Wegent 官方')
   })
 
   test('keeps local Codex installs when there are no cloud installs', () => {

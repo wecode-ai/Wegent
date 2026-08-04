@@ -1,4 +1,11 @@
 import type { InstalledPlugin } from '@/types/api'
+import i18n from '@/i18n'
+import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
+import {
+  isOpenAiOfficialMarketplaceId,
+  isInternalDeviceMarketplaceId,
+} from '@/features/plugins/marketplaceIdentity'
+import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 
 export function localPluginId(item: InstalledPlugin): string | null {
   const payload = item.spec.sourcePayload
@@ -17,13 +24,36 @@ function pluginKey(item: InstalledPlugin): string {
     .toLowerCase()
 }
 
+function marketplaceKey(item: InstalledPlugin): string {
+  const payload =
+    item.spec.sourcePayload && typeof item.spec.sourcePayload === 'object'
+      ? item.spec.sourcePayload
+      : {}
+  const candidates = [
+    item.spec.source.marketplace,
+    item.spec.source.providerKey,
+    payload.marketplaceName,
+    item.metadata.namespace,
+  ]
+  const marketplace = candidates.find(value => typeof value === 'string' && value.trim())
+  if (typeof marketplace !== 'string') return ''
+  const normalized = marketplace.trim().toLowerCase()
+  return isWegentCloudMarketplace(normalized) ? 'wegent' : normalized
+}
+
+function pluginIdentity(item: InstalledPlugin): string {
+  const plugin = pluginKey(item)
+  const marketplace = marketplaceKey(item)
+  return plugin && marketplace ? `${plugin}@${marketplace}` : ''
+}
+
 export function mergeInstalledPlugins(
   cloudItems: InstalledPlugin[],
   localItems: InstalledPlugin[],
   currentDeviceId = ''
 ): InstalledPlugin[] {
   const merged = new Map<string, InstalledPlugin>()
-  const cloudPluginKeys = new Set<string>()
+  const cloudPluginIdentities = new Set<string>()
 
   for (const item of cloudItems) {
     if (item.spec.pluginId && item.spec.releaseId) {
@@ -35,8 +65,8 @@ export function mergeInstalledPlugins(
         continue
       }
       merged.set(`market:${item.spec.pluginId}:${item.spec.releaseId}`, item)
-      const key = pluginKey(item)
-      if (key) cloudPluginKeys.add(key)
+      const identity = pluginIdentity(item)
+      if (identity) cloudPluginIdentities.add(identity)
     }
   }
 
@@ -47,10 +77,8 @@ export function mergeInstalledPlugins(
       continue
     }
 
-    // Keep local Codex marketplace installs visible in management/library even when
-    // cloud installs exist. Skip only when the cloud catalog already owns the same key.
-    const key = pluginKey(item)
-    if (key && cloudPluginKeys.has(key)) continue
+    const identity = pluginIdentity(item)
+    if (identity && cloudPluginIdentities.has(identity)) continue
     const id = localPluginId(item)
     if (id) merged.set(`runtime:${id}`, item)
   }
@@ -58,37 +86,42 @@ export function mergeInstalledPlugins(
   return Array.from(merged.values())
 }
 
-export function installedPluginSourceLabel(
-  item: InstalledPlugin,
-  t?: (key: string, defaultValue?: string) => string
-): string {
-  if (item.spec.sourceLabel) return item.spec.sourceLabel
+export function installedPluginSourceLabel(item: InstalledPlugin): string {
   if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
     const status = item.spec.sourcePayload?.submissionStatus
     if (status === 'approved') {
-      return t
-        ? t('workbench.plugins_created_source_approved', '我创建的 · 已发布')
-        : '我创建的 · 已发布'
+      return i18n.t('workbench.plugins_created_source_approved')
     }
     if (status === 'rejected') {
-      return t
-        ? t('workbench.plugins_created_source_rejected', '我创建的 · 已拒绝')
-        : '我创建的 · 已拒绝'
+      return i18n.t('workbench.plugins_created_source_rejected')
     }
     if (item.spec.sourcePayload?.submissionId || status === 'pending') {
-      return t
-        ? t('workbench.plugins_created_source_pending', '我创建的 · 审核中')
-        : '我创建的 · 审核中'
+      return i18n.t('workbench.plugins_created_source_pending')
     }
-    return t ? t('workbench.plugins_created_by_me', '我创建的') : '我创建的'
+    return i18n.t('workbench.plugins_created_by_me')
   }
-  if (item.spec.sourceProvider === 'codex') {
-    return 'Codex 官方 · Wework 镜像'
+
+  const marketplace = marketplaceKey(item)
+  if (isPersonalMarketplaceId(marketplace)) {
+    return i18n.t('workbench.plugins_source_personal_share')
   }
+  if (isOpenAiOfficialMarketplaceId(marketplace)) {
+    return i18n.t('workbench.plugins_source_openai_official')
+  }
+  if (isInternalDeviceMarketplaceId(marketplace)) {
+    if (item.spec.sourceProvider === 'codex') {
+      return i18n.t('workbench.plugins_source_codex_mirror')
+    }
+    if (item.spec.sourceProvider === 'user') {
+      return i18n.t('workbench.plugins_source_community')
+    }
+    return i18n.t('workbench.plugins_source_wegent_official')
+  }
+  if (item.spec.sourceLabel) return item.spec.sourceLabel
   if (item.spec.sourceProvider === 'user') {
-    return '社区插件'
+    return i18n.t('workbench.plugins_source_community')
   }
-  return 'Wegent 官方'
+  return i18n.t('workbench.plugins_source_wegent_official')
 }
 
 export function isCloudManagedInstalledPlugin(item: InstalledPlugin): boolean {

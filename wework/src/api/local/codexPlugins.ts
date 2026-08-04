@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import i18n from '@/i18n'
 import { getErrorMessage } from '@/lib/error-message'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
@@ -508,13 +509,25 @@ function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry): {
   visibility: 'personal' | 'workspace' | 'public'
 } {
   if (isPersonalMarketplaceId(marketplace.name)) {
-    return { sourceProvider: 'user', sourceLabel: '个人分享', visibility: 'personal' }
+    return {
+      sourceProvider: 'user',
+      sourceLabel: i18n.t('workbench.plugins_source_personal_share'),
+      visibility: 'personal',
+    }
   }
   if (isInternalDeviceMarketplaceId(marketplace.name)) {
-    return { sourceProvider: 'wegent', sourceLabel: 'Wegent 官方', visibility: 'workspace' }
+    return {
+      sourceProvider: 'wegent',
+      sourceLabel: i18n.t('workbench.plugins_source_wegent_official'),
+      visibility: 'workspace',
+    }
   }
   if (isOpenAiOfficialMarketplaceId(marketplace.name)) {
-    return { sourceProvider: 'codex', sourceLabel: 'OpenAI 官方', visibility: 'public' }
+    return {
+      sourceProvider: 'codex',
+      sourceLabel: i18n.t('workbench.plugins_source_openai_official'),
+      visibility: 'public',
+    }
   }
   return {
     sourceProvider: 'codex',

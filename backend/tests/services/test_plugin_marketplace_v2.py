@@ -326,6 +326,46 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
     )
 
 
+def test_submission_cannot_be_reviewed_twice(test_db, test_user, monkeypatch):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="review-once",
+            displayName="Review Once",
+            version="1.0.0",
+            filename="review-once.zip",
+            sha256=hashlib.sha256(package).hexdigest(),
+            sizeBytes=len(package),
+        ),
+    )
+    service.complete_submission(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+    )
+    service.review_submission(
+        test_db,
+        reviewer_user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        approved=True,
+        note="Approved",
+    )
+
+    with pytest.raises(HTTPException, match="Pending submission not found"):
+        service.review_submission(
+            test_db,
+            reviewer_user_id=test_user.id,
+            submission_id=initialized.submissionId,
+            approved=False,
+            note="Rejected after approval",
+        )
+
+
 def test_cancelled_submission_can_retry_the_same_version(
     test_db, test_user, monkeypatch
 ):
@@ -1034,6 +1074,11 @@ def test_restricted_access_replacement_revokes_original_install_and_copy(
     assert access.allowCopy is False
     assert revoked == [(recipient.id, installed_id)]
     assert service.list_plugins(test_db, user_id=recipient.id).items == []
+    test_db.expire_all()
+    revoked_install = test_db.get(Kind, installed_id)
+    assert revoked_install.is_active is False
+    assert revoked_install.json["spec"]["enabled"] is False
+    assert revoked_install.json["spec"]["installState"] == "uninstalled"
     with pytest.raises(HTTPException) as exc_info:
         service.plugin_copy_descriptor(
             test_db, plugin_id=initialized.pluginId, user_id=recipient.id
@@ -1499,6 +1544,93 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
     with pytest.raises(RuntimeError, match="upstream unavailable"):
         service.sync_upstream(test_db, upstream_id=upstream.id)
     assert test_db.get(PluginUpstream, upstream.id).last_error == "upstream unavailable"
+
+
+def test_upstream_archive_is_scanned_before_plugin_package_selection(
+    test_db, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip("2.0.0")
+    stored_packages: dict[str, bytes] = {}
+    upstream = service.create_upstream(
+        test_db,
+        request=PluginUpstreamCreateRequest(
+            slug="scan-before-select",
+            displayName="Scan Before Select",
+            marketplaceName="openai-bundled",
+            remotePluginId="gitlab-engineering",
+            upstreamUrl="https://example.com/plugins.zip",
+        ),
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.fetch_upstream_package",
+        lambda _url: package,
+    )
+    monkeypatch.setattr(
+        service,
+        "_scan_package",
+        lambda _package: calls.append("scan") or {},
+    )
+    monkeypatch.setattr(
+        service,
+        "_select_upstream_plugin_package",
+        lambda selected, _remote_id: calls.append("select") or selected,
+    )
+    _mock_package_storage(monkeypatch, stored_packages)
+
+    service.sync_upstream(test_db, upstream_id=upstream.id)
+
+    assert calls[:2] == ["scan", "select"]
+
+
+def test_marketplace_interface_cache_evicts_least_recently_used_entry(
+    monkeypatch,
+):
+    service = PluginMarketplaceService()
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.MAX_RESOLVED_INTERFACE_CACHE_ENTRIES",
+        2,
+    )
+    monkeypatch.setattr(plugin_package_storage, "get", lambda key: key.encode())
+    monkeypatch.setattr(
+        "app.services.plugin_marketplace_service.plugin_package_parser.resolve_interface_assets",
+        lambda package, _interface: {"resolved": package.decode()},
+    )
+
+    def release(key: str) -> PluginRelease:
+        return PluginRelease(
+            plugin_id=1,
+            version="1.0.0",
+            manifest_json={},
+            interface_json={"logo": "./assets/logo.png"},
+            storage_key=key,
+            sha256=key,
+            size_bytes=1,
+            status="ready",
+            scan_status="passed",
+            scan_report_json={},
+        )
+
+    plugin = Plugin(
+        slug="cache-test",
+        name="cache-test",
+        display_name="Cache Test",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+    )
+    first = release("first")
+    second = release("second")
+    third = release("third")
+
+    service._marketplace_interface(first, plugin)
+    service._marketplace_interface(second, plugin)
+    service._marketplace_interface(first, plugin)
+    service._marketplace_interface(third, plugin)
+
+    assert list(service._resolved_interface_cache) == ["first", "third"]
 
 
 def test_upstream_content_digest_ignores_python_formatting_only_changes():

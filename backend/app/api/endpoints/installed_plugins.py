@@ -200,17 +200,12 @@ async def update_marketplace_plugin_access(
         request=request,
     )
     for recipient_user_id, installed_id in revoked_installs:
-        plugin_device_installation_service.mark_uninstalling(
-            db,
-            user_id=recipient_user_id,
-            installed_kind_id=installed_id,
-        )
-        installed_plugin_service.uninstall_installed_plugin(
-            db=db,
-            user_id=recipient_user_id,
-            installed_id=installed_id,
-        )
         try:
+            plugin_device_installation_service.mark_uninstalling(
+                db,
+                user_id=recipient_user_id,
+                installed_kind_id=installed_id,
+            )
             result = await _sync_global_capabilities(
                 db,
                 recipient_user_id,
@@ -224,6 +219,7 @@ async def update_marketplace_plugin_access(
                 response=result,
             )
         except Exception:
+            db.rollback()
             logger.exception(
                 "Plugin share revocation sync failed: plugin_id=%s user_id=%s",
                 plugin_id,

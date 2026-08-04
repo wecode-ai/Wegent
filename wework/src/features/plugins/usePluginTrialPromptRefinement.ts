@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useTranslation } from '@/hooks/useTranslation'
 import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import type { PluginPathComponent, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 
@@ -51,6 +52,7 @@ export function usePluginTrialPromptRefinement({
   source: RuntimeTaskAddress | null
   project: ProjectWithTasks | null
 }) {
+  const { t } = useTranslation('common')
   const { createEphemeralRuntimeTask, subscribeRuntimeTaskStream, cancelRuntimePaneTask } =
     useWorkbenchPaneContext()
 
@@ -75,7 +77,7 @@ export function usePluginTrialPromptRefinement({
           if (settled) return
           const refined = normalizeRefinedPrompt(content)
           if (!refined) {
-            fail('没有生成可用的任务描述，请重试')
+            fail(t('workbench.plugin_trial_refinement_empty'))
             return
           }
           settled = true
@@ -90,9 +92,9 @@ export function usePluginTrialPromptRefinement({
               if (action.type === 'assistant_done') {
                 complete(action.content ?? '')
               } else if (action.type === 'assistant_error') {
-                fail(action.error || '任务完善失败')
+                fail(action.error || t('workbench.plugin_trial_refinement_failed'))
               } else if (action.type === 'assistant_cancelled') {
-                fail('任务完善已取消')
+                fail(t('workbench.plugin_trial_refinement_cancelled'))
               }
             },
           })
@@ -102,7 +104,7 @@ export function usePluginTrialPromptRefinement({
           if (activeAddress) {
             void cancelRuntimePaneTask(activeAddress)
           }
-          fail('任务完善超时，请重试')
+          fail(t('workbench.plugin_trial_refinement_timeout'))
         }, REFINEMENT_TIMEOUT_MS)
 
         void createEphemeralRuntimeTask(refinementPrompt(request), {
@@ -113,15 +115,24 @@ export function usePluginTrialPromptRefinement({
         })
           .then(address => {
             if (!address && !settled) {
-              fail('暂时无法启动 AI 任务完善')
+              fail(t('workbench.plugin_trial_refinement_unavailable'))
               return
             }
             if (address && !activeAddress) subscribe(address)
           })
           .catch(error => {
-            fail(error instanceof Error ? error.message : '任务完善失败')
+            fail(
+              error instanceof Error ? error.message : t('workbench.plugin_trial_refinement_failed')
+            )
           })
       }),
-    [cancelRuntimePaneTask, createEphemeralRuntimeTask, project, source, subscribeRuntimeTaskStream]
+    [
+      cancelRuntimePaneTask,
+      createEphemeralRuntimeTask,
+      project,
+      source,
+      subscribeRuntimeTaskStream,
+      t,
+    ]
   )
 }

@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import zipfile
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -21,6 +22,7 @@ from fastapi import HTTPException
 from packaging.version import Version
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
@@ -80,6 +82,7 @@ SEMVER_PATTERN = re.compile(
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$")
+MAX_RESOLVED_INTERFACE_CACHE_ENTRIES = 128
 logger = logging.getLogger(__name__)
 
 
@@ -95,7 +98,7 @@ class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
 
     def __init__(self) -> None:
-        self._resolved_interface_cache: dict[str, dict[str, Any]] = {}
+        self._resolved_interface_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def enrich_installed_list(
         self,
@@ -252,6 +255,7 @@ class PluginMarketplaceService:
         release_id: int | None = None,
     ) -> InstalledPlugin:
         plugin = self._published_plugin(db, plugin_id, user_id=user_id)
+        plugin = db.query(Plugin).filter(Plugin.id == plugin.id).with_for_update().one()
         existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
@@ -804,7 +808,12 @@ class PluginMarketplaceService:
         approved: bool,
         note: str,
     ) -> PluginSubmissionItem:
-        submission = db.get(PluginSubmission, submission_id)
+        submission = (
+            db.query(PluginSubmission)
+            .filter(PluginSubmission.id == submission_id)
+            .with_for_update()
+            .first()
+        )
         if not submission or submission.status != "pending":
             raise HTTPException(status_code=404, detail="Pending submission not found")
         plugin = db.get(Plugin, submission.plugin_id)
@@ -1175,10 +1184,10 @@ class PluginMarketplaceService:
         upstream.last_checked_at = datetime.now()
         try:
             package = fetch_upstream_package(upstream.upstream_url)
+            self._scan_package(package)
             package = self._select_upstream_plugin_package(
                 package, upstream.remote_plugin_id
             )
-            self._scan_package(package)
             adapted = adapt_upstream_package(
                 provider=upstream.provider,
                 marketplace_name=upstream.marketplace_name,
@@ -1568,6 +1577,7 @@ class PluginMarketplaceService:
         cache_key = release.sha256 or release.storage_key
         cached = self._resolved_interface_cache.get(cache_key)
         if cached is not None:
+            self._resolved_interface_cache.move_to_end(cache_key)
             return cached
         try:
             package = plugin_package_storage.get(release.storage_key)
@@ -1578,6 +1588,11 @@ class PluginMarketplaceService:
         except (PluginPackageStorageError, HTTPException, ValueError):
             return interface or None
         self._resolved_interface_cache[cache_key] = resolved
+        self._resolved_interface_cache.move_to_end(cache_key)
+        while (
+            len(self._resolved_interface_cache) > MAX_RESOLVED_INTERFACE_CACHE_ENTRIES
+        ):
+            self._resolved_interface_cache.popitem(last=False)
         return resolved or None
 
     def _installed_item_id(self, item: InstalledPlugin) -> int | None:
@@ -1927,11 +1942,38 @@ class PluginMarketplaceService:
                 user_id=recipient_user_id,
             )
         ]
+        self._deactivate_revoked_installations(db, revoked)
         db.commit()
         return (
             self.get_plugin_access(db, plugin_id=plugin.id, user_id=user_id),
             revoked,
         )
+
+    def _deactivate_revoked_installations(
+        self,
+        db: Session,
+        revoked: list[tuple[int, int]],
+    ) -> None:
+        if not revoked:
+            return
+        revoked_ids = {installed_id for _, installed_id in revoked}
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.id.in_(revoked_ids),
+                Kind.kind == "InstalledPlugin",
+                Kind.namespace == "default",
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        for row in rows:
+            spec = dict(row.json.get("spec", {}))
+            spec["enabled"] = False
+            spec["installState"] = "uninstalled"
+            row.json["spec"] = spec
+            row.is_active = False
+            flag_modified(row, "json")
 
     def plugin_copy_descriptor(
         self, db: Session, *, plugin_id: int, user_id: int
