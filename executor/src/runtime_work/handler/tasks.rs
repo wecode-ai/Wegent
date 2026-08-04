@@ -244,7 +244,7 @@ impl RuntimeWorkRpcHandler {
         }
         if existing_link
             .as_ref()
-            .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
+            .is_some_and(|link| self.is_active_local_task(&link.local_task_id))
         {
             return Ok(json!({
                 "success": false,
@@ -388,7 +388,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
-        if existing_link.running && self.is_active_local_task(&existing_link.local_task_id) {
+        if self.is_active_local_task(&existing_link.local_task_id) {
             return Ok(json!({
                 "success": false,
                 "accepted": false,

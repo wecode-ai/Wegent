@@ -88,6 +88,28 @@ pub(crate) struct RuntimeTaskLink {
 }
 
 impl RuntimeTaskLink {
+    pub(crate) fn copy_execution_state_from(&mut self, current: &Self) {
+        self.status = current.status.clone();
+        self.running = current.running;
+        self.thread_status = current.thread_status.clone();
+        self.turn_status = current.turn_status.clone();
+        self.updated_at = current.updated_at;
+    }
+
+    pub(crate) fn preserve_runtime_state_from(&mut self, current: &Self) {
+        self.git_info = current.git_info.clone();
+        self.list_order = current.list_order;
+        self.group_workspace_path = current.group_workspace_path.clone();
+        self.group_project_key = current.group_project_key.clone();
+        self.pinned = current.pinned;
+        self.pinned_order = current.pinned_order;
+        let archived = self.status == "archived";
+        let current_archived = current.status == "archived";
+        if archived == current_archived {
+            self.copy_execution_state_from(current);
+        }
+    }
+
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
         Self {
             local_task_id,
