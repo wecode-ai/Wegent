@@ -678,6 +678,11 @@ semantics for all three.
   active task and unsent composer input.
 - Opening the bottom workspace panel starts or restores its Terminal directly;
   it must not show an IDE launcher or require an intermediate tool choice.
+- Terminal sessions may remain mounted while the bottom panel is hidden so the
+  shell session and scrollback survive panel restoration. Only the active
+  terminal should be fitted and resized; after activation, window focus, or
+  document visibility restoration, refresh the buffered xterm rows so the
+  existing session remains visible.
 - Workspace IDEs and native editors launch only from the titlebar “Open
   location” control, including its local-editor picker and remote code-server
   behavior.
