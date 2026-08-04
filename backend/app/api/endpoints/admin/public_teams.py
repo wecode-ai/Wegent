@@ -121,13 +121,8 @@ async def upload_public_team_icon(
         user_id=current_user.id,
         filename=f"{uuid.uuid4().hex}.webp",
         binary_data=normalized,
+        extra_type_data={"public_asset_type": TEAM_ICON_ASSET_TYPE},
     )
-    asset.type_data = {
-        **(asset.type_data or {}),
-        "public_asset_type": TEAM_ICON_ASSET_TYPE,
-    }
-    db.commit()
-    db.refresh(asset)
     return PublicTeamIconUploadResponse(
         asset_id=asset.id,
         url=f"/api/resource-library/assets/team-icons/{asset.id}",

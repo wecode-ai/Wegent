@@ -276,6 +276,8 @@ export default function PublicTeamEditDialog({
       // Try to parse JSON to populate basic form
       const parsed = parseTeamJson(editingTeam.json)
       if (parsed) {
+        initialIconRef.current = parsed.icon
+        uploadedIconAssetIdsRef.current.clear()
         setName(parsed.name)
         setDisplayName(parsed.displayName)
         setDescription(parsed.description)
@@ -329,6 +331,8 @@ export default function PublicTeamEditDialog({
       }
     } else {
       // Create mode - reset to defaults
+      initialIconRef.current = null
+      uploadedIconAssetIdsRef.current.clear()
       setIsActive(true)
       setName('')
       setDisplayName('')
