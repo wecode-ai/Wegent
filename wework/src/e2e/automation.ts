@@ -897,6 +897,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         scrollerSelector?: string
       }
       const durationMs = options.durationMs ?? 1_000
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('sampleScrollStability requires a finite positive durationMs')
+      }
       const scrollerSelector = options.scrollerSelector?.trim()
       if (!scrollerSelector) {
         throw new Error('sampleScrollStability requires scrollerSelector')
