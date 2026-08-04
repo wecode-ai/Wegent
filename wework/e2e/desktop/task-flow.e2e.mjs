@@ -292,21 +292,17 @@ const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_C
 const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
-const PROVIDER_SWITCH_SOL_OPTION_ID = 'gpt-5.6-sol'
-const PROVIDER_SWITCH_SOL_LABEL = 'GPT 5.6 Sol'
-// Official Codex option used to verify the provider boundary restriction. The
-// local E2E Codex catalog is classified as third-party (custom provider), so
+// The local E2E Codex catalog is classified as third-party (custom provider), so
 // the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog (otherwise the catalog
-// merge drops it as a duplicate runtime Codex model).
+// that does not collide with the local Codex catalog.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_PROMPT =
-  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with Sol.'
+  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
-const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_SOL_COMPLETE'
+const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
@@ -1190,6 +1186,17 @@ async function verifyQueuedFollowUpNavigation({
   )
 }
 
+async function ensurePlanMode(control) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('plan-mode-pill')) return
+
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('click', '[data-testid="set-plan-mode-button"]')
+  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
 async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
@@ -1198,11 +1205,7 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     'The task-plan verification did not start from a ready workbench'
   )
   control.setScenario('task_plan')
-  await control.command('click', '[data-testid="add-context-button"]')
-  await control.command('click', '[data-testid="set-plan-mode-button"]')
-  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await ensurePlanMode(control)
   await sendPromptUntilScenarioRequest(control, composerSelector, TASK_PLAN_PROMPT, 'task_plan')
   const taskPlanDebugSnapshot = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -1234,6 +1237,19 @@ async function verifyBackgroundTaskPlanRestoration({ composerSelector, control }
     text: TASK_PLAN_STEP,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: TASK_PLAN_STEP,
+    value: 'background-task-plan-message',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command(
+      'getElementCount',
+      '[data-e2e-anchor-id="background-task-plan-message"] [data-testid="final-processing-toggle"]'
+    ),
+    '0',
+    'The completed task plan was collapsed into the final processing summary'
+  )
   await captureVerificationScreenshot(control, '01-background-task-plan-restored.png')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -2477,11 +2493,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await control.command('click', '[data-testid="add-context-button"]')
-  await control.command('click', '[data-testid="set-plan-mode-button"]')
-  await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  await ensurePlanMode(control)
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -2913,14 +2925,14 @@ async function verifyRunningFollowUpFork({
     text: RUNNING_FORK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedRuntimeIndex = JSON.parse(
+  const settledRuntimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
   const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   assert.equal(
-    completedRuntimeIndex.tasks[sourceTaskId]?.turn_status,
-    'completed',
-    'The source follow-up was interrupted instead of completing after the fork'
+    Object.hasOwn(settledRuntimeIndex.tasks[sourceTaskId] ?? {}, 'turn_status'),
+    false,
+    'The completed source follow-up leaked process-local turn status into the runtime index'
   )
 }
 
@@ -3611,6 +3623,85 @@ async function verifyWorkspaceDocumentTabs(control) {
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
 }
 
+async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
+  const taskTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="task"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
+
+  await control.command('click', '[data-testid^="workspace-tab-select-board-"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const boardSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const createSelector = boardSnapshot.testIds.includes('cloud-projects-home-create')
+    ? '[data-testid="cloud-projects-home-create"]'
+    : '[data-testid="cloud-project-add"]'
+  await control.command('click', createSelector)
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: 'Task Follow-up Board',
+  })
+  await control.command('click', '[data-testid="cloud-project-location-local"]')
+  await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]')
+  await control.command('waitFor', '[data-testid="cloud-project-manage-view"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-space-created-for-local-project.png')
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="project-menu-${localProjectId}"]`)
+  await control.command('click', `[data-testid="edit-project-${localProjectId}"]`)
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('select', '[data-testid="local-project-auto-join-space-select"]', {
+    by: 'label',
+    value: 'Task Follow-up Board',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
+    text: '加入看板 · Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('waitFor', '[data-testid="add-project-space-context-button"]', {
+    text: 'Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="add-project-space-context-button"]')
+  await control.command('waitFor', '[data-testid^="add-context-cloud-project-space-"]', {
+    text: 'Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', 'body', { key: 'Escape' })
+  return taskTabTestId
+}
+
+async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
+  await control.command('click', '[data-testid^="workspace-tab-select-board-"]')
+  await control.command('waitFor', '[data-testid="cloud-project-board-view"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-project-board-view"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-column-in_review"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-space-selected-task-in-review.png')
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+}
+
 function workspaceTabIds(snapshot, kind) {
   return snapshot.testIds.filter(testId => testId.startsWith(`workspace-tab-${kind}-`))
 }
@@ -4003,6 +4094,7 @@ async function verifyWorkspaceTabIsolation(control) {
     false,
     'The transferred task tab remained open in the source window'
   )
+  control.activateWindow('main')
 }
 
 async function verifyCloudWorkPage(control) {
@@ -5525,7 +5617,7 @@ async function selectE2EModel(
   )
 }
 
-async function verifyProviderBoundaryRestriction(control, composerSelector) {
+async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -5551,53 +5643,32 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
-  const targetModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
-  await control.command('waitFor', targetModelSelector, {
-    text: PROVIDER_SWITCH_SOL_LABEL,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const targetModelText = await control.command('getText', targetModelSelector)
-  assert.ok(
-    targetModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
-    'The target model option did not display the expected model label'
-  )
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const officialModelText = await control.command('getText', officialModelSelector)
-  assert.ok(
-    officialModelText.includes(PROVIDER_SWITCH_OFFICIAL_LABEL),
-    'The target model option did not display the expected model label'
-  )
-  assert.doesNotMatch(
-    officialModelText,
-    /官方 Codex|Official Codex/,
-    'The target model option displayed the provider restriction inline'
-  )
-  await assert.rejects(
-    control.command('click', officialModelSelector),
-    /disabled/,
-    'The official Codex option remained selectable in a third-party conversation'
-  )
+  await control.command('click', officialModelSelector)
+  await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_COMPLETION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
-    1,
-    'Selecting the disabled official Codex option unexpectedly sent another request'
+    2,
+    'The cross-provider retry did not make one Luna request and one official GPT request'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.ok(
-    snapshot.testIds.includes('model-selector-menu'),
-    'The model selector closed after clicking a disabled cross-provider option'
-  )
-  assert.ok(
-    !snapshot.testIds.includes('model-switch-warning-dialog'),
-    'A provider-switch confirmation appeared for a blocked cross-provider option'
-  )
-  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    text: PROVIDER_SWITCH_OFFICIAL_LABEL,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -7420,7 +7491,7 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
   const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
   const supervisorRunningTestId = `runtime-local-task-running-${supervisorTaskId}`
   await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   const beforeStaleSettlement = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -8467,6 +8538,12 @@ class DesktopE2EServer {
   async command(action, selector, options = {}) {
     assert.ok(this.activeControlClientId, 'No active desktop control client is registered')
     return this.commandForClient(this.activeControlClientId, action, selector, options)
+  }
+
+  activateWindow(windowLabel) {
+    const clientId = this.controlClientsByWindow.get(windowLabel)
+    assert.ok(clientId, `No desktop control client is registered for window ${windowLabel}`)
+    this.activeControlClientId = clientId
   }
 
   async commandForWindow(windowLabel, action, selector, options = {}) {
@@ -10048,15 +10125,15 @@ class DesktopE2EServer {
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(
-          createSse([
-            responseCreated(responseId),
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-          ])
-        )
+        response.write(createSse([responseCreated(responseId)]))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(createSse([responseCompleted(responseId)]))
+        response.end(
+          createSse([
+            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
@@ -10340,10 +10417,10 @@ class DesktopE2EServer {
     if (promptRequestCount === 2) {
       assert.equal(
         body.model,
-        PROVIDER_SWITCH_SOL_OPTION_ID,
-        `The provider-switch retry was still routed to ${String(body.model)}`
+        PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+        `The provider-switch retry was routed to ${String(body.model)} instead of official GPT`
       )
-      const responseId = 'provider-switch-sol-complete'
+      const responseId = 'provider-switch-gpt-complete'
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PROVIDER_SWITCH_COMPLETION),
@@ -13013,14 +13090,23 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     phase = 'secondary-project-create'
+    const projectMenusBeforeSecondaryCreate = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await createSingleRootLocalProject(control, secondaryProjectPath, 'secondary-project')
     const secondaryProjectSnapshot = await waitForSnapshot(
       control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      snapshot =>
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('project-menu-') && !projectMenusBeforeSecondaryCreate.has(testId)
+        ),
       'The standalone secondary project was not shown in the sidebar'
     )
-    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
+    const secondaryProjectMenuTestId = secondaryProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeSecondaryCreate.has(testId)
     )
     assert.ok(secondaryProjectMenuTestId, 'The standalone secondary project identity was not found')
     const secondaryProjectId = secondaryProjectMenuTestId.slice('project-menu-'.length)
@@ -13031,6 +13117,11 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     phase = 'composer-project-folder-select'
+    const projectMenusBeforeComposerCreate = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await control.command('click', '[data-testid="project-work-button"]')
     await control.command('click', '[data-testid="add-local-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
@@ -13102,12 +13193,13 @@ last_updated = "2026-07-30T00:00:00Z"`
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+          testId =>
+            testId.startsWith('project-menu-') && !projectMenusBeforeComposerCreate.has(testId)
         ),
       'The newly opened folder project was not shown in the sidebar'
     )
     let projectMenuTestId = openedProjectSnapshot.testIds.find(
-      testId => testId.startsWith('project-menu-') && testId !== secondaryProjectMenuTestId
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeComposerCreate.has(testId)
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     let projectId = projectMenuTestId.slice('project-menu-'.length)
@@ -13157,6 +13249,11 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     phase = 'project-folder-reopen'
+    const projectMenusBeforeReopen = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('project-menu-')
+      )
+    )
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-local-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
@@ -13224,18 +13321,12 @@ last_updated = "2026-07-30T00:00:00Z"`
       control,
       snapshot =>
         snapshot.testIds.some(
-          testId =>
-            testId.startsWith('project-menu-') &&
-            testId !== projectMenuTestId &&
-            testId !== secondaryProjectMenuTestId
+          testId => testId.startsWith('project-menu-') && !projectMenusBeforeReopen.has(testId)
         ),
       'The reopened folder project was not shown with its current identity'
     )
     const reopenedProjectMenuTestId = reopenedProjectSnapshot.testIds.find(
-      testId =>
-        testId.startsWith('project-menu-') &&
-        testId !== projectMenuTestId &&
-        testId !== secondaryProjectMenuTestId
+      testId => testId.startsWith('project-menu-') && !projectMenusBeforeReopen.has(testId)
     )
     assert.ok(reopenedProjectMenuTestId, 'The reopened folder project identity was not found')
     projectMenuTestId = reopenedProjectMenuTestId
@@ -13249,6 +13340,12 @@ last_updated = "2026-07-30T00:00:00Z"`
       text: 'secondary-project',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
+
+    let associatedTaskTabTestId = null
+    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+      phase = 'project-space-default-association-setup'
+      associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
+    }
 
     if (GUIDANCE_SCROLL_ONLY) {
       phase = 'guidance-scroll'
@@ -13455,6 +13552,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         taskRowTestId,
         userText: TASK_PROMPT,
       })
+      if (associatedTaskTabTestId) {
+        phase = 'project-space-selected-task-tracked'
+        await verifyExplicitlyTrackedTask(control, associatedTaskTabTestId)
+      }
       if (MESSAGE_RESTORATION_ONLY) {
         await verifyFollowUpMessageRestoration({
           composerSelector,
@@ -13812,7 +13913,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           }
         }
         phase = 'provider-switch-retry'
-        await verifyProviderBoundaryRestriction(control, composerSelector)
+        await verifyCrossProviderSwitchRetry(control, composerSelector)
         await writeFile(
           join(resultDir, 'model-switch-protocol-verification.json'),
           `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
@@ -13856,11 +13957,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'background-request-user-input'
       control.setScenario('request_user_input')
-      await control.command('click', '[data-testid="add-context-button"]')
-      await control.command('click', '[data-testid="set-plan-mode-button"]')
-      await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
+      await ensurePlanMode(control)
       await sendPromptUntilScenarioRequest(
         control,
         composerSelector,

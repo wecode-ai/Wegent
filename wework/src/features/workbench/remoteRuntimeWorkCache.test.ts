@@ -101,6 +101,10 @@ describe('remote runtime work cache', () => {
         ],
       })
     )
+    input.projects[0].project.defaultProjectSpace = {
+      projectStore: 'backend',
+      projectId: 'space-1',
+    }
 
     writeCachedRemoteRuntimeWork(7, input, [
       device('remote-a', 'online', { client_ip: '10.201.3.200' }),
@@ -117,6 +121,10 @@ describe('remote runtime work cache', () => {
       workspaceSource: 'remote',
       remoteHostId: 'remote-a',
       repoUrl: 'git@example.com:team/repo.git',
+    })
+    expect(restored.projects[0].project.defaultProjectSpace).toEqual({
+      projectStore: 'backend',
+      projectId: 'space-1',
     })
     expect(restoredTask).toMatchObject({
       taskId: 'task-a',

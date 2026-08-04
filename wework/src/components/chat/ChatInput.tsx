@@ -158,10 +158,12 @@ export interface ChatInputProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
+  toolbarLeadingContext?: ReactNode
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -533,10 +535,12 @@ export function ChatInput({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
   inputLeadingContext,
+  toolbarLeadingContext,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -689,6 +693,7 @@ export function ChatInput({
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectCloudProject,
+    selectedCloudProjectId,
   }
   const errorBanner = error ? (
     <div
@@ -832,6 +837,7 @@ export function ChatInput({
           onPause={onPause}
           showWorkspaceMenu={showWorkspaceMenu}
           inputLeadingContext={inputLeadingContext}
+          toolbarLeadingContext={toolbarLeadingContext}
         />
         {queueResumeDialog}
         {modelSwitchWarningDialog}

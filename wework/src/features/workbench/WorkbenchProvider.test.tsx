@@ -3247,7 +3247,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('disables third-party models inside an existing official Codex conversation', async () => {
+  test('keeps GPT and third-party models selectable inside an existing conversation', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.6-sol',
@@ -3343,12 +3343,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
-        [
-          'gpt-5.6-sol:enabled',
-          'gpt-5.5:enabled',
-          'kimi-k2.5:provider_boundary_mismatch',
-          'cloud-model:provider_boundary_mismatch',
-        ].join('|')
+        ['gpt-5.6-sol:enabled', 'gpt-5.5:enabled', 'kimi-k2.5:enabled', 'cloud-model:enabled'].join(
+          '|'
+        )
       )
     )
   })
@@ -9151,6 +9148,89 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
         'idle:idle'
+      )
+    )
+  })
+
+  test('syncs board completion from the in-memory terminal event while task status stays active', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.onChatStart) streamHandlers = handlers
+      return vi.fn()
+    })
+    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'active',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+      projectSpaceApis: {
+        local: { updateTaskTrackingStatus },
+      } as unknown as WorkbenchServices['projectSpaceApis'],
+    })
+
+    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'running'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
       )
     )
   })

@@ -1,6 +1,13 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, ChevronRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
+import {
+  ArrowLeftRight,
+  ChevronRight,
+  LayoutDashboard,
+  MessageCircle,
+  MessageSquareWarning,
+} from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { ComposerModePill } from '@/components/chat/composer/GoalDraftPill'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -15,12 +22,18 @@ import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
 import {
+  findProjectSpaceContextForTask,
+  projectSpaceApis,
+  projectSpaceKey,
+  projectSpaceRef,
+} from '@/features/todo/projectSpaceSelection'
+import {
   hydrateLocalWorkItems,
   loadLocalWorkItems,
   saveLocalWorkItems,
   type LocalWorkItem,
 } from '@/features/todo/todoModel'
-import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import type { WorkbenchServices, WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
@@ -48,6 +61,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -206,10 +220,47 @@ function cloudItemAsLocalWorkItem(
   }
 }
 
+function cloudProjectAdditionalContext(
+  project: CloudProject | null,
+  item: CloudLoopItem | null
+): RuntimeAdditionalContext | undefined {
+  if (!project) return undefined
+  const projectReference = `cloud://projects/${project.id}`
+  const todoReference = item ? `${projectReference}/todos/${item.id}` : null
+  const scope = item
+    ? [
+        `Current cloud project: ${project.name} (id=${project.id}).`,
+        `Current task: ${item.id} — ${item.title}.`,
+        item.description ? `Task description: ${item.description}` : null,
+        `Current task reference: ${todoReference}.`,
+      ]
+    : [
+        `Current cloud project: ${project.name} (id=${project.id}).`,
+        'No specific task is selected.',
+        `Current project reference: ${projectReference}.`,
+      ]
+  return {
+    cloudCollaboration: {
+      kind: 'application',
+      value: [
+        ...scope.filter((line): line is string => Boolean(line)),
+        'When the user refers to “this project” or “this task”, use this current cloud context.',
+        'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
+      ].join('\n'),
+    },
+  }
+}
+
 interface PendingTodoBinding {
   project: CloudProject
   item: CloudLoopItem | null
   target: RuntimeTaskAddress | null
+  description: string
+}
+
+interface PendingAutoJoinResolution {
+  target: RuntimeTaskAddress | null
+  description: string
 }
 
 let pendingTodoBinding: PendingTodoBinding | null = null
@@ -537,6 +588,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
+  const currentRuntimeProject = state.runtimeWork?.projects.find(
+    projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
+  )?.project
+  const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
   const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
     useState<HTMLDivElement | null>(null)
@@ -554,6 +609,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     project: currentProject,
   })
   const sendPaneInput = paneSession.send
+  const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
+  const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
   const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
   const [boundCloudItem, setBoundCloudItem] = useState<CloudLoopItem | null>(null)
@@ -576,6 +633,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
+  const [defaultProjectOptionKey, setDefaultProjectOptionKey] = useState<string | null>(null)
+  const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
+    string | null
+  >(null)
   const [cloudActionNotice, setCloudActionNotice] = useState<string | null>(null)
   const [cloudMentionState, setCloudMentionState] = useState<{
     todoId: string
@@ -597,38 +658,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const composerCloudProject = currentRuntimeTask ? boundCloudProject : pendingCloudProject
   const composerTodoItem = currentRuntimeTask ? boundCloudItem : pendingTodoItem
-  const cloudAdditionalContext = useMemo<RuntimeAdditionalContext | undefined>(() => {
-    if (!composerCloudProject) return undefined
-    const projectReference = `cloud://projects/${composerCloudProject.id}`
-    const todoReference = composerTodoItem
-      ? `${projectReference}/todos/${composerTodoItem.id}`
-      : null
-    const scope = composerTodoItem
-      ? [
-          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          `Current task: ${composerTodoItem.id} — ${composerTodoItem.title}.`,
-          composerTodoItem.description ? `Task description: ${composerTodoItem.description}` : null,
-          `Current task reference: ${todoReference}.`,
-        ]
-      : [
-          `Current cloud project: ${composerCloudProject.name} (id=${composerCloudProject.id}).`,
-          'No specific task is selected.',
-          `Current project reference: ${projectReference}.`,
-        ]
-    return {
-      cloudCollaboration: {
-        kind: 'application',
-        value: [
-          ...scope.filter((line): line is string => Boolean(line)),
-          'When the user refers to “this project” or “this task”, use this current cloud context.',
-          'Use the wegent_delivery MCP tools to inspect task details, shared files, and deliveries when needed. Do not ask for an id that is already provided here.',
-        ].join('\n'),
-      },
-    }
-  }, [composerCloudProject, composerTodoItem])
+  const defaultCloudProjectSelectionKey = `${paneKey}:${currentProject?.id ?? 'none'}`
+  const cloudAdditionalContext = useMemo(
+    () => cloudProjectAdditionalContext(composerCloudProject, composerTodoItem),
+    [composerCloudProject, composerTodoItem]
+  )
   const setPendingCloudContext = useCallback(
     (project: CloudProject | null, item: CloudLoopItem | null) => {
-      pendingTodoBinding = project ? { project, item, target: null } : null
+      pendingTodoBinding = project ? { project, item, target: null, description: '' } : null
       setPendingCloudProject(project)
       setPendingTodoItemState(item)
     },
@@ -657,13 +694,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const sendPaneInputWithContext = useCallback(
     (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
       const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
+      const description = value ?? paneSession.input
+      const submissionProject = currentRuntimeTask ? null : pendingCloudProject
+      const submissionItem =
+        submissionProject?.id === pendingCloudProject?.id ? pendingTodoItem : null
+      if (!currentRuntimeTask) {
+        setPendingCloudContext(submissionProject, submissionItem)
+        pendingAutoJoinResolutionRef.current =
+          !submissionProject &&
+          Boolean(defaultProjectSpace) &&
+          dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
+          projectSpaceApis(services).length > 0
+            ? { target: null, description }
+            : null
+      }
+      if (pendingTodoBinding) {
+        pendingTodoBinding = { ...pendingTodoBinding, description }
+      }
       return sendPaneInput(value, {
         ...options,
-        additionalContext: cloudAdditionalContext,
+        additionalContext:
+          cloudProjectAdditionalContext(submissionProject, submissionItem) ??
+          cloudAdditionalContext,
+        cloudProjectId: submissionProject?.id,
         initialSupervisor: supervisorConfig,
         onRuntimeTaskCreated: address => {
           if (pendingTodoBinding) {
             pendingTodoBinding = { ...pendingTodoBinding, target: address }
+          }
+          if (pendingAutoJoinResolutionRef.current) {
+            pendingAutoJoinResolutionRef.current = {
+              ...pendingAutoJoinResolutionRef.current,
+              target: address,
+            }
           }
         },
         onRuntimeTaskReady: () => {
@@ -673,7 +736,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         },
       })
     },
-    [cloudAdditionalContext, currentRuntimeTask, pendingSupervisorConfig, sendPaneInput]
+    [
+      cloudAdditionalContext,
+      currentRuntimeTask,
+      defaultProjectSpace,
+      defaultCloudProjectSelectionKey,
+      dismissedDefaultCloudProjectKey,
+      paneSession.input,
+      pendingCloudProject,
+      pendingTodoItem,
+      pendingSupervisorConfig,
+      sendPaneInput,
+      services,
+      setPendingCloudContext,
+    ]
   )
 
   const connectorAuthGate = useLocalConnectorAuthGate({
@@ -752,6 +828,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [currentRuntimeTask, runtimeWorkApi, submitPaneInput, t]
   )
 
+  const projectSpaceApiFor = useCallback(
+    (project: CloudProject): NonNullable<WorkbenchServices['deliveryApi']> | undefined =>
+      project.project_store === 'local' || project.task_provider === 'dingtalk_aitable'
+        ? (services?.projectSpaceApis?.local ?? services?.deliveryApi)
+        : (services?.projectSpaceApis?.cloud ?? services?.deliveryApi),
+    [services?.deliveryApi, services?.projectSpaceApis?.cloud, services?.projectSpaceApis?.local]
+  )
+
   useEffect(() => {
     let active = true
     if (!currentRuntimeTask) {
@@ -765,9 +849,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         active = false
       }
     }
-    if (services?.deliveryApi) {
-      void services.deliveryApi
-        .findCloudContextForTask(currentRuntimeTask)
+    const contextApis = projectSpaceApis(services)
+    if (contextApis.length > 0) {
+      void findProjectSpaceContextForTask(contextApis, currentRuntimeTask)
         .then(context => {
           if (!active) return
           setBoundCloudProject(context.project)
@@ -805,26 +889,42 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       active = false
     }
-  }, [currentRuntimeTask, services?.deliveryApi, state.user?.id])
+  }, [currentRuntimeTask, services, state.user?.id])
 
   useEffect(() => {
-    if (!currentRuntimeTask || !pendingCloudProject || !services?.deliveryApi) return
+    const projectToBind = pendingCloudProject ?? pendingTodoBinding?.project ?? null
+    const itemToBind = pendingTodoItem ?? pendingTodoBinding?.item ?? null
+    if (!currentRuntimeTask || !projectToBind) return
+    const pendingBinding = pendingTodoBinding
+    if (
+      pendingBinding?.target &&
+      (pendingBinding.target.deviceId !== currentRuntimeTask.deviceId ||
+        pendingBinding.target.taskId !== currentRuntimeTask.taskId)
+    ) {
+      return
+    }
+    const api = projectSpaceApiFor(projectToBind)
+    if (!api) return
+    const bindingTaskTitle =
+      truncateRuntimeTaskTitle(pendingBinding?.description) ||
+      t('workbench.untitled_task', '未命名任务')
     let active = true
-    const bindingRequest = pendingTodoItem
-      ? services.deliveryApi.bindTask(pendingTodoItem.id, currentRuntimeTask, runtimeTaskTitle)
-      : services.deliveryApi.bindProjectTask(
-          pendingCloudProject.id,
+    const bindingRequest = itemToBind
+      ? api
+          .bindTask(itemToBind.id, currentRuntimeTask, bindingTaskTitle)
+          .then(() => ({ item: itemToBind }))
+      : api.trackProjectTask(
+          projectToBind.id,
           currentRuntimeTask,
-          runtimeTaskTitle
+          bindingTaskTitle,
+          pendingBinding?.description ?? ''
         )
     void bindingRequest
-      .then(() => {
+      .then(({ item }) => {
         if (!active) return
-        setBoundCloudProject(pendingCloudProject)
-        setBoundCloudItem(pendingTodoItem)
-        setDeliveryItem(
-          pendingTodoItem ? cloudItemAsLocalWorkItem(pendingTodoItem, currentRuntimeTask) : null
-        )
+        setBoundCloudProject(projectToBind)
+        setBoundCloudItem(item)
+        setDeliveryItem(cloudItemAsLocalWorkItem(item, currentRuntimeTask))
         pendingTodoBinding = null
         setPendingCloudContext(null, null)
       })
@@ -843,8 +943,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     pendingCloudProject,
     pendingTodoItem,
-    runtimeTaskTitle,
-    services?.deliveryApi,
+    projectSpaceApiFor,
     setPendingCloudContext,
     t,
   ])
@@ -938,31 +1037,90 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ? cloudMentionState.candidates
       : []
 
-  // Accessible cloud projects power the @ 项目空间 entry even when the current
-  // session is not bound to a cloud project yet.
   useEffect(() => {
     let active = true
-    const api = services?.deliveryApi
-    if (!api) {
+    const apis = projectSpaceApis(services)
+    if (!apis.length) {
       queueMicrotask(() => {
-        if (active) setCloudProjects([])
+        if (active) {
+          setCloudProjects([])
+          setDefaultProjectOptionKey(null)
+        }
       })
       return () => {
         active = false
       }
     }
-    void api
-      .listCloudProjects()
-      .then(result => {
-        if (active) setCloudProjects(result.items)
+    void Promise.allSettled(
+      apis.map(async api => {
+        const result = await api.listCloudProjects()
+        return result.items
+      })
+    )
+      .then(results => {
+        if (!active) return
+        const candidates = results.flatMap(result =>
+          result.status === 'fulfilled' ? result.value : []
+        )
+        const uniqueProjects = candidates.filter(
+          (candidate, index) =>
+            candidates.findIndex(
+              other => other.id === candidate.id && other.project_store === candidate.project_store
+            ) === index
+        )
+        const defaultProject = defaultProjectSpace
+          ? uniqueProjects.find(
+              project =>
+                projectSpaceKey(projectSpaceRef(project)) === projectSpaceKey(defaultProjectSpace)
+            )
+          : null
+        setCloudProjects(uniqueProjects)
+        setDefaultProjectOptionKey(
+          defaultProject ? projectSpaceKey(projectSpaceRef(defaultProject)) : null
+        )
+        const pendingAutoJoin = pendingAutoJoinResolutionRef.current
+        const pendingTargetMatchesCurrentTask =
+          pendingAutoJoin?.target &&
+          currentRuntimeTask &&
+          pendingAutoJoin.target.deviceId === currentRuntimeTask.deviceId &&
+          pendingAutoJoin.target.taskId === currentRuntimeTask.taskId
+        if (
+          defaultProject &&
+          !pendingCloudProject &&
+          dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
+          (!currentRuntimeTask || pendingTargetMatchesCurrentTask)
+        ) {
+          pendingTodoBinding = {
+            project: defaultProject,
+            item: null,
+            target: pendingAutoJoin?.target ?? null,
+            description: pendingAutoJoin?.description ?? '',
+          }
+          pendingAutoJoinResolutionRef.current = null
+          setPendingCloudProject(defaultProject)
+          setPendingTodoItemState(null)
+        } else if (!defaultProject && pendingAutoJoin) {
+          pendingAutoJoinResolutionRef.current = null
+        }
       })
       .catch(() => {
-        if (active) setCloudProjects([])
+        if (active) {
+          setCloudProjects([])
+          setDefaultProjectOptionKey(null)
+        }
       })
     return () => {
       active = false
     }
-  }, [services?.deliveryApi])
+  }, [
+    currentRuntimeTask,
+    defaultProjectSpace,
+    defaultCloudProjectSelectionKey,
+    dismissedDefaultCloudProjectKey,
+    pendingCloudProject,
+    services,
+    setPendingCloudContext,
+  ])
   const cloudProjectMentionCandidates = useMemo<ComposerCloudMentionCandidate[]>(
     () =>
       cloudProjects.map(project => {
@@ -972,6 +1130,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           key: `cloud-project-space:${project.id}`,
           title: project.name,
           description: project.description || project.project_key || undefined,
+          statusLabel:
+            projectSpaceKey(projectSpaceRef(project)) === defaultProjectOptionKey
+              ? t('workbench.project_space_auto_join', '自动加入')
+              : undefined,
           metaLabel: t('workbench.mention_cloud_space', '云空间'),
           testId: `cloud-project-space-${String(project.id).replace(/[^a-zA-Z0-9_-]/g, '-')}`,
           enabled: true,
@@ -988,7 +1150,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           project,
         }
       }),
-    [cloudProjects, t]
+    [cloudProjects, defaultProjectOptionKey, t]
   )
   const bindComposerCloudProject = useCallback(
     (project: CloudProject, notice: string) => {
@@ -997,7 +1159,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         setPendingCloudContext(project, null)
         return
       }
-      const api = services?.deliveryApi
+      const api = projectSpaceApiFor(project)
       if (!api) return
       void api
         .bindProjectTask(project.id, currentRuntimeTask, runtimeTaskTitle)
@@ -1014,10 +1176,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )
         })
     },
-    [currentRuntimeTask, runtimeTaskTitle, services?.deliveryApi, setPendingCloudContext, t]
+    [currentRuntimeTask, projectSpaceApiFor, runtimeTaskTitle, setPendingCloudContext, t]
   )
   const handleSelectCloudProject = useCallback(
     (project: CloudProject) => {
+      setDismissedDefaultCloudProjectKey(null)
       bindComposerCloudProject(
         project,
         t('workbench.cloud_project_bound_notice', { name: project.name })
@@ -1025,6 +1188,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [bindComposerCloudProject, t]
   )
+  const pendingProjectSpaceContext =
+    !currentRuntimeTask && pendingCloudProject ? (
+      <ComposerModePill
+        label={t('workbench.project_space_context_pending', '加入看板 · {{name}}', {
+          name: pendingCloudProject.name,
+        })}
+        icon={LayoutDashboard}
+        testId="project-space-context-pill"
+        cancelTestId="clear-project-space-context-button"
+        cancelLabel={t('workbench.clear_project_space_context', '不加入项目看板')}
+        onCancel={() => {
+          setDismissedDefaultCloudProjectKey(defaultCloudProjectSelectionKey)
+          setPendingCloudContext(null, null)
+        }}
+        title={t(
+          'workbench.project_space_context_pending_title',
+          '发送后会在该项目空间的看板中创建任务'
+        )}
+      />
+    ) : null
 
   const activeDeliveryItem =
     currentRuntimeTask &&
@@ -2661,6 +2844,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
+                                    selectedCloudProjectId={composerCloudProject?.id}
+                                    toolbarLeadingContext={pendingProjectSpaceContext}
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={compactCurrentContext}
@@ -2822,6 +3007,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                         experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                       }
                       onSelectCloudProject={handleSelectCloudProject}
+                      selectedCloudProjectId={composerCloudProject?.id}
+                      toolbarLeadingContext={pendingProjectSpaceContext}
                       isStreaming={paneIsBusy}
                       onPause={pauseCurrentResponse}
                       onCompactContext={compactCurrentContext}
@@ -3081,9 +3268,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onDelivered={() => void finishLocalDelivery()}
             />
           )}
-        {todoBindingPickerOpen && services?.deliveryApi && (
+        {todoBindingPickerOpen && todoBindingApis.length > 0 && (
           <TodoBindingPicker
-            api={services.deliveryApi}
+            apis={todoBindingApis}
             runtimeTask={currentRuntimeTask ?? undefined}
             runtimeTaskTitle={runtimeTaskTitle}
             currentProject={currentRuntimeTask ? boundCloudProject : pendingCloudProject}

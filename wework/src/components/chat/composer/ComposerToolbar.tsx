@@ -1,10 +1,12 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
@@ -48,6 +50,9 @@ interface ComposerToolbarProps {
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  selectedCloudProjectId?: CloudProject['id']
+  onSelectCloudProject?: (project: CloudProject) => void
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -88,6 +93,9 @@ export function ComposerToolbar({
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
+  cloudProjectCandidates,
+  selectedCloudProjectId,
+  onSelectCloudProject,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -131,6 +139,9 @@ export function ComposerToolbar({
           onConfigureSupervisor={onConfigureSupervisor}
           supervisorEnabled={supervisorEnabled}
           supervisorPending={supervisorPending}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu

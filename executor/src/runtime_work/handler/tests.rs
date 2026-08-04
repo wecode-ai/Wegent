@@ -2,8 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::queries::reconcile_persisted_codex_turn_status;
+use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
+
+fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stopped, stopped) = oneshot::channel();
+    handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
+}
 
 #[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
@@ -22,7 +28,7 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
         link.running = persisted_running;
         handler.upsert_local_task(link);
         if active_in_memory {
-            handler.mark_active_local_task("task-1");
+            start_test_execution(&handler, "task-1");
         }
 
         let response = handler
@@ -42,7 +48,7 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
 }
 
 #[test]
-fn finishing_an_active_goal_keeps_the_task_idle() {
+fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -54,14 +60,17 @@ fn finishing_an_active_goal_keeps_the_task_idle() {
     link.goal_status = Some("active".to_owned());
     handler.upsert_local_task(link);
 
-    handler.finish_local_task("task-1", Some("thread-1".to_owned()), "done");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.finish_local_task("task-1", execution_id, Some("thread-1".to_owned()), "done");
 
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
+    assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
 }
@@ -78,12 +87,14 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     );
     link.goal_status = Some("active".to_owned());
     handler.upsert_local_task(link);
-    handler.mark_active_local_task("task-1");
+    let execution_id = start_test_execution(&handler, "task-1");
 
     handler.handle_turn_result(
         "task-1",
+        execution_id,
         &ExecutionRequest::default(),
         Some(&ActiveCodexTurn {
+            execution_id,
             thread_id: "thread-1".to_owned(),
             turn_id: "turn-1".to_owned(),
         }),
@@ -100,10 +111,55 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("complete"));
     assert!(!handler.is_active_local_task("task-1"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn stale_execution_cannot_finish_its_replacement() {
+    let index_path = temp_runtime_work_index_path("stale-execution-finish");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    let stale_execution_id = start_test_execution(&handler, "task-1");
+    let current_execution_id = start_test_execution(&handler, "task-1");
+
+    handler.finish_local_task(
+        "task-1",
+        stale_execution_id,
+        Some("stale-thread".to_owned()),
+        "done",
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert!(handler.is_active_local_task("task-1"));
+    assert_eq!(task.thread_id, None);
+    assert_eq!(task.completed_at, None);
+
+    handler.finish_local_task(
+        "task-1",
+        current_execution_id,
+        Some("current-thread".to_owned()),
+        "done",
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
+    assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
 }
@@ -459,10 +515,13 @@ fn completed_responses_use_the_active_codex_turn_id() {
             "/tmp/project".to_owned(),
             "Task".to_owned(),
         ));
+        let execution_id = start_test_execution(&handler, &local_task_id);
         handler.handle_turn_result(
             &local_task_id,
+            execution_id,
             &request,
             Some(&ActiveCodexTurn {
+                execution_id,
                 thread_id: format!("thread-{case}"),
                 turn_id: "turn-1".to_owned(),
             }),
@@ -990,6 +1049,7 @@ async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
         .insert(
             "thread-1".to_owned(),
             ActiveCodexTurn {
+                execution_id: 1,
                 thread_id: "thread-1".to_owned(),
                 turn_id: "turn-1".to_owned(),
             },
@@ -1236,6 +1296,88 @@ fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
 }
 
 #[test]
+fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle["modelSelection"] = json!({
+        "modelName": "gpt-5.6-sol",
+        "modelType": "runtime",
+        "options": {"reasoningEffort": "high"}
+    });
+
+    assert!(!runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "public",
+                "options": {}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "kimi-k3",
+                "modelType": "runtime",
+                "options": {}
+            }
+        })
+    ));
+}
+
+#[test]
+fn runtime_model_switch_marker_is_only_added_when_the_selection_changes() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let unchanged_payload = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let switched_payload = json!({
+        "modelSelection": {
+            "modelName": "kimi-k3",
+            "modelType": "custom"
+        }
+    });
+    let mut request = ExecutionRequest::default();
+
+    mark_runtime_model_switch(&mut request, &link, &unchanged_payload);
+    assert!(request.extra.get("wework_model_switched").is_none());
+
+    mark_runtime_model_switch(&mut request, &link, &switched_payload);
+    assert_eq!(
+        request.extra.get("wework_model_switched"),
+        Some(&Value::Bool(true))
+    );
+}
+
+#[test]
 fn task_list_running_state_comes_from_executor_memory() {
     let index_path = temp_runtime_work_index_path("authoritative-running-state");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -1264,7 +1406,7 @@ fn task_list_running_state_comes_from_executor_memory() {
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
-    handler.mark_active_local_task("task-1");
+    start_test_execution(&handler, "task-1");
 
     let running_link = handler
         .link_from_thread(&thread)
@@ -1298,10 +1440,11 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     link.thread_id = Some("thread-1".to_owned());
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
-    handler.mark_active_local_task(local_task_id);
+    let execution_id = start_test_execution(&handler, local_task_id);
     handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
     handler.record_active_codex_turn(
         local_task_id,
+        execution_id,
         "thread-1".to_owned(),
         "turn-current".to_owned(),
     );
@@ -1474,33 +1617,6 @@ fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
         active_turn_id_from_steer_mismatch("no active turn to steer"),
         None
     );
-}
-
-#[test]
-fn persisted_terminal_status_reconciles_only_the_exact_last_turn_id() {
-    let mut link = RuntimeTaskLink::new_pending(
-        "task-1".to_owned(),
-        "/tmp/project".to_owned(),
-        "Task".to_owned(),
-    );
-    link.thread_id = Some("thread-1".to_owned());
-    link.status = "done".to_owned();
-    link.turn_status = Some("completed".to_owned());
-    link.completed_at = Some(123);
-    link.runtime_handle["lastTurnId"] = json!("turn-2");
-    let mut thread = json!({
-        "id": "thread-1",
-        "turns": [
-            {"id": "turn-1", "status": "interrupted", "items": []},
-            {"id": "turn-2", "status": "interrupted", "items": []}
-        ]
-    });
-
-    reconcile_persisted_codex_turn_status(&mut thread, &link);
-
-    assert_eq!(thread["turns"][0]["status"], "interrupted");
-    assert_eq!(thread["turns"][1]["status"], "completed");
-    assert_eq!(thread["turns"][1]["completedAt"], 123);
 }
 
 #[test]

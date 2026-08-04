@@ -15,7 +15,6 @@ from app.models.api_key import APIKey
 from app.models.cloud_project import (
     CloudProject,
     CloudProjectFile,
-    CloudProjectLocalBinding,
     LoopItemTaskBinding,
 )
 from app.models.delivery import (
@@ -74,7 +73,6 @@ __all__ = [
     "DingtalkSyncedNode",
     "CloudProject",
     "CloudProjectFile",
-    "CloudProjectLocalBinding",
     "LoopItemTaskBinding",
     "LoopItem",
     "LoopItemAttachment",

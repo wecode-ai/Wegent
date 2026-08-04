@@ -51,6 +51,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'starting',
         turnPhase: 'submitting',
+        turnOutcome: null,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -60,6 +61,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
+        turnOutcome: null,
         expectedExecutorRunning: true,
       }
 
@@ -92,6 +94,7 @@ export function reduceRuntimeTaskLifecycle(
       return {
         ...state,
         executionPhase: 'running',
+        turnOutcome: null,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -110,6 +113,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: 'streaming',
+        turnOutcome: null,
         activeTurnId: event.turnId ?? null,
         expectedExecutorRunning: true,
         unread: false,
@@ -123,6 +127,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
         turnPhase: 'idle',
+        turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
         expectedExecutorRunning:
           state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
@@ -135,6 +140,7 @@ export function reduceRuntimeTaskLifecycle(
             ...state,
             executionPhase: 'running',
             turnPhase: 'streaming',
+            turnOutcome: null,
             activeTurnId: event.turnId ?? null,
             expectedExecutorRunning: true,
           }

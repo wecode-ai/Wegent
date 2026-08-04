@@ -139,6 +139,7 @@ const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
+const preserveScrollPositionOutsideVirtualizer = () => false
 
 function ForkTurnIcon() {
   return (
@@ -324,6 +325,8 @@ export const MessageList = memo(function MessageList({
     },
     initialMeasurementsCache,
   })
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+    preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
 
   useLayoutEffect(() => {
@@ -1987,8 +1990,12 @@ function AssistantMessage({
   const [finalProcessingCompletedAt] = useState(() => Date.now())
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
+  const hasPlanResponse = displayBlocks.some(
+    block => block.type === 'plan' && Boolean(block.content.trim())
+  )
   const usesFinalProcessingShell =
     hasBlocks &&
+    !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
     (isProcessingOnlyBeforeGuidance ||

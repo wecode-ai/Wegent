@@ -66,6 +66,7 @@ interface ProjectChatComposerProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -86,6 +87,7 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   inputLeadingContext?: ReactNode
+  toolbarLeadingContext?: ReactNode
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -127,6 +129,7 @@ export function ProjectChatComposer({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -147,6 +150,7 @@ export function ProjectChatComposer({
   onPause,
   showWorkspaceMenu,
   inputLeadingContext,
+  toolbarLeadingContext,
 }: ProjectChatComposerProps) {
   const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
@@ -388,6 +392,10 @@ export function ProjectChatComposer({
           }
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
+          leadingContext={toolbarLeadingContext}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
       </form>
     </div>
