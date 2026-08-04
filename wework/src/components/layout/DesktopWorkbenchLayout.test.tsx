@@ -4378,7 +4378,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     expect(screen.getAllByTestId('project-chat-composer')).toHaveLength(2)
 
@@ -4825,7 +4825,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
@@ -4881,7 +4881,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
@@ -4926,7 +4926,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
@@ -4980,7 +4980,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
@@ -5030,7 +5030,7 @@ describe('DesktopWorkbenchLayout', () => {
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')

@@ -6372,11 +6372,12 @@ function responseCreated(id) {
   return { type: 'response.created', response: { id } }
 }
 
-function responseCompleted(id) {
+function responseCompleted(id, output) {
   return {
     type: 'response.completed',
     response: {
       id,
+      ...(output ? { output } : {}),
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -9941,10 +9942,11 @@ class DesktopE2EServer {
         response.write(createSse([responseCreated(responseId)]))
         await this.sideChatQueueRelease
         if (response.destroyed || response.writableEnded) return
+        const initialAssistantMessage = assistantMessage(SIDE_CHAT_QUEUE_INITIAL_COMPLETION)
         response.end(
           createSse([
-            assistantMessage(SIDE_CHAT_QUEUE_INITIAL_COMPLETION),
-            responseCompleted(responseId),
+            initialAssistantMessage,
+            responseCompleted(responseId, [initialAssistantMessage.item]),
           ])
         )
         return
