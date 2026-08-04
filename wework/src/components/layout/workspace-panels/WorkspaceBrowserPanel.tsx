@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
+import { TransientNotice } from '@/components/common/TransientNotice'
 import {
   canUseEmbeddedBrowser,
   closeEmbeddedBrowser,
@@ -52,9 +53,8 @@ import {
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
-import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
+import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
-import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import {
   embeddedBrowserOverlayMutationAffectsVisibility,
   hasEmbeddedBrowserOverlayConflict,
@@ -739,9 +739,10 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
-  // Local file URL that the webview could not preview (download was cancelled
-  // by the backend). Shown as a notice bar with a reveal-in-folder action.
-  const [localFilePreviewUrl, setLocalFilePreviewUrl] = useState<string | null>(null)
+  const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
+    id: number
+    message: string
+  } | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
@@ -853,7 +854,10 @@ export function WorkspaceBrowserPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserLocalFilePreview(event => {
       if (!activeRef.current || event.nativeLabel !== nativeLabelRef.current) return
-      setLocalFilePreviewUrl(event.url)
+      setLocalFilePreviewToast({
+        id: Date.now(),
+        message: t('workbench.browser_local_file_notice'),
+      })
     })
     if (!listener) return undefined
     let disposed = false
@@ -869,7 +873,7 @@ export function WorkspaceBrowserPanel({
       disposed = true
       unlisten?.()
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -1600,7 +1604,7 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
-      setLocalFilePreviewUrl(null)
+      setLocalFilePreviewToast(null)
       setInvalidTlsCertificate(certificate =>
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
       )
@@ -2037,55 +2041,12 @@ export function WorkspaceBrowserPanel({
           )}
         </div>
       ) : null}
-      {localFilePreviewUrl ? (
-        <div
-          data-testid="workspace-browser-local-file-notice"
-          role="status"
-          className="flex shrink-0 items-center gap-2 border-b border-border bg-surface px-3 py-2 text-sm text-text-primary"
-        >
-          <CircleAlert className="h-4 w-4 shrink-0 text-amber-600" />
-          <span className="min-w-0 flex-1 truncate" title={localFilePreviewUrl}>
-            {t('workbench.browser_local_file_notice')}
-          </span>
-          <button
-            type="button"
-            data-testid="workspace-browser-local-file-open-button"
-            className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2 text-xs font-medium text-text-primary hover:bg-muted"
-            onClick={() => {
-              const path = fileUrlToPath(localFilePreviewUrl)
-              if (!path) return
-              void openLocalFile(path).catch(error => {
-                console.error('Failed to open local file:', error)
-              })
-            }}
-          >
-            {t('workbench.browser_local_file_open')}
-          </button>
-          <button
-            type="button"
-            data-testid="workspace-browser-local-file-reveal-button"
-            className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2 text-xs font-medium text-text-primary hover:bg-muted"
-            onClick={() => {
-              const path = fileUrlToPath(localFilePreviewUrl)
-              if (!path) return
-              void revealLocalFile(path).catch(error => {
-                console.error('Failed to reveal local file:', error)
-              })
-            }}
-          >
-            {t('workbench.browser_download_reveal')}
-          </button>
-          <button
-            type="button"
-            data-testid="workspace-browser-local-file-dismiss-button"
-            aria-label={t('common.close')}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
-            onClick={() => setLocalFilePreviewUrl(null)}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ) : null}
+      <TransientNotice
+        key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
+        message={localFilePreviewToast?.message ?? null}
+        tone="error"
+        onClear={() => setLocalFilePreviewToast(null)}
+      />
       {invalidTlsCertificate ? (
         <div
           data-testid="workspace-browser-invalid-tls-warning"

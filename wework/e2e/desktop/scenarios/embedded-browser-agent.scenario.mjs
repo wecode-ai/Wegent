@@ -13,7 +13,7 @@ const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
-const LOCAL_FILE_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-local-file-notice"]`
+const TRANSIENT_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="transient-notice"]`
 const BROWSER_LABEL = 'workspace-browser'
 const FIXTURE_PATH = '/embedded-browser-agent-fixture'
 const REDIRECT_PATH = '/embedded-browser-agent-redirect'
@@ -29,6 +29,9 @@ const SELECT_TEXT = 'selected: finance'
 const CHECKED_TEXT = 'checked: true'
 const SCROLLED_TEXT = 'scroll marker visible'
 const LOCAL_FILE_TEXT = 'Local File Browser Fixture'
+const LOCAL_MARKDOWN_TEXT = 'Local Markdown Browser Fixture'
+const LOCAL_PLAINTEXT_TEXT = '中文无扩展名文本'
+const LOCAL_TOAST_TEXT = '此文件无法预览'
 const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
@@ -626,6 +629,64 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `file:// page was not rendered: ${localFileInspect.inspectText}`
       )
 
+      const localMarkdownPath = join(resultDir, 'local-markdown-fixture.md')
+      await writeFile(localMarkdownPath, `# ${LOCAL_MARKDOWN_TEXT}\n`, 'utf8')
+      const localMarkdownOpenResult = await bridgeCall({
+        action: 'open',
+        url: pathToFileURL(localMarkdownPath).href,
+        timeoutMs: 8_000,
+      })
+      assert.equal(
+        localMarkdownOpenResult.ok,
+        true,
+        `Bridge file:// markdown open failed: ${JSON.stringify(localMarkdownOpenResult)}`
+      )
+      const localMarkdownWaitResult = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_MARKDOWN_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(localMarkdownWaitResult.kind, 'browser.wait')
+      assert.equal(localMarkdownWaitResult.ok, true)
+      const localMarkdownInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        localMarkdownInspect.inspectText.includes(LOCAL_MARKDOWN_TEXT),
+        `markdown file was not rendered: ${localMarkdownInspect.inspectText}`
+      )
+
+      const localPlainTextPath = join(resultDir, 'local-plain-text-fixture')
+      await writeFile(localPlainTextPath, `${LOCAL_PLAINTEXT_TEXT}\n第二行`, 'utf8')
+      const localPlainTextOpenResult = await bridgeCall({
+        action: 'open',
+        url: pathToFileURL(localPlainTextPath).href,
+        timeoutMs: 8_000,
+      })
+      assert.equal(
+        localPlainTextOpenResult.ok,
+        true,
+        `Bridge file:// plain text open failed: ${JSON.stringify(localPlainTextOpenResult)}`
+      )
+      const localPlainTextWaitResult = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_PLAINTEXT_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(localPlainTextWaitResult.kind, 'browser.wait')
+      assert.equal(localPlainTextWaitResult.ok, true)
+      const localPlainTextInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        localPlainTextInspect.inspectText.includes(LOCAL_PLAINTEXT_TEXT),
+        `plain text file was not rendered: ${localPlainTextInspect.inspectText}`
+      )
+
       const localDirectoryPath = join(resultDir, 'local-directory-fixture')
       await mkdir(join(localDirectoryPath, 'nested'), { recursive: true })
       await writeFile(join(localDirectoryPath, LOCAL_DIRECTORY_TEXT), 'directory fixture', 'utf8')
@@ -672,7 +733,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Browser URL input did not receive local zip URL before submit'
       )
       await control.command('submit', BROWSER_INPUT_SELECTOR)
-      await control.command('waitFor', LOCAL_FILE_NOTICE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
+        text: LOCAL_TOAST_TEXT,
+        timeoutMs: uiTimeoutMs,
+      })
 
       await writeFile(
         join(resultDir, 'embedded-browser-agent-result.json'),

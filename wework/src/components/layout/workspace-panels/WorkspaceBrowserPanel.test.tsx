@@ -54,7 +54,6 @@ vi.mock('@/lib/external-links', () => ({
 }))
 
 const localTerminalMocks = vi.hoisted(() => ({
-  openLocalFile: vi.fn(),
   revealLocalFile: vi.fn(),
 }))
 
@@ -91,7 +90,6 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
-    localTerminalMocks.openLocalFile.mockResolvedValue(undefined)
     localTerminalMocks.revealLocalFile.mockResolvedValue(undefined)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
@@ -218,7 +216,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('shows a notice when a local file cannot be previewed and opens or reveals it', async () => {
+  test('shows a transient toast when a local file cannot be previewed', async () => {
     let handleLocalFilePreview!: (event: {
       label: string
       nativeLabel: string
@@ -244,53 +242,15 @@ describe('WorkspaceBrowserPanel', () => {
       })
     })
 
-    const notice = screen.getByTestId('workspace-browser-local-file-notice')
+    const notice = screen.getByTestId('transient-notice')
     expect(notice).toHaveTextContent('此文件无法预览')
 
-    fireEvent.click(within(notice).getByTestId('workspace-browser-local-file-open-button'))
-    await waitFor(() =>
-      expect(localTerminalMocks.openLocalFile).toHaveBeenCalledWith('/Users/me/archive.zip')
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+      },
+      { timeout: 3000 }
     )
-
-    fireEvent.click(within(notice).getByTestId('workspace-browser-local-file-reveal-button'))
-    await waitFor(() =>
-      expect(localTerminalMocks.revealLocalFile).toHaveBeenCalledWith('/Users/me/archive.zip')
-    )
-
-    fireEvent.click(within(notice).getByTestId('workspace-browser-local-file-dismiss-button'))
-    expect(screen.queryByTestId('workspace-browser-local-file-notice')).not.toBeInTheDocument()
-  })
-
-  test('clears the local file notice on the next navigation', async () => {
-    let handleLocalFilePreview!: (event: {
-      label: string
-      nativeLabel: string
-      url: string
-    }) => void
-    embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockImplementation(handler => {
-      handleLocalFilePreview = handler
-      return null
-    })
-    mockBrowserHostRect()
-    render(<WorkspaceBrowserPanel active />)
-
-    const input = screen.getByTestId('workspace-browser-url-input')
-    fireEvent.change(input, { target: { value: 'file:///Users/me/archive.zip' } })
-    fireEvent.submit(input.closest('form')!)
-    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
-
-    act(() => {
-      handleLocalFilePreview({
-        label: 'workspace-browser',
-        nativeLabel: 'workspace-browser-native-1',
-        url: 'file:///Users/me/archive.zip',
-      })
-    })
-    expect(screen.getByTestId('workspace-browser-local-file-notice')).toBeInTheDocument()
-
-    fireEvent.change(input, { target: { value: 'file:///Users/me/report.html' } })
-    fireEvent.submit(input.closest('form')!)
-    expect(screen.queryByTestId('workspace-browser-local-file-notice')).not.toBeInTheDocument()
   })
 
   test('shows an invalid TLS warning returned during the initial browser open', async () => {

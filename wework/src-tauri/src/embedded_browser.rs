@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -22,6 +21,7 @@ mod agent_control;
 mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
+mod local_file_preview;
 mod popup;
 mod screenshot;
 
@@ -44,6 +44,15 @@ use browser_runtime::{
     inspect_embedded_browser, native_input_probe_result, present_probe_result,
     script_browser_action, script_expression, script_resolve_inspect_target,
     wait_for_embedded_browser,
+};
+#[cfg(test)]
+pub(crate) use local_file_preview::{
+    browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
+    format_directory_entry_modified, format_file_size, DirectoryEntry,
+};
+use local_file_preview::{
+    build_directory_preview, build_text_preview, file_url_path, is_generated_preview_path,
+    is_natively_renderable_html,
 };
 use popup::{classify_popup_url, emit_popup_observed};
 use screenshot::screenshot_embedded_browser;
@@ -69,13 +78,11 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
-const EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT: usize = 1_000;
 const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
 const EMBEDDED_BROWSER_WAIT_SCRIPT: &str = include_str!("embedded_browser_wait.js");
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static EMBEDDED_BROWSER_DIRECTORY_INDEX_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_NATIVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -85,7 +92,7 @@ static EMBEDDED_BROWSER_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
-    directory_previews: Arc<Mutex<HashMap<String, String>>>,
+    preview_sources: Arc<Mutex<HashMap<String, String>>>,
     agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
     agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
     lifecycle: Arc<AsyncMutex<()>>,
@@ -295,288 +302,18 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
-fn escape_html(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '&' => "&amp;".to_string(),
-            '<' => "&lt;".to_string(),
-            '>' => "&gt;".to_string(),
-            '"' => "&quot;".to_string(),
-            '\'' => "&#39;".to_string(),
-            _ => character.to_string(),
-        })
-        .collect()
-}
-
-fn browser_file_url_from_path(path: &Path) -> Result<tauri::Url, String> {
-    tauri::Url::from_file_path(path)
-        .map_err(|_| format!("Failed to create file URL from path: {}", path.display()))
-}
-
-fn browser_directory_cache_directory() -> Result<PathBuf, String> {
-    Ok(std::env::temp_dir().join("wework-embedded-browser"))
-}
-
-fn file_url_path(url: &tauri::Url) -> Result<PathBuf, String> {
-    if url.scheme() != "file" {
-        return Err("Embedded browser URL is not a file URL".to_string());
-    }
-    url.to_file_path()
-        .map_err(|_| format!("Unable to convert file URL to a path: {url}"))
-}
-
-fn directory_preview_source_url(state: &EmbeddedBrowserState, display_url: &str) -> Option<String> {
+fn preview_source_url(state: &EmbeddedBrowserState, display_url: &str) -> Option<String> {
     state
-        .directory_previews
+        .preview_sources
         .lock()
         .ok()
         .and_then(|previews| previews.get(display_url).cloned())
 }
 
-fn register_directory_preview(
-    state: &EmbeddedBrowserState,
-    display_url: &str,
-    requested_url: &str,
-) {
-    if let Ok(mut previews) = state.directory_previews.lock() {
+fn register_preview_source(state: &EmbeddedBrowserState, display_url: &str, requested_url: &str) {
+    if let Ok(mut previews) = state.preview_sources.lock() {
         previews.insert(display_url.to_string(), requested_url.to_string());
     }
-}
-
-#[derive(Clone)]
-struct DirectoryEntry {
-    name: String,
-    url: String,
-    kind: &'static str,
-    size: Option<u64>,
-    modified: Option<String>,
-}
-
-fn format_directory_entry_modified(modified: std::io::Result<SystemTime>) -> Option<String> {
-    let modified = modified.ok()?;
-    let unix = modified.duration_since(UNIX_EPOCH).ok()?;
-    Some(format!("{}s", unix.as_secs()))
-}
-
-fn build_directory_entries(directory: &Path) -> Result<(Vec<DirectoryEntry>, bool), String> {
-    let mut entries = Vec::new();
-    let mut children = fs::read_dir(directory)
-        .map_err(|error| {
-            format!(
-                "Failed to inspect directory {}: {error}",
-                directory.display()
-            )
-        })?
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-
-    children.sort_by_key(|entry| {
-        (
-            entry.file_type().map(|kind| !kind.is_dir()).unwrap_or(true),
-            entry.file_name(),
-        )
-    });
-
-    for entry in children
-        .into_iter()
-        .take(EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT)
-    {
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "Failed to inspect directory entry {}: {error}",
-                entry.path().display()
-            )
-        })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = entry.path();
-        let child_url = browser_file_url_from_path(&path)?.to_string();
-        let metadata = entry.metadata().ok();
-        let is_directory = file_type.is_dir();
-        entries.push(DirectoryEntry {
-            name: if is_directory {
-                format!("{name}/")
-            } else {
-                name
-            },
-            url: if is_directory {
-                format!("{child_url}/")
-            } else {
-                child_url
-            },
-            kind: if is_directory { "directory" } else { "file" },
-            size: metadata
-                .as_ref()
-                .and_then(|metadata| (!is_directory).then_some(metadata.len())),
-            modified: metadata
-                .as_ref()
-                .and_then(|metadata| format_directory_entry_modified(metadata.modified())),
-        });
-    }
-
-    let truncated = directory.read_dir().map(|iter| iter.count()).unwrap_or(0) > entries.len();
-    Ok((entries, truncated))
-}
-
-fn directory_listing_html(
-    directory: &Path,
-    directory_url: &tauri::Url,
-    entries: &[DirectoryEntry],
-    truncated: bool,
-) -> String {
-    let title = escape_html(&format!("Index of {}", directory.display()));
-    let directory_url = escape_html(directory_url.as_str());
-    let parent_url = directory
-        .parent()
-        .and_then(|parent| browser_file_url_from_path(parent).ok());
-    let parent_link = parent_url
-        .map(|url| {
-            format!(
-                "<a class=\"entry parent\" href=\"{}\"><span class=\"name\">../</span><span class=\"meta\">Parent directory</span></a>",
-                escape_html(url.as_str())
-            )
-        })
-        .unwrap_or_default();
-    let rows = entries
-        .iter()
-        .map(|entry| {
-            let size = entry
-                .size
-                .map(|bytes| format!("{bytes} bytes"))
-                .unwrap_or_else(|| String::from("-"));
-            let modified = entry.modified.clone().unwrap_or_else(|| String::from("-"));
-            format!(
-                "<a class=\"entry entry-{kind}\" href=\"{url}\"><span class=\"name\">{name}</span><span class=\"meta\">{kind} · {size} · {modified}</span></a>",
-                kind = entry.kind,
-                url = escape_html(&entry.url),
-                name = escape_html(&entry.name),
-                size = escape_html(&size),
-                modified = escape_html(&modified),
-            )
-        })
-        .collect::<String>();
-    let truncated_notice = if truncated {
-        "<p class=\"notice\">Showing the first 1,000 entries.</p>"
-    } else {
-        ""
-    };
-
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    :root {{
-      color-scheme: light;
-      --bg: #f6f7f8;
-      --panel: #ffffff;
-      --line: #d9dee3;
-      --text: #1f2328;
-      --muted: #66707a;
-      --accent: #0969da;
-    }}
-    body {{
-      margin: 0;
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }}
-    header {{
-      padding: 16px 20px 12px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
-      position: sticky;
-      top: 0;
-      z-index: 1;
-    }}
-    h1 {{
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      word-break: break-all;
-    }}
-    .path {{
-      margin-top: 4px;
-      color: var(--muted);
-      word-break: break-all;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12px;
-    }}
-    main {{
-      padding: 12px 20px 20px;
-    }}
-    .entry {{
-      display: flex;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 8px 12px;
-      margin-bottom: 6px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      color: inherit;
-      text-decoration: none;
-    }}
-    .entry:hover {{
-      border-color: var(--accent);
-    }}
-    .name {{
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }}
-    .meta {{
-      flex-shrink: 0;
-      color: var(--muted);
-      font-size: 12px;
-    }}
-    .notice {{
-      margin: 0 0 12px;
-      color: var(--muted);
-      font-size: 12px;
-    }}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>{title}</h1>
-    <div class="path">{directory_url}</div>
-  </header>
-  <main>
-    {parent_link}
-    {rows}
-    {truncated_notice}
-  </main>
-</body>
-</html>"#
-    )
-}
-
-fn build_directory_preview(directory_url: &tauri::Url) -> Result<(tauri::Url, String), String> {
-    let directory = file_url_path(directory_url)?;
-    if !directory.is_dir() {
-        return Err("File URL is not a directory".to_string());
-    }
-
-    let cache_directory = browser_directory_cache_directory()?;
-    fs::create_dir_all(&cache_directory)
-        .map_err(|error| format!("Failed to create embedded browser directory cache: {error}"))?;
-
-    let preview_path = cache_directory.join(format!(
-        "directory-{}-{}.html",
-        std::process::id(),
-        EMBEDDED_BROWSER_DIRECTORY_INDEX_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let (entries, truncated) = build_directory_entries(&directory)?;
-    let html = directory_listing_html(&directory, directory_url, &entries, truncated);
-    fs::write(&preview_path, html)
-        .map_err(|error| format!("Failed to write embedded browser directory preview: {error}"))?;
-
-    browser_file_url_from_path(&preview_path).map(|url| (url, directory_url.to_string()))
 }
 
 fn resolve_browser_navigation_url(
@@ -591,12 +328,22 @@ fn resolve_browser_navigation_url(
     let Ok(path) = file_url_path(&parsed_url) else {
         return Ok(parsed_url);
     };
+    if is_generated_preview_path(&path) {
+        return Ok(parsed_url);
+    }
     if !path.is_dir() {
+        if is_natively_renderable_html(&path) {
+            return Ok(parsed_url);
+        }
+        if let Some((display_url, source_url)) = build_text_preview(&parsed_url)? {
+            register_preview_source(state, display_url.as_str(), &source_url);
+            return Ok(display_url);
+        }
         return Ok(parsed_url);
     }
 
     let (display_url, source_url) = build_directory_preview(&parsed_url)?;
-    register_directory_preview(state, display_url.as_str(), &source_url);
+    register_preview_source(state, display_url.as_str(), &source_url);
     Ok(display_url)
 }
 
@@ -604,7 +351,7 @@ fn loaded_browser_url(state: &EmbeddedBrowserState, loaded_url: &str) -> Option<
     if !should_record_loaded_url(loaded_url) {
         return None;
     }
-    Some(directory_preview_source_url(state, loaded_url).unwrap_or_else(|| loaded_url.to_string()))
+    Some(preview_source_url(state, loaded_url).unwrap_or_else(|| loaded_url.to_string()))
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -1606,58 +1353,52 @@ pub async fn embedded_browser_open(
                     }),
                 );
                 if url.scheme() == "file" {
-                    if let Ok(path) = file_url_path(&url) {
-                        if path.is_dir() {
-                            match resolve_browser_navigation_url(&state, &requested_url) {
-                                Ok(display_url) => {
-                                    if display_url.as_str() == requested_url {
-                                        return true;
-                                    }
-                                    let _ = set_entry_url_for_native_label(
-                                        &state,
-                                        &native_label_for_navigation,
-                                        requested_url.clone(),
-                                    );
-                                    if let Some(webview) =
-                                        app_for_navigation.get_webview(&native_label_for_navigation)
-                                    {
-                                        if let Err(error) = webview.navigate(display_url.clone()) {
-                                            log_embedded_browser_diagnostic(
-                                                &state,
-                                                &owner,
-                                                "navigation_directory_preview_failed",
-                                                json!({
-                                                    "requestedUrl": &requested_url,
-                                                    "displayUrl": display_url.to_string(),
-                                                    "error": error.to_string(),
-                                                }),
-                                            );
-                                            return true;
-                                        }
-                                    }
+                    match resolve_browser_navigation_url(&state, &requested_url) {
+                        Ok(display_url) if display_url.as_str() != requested_url => {
+                            let _ = set_entry_url_for_native_label(
+                                &state,
+                                &native_label_for_navigation,
+                                requested_url.clone(),
+                            );
+                            if let Some(webview) =
+                                app_for_navigation.get_webview(&native_label_for_navigation)
+                            {
+                                if let Err(error) = webview.navigate(display_url.clone()) {
                                     log_embedded_browser_diagnostic(
                                         &state,
                                         &owner,
-                                        "navigation_directory_preview",
+                                        "navigation_local_file_preview_failed",
                                         json!({
                                             "requestedUrl": &requested_url,
                                             "displayUrl": display_url.to_string(),
+                                            "error": error.to_string(),
                                         }),
                                     );
-                                    return false;
-                                }
-                                Err(error) => {
-                                    log_embedded_browser_diagnostic(
-                                        &state,
-                                        &owner,
-                                        "navigation_directory_preview_failed",
-                                        json!({
-                                            "requestedUrl": &requested_url,
-                                            "error": error,
-                                        }),
-                                    );
+                                    return true;
                                 }
                             }
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview",
+                                json!({
+                                    "requestedUrl": &requested_url,
+                                    "displayUrl": display_url.to_string(),
+                                }),
+                            );
+                            return false;
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview_failed",
+                                json!({
+                                    "requestedUrl": &requested_url,
+                                    "error": error,
+                                }),
+                            );
                         }
                     }
                 }
