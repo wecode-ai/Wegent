@@ -124,7 +124,14 @@ export function createPluginApi(client: HttpClient) {
       file: File,
       metadata: Pick<
         PluginSubmissionInitRequest,
-        'slug' | 'displayName' | 'version' | 'listingType' | 'purpose'
+        | 'slug'
+        | 'displayName'
+        | 'version'
+        | 'listingType'
+        | 'purpose'
+        | 'visibility'
+        | 'targets'
+        | 'allowCopy'
       >
     ): Promise<PluginSubmissionCompleteResponse> {
       const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())

@@ -4581,6 +4581,7 @@ pub fn run() {
             local_executor::local_executor_initialize_bundled_plugin_marketplace,
             local_executor::local_executor_initialize_codex_home,
             local_executor::local_executor_import_external_content,
+            local_executor::local_executor_ensure_personal_plugin,
             local_executor::local_executor_import_plugin_copy,
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,

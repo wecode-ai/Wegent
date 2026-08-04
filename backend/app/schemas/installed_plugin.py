@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.device import DeviceCapabilitySyncResponse
 
@@ -342,6 +342,25 @@ class PluginSubmissionInitRequest(BaseModel):
     sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
     listingType: Literal["plugin", "skill"] = "plugin"
     purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
+    # Unified publish scope. When set, purpose is derived:
+    # personal -> restricted_share (auto-approve); workspace/public -> marketplace_publish (review).
+    visibility: Optional[Literal["personal", "workspace", "public"]] = None
+    targets: List["PluginAccessTarget"] = Field(default_factory=list)
+    allowCopy: bool = False
+
+    @model_validator(mode="after")
+    def resolve_purpose_from_visibility(self) -> "PluginSubmissionInitRequest":
+        if self.visibility is None:
+            return self
+        if self.visibility == "personal":
+            self.purpose = "restricted_share"
+            return self
+        self.purpose = "marketplace_publish"
+        if self.targets:
+            raise ValueError("targets are only allowed when visibility is personal")
+        if self.allowCopy:
+            raise ValueError("allowCopy is only allowed when visibility is personal")
+        return self
 
 
 class PluginSubmissionInitResponse(BaseModel):

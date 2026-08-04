@@ -431,6 +431,10 @@ class PluginMarketplaceService:
         self._validate_version(request.version)
         if not re.fullmatch(r"[0-9a-fA-F]{64}", request.sha256):
             raise HTTPException(status_code=422, detail="sha256 must be hexadecimal")
+        visibility = self._resolve_submission_visibility(request)
+        purpose = (
+            "restricted_share" if visibility == "personal" else "marketplace_publish"
+        )
         plugin = db.query(Plugin).filter(Plugin.slug == request.slug).first()
         if plugin and plugin.owner_user_id != user_id:
             raise HTTPException(status_code=409, detail="Plugin slug is already owned")
@@ -449,20 +453,15 @@ class PluginMarketplaceService:
                 owner_user_id=user_id,
                 keywords_json=[],
                 interface_json={},
-                visibility=(
-                    "personal" if request.purpose == "restricted_share" else "workspace"
-                ),
+                visibility=visibility,
                 status="draft",
             )
             db.add(plugin)
             db.flush()
-        elif request.purpose == "restricted_share":
-            if plugin.status == "published" and plugin.visibility != "personal":
-                raise HTTPException(
-                    status_code=409,
-                    detail="Published marketplace plugins cannot become personal shares",
-                )
-            plugin.visibility = "personal"
+        else:
+            self._apply_submission_visibility_upgrade(
+                db, plugin=plugin, visibility=visibility
+            )
         duplicate = (
             db.query(PluginRelease)
             .filter(
@@ -473,6 +472,18 @@ class PluginMarketplaceService:
         )
         if duplicate:
             raise HTTPException(status_code=409, detail="Plugin version already exists")
+        pending_access = None
+        if visibility == "personal" and (request.targets or request.allowCopy):
+            # Validate recipients up front so publish fails before package upload.
+            validated_targets = self._validated_access_targets(
+                db,
+                owner_user_id=user_id,
+                targets=list(request.targets),
+            )
+            pending_access = {
+                "targets": [target.model_dump() for target in validated_targets],
+                "allowCopy": bool(request.allowCopy and validated_targets),
+            }
         release = PluginRelease(
             plugin_id=plugin.id,
             version=request.version,
@@ -483,7 +494,11 @@ class PluginMarketplaceService:
             size_bytes=request.sizeBytes,
             status="processing",
             scan_status="pending",
-            scan_report_json={"filename": request.filename},
+            scan_report_json={
+                "filename": request.filename,
+                "requestedVisibility": visibility,
+                **({"pendingAccess": pending_access} if pending_access else {}),
+            },
             created_by_user_id=user_id,
         )
         db.add(release)
@@ -493,7 +508,7 @@ class PluginMarketplaceService:
             plugin_id=plugin.id,
             release_id=release.id,
             submitter_user_id=user_id,
-            purpose=request.purpose,
+            purpose=purpose,
             status="uploading",
         )
         db.add(submission)
@@ -513,6 +528,55 @@ class PluginMarketplaceService:
             uploadUrl=upload_url,
             expiresAt=expires_at,
         )
+
+    def _resolve_submission_visibility(
+        self, request: PluginSubmissionInitRequest
+    ) -> str:
+        if request.visibility:
+            return request.visibility
+        return "personal" if request.purpose == "restricted_share" else "workspace"
+
+    def _apply_submission_visibility_upgrade(
+        self, db: Session, *, plugin: Plugin, visibility: str
+    ) -> None:
+        """Validate visibility transitions; apply immediately only when safe.
+
+        Draft / pending_review plugins can take the requested visibility now because
+        they are not catalog-visible. Published personal -> marketplace upgrades
+        keep personal visibility until review approval.
+        """
+        del db
+        current = plugin.visibility
+        if visibility == "personal":
+            if plugin.status == "published" and current != "personal":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Published marketplace plugins cannot become personal shares",
+                )
+            plugin.visibility = "personal"
+            return
+        if plugin.status == "published" and current == "personal":
+            # Keep personal until marketplace review approves the upgrade.
+            return
+        if current == "public" and visibility == "workspace":
+            raise HTTPException(
+                status_code=409,
+                detail="Public plugins cannot be downgraded to workspace",
+            )
+        if plugin.status != "published":
+            plugin.visibility = visibility
+            return
+        if visibility in {"workspace", "public"}:
+            plugin.visibility = visibility
+
+    def _requested_visibility_for_release(
+        self, release: PluginRelease, *, fallback: str
+    ) -> str:
+        report = release.scan_report_json or {}
+        requested = report.get("requestedVisibility")
+        if requested in {"personal", "workspace", "public"}:
+            return requested
+        return fallback
 
     def complete_submission(
         self, db: Session, *, user_id: int, submission_id: int
@@ -558,7 +622,10 @@ class PluginMarketplaceService:
                     final_key, package
                 )
                 release.storage_key = final_key
-            release.scan_report_json = self._scan_report(
+            staging_report = release.scan_report_json or {}
+            requested_visibility = staging_report.get("requestedVisibility")
+            pending_access = staging_report.get("pendingAccess")
+            scanned_report = self._scan_report(
                 parsed,
                 security_report,
                 provenance={
@@ -567,14 +634,28 @@ class PluginMarketplaceService:
                     "submissionId": submission.id,
                 },
             )
+            if requested_visibility in {"personal", "workspace", "public"}:
+                scanned_report["requestedVisibility"] = requested_visibility
+            if isinstance(pending_access, dict):
+                scanned_report["pendingAccess"] = pending_access
+            release.scan_report_json = scanned_report
             if submission.purpose == "restricted_share":
                 plugin.visibility = "personal"
                 self._finalize_release(db, plugin=plugin, release=release)
                 submission.status = "approved"
                 submission.reviewed_at = datetime.now()
+                if isinstance(pending_access, dict):
+                    self._apply_pending_personal_access(
+                        db,
+                        plugin=plugin,
+                        owner_user_id=user_id,
+                        pending_access=pending_access,
+                    )
             else:
                 if plugin.status != "published":
                     plugin.status = "pending_review"
+                    if requested_visibility in {"workspace", "public"}:
+                        plugin.visibility = requested_visibility
                 submission.status = "pending"
             db.commit()
             if staging_key != final_key:
@@ -652,6 +733,19 @@ class PluginMarketplaceService:
         submission.review_note = note
         submission.reviewed_at = datetime.now()
         if approved:
+            requested = self._requested_visibility_for_release(
+                release,
+                fallback=(
+                    "personal"
+                    if submission.purpose == "restricted_share"
+                    else "workspace"
+                ),
+            )
+            if requested in {"workspace", "public"} and plugin.visibility == "personal":
+                self._clear_plugin_grants(db, plugin_id=plugin.id)
+                plugin.allow_copy = False
+            if requested in {"personal", "workspace", "public"}:
+                plugin.visibility = requested
             self._finalize_release(db, plugin=plugin, release=release)
         else:
             release.status = "rejected"
@@ -1628,6 +1722,57 @@ class PluginMarketplaceService:
             targets=targets,
             allowCopy=bool(plugin.allow_copy and targets),
         )
+
+    def _clear_plugin_grants(self, db: Session, *, plugin_id: int) -> None:
+        (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(
+                    (ResourceType.PLUGIN.value, ResourceType.PLUGIN.name)
+                ),
+                ResourceMember.resource_id == plugin_id,
+            )
+            .delete(synchronize_session=False)
+        )
+
+    def _apply_pending_personal_access(
+        self,
+        db: Session,
+        *,
+        plugin: Plugin,
+        owner_user_id: int,
+        pending_access: dict,
+    ) -> None:
+        raw_targets = pending_access.get("targets") or []
+        if not isinstance(raw_targets, list) or not raw_targets:
+            plugin.allow_copy = False
+            return
+        targets = self._validated_access_targets(
+            db,
+            owner_user_id=owner_user_id,
+            targets=[
+                PluginAccessTarget.model_validate(item)
+                for item in raw_targets
+                if isinstance(item, dict)
+            ],
+        )
+        self._clear_plugin_grants(db, plugin_id=plugin.id)
+        for target in targets:
+            db.add(
+                ResourceMember.create(
+                    resource_type=ResourceType.PLUGIN.value,
+                    resource_id=plugin.id,
+                    entity_type=target.entityType,
+                    entity_id=target.entityId,
+                    entity_display_name=target.displayName,
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=owner_user_id,
+                    reviewed_by_user_id=owner_user_id,
+                    reviewed_at=datetime.now(),
+                )
+            )
+        plugin.visibility = "personal"
+        plugin.allow_copy = bool(pending_access.get("allowCopy") and targets)
 
     def update_plugin_access(
         self,

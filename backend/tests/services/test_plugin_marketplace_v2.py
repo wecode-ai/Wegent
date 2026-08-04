@@ -1903,3 +1903,165 @@ def test_legacy_marketplace_migration_is_idempotent(test_db, test_user, monkeypa
         == 1
     )
     assert test_db.query(PluginRelease).count() == 1
+
+
+def test_visibility_personal_auto_approves_with_targets(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    digest = hashlib.sha256(package).hexdigest()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    recipient = User(
+        user_name="visibility-recipient",
+        password_hash=test_user.password_hash,
+        email="visibility-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add(recipient)
+    test_db.commit()
+
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.0.0",
+            filename="gitlab.zip",
+            sha256=digest,
+            sizeBytes=len(package),
+            visibility="personal",
+            targets=[
+                PluginAccessTarget(
+                    entityType="user",
+                    entityId=str(recipient.id),
+                    displayName=recipient.user_name,
+                )
+            ],
+            allowCopy=True,
+        ),
+    )
+    completed = service.complete_submission(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+    )
+    plugin = test_db.get(Plugin, initialized.pluginId)
+    assert completed.status == "approved"
+    assert completed.purpose == "restricted_share"
+    assert plugin.visibility == "personal"
+    assert plugin.allow_copy is True
+    shared = service.list_plugins(test_db, user_id=recipient.id).items
+    assert [item.id for item in shared] == [plugin.id]
+
+
+def test_visibility_public_waits_for_review_and_publishes(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    digest = hashlib.sha256(package).hexdigest()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.0.0",
+            filename="gitlab.zip",
+            sha256=digest,
+            sizeBytes=len(package),
+            visibility="public",
+        ),
+    )
+    completed = service.complete_submission(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+    )
+    plugin = test_db.get(Plugin, initialized.pluginId)
+    assert completed.status == "pending"
+    assert completed.purpose == "marketplace_publish"
+    assert plugin.status == "pending_review"
+    assert plugin.visibility == "public"
+
+    reviewed = service.review_submission(
+        test_db,
+        reviewer_user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        approved=True,
+        note="ok",
+    )
+    test_db.refresh(plugin)
+    assert reviewed.status == "approved"
+    assert plugin.status == "published"
+    assert plugin.visibility == "public"
+
+
+def test_personal_to_workspace_upgrade_applies_on_review(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package_v1 = _plugin_zip("1.0.0")
+    package_v2 = _plugin_zip("1.1.0")
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package_v1)
+
+    first = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.0.0",
+            filename="gitlab.zip",
+            sha256=hashlib.sha256(package_v1).hexdigest(),
+            sizeBytes=len(package_v1),
+            visibility="personal",
+        ),
+    )
+    service.complete_submission(
+        test_db, user_id=test_user.id, submission_id=first.submissionId
+    )
+    plugin = test_db.get(Plugin, first.pluginId)
+    assert plugin.visibility == "personal"
+    assert plugin.status == "published"
+
+    _mock_package_storage(monkeypatch, stored_packages, package_v2)
+    second = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="gitlab-engineering",
+            displayName="GitLab Engineering",
+            version="1.1.0",
+            filename="gitlab-v2.zip",
+            sha256=hashlib.sha256(package_v2).hexdigest(),
+            sizeBytes=len(package_v2),
+            visibility="workspace",
+        ),
+    )
+    service.complete_submission(
+        test_db, user_id=test_user.id, submission_id=second.submissionId
+    )
+    test_db.refresh(plugin)
+    assert plugin.visibility == "personal"
+    assert plugin.status == "published"
+
+    service.review_submission(
+        test_db,
+        reviewer_user_id=test_user.id,
+        submission_id=second.submissionId,
+        approved=True,
+        note="promote",
+    )
+    test_db.refresh(plugin)
+    assert plugin.visibility == "workspace"
+    assert plugin.status == "published"
+    assert plugin.latest_release_id == second.releaseId

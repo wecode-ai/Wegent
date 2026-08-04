@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { getErrorMessage } from '@/lib/error-message'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   ensureBundledPluginMarketplaceRegistered,
@@ -19,6 +20,7 @@ import type {
   PluginMarketplaceListResponse,
 } from '@/types/api'
 import {
+  CODEX_PERSONAL_MARKETPLACE_ID,
   isPersonalMarketplaceId,
   WEWORK_PERSONAL_MARKETPLACE_ID,
 } from '@/features/plugins/builtinPlugins'
@@ -27,6 +29,7 @@ import {
   isInternalDeviceMarketplaceId,
   isOpenAiOfficialMarketplaceId,
 } from '@/features/plugins/marketplaceIdentity'
+import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPluginMigration'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -100,6 +103,12 @@ export interface LocalCodexPluginApi {
   readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
   updateCodexLocalConfig(patch: LocalCodexLocalConfigPatch): Promise<LocalCodexLocalConfig>
   packageCreatedPlugin(plugin: InstalledPlugin): Promise<File>
+  ensureCreatedPluginInWeworkPersonal(plugin: InstalledPlugin): Promise<{
+    pluginName: string
+    marketplacePath: string
+    pluginPath: string
+    migrated: boolean
+  }>
   linkPersonalPluginRelease(
     plugin: InstalledPlugin,
     cloudPluginId: number,
@@ -347,6 +356,97 @@ export function installedPluginMatchesReference(
 
 function isLocalMarketplacePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+}
+
+interface EnsurePersonalPluginResult {
+  pluginName: string
+  marketplacePath: string
+  pluginPath: string
+  migrated: boolean
+}
+
+async function resolveWeworkPersonalMarketplacePath(
+  state?: LocalCodexPluginsState | null
+): Promise<string> {
+  const current = state ?? cachedState ?? (await readState({ skipPersonalReconcile: true }))
+  const marketplace = current.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
+  if (marketplace && isLocalMarketplacePath(marketplace.path)) {
+    return marketplace.path
+  }
+  const bundled = getInitializedBundledPluginMarketplace()
+  if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
+    return bundled.path
+  }
+  throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
+}
+
+async function ensurePluginInWeworkPersonal(options: {
+  sourceMarketplacePath: string
+  pluginName: string
+  installAfterMigrate?: boolean
+}): Promise<EnsurePersonalPluginResult> {
+  const destinationMarketplacePath = await resolveWeworkPersonalMarketplacePath()
+  const ensured = await invoke<EnsurePersonalPluginResult>(
+    'local_executor_ensure_personal_plugin',
+    {
+      options: {
+        sourceMarketplacePath: options.sourceMarketplacePath,
+        destinationMarketplacePath,
+        pluginName: options.pluginName,
+      },
+    }
+  )
+  if (options.installAfterMigrate !== false && ensured.migrated) {
+    try {
+      await codexAppServerRequest('plugin/install', {
+        marketplacePath: ensured.marketplacePath,
+        remoteMarketplaceName: null,
+        pluginName: ensured.pluginName,
+      })
+    } catch (error) {
+      // Migration already landed on disk; install can be retried on the next refresh.
+      console.warn('[Wework] Failed to install migrated personal plugin', error)
+    }
+  }
+  return ensured
+}
+
+async function reconcileCodexPersonalPlugins(state: LocalCodexPluginsState): Promise<boolean> {
+  const candidates = state.installedPlugins.filter(plugin => {
+    const marketplaceId = plugin.spec.source.marketplace || plugin.spec.source.providerKey || ''
+    return marketplaceId === CODEX_PERSONAL_MARKETPLACE_ID
+  })
+  if (candidates.length === 0) return false
+
+  let changed = false
+  for (const plugin of candidates) {
+    const sourcePayload = plugin.spec.sourcePayload ?? {}
+    const pluginName =
+      (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
+      plugin.spec.source.pluginKey
+    let sourceMarketplacePath =
+      typeof sourcePayload.marketplacePath === 'string' ? sourcePayload.marketplacePath.trim() : ''
+    if (!sourceMarketplacePath) {
+      const marketplace = state.marketplaces.find(
+        item =>
+          item.id === CODEX_PERSONAL_MARKETPLACE_ID || item.name === CODEX_PERSONAL_MARKETPLACE_ID
+      )
+      sourceMarketplacePath =
+        marketplace && isLocalMarketplacePath(marketplace.path) ? marketplace.path : ''
+    }
+    if (!pluginName.trim() || !sourceMarketplacePath) continue
+    try {
+      const ensured = await ensurePluginInWeworkPersonal({
+        sourceMarketplacePath,
+        pluginName,
+        installAfterMigrate: true,
+      })
+      if (ensured.migrated) changed = true
+    } catch (error) {
+      console.warn('[Wework] Failed to migrate Codex personal plugin', pluginName, error)
+    }
+  }
+  return changed
 }
 
 function pluginInstallName(item: PluginMarketplaceItem, localMarketplace: boolean): string {
@@ -701,6 +801,7 @@ async function readState(
     marketplaceId?: string
     mergeAllMarketplaces?: boolean
     refresh?: boolean
+    skipPersonalReconcile?: boolean
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
@@ -738,8 +839,10 @@ async function readState(
     ),
     params.query
   )
-  const installedPlugins = installedResponse.marketplaces.flatMap(marketplace =>
-    marketplace.plugins.map(plugin => toInstalledPlugin(marketplace, plugin))
+  const installedPlugins = preferWeworkPersonalInstalled(
+    installedResponse.marketplaces.flatMap(marketplace =>
+      marketplace.plugins.map(plugin => toInstalledPlugin(marketplace, plugin))
+    )
   )
   const marketplaces = availableMarketplaces.map(marketplaceInfo)
   const state: LocalCodexPluginsState = {
@@ -757,6 +860,12 @@ async function readState(
     cachedState = state
     cachedStateGeneration = generation
     rememberSelectedMarketplaceId(selectedId)
+  }
+  if (!params.skipPersonalReconcile) {
+    const migrated = await reconcileCodexPersonalPlugins(state)
+    if (migrated) {
+      return readState({ ...params, skipPersonalReconcile: true, refresh: true })
+    }
   }
   return state
 }
@@ -823,41 +932,87 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       return invoke<LocalCodexLocalConfig>('local_executor_update_codex_local_config', { patch })
     },
+    async ensureCreatedPluginInWeworkPersonal(plugin) {
+      if (!isTauriRuntime()) {
+        throw new Error('Migrating a local plugin requires the Wework desktop app')
+      }
+      const sourcePayload = plugin.spec.sourcePayload ?? {}
+      const pluginName =
+        (typeof sourcePayload.pluginName === 'string' && sourcePayload.pluginName.trim()) ||
+        plugin.spec.source.pluginKey
+      if (!pluginName.trim()) {
+        throw new Error('Local plugin name is unavailable')
+      }
+      let sourceMarketplacePath =
+        typeof sourcePayload.marketplacePath === 'string'
+          ? sourcePayload.marketplacePath.trim()
+          : ''
+      if (!sourceMarketplacePath) {
+        const marketplaceName =
+          (typeof sourcePayload.marketplaceName === 'string' && sourcePayload.marketplaceName) ||
+          plugin.spec.source.marketplace ||
+          plugin.spec.source.providerKey ||
+          ''
+        const state = cachedState ?? (await readState({ skipPersonalReconcile: true }))
+        const marketplace = state.marketplaces.find(
+          item => item.id === marketplaceName || item.name === marketplaceName
+        )
+        sourceMarketplacePath =
+          marketplace && isLocalMarketplacePath(marketplace.path) ? marketplace.path : ''
+      }
+      if (!sourceMarketplacePath) {
+        // Fall back to wework-personal itself when the plugin is already managed.
+        sourceMarketplacePath = await resolveWeworkPersonalMarketplacePath()
+      }
+      try {
+        return await ensurePluginInWeworkPersonal({
+          sourceMarketplacePath,
+          pluginName,
+          installAfterMigrate: true,
+        })
+      } catch (error) {
+        throw new Error(getErrorMessage(error, 'Failed to migrate local plugin'), {
+          cause: error,
+        })
+      }
+    },
     async packageCreatedPlugin(plugin) {
       if (!isTauriRuntime()) {
         throw new Error('Packaging a local plugin requires the Wework desktop app')
       }
-      const sourcePayload = plugin.spec.sourcePayload ?? {}
-      const marketplacePath = sourcePayload.marketplacePath
-      const pluginName = sourcePayload.pluginName
-      if (typeof marketplacePath !== 'string' || !marketplacePath.trim()) {
-        throw new Error('Local plugin marketplace path is unavailable')
+      const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      try {
+        const packaged = await invoke<{ name: string; bytes: number[] }>(
+          'local_executor_package_plugin',
+          {
+            marketplacePath: ensured.marketplacePath,
+            pluginName: ensured.pluginName,
+          }
+        )
+        return new File([new Uint8Array(packaged.bytes)], packaged.name, {
+          type: 'application/zip',
+        })
+      } catch (error) {
+        throw new Error(getErrorMessage(error, 'Failed to package local plugin'), {
+          cause: error,
+        })
       }
-      if (typeof pluginName !== 'string' || !pluginName.trim()) {
-        throw new Error('Local plugin name is unavailable')
-      }
-      const packaged = await invoke<{ name: string; bytes: number[] }>(
-        'local_executor_package_plugin',
-        { marketplacePath, pluginName }
-      )
-      return new File([new Uint8Array(packaged.bytes)], packaged.name, {
-        type: 'application/zip',
-      })
     },
     async linkPersonalPluginRelease(plugin, cloudPluginId, cloudReleaseId) {
       if (!isTauriRuntime()) return
-      const sourcePayload = plugin.spec.sourcePayload ?? {}
-      const marketplacePath = sourcePayload.marketplacePath
-      const localPluginName = sourcePayload.pluginName
-      if (typeof marketplacePath !== 'string' || typeof localPluginName !== 'string') {
-        throw new Error('Local plugin source mapping is unavailable')
+      const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      try {
+        await invoke('local_executor_link_plugin_release', {
+          marketplacePath: ensured.marketplacePath,
+          localPluginName: ensured.pluginName,
+          cloudPluginId,
+          cloudReleaseId,
+        })
+      } catch (error) {
+        throw new Error(getErrorMessage(error, 'Failed to link local plugin release'), {
+          cause: error,
+        })
       }
-      await invoke('local_executor_link_plugin_release', {
-        marketplacePath,
-        localPluginName,
-        cloudPluginId,
-        cloudReleaseId,
-      })
     },
     async importMarketplaceCopy(descriptor) {
       if (!isTauriRuntime()) {

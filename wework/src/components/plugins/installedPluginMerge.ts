@@ -58,16 +58,29 @@ export function mergeInstalledPlugins(
   return Array.from(merged.values())
 }
 
-export function installedPluginSourceLabel(item: InstalledPlugin): string {
+export function installedPluginSourceLabel(
+  item: InstalledPlugin,
+  t?: (key: string, defaultValue?: string) => string
+): string {
   if (item.spec.sourceLabel) return item.spec.sourceLabel
   if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
-    if (item.spec.sourcePayload?.submissionStatus === 'approved') {
-      return '我创建的 · 已发布'
+    const status = item.spec.sourcePayload?.submissionStatus
+    if (status === 'approved') {
+      return t
+        ? t('workbench.plugins_created_source_approved', '我创建的 · 已发布')
+        : '我创建的 · 已发布'
     }
-    if (item.spec.sourcePayload?.submissionId) {
-      return '我创建的 · 审核中'
+    if (status === 'rejected') {
+      return t
+        ? t('workbench.plugins_created_source_rejected', '我创建的 · 已拒绝')
+        : '我创建的 · 已拒绝'
     }
-    return '我创建的'
+    if (item.spec.sourcePayload?.submissionId || status === 'pending') {
+      return t
+        ? t('workbench.plugins_created_source_pending', '我创建的 · 审核中')
+        : '我创建的 · 审核中'
+    }
+    return t ? t('workbench.plugins_created_by_me', '我创建的') : '我创建的'
   }
   if (item.spec.sourceProvider === 'codex') {
     return 'Codex 官方 · Wework 镜像'

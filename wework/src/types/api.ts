@@ -2090,6 +2090,9 @@ export interface PluginSubmissionInitRequest {
   sizeBytes: number
   listingType?: 'plugin' | 'skill'
   purpose?: 'marketplace_publish' | 'restricted_share'
+  visibility?: 'personal' | 'workspace' | 'public'
+  targets?: PluginAccessTarget[]
+  allowCopy?: boolean
 }
 
 export interface PluginSubmissionInitResponse {

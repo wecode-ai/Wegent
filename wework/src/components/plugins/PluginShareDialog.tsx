@@ -246,7 +246,10 @@ export function PluginShareDialog({
         )}
 
         <p className="mt-4 text-xs text-text-muted">
-          {t('workbench.plugins_share_all_disabled', '全员可用暂未开放')}
+          {t(
+            'workbench.plugins_share_manage_hint',
+            '仅用于管理个人插件的可见成员；扩大到组织或全部请使用「发布」。'
+          )}
         </p>
         {error && (
           <p role="alert" className="mt-3 text-sm text-red-600">

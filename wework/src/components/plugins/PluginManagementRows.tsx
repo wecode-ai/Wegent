@@ -1,4 +1,13 @@
-import { Boxes, Copy, Ellipsis, Loader2, MessageCirclePlus, Trash2, UserCog } from 'lucide-react'
+import {
+  Boxes,
+  Copy,
+  Ellipsis,
+  Loader2,
+  MessageCirclePlus,
+  Trash2,
+  Upload,
+  UserCog,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
@@ -33,6 +42,7 @@ export function InstalledPluginRow({
   marketplaceItem,
   onOpen,
   onTry,
+  onPublish,
   onShare,
   onCopy,
   onToggle,
@@ -43,6 +53,7 @@ export function InstalledPluginRow({
   marketplaceItem?: PluginMarketplaceItem
   onOpen?: () => void
   onTry?: () => void
+  onPublish?: () => void
   onShare?: () => void
   onCopy?: () => void
   onToggle: () => void
@@ -203,6 +214,20 @@ export function InstalledPluginRow({
             data-testid={`installed-plugin-actions-menu-${plugin.id}`}
             className="absolute right-0 top-[calc(100%+7px)] z-popover min-w-[172px] rounded-xl border border-border/30 bg-popover p-1 shadow-lg"
           >
+            {onPublish && (
+              <button
+                type="button"
+                data-testid={`installed-plugin-publish-${plugin.id}`}
+                className="flex min-h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-base text-text-primary hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  onPublish()
+                }}
+              >
+                <Upload className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+                {t('workbench.plugins_publish_to_marketplace', '发布')}
+              </button>
+            )}
             {onShare && (
               <button
                 type="button"
@@ -231,7 +256,7 @@ export function InstalledPluginRow({
                 {t('workbench.plugins_copy_to_personal', '复制为个人插件')}
               </button>
             )}
-            {(onShare || onCopy) && <div className="my-1 h-px bg-border/25" />}
+            {(onPublish || onShare || onCopy) && <div className="my-1 h-px bg-border/25" />}
             <button
               type="button"
               data-testid={`installed-plugin-uninstall-${plugin.id}`}

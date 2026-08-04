@@ -96,6 +96,11 @@ async function parseError(response: Response): Promise<ApiError> {
     detail = json.errors ? { detail: json.detail, errors: json.errors } : json.detail
     if (typeof json.detail === 'string') {
       message = json.detail
+    } else if (Array.isArray(json.detail) && json.detail.length > 0) {
+      const first = json.detail[0]
+      if (first && typeof first === 'object' && typeof first.msg === 'string') {
+        message = first.msg
+      }
     } else if (json.detail && typeof json.detail === 'object') {
       if (typeof json.detail.message === 'string') {
         message = json.detail.message

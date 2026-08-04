@@ -578,7 +578,10 @@ def init_plugin_submission(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginSubmissionInitResponse:
-    if request.purpose == "marketplace_publish":
+    visibility = request.visibility or (
+        "personal" if request.purpose == "restricted_share" else "workspace"
+    )
+    if visibility in {"workspace", "public"}:
         _ensure_publish_allowed(current_user)
     try:
         return plugin_marketplace_service.init_submission(
@@ -614,15 +617,16 @@ def complete_plugin_submission(
         raise HTTPException(
             status_code=503, detail="Plugin package storage unavailable"
         ) from exc
-    plugin = (
-        plugin_marketplace_service.get_plugin(
-            db,
-            plugin_id=item.pluginId,
-            user_id=current_user.id,
-        )
-        if item.purpose == "restricted_share" and item.status == "approved"
-        else None
-    )
+    plugin = None
+    if item.status in {"approved", "pending"}:
+        try:
+            plugin = plugin_marketplace_service.get_plugin(
+                db,
+                plugin_id=item.pluginId,
+                user_id=current_user.id,
+            )
+        except HTTPException:
+            plugin = None
     return PluginSubmissionCompleteResponse(submission=item, plugin=plugin)
 
 

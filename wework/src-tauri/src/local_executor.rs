@@ -78,6 +78,23 @@ pub struct LocalPluginPackage {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EnsurePersonalPluginOptions {
+    source_marketplace_path: String,
+    destination_marketplace_path: String,
+    plugin_name: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsurePersonalPluginResult {
+    plugin_name: String,
+    marketplace_path: String,
+    plugin_path: String,
+    migrated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalPluginCopyImportOptions {
     marketplace_path: String,
     download_url: String,
@@ -2439,10 +2456,138 @@ fn collect_plugin_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
-fn package_local_plugin(
+fn marketplace_manifest_paths(marketplace_path: &Path) -> Vec<PathBuf> {
+    vec![
+        marketplace_path.join(".agents/plugins/marketplace.json"),
+        marketplace_path.join(".claude-plugin/marketplace.json"),
+        marketplace_path.join("marketplace.json"),
+        marketplace_path.join("plugins/marketplace.json"),
+    ]
+}
+
+fn marketplace_roots_for_resolution(marketplace_path: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![marketplace_path.to_path_buf()];
+    if marketplace_path
+        .file_name()
+        .is_some_and(|name| name == ".agents")
+    {
+        if let Some(parent) = marketplace_path.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    if marketplace_path
+        .file_name()
+        .is_some_and(|name| name == "plugins")
+    {
+        if let Some(agents) = marketplace_path.parent() {
+            roots.push(agents.to_path_buf());
+            if agents.file_name().is_some_and(|name| name == ".agents") {
+                if let Some(home) = agents.parent() {
+                    roots.push(home.to_path_buf());
+                }
+            }
+        }
+    }
+    roots
+}
+
+fn plugin_source_path_from_marketplace_json(
+    manifest_path: &Path,
+    plugin_name: &str,
+) -> Option<PathBuf> {
+    let content = fs::read_to_string(manifest_path).ok()?;
+    let manifest = serde_json::from_str::<Value>(&content).ok()?;
+    let plugins = manifest.get("plugins")?.as_array()?;
+    for plugin in plugins {
+        let name = plugin.get("name").and_then(Value::as_str)?;
+        if name != plugin_name {
+            continue;
+        }
+        let source = plugin.get("source")?;
+        let relative = source
+            .get("path")
+            .and_then(Value::as_str)
+            .or_else(|| source.as_str())?;
+        let relative = relative
+            .trim()
+            .trim_start_matches("./")
+            .trim_start_matches(".\\");
+        if relative.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(relative);
+        if path.is_absolute() {
+            return Some(path);
+        }
+        // Codex personal marketplace keeps marketplace.json under ~/.agents/plugins
+        // while plugin sources are relative to the marketplace root (usually $HOME).
+        for root in marketplace_roots_for_resolution(
+            manifest_path
+                .parent()
+                .and_then(|parent| {
+                    if parent.file_name().is_some_and(|name| name == "plugins") {
+                        parent.parent()
+                    } else {
+                        Some(parent)
+                    }
+                })
+                .unwrap_or_else(|| Path::new(".")),
+        ) {
+            let candidate = root.join(relative);
+            if candidate.join(".codex-plugin/plugin.json").is_file() {
+                return Some(candidate);
+            }
+        }
+        if let Some(manifest_dir) = manifest_path.parent() {
+            let candidate = manifest_dir.join(relative);
+            if candidate.join(".codex-plugin/plugin.json").is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn resolve_local_plugin_root(
     marketplace_path: &Path,
     plugin_name: &str,
-) -> Result<LocalPluginPackage, String> {
+) -> Result<(PathBuf, PathBuf), String> {
+    let marketplace_root = marketplace_path
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve local marketplace: {error}"))?;
+    let mut candidates = vec![
+        marketplace_root.join("plugins").join(plugin_name),
+        marketplace_root.join(plugin_name),
+    ];
+    for root in marketplace_roots_for_resolution(&marketplace_root) {
+        candidates.push(root.join("plugins").join(plugin_name));
+        candidates.push(root.join(plugin_name));
+        for manifest in marketplace_manifest_paths(&root) {
+            if let Some(source) = plugin_source_path_from_marketplace_json(&manifest, plugin_name) {
+                candidates.push(source);
+            }
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join("plugins").join(plugin_name));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for candidate in candidates {
+        let Ok(normalized) = candidate.canonicalize() else {
+            continue;
+        };
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        if normalized.join(".codex-plugin/plugin.json").is_file() {
+            return Ok((marketplace_root, normalized));
+        }
+    }
+    Err("Local plugin is missing .codex-plugin/plugin.json".to_string())
+}
+
+fn validate_plugin_name(plugin_name: &str) -> Result<&str, String> {
     let normalized_name = plugin_name.trim();
     if normalized_name.is_empty()
         || normalized_name.contains('/')
@@ -2452,22 +2597,168 @@ fn package_local_plugin(
     {
         return Err("Plugin name is invalid".to_string());
     }
-    let marketplace_root = marketplace_path
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve local marketplace: {error}"))?;
-    let candidates = [
-        marketplace_root.join("plugins").join(normalized_name),
-        marketplace_root.join(normalized_name),
-    ];
-    let plugin_root = candidates
-        .iter()
-        .find(|candidate| candidate.join(".codex-plugin/plugin.json").is_file())
-        .ok_or_else(|| "Local plugin is missing .codex-plugin/plugin.json".to_string())?
-        .canonicalize()
-        .map_err(|error| format!("Failed to resolve local plugin: {error}"))?;
-    if !plugin_root.starts_with(&marketplace_root) {
-        return Err("Local plugin is outside its marketplace".to_string());
+    Ok(normalized_name)
+}
+
+fn upsert_marketplace_plugin_entry(manifest_path: &Path, plugin_name: &str) -> Result<(), String> {
+    let relative_source = format!("./plugins/{plugin_name}");
+    let mut manifest = if manifest_path.is_file() {
+        let content = fs::read_to_string(manifest_path)
+            .map_err(|error| format!("Failed to read {}: {error}", manifest_path.display()))?;
+        serde_json::from_str::<Value>(&content).map_err(|error| {
+            format!(
+                "Invalid marketplace manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?
+    } else {
+        json!({
+            "name": WEWORK_PERSONAL_MARKETPLACE_ID,
+            "interface": { "displayName": "WeWork Personal Marketplace" },
+            "plugins": []
+        })
+    };
+    let object = manifest
+        .as_object_mut()
+        .ok_or_else(|| "Marketplace manifest must be an object".to_string())?;
+    object
+        .entry("name")
+        .or_insert_with(|| Value::String(WEWORK_PERSONAL_MARKETPLACE_ID.to_string()));
+    let plugins = object
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(vec![]));
+    let plugins = plugins
+        .as_array_mut()
+        .ok_or_else(|| "Marketplace plugins must be an array".to_string())?;
+    let already_present = plugins.iter().any(|plugin| {
+        plugin
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name == plugin_name)
+    });
+    if !already_present {
+        plugins.push(json!({
+            "name": plugin_name,
+            "source": {
+                "source": "local",
+                "path": relative_source
+            },
+            "policy": {
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL"
+            }
+        }));
     }
+    if let Some(parent) = manifest_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("Failed to serialize marketplace manifest: {error}"))?;
+    write_atomic_file(manifest_path, &bytes)
+}
+
+fn ensure_plugin_in_personal_marketplace(
+    source_marketplace_path: &Path,
+    destination_marketplace_path: &Path,
+    plugin_name: &str,
+) -> Result<EnsurePersonalPluginResult, String> {
+    let normalized_name = validate_plugin_name(plugin_name)?;
+    let destination_root = {
+        fs::create_dir_all(destination_marketplace_path).map_err(|error| {
+            format!(
+                "Failed to create personal marketplace {}: {error}",
+                destination_marketplace_path.display()
+            )
+        })?;
+        destination_marketplace_path
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?
+    };
+    let destination_plugin = destination_root.join("plugins").join(normalized_name);
+    if destination_plugin
+        .join(".codex-plugin/plugin.json")
+        .is_file()
+    {
+        let plugin_path = destination_plugin
+            .canonicalize()
+            .map_err(|error| format!("Failed to resolve personal plugin: {error}"))?;
+        return Ok(EnsurePersonalPluginResult {
+            plugin_name: normalized_name.to_string(),
+            marketplace_path: destination_root.display().to_string(),
+            plugin_path: plugin_path.display().to_string(),
+            migrated: false,
+        });
+    }
+
+    let (_source_root, source_plugin) =
+        resolve_local_plugin_root(source_marketplace_path, normalized_name)?;
+    if source_plugin.starts_with(&destination_root) {
+        return Ok(EnsurePersonalPluginResult {
+            plugin_name: normalized_name.to_string(),
+            marketplace_path: destination_root.display().to_string(),
+            plugin_path: source_plugin.display().to_string(),
+            migrated: false,
+        });
+    }
+
+    let plugins_root = destination_root.join("plugins");
+    fs::create_dir_all(&plugins_root)
+        .map_err(|error| format!("Failed to create plugin directory: {error}"))?;
+    let staging = plugins_root.join(format!(
+        ".{}-migrate-{}",
+        normalized_name,
+        std::process::id()
+    ));
+    if staging.exists() {
+        fs::remove_dir_all(&staging)
+            .map_err(|error| format!("Failed to clear stale plugin migration: {error}"))?;
+    }
+    if let Err(error) = copy_directory_recursive(&source_plugin, &staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    if destination_plugin.exists() {
+        fs::remove_dir_all(&destination_plugin).map_err(|error| {
+            format!(
+                "Failed to replace personal plugin {}: {error}",
+                destination_plugin.display()
+            )
+        })?;
+    }
+    if let Err(error) = fs::rename(&staging, &destination_plugin) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(format!("Failed to activate migrated plugin: {error}"));
+    }
+
+    for manifest in [
+        destination_root.join(".agents/plugins/marketplace.json"),
+        destination_root.join(".claude-plugin/marketplace.json"),
+    ] {
+        if let Err(error) = upsert_marketplace_plugin_entry(&manifest, normalized_name) {
+            let _ = fs::remove_dir_all(&destination_plugin);
+            return Err(error);
+        }
+    }
+
+    let plugin_path = destination_plugin
+        .canonicalize()
+        .map_err(|error| format!("Failed to resolve migrated plugin: {error}"))?;
+    Ok(EnsurePersonalPluginResult {
+        plugin_name: normalized_name.to_string(),
+        marketplace_path: destination_root.display().to_string(),
+        plugin_path: plugin_path.display().to_string(),
+        migrated: true,
+    })
+}
+
+fn package_local_plugin(
+    marketplace_path: &Path,
+    plugin_name: &str,
+) -> Result<LocalPluginPackage, String> {
+    let normalized_name = validate_plugin_name(plugin_name)?;
+    let (_marketplace_root, plugin_root) =
+        resolve_local_plugin_root(marketplace_path, normalized_name)?;
 
     let files = collect_plugin_files(&plugin_root)?;
     let expanded_size = files.iter().try_fold(0_u64, |total, path| {
@@ -2522,6 +2813,21 @@ pub async fn local_executor_package_plugin(
     })
     .await
     .map_err(|error| format!("Failed to join plugin packaging task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_ensure_personal_plugin(
+    options: EnsurePersonalPluginOptions,
+) -> Result<EnsurePersonalPluginResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_plugin_in_personal_marketplace(
+            Path::new(&options.source_marketplace_path),
+            Path::new(&options.destination_marketplace_path),
+            &options.plugin_name,
+        )
+    })
+    .await
+    .map_err(|error| format!("Failed to join personal plugin migration task: {error}"))?
 }
 
 fn normalized_copy_slug(source_name: &str) -> String {
@@ -3197,6 +3503,97 @@ mod tests {
         assert_eq!(package.name, "gitlab.zip");
         assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
         assert!(archive.by_name("skills/review/SKILL.md").is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn packages_codex_personal_marketplace_plugins_outside_agents_dir() {
+        let root = import_test_root("package-codex-personal");
+        let agents = root.join(".agents");
+        let plugin_root = root.join("plugins/dev-tools");
+        fs::create_dir_all(agents.join("plugins")).unwrap();
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(plugin_root.join("skills/ip")).unwrap();
+        fs::write(
+            agents.join("plugins/marketplace.json"),
+            r#"{"name":"personal","plugins":[{"name":"dev-tools","source":{"source":"local","path":"./plugins/dev-tools"}}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        fs::write(plugin_root.join("skills/ip/SKILL.md"), "# IP").unwrap();
+
+        // Codex reports the personal marketplace path as ~/.agents while plugin
+        // sources live under ~/plugins relative to the marketplace root.
+        let package = package_local_plugin(&agents, "dev-tools").unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package.bytes)).unwrap();
+        assert_eq!(package.name, "dev-tools.zip");
+        assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
+        assert!(archive.by_name("skills/ip/SKILL.md").is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrates_codex_personal_plugin_into_wework_personal_marketplace() {
+        let root = import_test_root("migrate-personal-plugin");
+        let source_home = root.join("home");
+        let agents = source_home.join(".agents");
+        let source_plugin = source_home.join("plugins/dev-tools");
+        let destination = root.join("wework-personal");
+        fs::create_dir_all(agents.join("plugins")).unwrap();
+        fs::create_dir_all(source_plugin.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(source_plugin.join("skills/ip")).unwrap();
+        fs::create_dir_all(destination.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(destination.join(".claude-plugin")).unwrap();
+        fs::write(
+            agents.join("plugins/marketplace.json"),
+            r#"{"name":"personal","plugins":[{"name":"dev-tools","source":{"source":"local","path":"./plugins/dev-tools"}}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source_plugin.join(".codex-plugin/plugin.json"),
+            r#"{"name":"dev-tools","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        fs::write(source_plugin.join("skills/ip/SKILL.md"), "# IP").unwrap();
+        fs::write(
+            destination.join(".agents/plugins/marketplace.json"),
+            r#"{"name":"wework-personal","interface":{"displayName":"WeWork Personal Marketplace"},"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            destination.join(".claude-plugin/marketplace.json"),
+            r#"{"name":"wework-personal","interface":{"displayName":"WeWork Personal Marketplace"},"plugins":[]}"#,
+        )
+        .unwrap();
+
+        let first =
+            ensure_plugin_in_personal_marketplace(&agents, &destination, "dev-tools").unwrap();
+        assert!(first.migrated);
+        assert!(destination
+            .join("plugins/dev-tools/.codex-plugin/plugin.json")
+            .is_file());
+        assert!(destination.join("plugins/dev-tools/skills/ip/SKILL.md").is_file());
+        let agents_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(destination.join(".agents/plugins/marketplace.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            agents_manifest["plugins"][0]["name"].as_str(),
+            Some("dev-tools")
+        );
+
+        let second =
+            ensure_plugin_in_personal_marketplace(&agents, &destination, "dev-tools").unwrap();
+        assert!(!second.migrated);
+        assert_eq!(first.plugin_path, second.plugin_path);
+
+        let package = package_local_plugin(&destination, "dev-tools").unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package.bytes)).unwrap();
+        assert!(archive.by_name("skills/ip/SKILL.md").is_ok());
         let _ = fs::remove_dir_all(root);
     }
 

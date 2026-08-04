@@ -46,9 +46,19 @@ interface PluginDetailViewProps {
   onManageConnector?: (slug: string) => void
   connectorAuthBySlug?: Record<string, 'connected' | 'disconnected'>
   accessRole?: 'catalog' | 'owner' | 'recipient'
+  pluginVisibility?: 'personal' | 'workspace' | 'public' | null
   shareGrantUserCount?: number
   shareGrantNamespaceCount?: number
   onManageAccess?: () => void
+  submissionStatus?:
+    | 'uploading'
+    | 'scanning'
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled'
+    | null
+  submissionReviewNote?: string | null
   isExternalSource?: boolean
   onSkillRun?: (skillName: string) => void
   shareRecipient?: boolean
@@ -410,9 +420,12 @@ export function PluginDetailView({
   onManageConnector,
   connectorAuthBySlug,
   accessRole,
+  pluginVisibility = null,
   shareGrantUserCount = 0,
   shareGrantNamespaceCount = 0,
   onManageAccess,
+  submissionStatus = null,
+  submissionReviewNote = null,
   isExternalSource = false,
   onSkillRun,
   shareRecipient = false,
@@ -463,6 +476,22 @@ export function PluginDetailView({
   const showAccessScope =
     isInstalled &&
     (accessRole === 'owner' || accessRole === 'recipient' || plugin.distribution === 'personal')
+  const accessScopeSummary = (() => {
+    if (pluginVisibility === 'public') {
+      return t('workbench.plugin_detail_access_public', '全部用户可用')
+    }
+    if (pluginVisibility === 'workspace') {
+      return t('workbench.plugin_detail_access_workspace', '组织内可用')
+    }
+    if (shareGrantUserCount + shareGrantNamespaceCount === 0) {
+      return t('workbench.plugin_detail_access_private', '仅自己可用')
+    }
+    return t('workbench.plugin_detail_access_shared_summary', {
+      departments: shareGrantNamespaceCount,
+      members: shareGrantUserCount,
+      defaultValue: `已分享给 ${shareGrantNamespaceCount} 个部门、${shareGrantUserCount} 位成员`,
+    })
+  })()
   const accessScopeSection = showAccessScope && (
     <section className="mt-7 space-y-3" data-testid="plugin-detail-access-scope">
       <div className="flex items-end justify-between gap-3">
@@ -470,15 +499,7 @@ export function PluginDetailView({
           <h2 className="text-base font-medium leading-5 text-text-primary">
             {t('workbench.plugin_detail_access_scope', '可用范围')}
           </h2>
-          <p className="text-xs leading-4 text-text-muted">
-            {shareGrantUserCount + shareGrantNamespaceCount === 0
-              ? t('workbench.plugin_detail_access_private', '仅自己可用')
-              : t('workbench.plugin_detail_access_shared_summary', {
-                  departments: shareGrantNamespaceCount,
-                  members: shareGrantUserCount,
-                  defaultValue: `已分享给 ${shareGrantNamespaceCount} 个部门、${shareGrantUserCount} 位成员`,
-                })}
-          </p>
+          <p className="text-xs leading-4 text-text-muted">{accessScopeSummary}</p>
         </div>
         {accessRole === 'owner' && onManageAccess && (
           <button
@@ -709,6 +730,36 @@ export function PluginDetailView({
             </p>
             {deviceSummary && (
               <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>
+            )}
+            {submissionStatus === 'pending' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-text-muted"
+              >
+                {t(
+                  'workbench.plugins_publish_pending_notice',
+                  '已提交审核，通过后将出现在插件市场。'
+                )}
+              </p>
+            )}
+            {submissionStatus === 'rejected' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-red-600"
+              >
+                {t('workbench.plugins_publish_rejected_notice', {
+                  note: submissionReviewNote || '-',
+                  defaultValue: `发布被拒绝：${submissionReviewNote || '-'}`,
+                })}
+              </p>
+            )}
+            {submissionStatus === 'approved' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-text-muted"
+              >
+                {t('workbench.plugins_publish_approved_notice', '发布成功。')}
+              </p>
             )}
           </div>
 
