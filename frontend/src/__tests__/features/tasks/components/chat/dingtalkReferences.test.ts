@@ -18,7 +18,8 @@ const t = (key: string, params?: Record<string, unknown>) => {
 function context(
   id: string,
   source: DingTalkDocContext['source'],
-  nodeType: DingTalkDocContext['node_type']
+  nodeType: DingTalkDocContext['node_type'],
+  workspace?: { id: string; name: string }
 ): DingTalkDocContext {
   return {
     id,
@@ -28,22 +29,32 @@ function context(
     node_type: nodeType,
     dingtalk_node_id: id,
     source,
+    workspace_id: workspace?.id,
+    workspace_name: workspace?.name,
   }
 }
 
 describe('formatDingTalkReferences', () => {
-  it('keeps docs and wikispace references in separate compact groups', () => {
+  it('keeps DingTalk knowledge bases in separate named groups', () => {
     const result = formatDingTalkReferences(
       [
         context('1', 'docs', 'folder'),
         context('2', 'docs', 'doc'),
-        context('3', 'wikispace', 'doc'),
+        context('3', 'wikispace', 'doc', { id: 'space-1', name: '产品知识库' }),
+        context('4', 'wikispace', 'doc', { id: 'space-2', name: '研发知识库' }),
       ],
       t
     )
 
     expect(result).toContain('**我的文档 · 1 文件夹 · 1 文档**')
-    expect(result).toContain('**知识库 · 1 文档**')
+    expect(result).toContain('**产品知识库 · 1 文档**')
+    expect(result).toContain('**研发知识库 · 1 文档**')
     expect(result).toContain('[Node 1](https://alidocs.dingtalk.com/i/nodes/1)')
+  })
+
+  it('falls back to the generic label when workspace metadata is unavailable', () => {
+    const result = formatDingTalkReferences([context('3', 'wikispace', 'doc')], t)
+
+    expect(result).toContain('**知识库 · 1 文档**')
   })
 })

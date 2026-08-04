@@ -1228,8 +1228,18 @@ describe('ContextSelector organization grouping', () => {
     })
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-space-select-space-1'))
     expect(onSelectMultiple).toHaveBeenCalledWith([
-      expect.objectContaining({ id: 'wikispace:space-1', type: 'dingtalk_doc' }),
-      expect.objectContaining({ id: 'wikispace:wiki-file-1', type: 'dingtalk_doc' }),
+      expect.objectContaining({
+        id: 'wikispace:space-1',
+        type: 'dingtalk_doc',
+        workspace_id: 'space-1',
+        workspace_name: '视频业务研发',
+      }),
+      expect.objectContaining({
+        id: 'wikispace:wiki-file-1',
+        type: 'dingtalk_doc',
+        workspace_id: 'space-1',
+        workspace_name: '视频业务研发',
+      }),
     ])
 
     await waitFor(() => {

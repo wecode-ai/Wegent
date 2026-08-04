@@ -117,21 +117,24 @@ export function useDingTalkKnowledgeSelection({
     [onDeselect, onDeselectMultiple]
   )
 
-  const collectContexts = useCallback((node: DingtalkDocNode, currentSelectedIds: Set<string>) => {
-    const contexts: DingTalkDocContext[] = []
-    const visit = (item: DingtalkDocNode) => {
-      const selectionKey = getDingTalkSelectionKey(item.source, item.dingtalk_node_id)
-      if (!currentSelectedIds.has(selectionKey)) {
-        contexts.push(buildDingTalkDocContext(item))
+  const collectContexts = useCallback(
+    (node: DingtalkDocNode, currentSelectedIds: Set<string>, workspace?: DingtalkDocNode) => {
+      const contexts: DingTalkDocContext[] = []
+      const visit = (item: DingtalkDocNode) => {
+        const selectionKey = getDingTalkSelectionKey(item.source, item.dingtalk_node_id)
+        if (!currentSelectedIds.has(selectionKey)) {
+          contexts.push(buildDingTalkDocContext(item, workspace))
+        }
+        item.children?.forEach(visit)
       }
-      item.children?.forEach(visit)
-    }
-    visit(node)
-    return contexts
-  }, [])
+      visit(node)
+      return contexts
+    },
+    []
+  )
 
   const toggleNode = useCallback(
-    (node: DingtalkDocNode) => {
+    (node: DingtalkDocNode, workspace?: DingtalkDocNode) => {
       const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
       if (node.node_type === 'folder') {
         const allIds = collectDescendants(node)
@@ -140,7 +143,7 @@ export function useDingTalkKnowledgeSelection({
           deselectMultiple(allIds)
           return
         }
-        const contexts = collectContexts(node, selectedIds)
+        const contexts = collectContexts(node, selectedIds, workspace)
         if (contexts.length > 0) {
           selectMultiple(contexts)
         }
@@ -150,21 +153,21 @@ export function useDingTalkKnowledgeSelection({
       if (selectedIds.has(selectionKey)) {
         onDeselect(selectionKey)
       } else {
-        onSelect(buildDingTalkDocContext(node))
+        onSelect(buildDingTalkDocContext(node, workspace))
       }
     },
     [collectContexts, deselectMultiple, onDeselect, onSelect, selectMultiple, selectedIds]
   )
 
   const toggleNodeList = useCallback(
-    (nodes: DingtalkDocNode[]) => {
+    (nodes: DingtalkDocNode[], workspace?: DingtalkDocNode) => {
       const allIds = nodes.flatMap(collectDescendants)
       const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.has(id))
       if (allSelected) {
         deselectMultiple(allIds)
         return
       }
-      const contexts = nodes.flatMap(node => collectContexts(node, selectedIds))
+      const contexts = nodes.flatMap(node => collectContexts(node, selectedIds, workspace))
       if (contexts.length > 0) {
         selectMultiple(contexts)
       }
