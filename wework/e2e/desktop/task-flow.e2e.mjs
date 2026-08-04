@@ -6377,6 +6377,8 @@ function responseCompleted(id, output) {
     type: 'response.completed',
     response: {
       id,
+      object: 'response',
+      status: 'completed',
       ...(output ? { output } : {}),
       usage: {
         input_tokens: 0,
@@ -6449,9 +6451,10 @@ function assistantMessage(text) {
     type: 'response.output_item.done',
     item: {
       type: 'message',
+      status: 'completed',
       role: 'assistant',
       id: messageId,
-      content: [{ type: 'output_text', text }],
+      content: [{ type: 'output_text', text, annotations: [] }],
       phase: 'final_answer',
     },
   }
