@@ -3247,7 +3247,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('disables third-party models inside an existing official Codex conversation', async () => {
+  test('keeps GPT and third-party models selectable inside an existing conversation', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.6-sol',
@@ -3343,12 +3343,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
-        [
-          'gpt-5.6-sol:enabled',
-          'gpt-5.5:enabled',
-          'kimi-k2.5:provider_boundary_mismatch',
-          'cloud-model:provider_boundary_mismatch',
-        ].join('|')
+        ['gpt-5.6-sol:enabled', 'gpt-5.5:enabled', 'kimi-k2.5:enabled', 'cloud-model:enabled'].join(
+          '|'
+        )
       )
     )
   })

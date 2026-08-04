@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
 
 fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
@@ -1290,6 +1291,88 @@ fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
             "modelType": "runtime",
             "options": {"reasoningEffort": "medium"}
         })
+    );
+}
+
+#[test]
+fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle["modelSelection"] = json!({
+        "modelName": "gpt-5.6-sol",
+        "modelType": "runtime",
+        "options": {"reasoningEffort": "high"}
+    });
+
+    assert!(!runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "public",
+                "options": {}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "kimi-k3",
+                "modelType": "runtime",
+                "options": {}
+            }
+        })
+    ));
+}
+
+#[test]
+fn runtime_model_switch_marker_is_only_added_when_the_selection_changes() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let unchanged_payload = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let switched_payload = json!({
+        "modelSelection": {
+            "modelName": "kimi-k3",
+            "modelType": "custom"
+        }
+    });
+    let mut request = ExecutionRequest::default();
+
+    mark_runtime_model_switch(&mut request, &link, &unchanged_payload);
+    assert!(request.extra.get("wework_model_switched").is_none());
+
+    mark_runtime_model_switch(&mut request, &link, &switched_payload);
+    assert_eq!(
+        request.extra.get("wework_model_switched"),
+        Some(&Value::Bool(true))
     );
 }
 

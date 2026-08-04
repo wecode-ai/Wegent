@@ -626,7 +626,6 @@
     "model_disabled_missing_current_runtime_family": "Current model is missing runtime.family",
     "model_disabled_missing_target_runtime_family": "This model is missing runtime.family",
     "model_disabled_unavailable": "This model is unavailable",
-    "model_disabled_provider_boundary_mismatch": "Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.",
     "model_disabled_runtime_family_mismatch": "Incompatible with the current model protocol",
     "enter_project_work": "Enter project work",
     "project_work_trigger_device_aria": "{{action}}, current device {{device}}",

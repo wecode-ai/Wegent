@@ -270,6 +270,9 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         if let Some(link) = existing_link.as_ref() {
+            mark_runtime_model_switch(&mut request, link, &payload);
+        }
+        if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
         }
         request.new_session = false;
@@ -401,6 +404,7 @@ impl RuntimeWorkRpcHandler {
         let workspace_path =
             workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
         apply_runtime_payload_metadata(&mut request, &payload);
+        mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
@@ -795,6 +799,52 @@ impl RuntimeWorkRpcHandler {
         }
         self.upsert_local_task(link);
     }
+}
+
+pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &Value) -> bool {
+    let previous = model_selection_identity(
+        link.runtime_handle
+            .get("modelSelection")
+            .or_else(|| link.runtime_handle.get("model_selection")),
+    );
+    let next = model_selection_identity(
+        payload
+            .get("modelSelection")
+            .or_else(|| payload.get("model_selection")),
+    );
+    previous.is_some() && next.is_some() && previous != next
+}
+
+pub(super) fn mark_runtime_model_switch(
+    request: &mut ExecutionRequest,
+    link: &RuntimeTaskLink,
+    payload: &Value,
+) {
+    if runtime_model_selection_changed(link, payload) {
+        request
+            .extra
+            .insert("wework_model_switched".to_owned(), Value::Bool(true));
+    }
+}
+
+fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option<String>)> {
+    let selection = selection?.as_object()?;
+    let model_name = selection
+        .get("modelName")
+        .or_else(|| selection.get("model_name"))
+        .and_then(Value::as_str)?
+        .trim();
+    if model_name.is_empty() {
+        return None;
+    }
+    let model_type = selection
+        .get("modelType")
+        .or_else(|| selection.get("model_type"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Some((model_name.to_owned(), model_type))
 }
 
 fn runtime_guidance_failure(

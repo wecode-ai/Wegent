@@ -24,9 +24,9 @@ The model provides the AI capability; the device determines where files and comm
 
 When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
 
-You can select any available model when starting a new conversation. After the conversation starts, Wework does not allow switching between official Codex models and third-party models. Incompatible choices remain visible but disabled. On desktop, the reason appears in the hover tooltip instead of being repeated below every model name. Models within the same category remain switchable through the normal flow.
+After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-To continue the work with a model from the other category, start a new conversation and use `@` in the composer to reference the current conversation so the new model receives its context.
+If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
 
 ## Control a running task
 
