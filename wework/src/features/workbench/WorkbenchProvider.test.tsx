@@ -6554,6 +6554,70 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('keeps an archived remote task hidden when the local list refresh fails', async () => {
+    const remoteRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'remote-project', name: 'Remote Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/srv/Wegent',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              tasks: [
+                {
+                  taskId: 'remote-task',
+                  workspacePath: '/srv/Wegent',
+                  title: 'Remote task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockRejectedValue(new Error('local list unavailable')),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: '10.201.3.200',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+          }),
+        ]),
+        listRuntimeWork: vi.fn().mockResolvedValue(remoteRuntimeWork),
+      },
+    })
+
+    renderWorkbench(<ArchiveRemoteRuntimeTaskProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('Remote task')
+    )
+    await userEvent.click(screen.getByText('archive remote task'))
+
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    )
+  })
+
   test('renders streaming runtime task chunks when the socket connects after chat start', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

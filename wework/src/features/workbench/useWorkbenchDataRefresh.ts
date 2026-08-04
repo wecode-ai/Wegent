@@ -36,6 +36,7 @@ import {
   runtimeWorkContainsTask,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
+import type { RefreshWorkLists } from './workbenchContextTypes'
 import {
   readCachedRemoteRuntimeWork,
   reconcileCachedRemoteRuntimeWork,
@@ -623,8 +624,8 @@ export function useWorkbenchDataRefresh({
     user,
   ])
 
-  const refreshWorkLists = useCallback(
-    async (options?: { syncCloud?: boolean }) => {
+  const refreshWorkLists: RefreshWorkLists = useCallback(
+    async options => {
       const [devicesResult, runtimeWorkResult] = await Promise.all([
         executorClient.commands.listDevices().catch(error => {
           const cachedDevices = readCachedDeviceList()
@@ -649,9 +650,12 @@ export function useWorkbenchDataRefresh({
       }
       const runtimeWork = filteredRuntimeWorkResult
         ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
-        : hasCloudBackgroundApi
-          ? localRuntimeWork
-          : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
+        : removeRuntimeTasks(
+            hasCloudBackgroundApi
+              ? localRuntimeWork
+              : filterDisconnectedRemoteRuntimeWork(localRuntimeWork),
+            archivedRuntimeTaskAddressesRef.current
+          )
       debugRuntimeSidebarState('refresh-resolved', {
         source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
         executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
