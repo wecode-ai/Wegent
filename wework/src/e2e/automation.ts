@@ -1110,6 +1110,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
+    case 'getLocalExecutorLog':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':
