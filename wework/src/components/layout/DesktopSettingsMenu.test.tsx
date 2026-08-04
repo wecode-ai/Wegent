@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
+import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 const mockCheckNow = vi.fn()
@@ -24,6 +25,14 @@ vi.mock('@/features/app-update/app-update-context', () => ({
 
 vi.mock('@/lib/runtime-mode', () => runtimeModeMock)
 
+vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
+  useOptionalCloudConnection: () => ({
+    isConnected: true,
+    apiBaseUrl: 'https://wegent.example.com/api',
+    token: 'token',
+  }),
+}))
+
 vi.mock('@/api/local/codexUsage', () => ({
   formatCodexUsageResetTime: (resetsAt: number | null) =>
     resetsAt === 1 ? '11:30' : resetsAt === 2 ? '1月5日 09:15' : null,
@@ -43,7 +52,37 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
 }))
 
+vi.mock('@/api/wegentUsage', () => ({
+  emptyWegentUsageDisplay: () => ({
+    status: 'none',
+    sourceText: '',
+    sourceLabel: 'Quota',
+    quota: 0,
+    usage: 0,
+    remaining: 0,
+    usageRate: null,
+    value: '--',
+    detail: '',
+    trayTitle: 'Quota --',
+    tooltip: '',
+  }),
+  getWegentUsageDisplay: vi.fn().mockResolvedValue({
+    status: 'available',
+    sourceText: 'AIGC额度',
+    sourceLabel: 'AIGC',
+    quota: 1042,
+    usage: 1126.7,
+    remaining: -84.7,
+    usageRate: 108.13,
+    value: '1,126.7 / 1,042 元',
+    detail: '已用 108.13% · 剩余 -84.7 元',
+    trayTitle: 'AIGC -84.7',
+    tooltip: 'AIGC额度\n1,126.7 / 1,042 元 (108.13%)\n剩余 -84.7 元',
+  }),
+}))
+
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
+const getWegentUsageDisplayMock = vi.mocked(getWegentUsageDisplay)
 
 function renderMenu({
   showLogout,
@@ -87,6 +126,19 @@ describe('DesktopSettingsMenu', () => {
       trayTitle: '5h 90%\n7d 80%',
       tooltip: '5小时额度 90%\n7天额度 80%',
     })
+    getWegentUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      sourceText: 'AIGC额度',
+      sourceLabel: 'AIGC',
+      quota: 1042,
+      usage: 1126.7,
+      remaining: -84.7,
+      usageRate: 108.13,
+      value: '1,126.7 / 1,042 元',
+      detail: '已用 108.13% · 剩余 -84.7 元',
+      trayTitle: 'AIGC -84.7',
+      tooltip: 'AIGC额度\n1,126.7 / 1,042 元 (108.13%)\n剩余 -84.7 元',
+    })
   })
 
   test('checks for app updates from the settings menu', async () => {
@@ -117,12 +169,13 @@ describe('DesktopSettingsMenu', () => {
     expect(onOpenAbout).toHaveBeenCalledTimes(1)
   })
 
-  test('does not render the old account or quota summary row', () => {
+  test('does not render the old account or quota summary row', async () => {
     renderMenu()
 
     expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
     expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
     expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
+    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
   })
 
   test('hides logout in local-first app runtime', () => {
@@ -267,5 +320,21 @@ describe('DesktopSettingsMenu', () => {
 
     expect(await screen.findByText('5小时额度')).toBeInTheDocument()
     expect(screen.getByText('0%')).toBeInTheDocument()
+  })
+
+  test('loads and displays the Wegent model quota', async () => {
+    renderMenu()
+
+    await userEvent.click(screen.getByTestId('wegent-usage-menu-button'))
+
+    expect(getWegentUsageDisplayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isConnected: true,
+        apiBaseUrl: 'https://wegent.example.com/api',
+        token: 'token',
+      })
+    )
+    expect(await screen.findByText('1,126.7 / 1,042 元')).toBeInTheDocument()
+    expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toBeInTheDocument()
   })
 })

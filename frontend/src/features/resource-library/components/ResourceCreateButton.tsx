@@ -32,6 +32,7 @@ export interface ResourceCreateRequest {
   id: number
   target: ResourceCreateTarget
   publishAfterCreate?: boolean
+  marketplaceTags?: string[]
 }
 
 interface ResourceCreateButtonProps {

@@ -162,6 +162,24 @@ class KnowledgeDocument(Base):
         # must explicitly flag it as modified for the ORM to flush the change.
         flag_modified(self, "source_config")
 
+    @property
+    def processing_error_payload(self) -> dict | None:
+        """Return the current processing error stored in source_config."""
+        value = (self.source_config or {}).get("processing_error")
+        return dict(value) if isinstance(value, dict) else None
+
+    def set_processing_error_payload(self, value: dict) -> None:
+        """Store a processing error without replacing other source metadata."""
+        source_config = dict(self.source_config or {})
+        source_config["processing_error"] = dict(value)
+        self.source_config = source_config
+
+    def clear_processing_error_payload(self) -> None:
+        """Remove a stale processing error while preserving source metadata."""
+        source_config = dict(self.source_config or {})
+        source_config.pop("processing_error", None)
+        self.source_config = source_config
+
     # References knowledge_folders.id, 0 = root level (no FK constraint,
     # referential integrity managed at the application layer)
     folder_id = Column(Integer, nullable=False, default=0, index=True)

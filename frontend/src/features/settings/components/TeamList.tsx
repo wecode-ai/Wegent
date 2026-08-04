@@ -111,6 +111,7 @@ import { ResourceManagementLayout } from './resource-management/ResourceManageme
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { cn } from '@/lib/utils'
 import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
 import { paths } from '@/config/paths'
 
 interface TeamListProps {
@@ -296,7 +297,7 @@ export default function TeamList({
             display_name: team.displayName || team.name,
             description: team.description || null,
             icon: team.icon || null,
-            tags: [],
+            tags: pendingCreateRequestRef.current.marketplaceTags || [],
             version: '1.0.0',
             manifest_options: {},
           })
@@ -316,13 +317,14 @@ export default function TeamList({
   )
 
   const handleCreateOptionsChange = useCallback(
-    (target: ResourceCreateTarget, publishAfterCreate: boolean) => {
+    (target: ResourceCreateTarget, publishAfterCreate: boolean, marketplaceTags: string[]) => {
       setCreateTarget(target)
       if (pendingCreateRequestRef.current) {
         pendingCreateRequestRef.current = {
           ...pendingCreateRequestRef.current,
           target,
           publishAfterCreate,
+          marketplaceTags,
         }
       }
     },
@@ -892,17 +894,22 @@ export default function TeamList({
                               : undefined
                           }
                           icon={
-                            <ResourceCardIcon compact={compact}>
-                              {compact ? (
-                                <TeamIconDisplay iconId={team.icon} size="md" />
-                              ) : (
+                            compact ? (
+                              <ResourceIcon
+                                resourceType="agent"
+                                name={getTeamDisplayName(team)}
+                                icon={team.icon}
+                                size="sm"
+                              />
+                            ) : (
+                              <ResourceCardIcon compact={false}>
                                 <TeamIconDisplay
                                   iconId={team.icon}
                                   size="md"
                                   className="text-primary"
                                 />
-                              )}
-                            </ResourceCardIcon>
+                              </ResourceCardIcon>
+                            )
                           }
                           actions={
                             compact &&

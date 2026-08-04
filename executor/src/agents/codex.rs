@@ -26,7 +26,7 @@ use tokio::{
 use crate::{
     agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    image_preprocessor::prepare_image_bytes_for_model,
+    image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
@@ -45,6 +45,7 @@ const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
+const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
@@ -3287,6 +3288,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
+    let resize_images = !is_official_codex_model(&request.model_config);
     for attachment in attachments {
         if let Some(local_path) = attachment
             .local_path
@@ -3302,6 +3304,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
                         .mime_type
                         .as_deref()
                         .unwrap_or("image/png"),
+                    resize_images,
                     &mut generated_files,
                 )
                 .unwrap_or_else(|| local_path.to_owned());
@@ -3419,10 +3422,18 @@ fn is_image_attachment(attachment: &AttachmentRecord) -> bool {
 fn prepare_local_image_path(
     path: &str,
     mime_type: &str,
+    resize: bool,
     generated_files: &mut Vec<PathBuf>,
 ) -> Option<String> {
+    if !resize {
+        return Some(path.to_owned());
+    }
     let image_data = fs::read(path).ok()?;
-    let prepared = prepare_image_bytes_for_model(&image_data, mime_type, None);
+    let prepared = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_data,
+        mime_type,
+        NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE,
+    );
     if !prepared.resized {
         return Some(path.to_owned());
     }
@@ -3433,6 +3444,12 @@ fn prepare_local_image_path(
     }
     generated_files.push(output_path.clone());
     Some(output_path.display().to_string())
+}
+
+fn is_official_codex_model(model_config: &Value) -> bool {
+    non_empty_config(model_config, "wework_model_kind")
+        .or_else(|| non_empty_config(model_config, "weworkModelKind"))
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("codex-official"))
 }
 
 fn model_input_image_path(path: &Path, mime_type: &str) -> PathBuf {

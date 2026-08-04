@@ -311,12 +311,8 @@ describe('TeamList mode filter', () => {
       'xl:grid-cols-4'
     )
     expect(card).toHaveClass('group', 'relative', 'min-h-[160px]', 'gap-4')
-    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
-      'h-11',
-      'w-11',
-      'rounded-xl',
-      'border'
-    )
+    expect(within(card).getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
+    expect(within(card).getByTestId('resource-icon')).toHaveClass('h-10', 'w-10', 'rounded-full')
     expect(within(card).getByTestId('use-team-button-8')).toHaveTextContent('Go to Chat')
     expect(within(card).getByTestId('use-team-button-8')).toHaveClass(
       'h-11',

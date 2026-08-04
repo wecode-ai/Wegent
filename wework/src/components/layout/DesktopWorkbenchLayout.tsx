@@ -10,7 +10,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -53,10 +53,10 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
   return fallback
 }
 
-function boardProjectIdFromRoute(contentRoute: string): string | null {
+function boardRouteParam(contentRoute: string, name: string): string | null {
   const searchIndex = contentRoute.indexOf('?')
   if (searchIndex < 0) return null
-  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get('projectId')
+  return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get(name)
 }
 
 interface DesktopWorkbenchLayoutProps {
@@ -179,6 +179,20 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const [standalonePreferNativeLocalPicker, setStandalonePreferNativeLocalPicker] = useState(true)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
+  )
+  const openProjectSpaceRuntimeTask = useCallback(
+    async (address: RuntimeTaskAddress) => {
+      await onOpenRuntimeTask(address)
+      if (!workspaceTabs) return
+      const contentRoute = buildRuntimeTaskRoute(address)
+      const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
+      if (taskTab) {
+        workspaceTabs.selectTab(taskTab.id, { contentRoute })
+        return
+      }
+      workspaceTabs.openTab('task', { contentRoute })
+    },
+    [onOpenRuntimeTask, workspaceTabs]
   )
   const [searchOpen, setSearchOpen] = useState(false)
   const [imNotificationDialogMode, setImNotificationDialogMode] =
@@ -688,11 +702,29 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 user={state.user}
                 localProjects={localTodoProjects}
                 services={services}
+                onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 activeProjectId={
                   workspaceTabs?.activeTab.kind === 'board'
-                    ? boardProjectIdFromRoute(workspaceTabs.activeTab.contentRoute)
+                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'projectId')
                     : undefined
                 }
+                focusedItemId={
+                  workspaceTabs?.activeTab.kind === 'board'
+                    ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
+                    : undefined
+                }
+                onFocusedItemHandled={() => {
+                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  const projectId = boardRouteParam(
+                    workspaceTabs.activeTab.contentRoute,
+                    'projectId'
+                  )
+                  const params = new URLSearchParams()
+                  if (projectId) params.set('projectId', projectId)
+                  workspaceTabs.updateActiveTab({
+                    contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
+                  })
+                }}
                 onActiveProjectChange={project => {
                   if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
                   if (!project) {

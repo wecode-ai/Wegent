@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.config import settings
-from app.tasks.knowledge_tasks import index_document_task
+from app.models.knowledge import DocumentIndexStatus
+from app.tasks.knowledge_tasks import (
+    _build_stale_processing_error,
+    index_document_task,
+)
 
 
 @contextmanager
@@ -56,6 +60,29 @@ def _session_factory():
         return nullcontext(MagicMock())
 
     return _open_session
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_stage", "expected_code"),
+    [
+        (
+            DocumentIndexStatus.PENDING_CONVERSION,
+            "conversion",
+            "conversion_timeout",
+        ),
+        (DocumentIndexStatus.CONVERTING, "conversion", "conversion_timeout"),
+        (DocumentIndexStatus.QUEUED, "indexing", "indexing_timeout"),
+        (DocumentIndexStatus.INDEXING, "indexing", "indexing_timeout"),
+    ],
+)
+def test_stale_processing_error_uses_public_timeout_code(
+    status, expected_stage: str, expected_code: str
+) -> None:
+    error = _build_stale_processing_error(status, generation=3)
+
+    assert error.stage.value == expected_stage
+    assert error.code == expected_code
+    assert error.generation == 3
 
 
 def test_index_document_task_retries_when_lock_is_held(

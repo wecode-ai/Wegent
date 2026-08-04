@@ -24,7 +24,7 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/apis/resourceLibrary', () => ({
   resourceLibraryApi: {
     listMyInstalls: jest.fn(),
-    listGroupInstalls: jest.fn(),
+    listGroupInstallsBatch: jest.fn(),
     uninstallListing: jest.fn(),
   },
 }))
@@ -130,9 +130,10 @@ jest.mock('@/components/ui/dialog', () => ({
 const mockedListMyInstalls = resourceLibraryApi.listMyInstalls as jest.MockedFunction<
   typeof resourceLibraryApi.listMyInstalls
 >
-const mockedListGroupInstalls = resourceLibraryApi.listGroupInstalls as jest.MockedFunction<
-  typeof resourceLibraryApi.listGroupInstalls
->
+const mockedListGroupInstallsBatch =
+  resourceLibraryApi.listGroupInstallsBatch as jest.MockedFunction<
+    typeof resourceLibraryApi.listGroupInstallsBatch
+  >
 const mockedUninstallListing = resourceLibraryApi.uninstallListing as jest.MockedFunction<
   typeof resourceLibraryApi.uninstallListing
 >
@@ -211,7 +212,7 @@ describe('InstalledResources', () => {
       page: 1,
       limit: 100,
     })
-    mockedListGroupInstalls.mockResolvedValue({
+    mockedListGroupInstallsBatch.mockResolvedValue({
       items: [],
       total: 0,
       page: 1,
@@ -406,17 +407,18 @@ describe('InstalledResources', () => {
       }),
     })
 
-    mockedListGroupInstalls.mockImplementation(groupNamespace =>
-      Promise.resolve({
-        items:
-          groupNamespace === 'engineering'
-            ? [nameMatch, displayNameMatch]
-            : [makeInstall('skill', { ...nameMatch, id: 35 }), descriptionMatch, unrelated],
-        total: groupNamespace === 'engineering' ? 2 : 3,
-        page: 1,
-        limit: 100,
-      })
-    )
+    mockedListGroupInstallsBatch.mockResolvedValue({
+      items: [
+        nameMatch,
+        displayNameMatch,
+        makeInstall('skill', { ...nameMatch, id: 35 }),
+        descriptionMatch,
+        unrelated,
+      ],
+      total: 5,
+      page: 1,
+      limit: 100,
+    })
 
     render(
       <InstalledResources
@@ -432,13 +434,8 @@ describe('InstalledResources', () => {
     expect(screen.queryByText('Unrelated Skill')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('resource-listing-card-101')).toHaveLength(1)
     expect(mockedListMyInstalls).not.toHaveBeenCalled()
-    expect(mockedListGroupInstalls).toHaveBeenCalledTimes(2)
-    expect(mockedListGroupInstalls).toHaveBeenNthCalledWith(1, 'engineering', {
-      resourceType: 'skill',
-      page: 1,
-      limit: 100,
-    })
-    expect(mockedListGroupInstalls).toHaveBeenNthCalledWith(2, 'product', {
+    expect(mockedListGroupInstallsBatch).toHaveBeenCalledTimes(1)
+    expect(mockedListGroupInstallsBatch).toHaveBeenCalledWith(['engineering', 'product'], {
       resourceType: 'skill',
       page: 1,
       limit: 100,
@@ -457,12 +454,12 @@ describe('InstalledResources', () => {
     render(<InstalledResources resourceType="skill" groupNamespaces={[]} />)
 
     expect(await screen.findByTestId('installed-resources-empty')).toHaveTextContent('暂无资源')
-    expect(mockedListGroupInstalls).not.toHaveBeenCalled()
+    expect(mockedListGroupInstallsBatch).not.toHaveBeenCalled()
     expect(mockedListMyInstalls).not.toHaveBeenCalled()
   })
 
-  it('loads every page of each group install source', async () => {
-    mockedListGroupInstalls.mockImplementation((_groupNamespace, params) => {
+  it('loads every page of the selected group install sources in one batch', async () => {
+    mockedListGroupInstallsBatch.mockImplementation((_groupNamespaces, params) => {
       const page = params?.page || 1
       const listingId = page === 1 ? 301 : 302
 
@@ -487,12 +484,12 @@ describe('InstalledResources', () => {
 
     expect(await screen.findByText('Group Page Two')).toBeInTheDocument()
     expect(screen.getByText('Group Page One')).toBeInTheDocument()
-    expect(mockedListGroupInstalls).toHaveBeenNthCalledWith(1, 'engineering', {
+    expect(mockedListGroupInstallsBatch).toHaveBeenNthCalledWith(1, ['engineering'], {
       resourceType: 'skill',
       page: 1,
       limit: 100,
     })
-    expect(mockedListGroupInstalls).toHaveBeenNthCalledWith(2, 'engineering', {
+    expect(mockedListGroupInstallsBatch).toHaveBeenNthCalledWith(2, ['engineering'], {
       resourceType: 'skill',
       page: 2,
       limit: 100,
@@ -501,7 +498,7 @@ describe('InstalledResources', () => {
 
   it('ignores stale results after the resource type and group selection change', async () => {
     let resolveStaleRequest: (
-      value: Awaited<ReturnType<typeof resourceLibraryApi.listGroupInstalls>>
+      value: Awaited<ReturnType<typeof resourceLibraryApi.listGroupInstallsBatch>>
     ) => void
     const currentInstall = makeInstall('agent', {
       id: 402,
@@ -514,8 +511,8 @@ describe('InstalledResources', () => {
       listing: makeListing('skill', { id: 401, display_name: 'Stale Engineering Skill' }),
     })
 
-    mockedListGroupInstalls.mockImplementation(groupNamespace => {
-      if (groupNamespace === 'engineering') {
+    mockedListGroupInstallsBatch.mockImplementation(groupNamespaces => {
+      if (groupNamespaces.includes('engineering')) {
         return new Promise(resolve => {
           resolveStaleRequest = resolve
         })
@@ -527,7 +524,7 @@ describe('InstalledResources', () => {
     const { rerender } = render(
       <InstalledResources resourceType="skill" groupNamespaces={['engineering']} />
     )
-    await waitFor(() => expect(mockedListGroupInstalls).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockedListGroupInstallsBatch).toHaveBeenCalledTimes(1))
 
     rerender(<InstalledResources resourceType="agent" groupNamespaces={['product']} />)
 

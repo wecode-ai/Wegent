@@ -29,7 +29,7 @@ impl LocalBackendTransport for SocketIoTransport {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
         Box::pin(async move {
             let handlers = self.handlers.lock().expect("handler lock").clone();
-            let mut builder = ClientBuilder::new(config.backend_url.clone())
+            let mut builder = ClientBuilder::new(config.socket_url.clone())
                 .namespace(NAMESPACE)
                 .auth(json!({ "token": config.auth_token }))
                 .transport_type(TransportType::Websocket)

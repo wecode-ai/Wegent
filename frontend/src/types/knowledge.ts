@@ -25,6 +25,18 @@ export type DocumentIndexStatus =
   | 'success'
   | 'failed'
 
+export interface DocumentProcessingError {
+  stage: 'dispatch' | 'conversion' | 'indexing' | 'system'
+  code: string
+  message: string
+  retryable: boolean
+  generation: number
+  occurred_at: string
+  provider?: string | null
+  model?: string | null
+  request_id?: string | null
+}
+
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
 // Retrieval Config types
@@ -431,6 +443,7 @@ export interface KnowledgeDocument {
   is_active: boolean
   index_status: DocumentIndexStatus
   index_generation: number
+  processing_error?: DocumentProcessingError | null
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>

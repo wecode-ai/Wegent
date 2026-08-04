@@ -20,7 +20,8 @@ const labels = {
 }
 
 function TabsState() {
-  const { activeTab, openTab, tabs } = useWorkspaceTabs()
+  const { activeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
+  const boardTab = tabs.find(tab => tab.kind === 'board')
 
   return (
     <>
@@ -31,6 +32,18 @@ function TabsState() {
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          boardTab &&
+          selectTab(boardTab.id, {
+            title: 'Wegent V4',
+            contentRoute: '/todo?projectId=project-1&itemId=WEG-1',
+          })
+        }
+      >
+        打开项目任务
       </button>
     </>
   )
@@ -91,5 +104,20 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(screen.getByTestId('tab-count')).toHaveTextContent('4')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
     expect(window.location.search).toContain('workspaceTab=board-')
+  })
+
+  test('selects and updates an existing board tab for a concrete project task', () => {
+    render(<RoutingHarness />)
+
+    act(() => screen.getByRole('button', { name: '打开项目任务' }).click())
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+    expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('Wegent V4')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/todo?projectId=project-1&itemId=WEG-1'
+    )
+    expect(window.location.search).toContain('projectId=project-1')
+    expect(window.location.search).toContain('itemId=WEG-1')
   })
 })

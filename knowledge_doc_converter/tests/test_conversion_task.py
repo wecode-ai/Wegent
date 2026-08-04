@@ -163,7 +163,17 @@ class TestConvertDocumentTask:
 
         assert result["status"] == "skipped"
         assert result["reason"] == "lock_retry_exhausted"
-        mock_callback.notify_failed.assert_called_once()
+        mock_callback.notify_failed.assert_called_once_with(
+            path=TASK_KWARGS["callback_status_path"],
+            document_id=TASK_KWARGS["document_id"],
+            generation=TASK_KWARGS["index_generation"],
+            error_message="conversion_lock_timeout",
+            error_code="conversion_lock_timeout",
+            user_message=(
+                "The document conversion task waited too long. Please retry."
+            ),
+            retryable=True,
+        )
 
     @patch("knowledge_doc_converter.tasks.conversion_task.lock_service")
     @patch("knowledge_doc_converter.tasks.conversion_task.callback_client")

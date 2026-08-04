@@ -15,7 +15,7 @@ import type { Group } from '@/types/group'
 
 jest.mock('@/apis/resourceLibrary', () => ({
   resourceLibraryApi: {
-    listGroupInstalls: jest.fn(),
+    listGroupInstallsBatch: jest.fn(),
   },
 }))
 
@@ -85,9 +85,10 @@ jest.mock('@/components/ui/alert-dialog', () => ({
   ),
 }))
 
-const mockedListGroupInstalls = resourceLibraryApi.listGroupInstalls as jest.MockedFunction<
-  typeof resourceLibraryApi.listGroupInstalls
->
+const mockedListGroupInstallsBatch =
+  resourceLibraryApi.listGroupInstallsBatch as jest.MockedFunction<
+    typeof resourceLibraryApi.listGroupInstallsBatch
+  >
 const mockedRemoveSkillFromGroup = removeSkillFromGroup as jest.MockedFunction<
   typeof removeSkillFromGroup
 >
@@ -130,7 +131,11 @@ function makeInstall(): ResourceLibraryInstall {
       created_at: '2026-07-29T00:00:00Z',
       updated_at: '2026-07-29T00:00:00Z',
     },
-    installed_reference: { skill_id: 92, kind: 'SkillBinding' },
+    installed_reference: {
+      namespace: 'platform/team',
+      skill_id: 92,
+      kind: 'SkillBinding',
+    },
     install_status: 'installed',
     installed_at: '2026-07-29T00:00:00Z',
     updated_at: '2026-07-29T00:00:00Z',
@@ -139,7 +144,7 @@ function makeInstall(): ResourceLibraryInstall {
 
 describe('GroupInstalledSkills', () => {
   beforeEach(() => {
-    mockedListGroupInstalls.mockResolvedValue({
+    mockedListGroupInstallsBatch.mockResolvedValue({
       items: [makeInstall()],
       total: 1,
       page: 1,
@@ -150,9 +155,9 @@ describe('GroupInstalledSkills', () => {
 
   it('shows an animated loading state while group skills are loading', async () => {
     let resolveRequest: (
-      value: Awaited<ReturnType<typeof resourceLibraryApi.listGroupInstalls>>
+      value: Awaited<ReturnType<typeof resourceLibraryApi.listGroupInstallsBatch>>
     ) => void
-    mockedListGroupInstalls.mockReturnValue(
+    mockedListGroupInstallsBatch.mockReturnValue(
       new Promise(resolve => {
         resolveRequest = resolve
       })
@@ -210,7 +215,7 @@ describe('GroupInstalledSkills', () => {
   })
 
   it('shows legacy skills owned by the group namespace', async () => {
-    mockedListGroupInstalls.mockResolvedValue({
+    mockedListGroupInstallsBatch.mockResolvedValue({
       items: [
         {
           ...makeInstall(),
@@ -248,7 +253,7 @@ describe('GroupInstalledSkills', () => {
 
     expect(await screen.findByText('Legacy Skill')).toBeInTheDocument()
     expect(screen.queryByTestId('group-skill-actions-legacy-31')).not.toBeInTheDocument()
-    expect(mockedListGroupInstalls).toHaveBeenCalledWith('platform/team', {
+    expect(mockedListGroupInstallsBatch).toHaveBeenCalledWith(['platform/team'], {
       resourceType: 'skill',
       page: 1,
       limit: 100,

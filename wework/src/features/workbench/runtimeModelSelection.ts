@@ -129,8 +129,10 @@ export function selectedModelExecutionFields(
   }
   const codexProviderId = getRawStringConfigValue(selectedModel.config, 'codexProviderId')
   const codexProviderName = getRawStringConfigValue(selectedModel.config, 'codexProviderName')
+  const codexProviderType = getRawStringConfigValue(selectedModel.config, 'codexProviderType')
   if (codexProviderId) modelOptions.codexProviderId = codexProviderId
   if (codexProviderName) modelOptions.codexProviderName = codexProviderName
+  if (codexProviderType) modelOptions.codexProviderType = codexProviderType
   const executionModel = resolveModelExecutionSelection(selectedModel)
   if (
     executionModel.modelType === 'public' ||

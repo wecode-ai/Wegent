@@ -68,6 +68,29 @@ class TestCallbackClient:
                 callback_type="failed",
             )
 
+    def test_notify_failed_sends_structured_error_fields(self, client):
+        with patch.object(client, "call") as mock_call:
+            mock_call.return_value = {"ok": True, "document_exists": True}
+
+            client.notify_failed(
+                path="/internal/conversion/callback/status",
+                document_id=1,
+                generation=3,
+                error_message="private detail",
+                error_code="model_quota_exhausted",
+                user_message="Model quota exhausted.",
+                retryable=False,
+                provider="gemini",
+                model="gemini-3.5-flash",
+            )
+
+            payload = mock_call.call_args.args[1]
+            assert payload["error_code"] == "model_quota_exhausted"
+            assert payload["user_message"] == "Model quota exhausted."
+            assert payload["retryable"] is False
+            assert payload["provider"] == "gemini"
+            assert payload["model"] == "gemini-3.5-flash"
+
     def test_notify_completed(self, client):
         with patch.object(client, "call") as mock_call:
             mock_call.return_value = {

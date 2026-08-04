@@ -191,6 +191,7 @@ describe('runtimeModelSelection', () => {
         weworkModelKind: 'codex-provider',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
         ui: { family: 'codex-provider', controls: ['speed'] },
       },
     }
@@ -245,6 +246,7 @@ describe('runtimeModelSelection', () => {
         weworkModelKind: 'codex-provider',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
         ui: { family: 'codex-provider', controls: ['speed'] },
       },
     }
@@ -260,6 +262,7 @@ describe('runtimeModelSelection', () => {
         collaborationMode: 'default',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
   })

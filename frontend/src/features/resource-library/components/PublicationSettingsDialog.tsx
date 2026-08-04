@@ -19,6 +19,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
 import type { ResourceLibraryListing, ResourceLibraryPublicationUpdateRequest } from '../types'
 import { CapabilityScopeSelector, type CapabilityPublishTarget } from './CapabilityScopeSelector'
+import { MarketplaceTagSelector } from './MarketplaceTagSelector'
 
 interface PublicationSettingsDialogProps {
   listing: ResourceLibraryListing | null
@@ -40,11 +41,15 @@ export function PublicationSettingsDialog({
   const { t } = useTranslation('resource-library')
   const [target, setTarget] = useState<CapabilityPublishTarget>('personal')
   const [groupNames, setGroupNames] = useState<string[]>([])
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
+  const supportsMarketplaceTags =
+    listing?.resource_type === 'agent' || listing?.resource_type === 'skill'
 
   useEffect(() => {
     if (!open || !listing) return
     const nextGroupNames = listing.target_groups || []
     setGroupNames(nextGroupNames)
+    setMarketplaceTags(listing.tags)
     setTarget(
       listing.status === 'published'
         ? 'marketplace'
@@ -60,6 +65,7 @@ export function PublicationSettingsDialog({
       target_groups: target === 'team' ? groupNames : [],
       allow_personal_install: target === 'marketplace',
       allow_group_install: target !== 'personal',
+      ...(target === 'marketplace' && supportsMarketplaceTags ? { tags: marketplaceTags } : {}),
     })
   }
 
@@ -89,6 +95,15 @@ export function PublicationSettingsDialog({
           multipleGroups
         />
 
+        {target === 'marketplace' && supportsMarketplaceTags && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-text-primary">
+              {t('marketplace_tags.field_label')}
+            </h3>
+            <MarketplaceTagSelector value={marketplaceTags} onChange={setMarketplaceTags} />
+          </div>
+        )}
+
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {t('actions.cancel')}
@@ -96,7 +111,11 @@ export function PublicationSettingsDialog({
           <Button
             type="button"
             variant="primary"
-            disabled={saving || (target === 'team' && groupNames.length === 0)}
+            disabled={
+              saving ||
+              (target === 'team' && groupNames.length === 0) ||
+              (target === 'marketplace' && supportsMarketplaceTags && marketplaceTags.length === 0)
+            }
             onClick={handleSave}
             data-testid="publication-settings-save"
           >

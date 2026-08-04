@@ -28,7 +28,11 @@ interface WorkspaceTabsState extends PersistedWorkspaceTabs {
 
 type WorkspaceTabsAction =
   | { type: 'routeChanged'; pathname: string; search: string; labels: WorkspaceTabLabels }
-  | { type: 'select'; tabId: string }
+  | {
+      type: 'select'
+      tabId: string
+      updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>
+    }
   | { type: 'open'; tab: WorkspaceTab }
   | { type: 'close'; tabId: string; fallback: WorkspaceTab }
   | { type: 'closeOthers'; tabId: string }
@@ -154,7 +158,15 @@ function workspaceTabsReducer(
     }
     case 'select':
       return state.tabs.some(tab => tab.id === action.tabId)
-        ? { ...state, activeTabId: action.tabId }
+        ? {
+            ...state,
+            activeTabId: action.tabId,
+            tabs: action.updates
+              ? state.tabs.map(tab =>
+                  tab.id === action.tabId ? { ...tab, ...action.updates } : tab
+                )
+              : state.tabs,
+          }
         : state
     case 'open':
       return { ...state, tabs: [...state.tabs, action.tab], activeTabId: action.tab.id }
@@ -231,11 +243,12 @@ export function WorkspaceTabsProvider({
   }, [state, storageScope])
 
   const selectTab = useCallback(
-    (tabId: string) => {
+    (tabId: string, updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
-      flushSync(() => dispatch({ type: 'select', tabId }))
-      navigateTo(workspaceTabRoute(tab))
+      const updated = { ...tab, ...updates }
+      flushSync(() => dispatch({ type: 'select', tabId, updates }))
+      navigateTo(workspaceTabRoute(updated))
     },
     [state.tabs]
   )
