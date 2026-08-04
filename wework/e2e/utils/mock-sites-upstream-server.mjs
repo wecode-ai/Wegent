@@ -24,6 +24,18 @@ function seedProjects() {
     snapshot: null,
     created_at: '2026-07-22T00:05:00Z',
   })
+  projects.set('prj_e2e_mini', {
+    id: 'prj_e2e_mini',
+    app_type: 'mini_program',
+    title: 'E2E Mini Program',
+    app_id: 'wx-e2e-mini',
+    status: 'experience',
+    version: '1.0.0',
+    experience_url: 'https://example.test/mini-experience',
+    snapshot: null,
+    created_at: '2026-07-22T00:10:00Z',
+    updated_at: '2026-07-22T00:12:00Z',
+  })
 }
 
 seedProjects()
@@ -87,6 +99,7 @@ function searchProjects(req, res) {
 
   const url = new URL(req.url || '/', `http://127.0.0.1:${PORT}`)
   const query = url.searchParams.get('sitename')?.trim().toLowerCase() || ''
+  const appType = url.searchParams.get('app_type') || 'site'
   const limit = Math.max(
     1,
     Math.min(100, Number.parseInt(url.searchParams.get('limit') || '100', 10))
@@ -94,6 +107,9 @@ function searchProjects(req, res) {
   const cursor = url.searchParams.get('cursor')
   const startIndex = cursor ? Number.parseInt(cursor, 10) || 0 : 0
   const allItems = [...projects.values()].filter(project => {
+    if ((project.app_type || 'site') !== appType) {
+      return false
+    }
     if (!query) {
       return true
     }

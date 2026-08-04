@@ -28,6 +28,7 @@ from app.models.delivery import (
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
     loop_datetime_value_is_unset,
+    loop_node_non_nullable_attributes,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -564,7 +565,9 @@ class LoopItemService:
             # its new lane instead of an arbitrary stale position.
             updates["sort_order"] = 0
         updates = adapt_loop_node_values_for_dialect(
-            updates, db.get_bind().dialect.name
+            updates,
+            db.get_bind().dialect.name,
+            loop_node_non_nullable_attributes(db.connection()),
         )
         updated = (
             db.query(LoopItem)
@@ -834,6 +837,7 @@ class LoopItemService:
         updates = adapt_loop_node_values_for_dialect(
             {"status": "in_progress", "completed_at": None},
             db.get_bind().dialect.name,
+            loop_node_non_nullable_attributes(db.connection()),
         )
         db.query(LoopItem).filter(
             LoopItem.id == item_id,

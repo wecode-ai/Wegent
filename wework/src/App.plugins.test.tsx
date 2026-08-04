@@ -296,6 +296,55 @@ function installedGithubPlugin(enabled = true): InstalledPlugin {
   }
 }
 
+function installedCodexMiniProgramPlugin(): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'wegent-mini-program',
+      namespace: 'default',
+      labels: { id: '102' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'wegent-marketplace',
+        pluginKey: 'wegent-mini-program',
+        catalogItemId: '102',
+        marketplace: 'wegent',
+      },
+      displayName: '小程序',
+      description: 'Build and publish mini programs',
+      version: '0.1.0',
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: { name: 'wegent-mini-program' },
+      components: {
+        skills: [],
+        commands: [],
+        templates: [],
+        apps: [],
+        agents: [],
+        mcps: [],
+        hooks: [],
+        lsps: [],
+        monitors: [],
+        bins: [],
+      },
+      interface: {
+        displayName: '小程序',
+        defaultPrompt: ['创建并发布一个小程序'],
+      },
+      packageRef: null,
+      sourcePayload: {
+        filename: 'wegent-mini-program.zip',
+      },
+    },
+    status: { state: 'enabled' },
+  }
+}
+
 function successfulSitesDeviceSync() {
   return {
     success: true,
@@ -315,6 +364,32 @@ function successfulSitesDeviceSync() {
         error: null,
         skills: [],
         plugins: [{ id: 101, name: 'wegent-sites', status: 'synced' }],
+        mcps: [],
+        errors: [],
+      },
+    ],
+  }
+}
+
+function successfulMiniProgramDeviceSync() {
+  return {
+    success: true,
+    device_id: 'local-device',
+    mode: 'merge',
+    skills: [],
+    plugins: [{ id: 102, name: 'wegent-mini-program', status: 'synced' }],
+    mcps: [],
+    errors: [],
+    synced: 1,
+    failed: 0,
+    skipped: 0,
+    results: [
+      {
+        device_id: 'local-device',
+        success: true,
+        error: null,
+        skills: [],
+        plugins: [{ id: 102, name: 'wegent-mini-program', status: 'synced' }],
         mcps: [],
         errors: [],
       },
@@ -369,6 +444,11 @@ function renderApp() {
       <App />
     </RuntimeTaskLifecycleProvider>
   )
+}
+
+async function createSiteFromMenu() {
+  await userEvent.click(await screen.findByTestId('sites-create-button'))
+  await userEvent.click(await screen.findByTestId('sites-create-site-menu-item'))
 }
 
 function mockSystemSkillsFetch() {
@@ -765,7 +845,7 @@ describe('App plugins route', () => {
     renderApp()
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
-      '站点功能尚未推出'
+      '应用功能尚未推出'
     )
     expect(fetch).not.toHaveBeenCalled()
     expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
@@ -810,6 +890,7 @@ describe('App plugins route', () => {
             Promise.resolve({
               items: [
                 {
+                  app_type: 'site',
                   siteid: 'site-cloud-1',
                   name: '云端站点',
                   internal_url: 'http://sites.internal/cloud',
@@ -843,13 +924,13 @@ describe('App plugins route', () => {
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/sites?offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?app_type=site&offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
     )
 
-    await userEvent.click(screen.getByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
@@ -885,6 +966,7 @@ describe('App plugins route', () => {
             Promise.resolve({
               items: [
                 {
+                  app_type: 'site',
                   siteid: 'site-1',
                   name: '产品发布页',
                   internal_url: 'http://sites.internal/product',
@@ -909,7 +991,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/sites?offset=0&limit=20',
+      '/api/sites?app_type=site&offset=0&limit=20',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -917,7 +999,7 @@ describe('App plugins route', () => {
     )
     expect(await screen.findByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
 
-    await userEvent.click(screen.getByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetch).toHaveBeenCalledWith(
@@ -933,6 +1015,54 @@ describe('App plugins route', () => {
         input:
           '[$站点](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
         pluginName: '站点',
+      }
+    )
+  })
+
+  test('installs the Mini Program plugin with its creation prompt', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/builtin/wegent-mini-program/ensure-installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              plugin: installedCodexMiniProgramPlugin(),
+              sync: successfulMiniProgramDeviceSync(),
+            }),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites?app_type=mini_program')
+
+    renderApp()
+    await screen.findByText('还没有小程序')
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+    await userEvent.click(screen.getByTestId('sites-create-mini-program-menu-item'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/builtin/wegent-mini-program/ensure-installed',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ device_id: 'local-device' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$小程序](plugin://wegent-mini-program@wegent) 创建并发布一个小程序',
+        pluginName: '小程序',
       }
     )
   })
@@ -957,10 +1087,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      'Sites 插件未能同步到目标设备，请检查设备后重试'
+      '应用插件未能同步到目标设备，请检查设备后重试'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
@@ -993,10 +1123,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      'Sites 插件未能同步到目标设备，请检查设备后重试'
+      '应用插件未能同步到目标设备，请检查设备后重试'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
@@ -1014,10 +1144,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      'Sites 插件尚未安装或启用'
+      '请选择一个在线且版本兼容的设备后再创建应用'
     )
     expect(
       vi
@@ -1044,10 +1174,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      'Sites 插件安装失败，请重试'
+      '应用插件安装失败，请重试'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(screen.getByTestId('sites-create-button')).toBeEnabled()
@@ -1074,10 +1204,10 @@ describe('App plugins route', () => {
 
     renderApp()
 
-    await userEvent.click(await screen.findByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      '云端 Backend 尚未升级 Sites 插件，请先部署最新 Backend'
+      '云端 Backend 尚未支持对应的应用插件，请先部署最新 Backend'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
@@ -1097,10 +1227,10 @@ describe('App plugins route', () => {
     renderApp()
 
     await screen.findByTestId('sites-unavailable-state')
-    await userEvent.click(screen.getByTestId('sites-create-button'))
+    await createSiteFromMenu()
 
     expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
-      'Sites 插件尚未安装或启用'
+      '连接云端后才能使用应用创建插件'
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()

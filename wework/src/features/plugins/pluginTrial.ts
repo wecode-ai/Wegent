@@ -41,15 +41,16 @@ interface PendingPluginTrial {
   openInNewChat?: boolean
 }
 
-interface PluginTrialOptions {
-  openInNewChat?: boolean
-}
-
 interface PluginReferenceTrial {
   pluginName: string
   marketplaceName: string
   displayName: string
   templates?: PluginPathComponent[]
+}
+
+interface PluginTrialOptions {
+  prompt?: string
+  openInNewChat?: boolean
 }
 
 function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
@@ -183,7 +184,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function pluginTrialInput(plugin: InstalledPlugin): string | null {
+export function pluginTrialInput(
+  plugin: InstalledPlugin,
+  options: PluginTrialOptions = {}
+): string | null {
   const skill = firstPluginSkill(plugin)
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
@@ -195,7 +199,8 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
         : null
   if (!reference) return null
   registerPluginMentionIcon(plugin, reference)
-  const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
+  const promptOverride = options.prompt?.trim()
+  const defaultPrompt = promptOverride || firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
   if (!defaultPrompt) return `${reference} `
 
   const skillTokenPattern = skill ? new RegExp(`\\$${escapeRegExp(skill.name)}\\b`, 'g') : null
@@ -208,15 +213,15 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
 
 export function queuePluginTrial(
   plugin: InstalledPlugin,
-  { openInNewChat = false }: PluginTrialOptions = {}
+  options: PluginTrialOptions = {}
 ): boolean {
-  const input = pluginTrialInput(plugin)
+  const input = pluginTrialInput(plugin, options)
   if (!input) return false
   return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
-    templates: pluginTrialTemplates(plugin),
-    openInNewChat,
+    templates: pluginTrialTemplates(plugin, options.prompt),
+    openInNewChat: options.openInNewChat === true,
   })
 }
 

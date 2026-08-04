@@ -80,25 +80,29 @@ export function GroupInstalledSkills({
   const { toast } = useToast()
   const [installs, setInstalls] = useState<GroupInstallItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [pendingRemoval, setPendingRemoval] = useState<GroupInstallItem | null>(null)
   const [removingKey, setRemovingKey] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
     setIsLoading(true)
+    setLoadFailed(false)
     setInstalls([])
 
-    Promise.all(
-      groupNamespaces.map(async groupNamespace => {
-        try {
-          const response = await resourceLibraryApi.listGroupInstalls(groupNamespace, {
-            resourceType: 'skill',
-            page: 1,
-            limit: 100,
-          })
-          return response.items.flatMap(install => {
+    resourceLibraryApi
+      .listGroupInstallsBatch(groupNamespaces, {
+        resourceType: 'skill',
+        page: 1,
+        limit: 100,
+      })
+      .then(response => {
+        if (!isMounted) return
+        setInstalls(
+          response.items.flatMap(install => {
             const listing = install.listing
-            if (!listing) return []
+            const groupNamespace = install.installed_reference.namespace
+            if (!listing || typeof groupNamespace !== 'string') return []
             return [
               {
                 groupNamespace,
@@ -112,16 +116,17 @@ export function GroupInstalledSkills({
               },
             ]
           })
-        } catch {
-          return []
+        )
+      })
+      .catch(() => {
+        if (isMounted) {
+          setInstalls([])
+          setLoadFailed(true)
         }
       })
-    ).then(results => {
-      if (isMounted) {
-        setInstalls(results.flat())
-        setIsLoading(false)
-      }
-    })
+      .finally(() => {
+        if (isMounted) setIsLoading(false)
+      })
 
     return () => {
       isMounted = false
@@ -130,6 +135,17 @@ export function GroupInstalledSkills({
 
   if (isLoading) {
     return <GroupInstalledSkillsSkeleton />
+  }
+
+  if (loadFailed) {
+    return (
+      <section className="space-y-3" data-testid="group-installed-skills-error">
+        <h2 className="text-sm font-semibold text-text-secondary">
+          {t('fields.group_added_skills')}
+        </h2>
+        <p className="text-sm text-error">{t('states.error')}</p>
+      </section>
+    )
   }
 
   if (installs.length === 0) {

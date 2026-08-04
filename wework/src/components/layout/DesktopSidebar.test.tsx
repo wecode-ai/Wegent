@@ -1675,6 +1675,7 @@ describe('DesktopSidebar', () => {
     renderSidebar({ onOpenSites, activeItem: 'sites' })
 
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
     await userEvent.click(screen.getByTestId('sites-button'))
 
     expect(onOpenSites).toHaveBeenCalledTimes(1)

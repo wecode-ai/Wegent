@@ -26,13 +26,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import type {
-  Attachment,
-  DeviceInfo,
-  ProjectDeviceSessionResponse,
-  RuntimeWorkListResponse,
-  User,
-} from '@/types/api'
+import type { Attachment, ProjectDeviceSessionResponse, User } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type {
   Automation,
@@ -129,8 +123,8 @@ export interface WorkbenchServices {
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
     getDefaultWorkbenchTeam?: ReturnType<typeof createTeamApi>['getDefaultWorkbenchTeam']
-    listDevices?: () => Promise<DeviceInfo[]>
-    listRuntimeWork?: () => Promise<RuntimeWorkListResponse>
+    listDevices?: ReturnType<typeof createDeviceApi>['listDevices']
+    listRuntimeWork?: ReturnType<typeof createRuntimeWorkApi>['listRuntimeWork']
   }
 }
 

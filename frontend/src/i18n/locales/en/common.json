@@ -421,6 +421,11 @@
     "public": "Public",
     "icon": "Icon",
     "selectIcon": "Select Icon",
+    "uploadCustomIcon": "Upload custom image",
+    "removeCustomIcon": "Remove custom image",
+    "customIconHint": "PNG, JPEG, or WebP up to 2 MB. Images are cropped to a square.",
+    "customIconInvalid": "Choose a PNG, JPEG, or WebP image up to 2 MB",
+    "customIconUploadFailed": "Icon upload failed. Try again.",
     "api_call": {
       "action": "API Call",
       "title": "API Call: {{name}}",

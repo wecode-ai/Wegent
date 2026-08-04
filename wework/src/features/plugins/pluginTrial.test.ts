@@ -113,6 +113,14 @@ describe('plugin trial state', () => {
     )
   })
 
+  test('uses an explicit prompt when the caller selects an application type', () => {
+    const plugin = pluginWithDefaultPrompt('Build an internal website.')
+
+    expect(pluginTrialInput(plugin, { prompt: '创建并发布一个小程序' })).toBe(
+      '[$Documents](plugin://documents@OpenAI Bundled) 创建并发布一个小程序'
+    )
+  })
+
   test('uses the cloud marketplace identity from the installed plugin source', () => {
     const plugin = pluginWithSkill()
     plugin.metadata.namespace = 'default'
