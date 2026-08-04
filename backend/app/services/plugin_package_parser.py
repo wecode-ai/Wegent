@@ -16,7 +16,9 @@ from app.schemas.installed_plugin import (
     InstalledPluginComponents,
     PluginConnectorComponent,
     PluginInterface,
+    PluginLocalAuthArtifactDefinition,
     PluginLocalAuthDefinition,
+    PluginLocalAuthToolDefinition,
     PluginMCPComponent,
     PluginPathComponent,
     PluginSkillComponent,
@@ -52,6 +54,7 @@ CODEX_MANIFEST_FIELDS = {
     "keywords",
     "skills",
     "mcpServers",
+    "connectors",
 }
 # Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
 CLAUDE_MANIFEST_FIELDS = CODEX_MANIFEST_FIELDS | {
@@ -617,7 +620,7 @@ class PluginPackageParser:
         if not isinstance(raw, dict):
             return None
         kind = str(raw.get("kind") or "local_qr").strip()
-        if kind != "local_qr":
+        if kind not in {"local_qr", "browser_oauth"}:
             return None
 
         def command_list(value: Any) -> list[str]:
@@ -643,28 +646,107 @@ class PluginPackageParser:
         start = command_list(raw.get("start"))
         poll = command_list(raw.get("poll"))
         logout = command_list(raw.get("logout"))
-        if not health or not start or not poll:
+        if not health or not start or (kind == "local_qr" and not poll):
+            return None
+        tool = self._parse_local_auth_tool(raw.get("tool"))
+        if raw.get("tool") is not None and tool is None:
             return None
         poll_interval = raw.get("pollIntervalSeconds", 2)
         try:
             poll_interval_seconds = max(1, min(int(poll_interval), 30))
         except (TypeError, ValueError):
             poll_interval_seconds = 2
+        default_timeout = 300 if kind == "browser_oauth" else 45
+        try:
+            timeout_seconds = max(
+                15, min(int(raw.get("timeoutSeconds", default_timeout)), 600)
+            )
+        except (TypeError, ValueError):
+            timeout_seconds = default_timeout
         ok_values = [
             str(item).strip()
             for item in (raw.get("okValues") or ["ok"])
             if str(item).strip()
         ] or ["ok"]
+        logout_on_uninstall = raw.get("logoutOnUninstall")
+        if not isinstance(logout_on_uninstall, bool):
+            logout_on_uninstall = kind == "local_qr"
         return PluginLocalAuthDefinition(
-            kind="local_qr",
+            kind=kind,
             health=health,
             start=start,
             poll=poll,
             logout=logout,
+            tool=tool,
             qrField=str(raw.get("qrField") or "qr_path").strip() or "qr_path",
             statusField=str(raw.get("statusField") or "status").strip() or "status",
             okValues=ok_values,
             pollIntervalSeconds=poll_interval_seconds,
+            timeoutSeconds=timeout_seconds,
+            logoutOnUninstall=logout_on_uninstall,
+        )
+
+    def _parse_local_auth_tool(self, raw: Any) -> PluginLocalAuthToolDefinition | None:
+        if not isinstance(raw, dict):
+            return None
+        tool_id = str(raw.get("id") or "").strip()
+        source = str(raw.get("source") or "").strip()
+        version = str(raw.get("version") or "").strip() or None
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", tool_id):
+            return None
+        if source not in {"bundled", "managed"}:
+            return None
+        if source == "bundled":
+            return PluginLocalAuthToolDefinition(id=tool_id, source=source)
+        if not version or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", version):
+            return None
+        raw_artifacts = raw.get("artifacts")
+        if not isinstance(raw_artifacts, dict) or not raw_artifacts:
+            return None
+        artifacts: dict[str, PluginLocalAuthArtifactDefinition] = {}
+        for target, artifact in raw_artifacts.items():
+            parsed = self._parse_local_auth_artifact(target, artifact)
+            if parsed is None:
+                return None
+            artifacts[str(target)] = parsed
+        return PluginLocalAuthToolDefinition(
+            id=tool_id,
+            source=source,
+            version=version,
+            artifacts=artifacts,
+        )
+
+    def _parse_local_auth_artifact(
+        self, target: Any, raw: Any
+    ) -> PluginLocalAuthArtifactDefinition | None:
+        if not isinstance(target, str) or not re.fullmatch(
+            r"(?:darwin|linux|windows)-(?:x64|arm64)", target
+        ):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        url = str(raw.get("url") or "").strip()
+        sha256 = str(raw.get("sha256") or "").strip().lower()
+        archive = str(raw.get("archive") or "").strip()
+        binary_path = str(raw.get("binaryPath") or "").strip()
+        if not url.startswith("https://") or not re.fullmatch(r"[a-f0-9]{64}", sha256):
+            return None
+        if archive not in {"tar_gz", "zip"}:
+            return None
+        binary_parts = PurePosixPath(binary_path).parts
+        if (
+            not binary_path
+            or binary_path.startswith(("/", "~"))
+            or "\\" in binary_path
+            or ".." in binary_parts
+            or re.search(r"^[A-Za-z]:[\\/]", binary_path)
+        ):
+            return None
+        return PluginLocalAuthArtifactDefinition(
+            url=url,
+            sha256=sha256,
+            archive=archive,
+            binaryPath=binary_path,
         )
 
     def _join_root_path(self, root: str, path: str) -> str:

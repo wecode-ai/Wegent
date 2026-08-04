@@ -572,6 +572,7 @@ async function createPluginMarketplaceFixture(root) {
   await Promise.all([
     mkdir(marketplaceManifestDir, { recursive: true }),
     mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
+    mkdir(join(pluginRoot, 'scripts'), { recursive: true }),
     mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
   ])
   await Promise.all([
@@ -606,6 +607,20 @@ async function createPluginMarketplaceFixture(root) {
           description: 'Exercises the real Wework plugin lifecycle',
           author: { name: 'Wework Desktop E2E' },
           skills: './skills/',
+          connectors: [
+            {
+              slug: 'desktop-e2e-browser-auth',
+              authPolicy: 'on_install',
+              localAuth: {
+                kind: 'browser_oauth',
+                health: ['scripts/local-auth.sh', 'health'],
+                start: ['scripts/local-auth.sh', 'login'],
+                logout: ['scripts/local-auth.sh', 'logout'],
+                timeoutSeconds: 30,
+                logoutOnUninstall: true,
+              },
+            },
+          ],
           interface: {
             displayName: PLUGIN_DISPLAY_NAME,
             shortDescription: 'Exercises the real Wework plugin lifecycle',
@@ -619,6 +634,55 @@ async function createPluginMarketplaceFixture(root) {
         null,
         2
       )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, 'scripts', 'local-auth.sh'),
+      `#!/bin/sh
+set -eu
+marker="\${WEGENT_EXECUTOR_HOME}/desktop-e2e-browser-auth"
+case "\${1:-health}" in
+  health)
+    if [ -f "\${marker}" ]; then
+      printf '{"status":"ok","hint":"E2E authorization is ready."}\\n'
+    else
+      printf '{"status":"need_login","hint":"E2E authorization is required."}\\n'
+    fi
+    ;;
+  login)
+    sleep 1
+    printf 'ready\\n' >"\${marker}"
+    printf '{"status":"ok","hint":"E2E authorization is ready."}\\n'
+    ;;
+  logout)
+    rm -f -- "\${marker}"
+    printf '{"status":"ok","hint":"E2E authorization was removed."}\\n'
+    ;;
+esac
+`
+    ),
+    writeFile(
+      join(pluginRoot, 'scripts', 'local-auth.ps1'),
+      `param([string]$Action = 'health')
+$marker = Join-Path $env:WEGENT_EXECUTOR_HOME 'desktop-e2e-browser-auth'
+switch ($Action) {
+  'health' {
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+      Write-Output '{"status":"ok","hint":"E2E authorization is ready."}'
+    } else {
+      Write-Output '{"status":"need_login","hint":"E2E authorization is required."}'
+    }
+  }
+  'login' {
+    Start-Sleep -Seconds 1
+    Set-Content -LiteralPath $marker -Value 'ready'
+    Write-Output '{"status":"ok","hint":"E2E authorization is ready."}'
+  }
+  'logout' {
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    Write-Output '{"status":"ok","hint":"E2E authorization was removed."}'
+  }
+}
+`
     ),
     writeFile(
       join(pluginRoot, 'skills', 'desktop-e2e-skill', 'SKILL.md'),
@@ -2975,14 +3039,10 @@ async function verifyExpandedToolDetail(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command(
-    'waitFor',
-    `${selector} [data-tool-detail-toggle][aria-expanded="true"]`,
-    {
-      stableMs: 250,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+  await control.command('waitFor', `${selector} [data-tool-detail-toggle][aria-expanded="true"]`, {
+    stableMs: 250,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await captureVerificationScreenshot(control, screenshotName, selector)
   await control.command('click', `${selector} [data-tool-detail-toggle]`)
 }
@@ -4337,6 +4397,12 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
   })
   await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-connector-auth-dialog"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForSnapshot(

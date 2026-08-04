@@ -22,7 +22,8 @@ import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import {
-  isLocalQrConnector,
+  isLocalBrowserConnector,
+  isLocalConnector,
   localConnectorAuthHealth,
   localConnectorAuthLogout,
   localQrManageActionFromHealth,
@@ -39,7 +40,7 @@ import {
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
-import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -1790,7 +1791,7 @@ export function PluginsWorkspace({
       return
     }
 
-    void logoutLocalQrConnectorsForPlugin(plugin.raw)
+    void logoutLocalConnectorsForPlugin(plugin.raw)
       .catch(() => undefined)
       .then(() =>
         plugin.origin === 'created' || !isCloudManagedInstalledPlugin(plugin.raw)
@@ -2030,7 +2031,7 @@ export function PluginsWorkspace({
               .then(response => response.plugin)
       )
       .then(async plugin => {
-        await ensureLocalQrConnectorsAfterInstall(item, plugin)
+        await ensureLocalConnectorsAfterInstall(item, plugin)
         return plugin
       })
 
@@ -2131,7 +2132,7 @@ export function PluginsWorkspace({
     const required = (item.components.connectors ?? []).filter(
       connector => connector.authPolicy === 'on_install'
     )
-    const oauthRequired = required.filter(connector => !isLocalQrConnector(connector))
+    const oauthRequired = required.filter(connector => !isLocalConnector(connector))
     if (oauthRequired.length === 0) return
     if (!cloudApiBaseUrl || !cloudToken) {
       throw new Error(
@@ -2172,12 +2173,15 @@ export function PluginsWorkspace({
     }
   }
 
-  const ensureLocalQrConnectorsAfterInstall = async (
+  const ensureLocalConnectorsAfterInstall = async (
     item: PluginMarketplaceItem,
     plugin: InstalledPlugin
   ) => {
-    const required = (item.components.connectors ?? plugin.spec.components.connectors ?? []).filter(
-      connector => connector.authPolicy === 'on_install' && isLocalQrConnector(connector)
+    const listedConnectors = item.components.connectors ?? []
+    const installedConnectors = plugin.spec.components.connectors ?? []
+    const connectors = listedConnectors.length > 0 ? listedConnectors : installedConnectors
+    const required = connectors.filter(
+      connector => connector.authPolicy === 'on_install' && isLocalConnector(connector)
     )
     if (required.length === 0) return
 
@@ -2194,15 +2198,20 @@ export function PluginsWorkspace({
         const health = await localConnectorAuthHealth(target)
         if (health.status === 'ok') continue
       } catch {
-        // Fall through to QR login when health fails.
+        // Fall through to local login when health or tool discovery fails.
       }
       try {
         await promptLocalConnectorAuth({
           target,
-          title: t('workbench.plugins_local_qr_install_title', {
-            defaultValue: `扫码登录 ${displayName}`,
-            name: displayName,
-          }),
+          title: isLocalBrowserConnector(connector)
+            ? t('workbench.plugins_local_browser_install_title', {
+                defaultValue: `授权 ${displayName}`,
+                name: displayName,
+              })
+            : t('workbench.plugins_local_qr_install_title', {
+                defaultValue: `扫码登录 ${displayName}`,
+                name: displayName,
+              }),
         })
       } catch (error) {
         const pluginId =
@@ -2220,7 +2229,7 @@ export function PluginsWorkspace({
         }
         throw error instanceof Error
           ? error
-          : new Error(t('workbench.plugins_local_qr_cancelled', '已取消扫码登录，安装已终止'))
+          : new Error(t('workbench.plugins_local_auth_cancelled', '已取消授权，安装已终止'))
       }
     }
   }
@@ -2236,7 +2245,7 @@ export function PluginsWorkspace({
           ? (plugin.components.connectors ?? [])
           : []
     const localConnector = connectors.find(
-      connector => connector.slug === slug && isLocalQrConnector(connector)
+      connector => connector.slug === slug && isLocalConnector(connector)
     )
     if (localConnector) {
       const pluginKey =
@@ -2267,8 +2276,8 @@ export function PluginsWorkspace({
 
       if (action === 'logout') {
         const confirmed = window.confirm(
-          t('workbench.plugins_local_qr_logout_confirm', {
-            defaultValue: `确定退出「${displayName}」登录？退出后需要重新扫码授权。`,
+          t('workbench.plugins_local_auth_logout_confirm', {
+            defaultValue: `确定退出「${displayName}」登录？退出后需要重新授权。`,
             name: displayName,
           })
         )
@@ -2282,7 +2291,7 @@ export function PluginsWorkspace({
             error:
               error instanceof Error
                 ? error.message
-                : t('workbench.plugins_local_qr_logout_failed', '退出登录失败'),
+                : t('workbench.plugins_local_auth_logout_failed', '退出登录失败'),
           }))
         }
         return
@@ -2291,10 +2300,15 @@ export function PluginsWorkspace({
       try {
         await promptLocalConnectorAuth({
           target,
-          title: t('workbench.plugins_local_qr_login_title', {
-            defaultValue: `扫码登录 ${displayName}`,
-            name: displayName,
-          }),
+          title: isLocalBrowserConnector(localConnector)
+            ? t('workbench.plugins_local_browser_login_title', {
+                defaultValue: `授权 ${displayName}`,
+                name: displayName,
+              })
+            : t('workbench.plugins_local_qr_login_title', {
+                defaultValue: `扫码登录 ${displayName}`,
+                name: displayName,
+              }),
         })
         setLocalConnectorAuthBySlug(previous => ({ ...previous, [slug]: 'connected' }))
       } catch (error) {
@@ -2303,7 +2317,7 @@ export function PluginsWorkspace({
           error:
             error instanceof Error
               ? error.message
-              : t('workbench.plugins_local_qr_cancelled', '已取消扫码登录'),
+              : t('workbench.plugins_local_auth_cancelled', '已取消授权'),
         }))
       }
       return
@@ -2723,7 +2737,7 @@ export function PluginsWorkspace({
         : null
 
     const connectors = detailPlugin?.raw.spec.components.connectors ?? []
-    const localConnectors = connectors.filter(connector => isLocalQrConnector(connector))
+    const localConnectors = connectors.filter(connector => isLocalConnector(connector))
     if (activeTab !== 'plugins' || !detailPlugin || localConnectors.length === 0) {
       setLocalConnectorAuthBySlug({})
       return
@@ -2941,7 +2955,7 @@ export function PluginsWorkspace({
             const pending = pendingLocalConnectorAuth
             setPendingLocalConnectorAuth(null)
             pending.reject(
-              new Error(t('workbench.plugins_local_qr_cancelled', '已取消扫码登录，安装已终止'))
+              new Error(t('workbench.plugins_local_auth_cancelled', '已取消授权，安装已终止'))
             )
           }}
         />

@@ -1,5 +1,5 @@
 import {
-  isLocalQrConnector,
+  isLocalConnector,
   localConnectorAuthHealth,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
@@ -8,7 +8,7 @@ import type { InstalledPlugin, PluginLocalAuthDefinition } from '@/types/api'
 
 const PLUGIN_URI_PATTERN = /plugin:\/\/[^\s)\]]+/g
 
-export interface LocalQrConnectorRequirement {
+export interface LocalConnectorRequirement {
   plugin: InstalledPlugin
   pluginKey: string
   connectorSlug: string
@@ -32,16 +32,16 @@ function pluginMatchesName(plugin: InstalledPlugin, pluginName: string): boolean
   return candidates.some(candidate => normalized(candidate) === wanted)
 }
 
-export function listLocalQrConnectors(
+export function listLocalConnectors(
   plugins: InstalledPlugin[],
   options?: { authPolicies?: Array<'on_install' | 'on_use' | 'optional'> }
-): LocalQrConnectorRequirement[] {
+): LocalConnectorRequirement[] {
   const policies = new Set(options?.authPolicies ?? ['on_install', 'on_use', 'optional'])
-  const results: LocalQrConnectorRequirement[] = []
+  const results: LocalConnectorRequirement[] = []
   for (const plugin of plugins) {
     for (const connector of plugin.spec.components.connectors ?? []) {
       if (!policies.has(connector.authPolicy)) continue
-      if (!isLocalQrConnector(connector) || !connector.localAuth) continue
+      if (!isLocalConnector(connector) || !connector.localAuth) continue
       results.push({
         plugin,
         pluginKey: String(plugin.spec.source.pluginKey || plugin.metadata.name),
@@ -54,16 +54,16 @@ export function listLocalQrConnectors(
   return results
 }
 
-export function findLocalQrConnectorsForMessage(
+export function findLocalConnectorsForMessage(
   message: string,
   plugins: InstalledPlugin[]
-): LocalQrConnectorRequirement[] {
+): LocalConnectorRequirement[] {
   const uris = message.match(PLUGIN_URI_PATTERN) ?? []
   if (uris.length === 0) {
     // Also gate plugins with on_use when message doesn't mention them but skills may still load.
-    // Prefer explicit mentions; fall back to all enabled on_install/on_use local_qr plugins only
+    // Prefer explicit mentions; fall back to enabled on_install/on_use local connectors only
     // when the message clearly references their display name.
-    return listLocalQrConnectors(plugins, { authPolicies: ['on_install', 'on_use'] }).filter(
+    return listLocalConnectors(plugins, { authPolicies: ['on_install', 'on_use'] }).filter(
       requirement => {
         const name = requirement.displayName.trim()
         const key = requirement.pluginKey.trim()
@@ -83,7 +83,7 @@ export function findLocalQrConnectorsForMessage(
     if (parsed) mentioned.add(normalized(parsed.pluginName))
   }
 
-  return listLocalQrConnectors(plugins, {
+  return listLocalConnectors(plugins, {
     authPolicies: ['on_install', 'on_use', 'optional'],
   }).filter(
     requirement =>
@@ -98,7 +98,7 @@ export function findLocalQrConnectorsForMessage(
 }
 
 export function toLocalConnectorAuthTarget(
-  requirement: LocalQrConnectorRequirement
+  requirement: LocalConnectorRequirement
 ): LocalConnectorAuthTarget {
   return {
     pluginKey: requirement.pluginKey,
@@ -107,9 +107,9 @@ export function toLocalConnectorAuthTarget(
   }
 }
 
-export async function findFirstLocalQrNeedingLogin(
-  requirements: LocalQrConnectorRequirement[]
-): Promise<LocalQrConnectorRequirement | null> {
+export async function findFirstLocalNeedingLogin(
+  requirements: LocalConnectorRequirement[]
+): Promise<LocalConnectorRequirement | null> {
   for (const requirement of requirements) {
     try {
       const health = await localConnectorAuthHealth(toLocalConnectorAuthTarget(requirement))
@@ -192,24 +192,24 @@ export function resolveLocalConnectorAuthHint(
   }
 }
 
-function pluginHasLocalQrConnector(plugin: InstalledPlugin): boolean {
-  return (plugin.spec.components.connectors ?? []).some(connector => isLocalQrConnector(connector))
+function pluginHasLocalConnector(plugin: InstalledPlugin): boolean {
+  return (plugin.spec.components.connectors ?? []).some(connector => isLocalConnector(connector))
 }
 
 /**
  * `plugin/installed` summaries omit connector localAuth. Enrich from plugin/read
  * so mid-task QR resume can resolve health/start/poll commands.
  */
-export async function enrichInstalledPluginsForLocalQr(
+export async function enrichInstalledPluginsForLocalAuth(
   plugins: InstalledPlugin[],
   readDetail: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
 ): Promise<InstalledPlugin[]> {
   return Promise.all(
     plugins.map(async plugin => {
-      if (pluginHasLocalQrConnector(plugin)) return plugin
+      if (pluginHasLocalConnector(plugin)) return plugin
       try {
         const detailed = await readDetail(plugin)
-        return pluginHasLocalQrConnector(detailed) ? detailed : plugin
+        return pluginHasLocalConnector(detailed) ? detailed : plugin
       } catch {
         return plugin
       }
@@ -217,22 +217,22 @@ export async function enrichInstalledPluginsForLocalQr(
   )
 }
 
-export function filterLocalQrRequirements(
+export function filterLocalRequirements(
   plugins: InstalledPlugin[],
   options?: {
     pluginKey?: string | null
     connectorSlug?: string | null
   }
-): LocalQrConnectorRequirement[] {
+): LocalConnectorRequirement[] {
   const pluginKey = options?.pluginKey?.trim()
   const connectorSlug = options?.connectorSlug?.trim()
   let requirements = pluginKey
-    ? listLocalQrConnectors(plugins).filter(
+    ? listLocalConnectors(plugins).filter(
         item =>
           item.pluginKey.toLowerCase() === pluginKey.toLowerCase() ||
           item.displayName.toLowerCase() === pluginKey.toLowerCase()
       )
-    : listLocalQrConnectors(plugins, { authPolicies: ['on_install', 'on_use'] })
+    : listLocalConnectors(plugins, { authPolicies: ['on_install', 'on_use'] })
   if (connectorSlug) {
     const matched = requirements.filter(
       item => item.connectorSlug.toLowerCase() === connectorSlug.toLowerCase()

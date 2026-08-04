@@ -41,18 +41,41 @@ class PluginMCPComponent(BaseModel):
     server: Dict[str, Any] = Field(default_factory=dict)
 
 
-class PluginLocalAuthDefinition(BaseModel):
-    """Device-side QR/session authentication commands for a plugin connector."""
+class PluginLocalAuthArtifactDefinition(BaseModel):
+    """Immutable platform artifact used by a managed local auth tool."""
 
-    kind: Literal["local_qr"] = "local_qr"
+    url: str
+    sha256: str
+    archive: Literal["tar_gz", "zip"]
+    binaryPath: str
+
+
+class PluginLocalAuthToolDefinition(BaseModel):
+    """Bundled or host-managed CLI used by local connector authentication."""
+
+    id: str
+    source: Literal["bundled", "managed"]
+    version: Optional[str] = None
+    artifacts: Dict[str, PluginLocalAuthArtifactDefinition] = Field(
+        default_factory=dict
+    )
+
+
+class PluginLocalAuthDefinition(BaseModel):
+    """Device-side authentication commands for a plugin connector."""
+
+    kind: Literal["local_qr", "browser_oauth"] = "local_qr"
     health: List[str] = Field(default_factory=list)
     start: List[str] = Field(default_factory=list)
     poll: List[str] = Field(default_factory=list)
     logout: List[str] = Field(default_factory=list)
+    tool: Optional[PluginLocalAuthToolDefinition] = None
     qrField: str = "qr_path"
     statusField: str = "status"
     okValues: List[str] = Field(default_factory=lambda: ["ok"])
     pollIntervalSeconds: int = 2
+    timeoutSeconds: int = 45
+    logoutOnUninstall: bool = True
 
 
 class PluginConnectorComponent(BaseModel):

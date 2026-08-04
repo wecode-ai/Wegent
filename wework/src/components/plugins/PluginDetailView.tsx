@@ -789,7 +789,7 @@ export function PluginDetailView({
                       ? connectorAuthBySlug?.[item.name] === 'connected'
                         ? t('workbench.plugin_disconnect_connection', '退出登录')
                         : connectorAuthBySlug?.[item.name] === 'disconnected'
-                          ? t('workbench.plugin_connect_login', '扫码登录')
+                          ? t('workbench.plugin_connect_login', '登录')
                           : t('workbench.plugin_manage_connection', '管理连接')
                       : t('workbench.plugin_connect_after_install', '安装后可连接')}
                   </button>

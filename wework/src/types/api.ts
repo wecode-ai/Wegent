@@ -1875,15 +1875,32 @@ export interface InstalledPluginComponents {
 }
 
 export interface PluginLocalAuthDefinition {
-  kind?: 'local_qr'
+  kind?: 'local_qr' | 'browser_oauth'
   health: string[]
   start: string[]
   poll: string[]
   logout?: string[]
+  tool?: PluginLocalAuthToolDefinition | null
   qrField?: string
   statusField?: string
   okValues?: string[]
   pollIntervalSeconds?: number
+  timeoutSeconds?: number
+  logoutOnUninstall?: boolean
+}
+
+export interface PluginLocalAuthArtifactDefinition {
+  url: string
+  sha256: string
+  archive: 'tar_gz' | 'zip'
+  binaryPath: string
+}
+
+export interface PluginLocalAuthToolDefinition {
+  id: string
+  source: 'bundled' | 'managed'
+  version?: string | null
+  artifacts?: Record<string, PluginLocalAuthArtifactDefinition>
 }
 
 export interface InstalledPluginSource {

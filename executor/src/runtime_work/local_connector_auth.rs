@@ -1,25 +1,32 @@
-//! Device-side local QR connector authentication.
+//! Device-side local connector authentication.
 //!
-//! Executes plugin-declared relative CLI commands for health/start/poll/logout
-//! without sending credentials to the cloud or LLM.
+//! Executes plugin-declared relative CLI commands and manages immutable CLI
+//! artifacts without sending credentials to the cloud or LLM.
 
 use std::{
+    collections::HashMap,
     env, fs,
     path::{Component, Path, PathBuf},
     process::Stdio,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
-use tokio::process::Command;
+use tokio::{process::Command, sync::Mutex, task::JoinHandle};
+use uuid::Uuid;
 
 use crate::local::app_ipc::AppIpcError;
 
 use super::util::string_field;
+use tools::{parse_tool_spec, resolve_auth_tool, LocalAuthToolSpec};
+
+mod tools;
 
 #[derive(Debug, Clone)]
 struct LocalAuthSpec {
+    kind: String,
     health: Vec<String>,
     start: Vec<String>,
     poll: Vec<String>,
@@ -27,27 +34,68 @@ struct LocalAuthSpec {
     qr_field: String,
     status_field: String,
     ok_values: Vec<String>,
+    timeout_seconds: u64,
+    tool: Option<LocalAuthToolSpec>,
 }
+
+struct BrowserAuthSession {
+    plugin_key: String,
+    connector_slug: String,
+    state: Arc<Mutex<Value>>,
+    task: JoinHandle<()>,
+}
+
+static BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, BrowserAuthSession>>> =
+    OnceLock::new();
+
+const DEFAULT_COMMAND_TIMEOUT_SECONDS: u64 = 45;
 
 pub async fn health(payload: Value) -> Result<Value, AppIpcError> {
     let (plugin_root, spec) = resolve_request(&payload)?;
-    let result = run_plugin_command(&plugin_root, &spec.health).await?;
+    let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+    let result = run_plugin_command(
+        &plugin_root,
+        &spec.health,
+        tool.as_deref(),
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    )
+    .await?;
     Ok(normalize_status_response(&result, &spec, None))
 }
 
 pub async fn start(payload: Value) -> Result<Value, AppIpcError> {
     let (plugin_root, spec) = resolve_request(&payload)?;
-    let result = run_plugin_command(&plugin_root, &spec.start).await?;
+    if spec.kind == "browser_oauth" {
+        return start_browser_auth(payload, plugin_root, spec).await;
+    }
+    let tool = resolve_auth_tool(spec.tool.as_ref(), true).await?;
+    let result = run_plugin_command(
+        &plugin_root,
+        &spec.start,
+        tool.as_deref(),
+        spec.timeout_seconds,
+    )
+    .await?;
     let qr_image = read_qr_image(&result, &spec.qr_field)?;
     Ok(normalize_status_response(&result, &spec, qr_image))
 }
 
 pub async fn poll(payload: Value) -> Result<Value, AppIpcError> {
     let (plugin_root, spec) = resolve_request(&payload)?;
+    if spec.kind == "browser_oauth" {
+        return poll_browser_auth(&payload).await;
+    }
     // Force non-blocking poll regardless of manifest args.
     let mut command = spec.poll.clone();
     ensure_wait_seconds_zero(&mut command);
-    let result = run_plugin_command(&plugin_root, &command).await?;
+    let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+    let result = run_plugin_command(
+        &plugin_root,
+        &command,
+        tool.as_deref(),
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    )
+    .await?;
     let qr_image = read_qr_image(&result, &spec.qr_field).ok().flatten();
     Ok(normalize_status_response(&result, &spec, qr_image))
 }
@@ -57,8 +105,36 @@ pub async fn logout(payload: Value) -> Result<Value, AppIpcError> {
     if spec.logout.is_empty() {
         return Ok(json!({ "status": "ok", "deleted": false }));
     }
-    let result = run_plugin_command(&plugin_root, &spec.logout).await?;
+    let tool = resolve_auth_tool(spec.tool.as_ref(), false).await?;
+    let result = run_plugin_command(
+        &plugin_root,
+        &spec.logout,
+        tool.as_deref(),
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    )
+    .await?;
     Ok(normalize_status_response(&result, &spec, None))
+}
+
+pub async fn cancel(payload: Value) -> Result<Value, AppIpcError> {
+    let session_id = request_session_id(&payload)?;
+    let mut sessions = browser_auth_sessions().lock().await;
+    let session = sessions.get(&session_id).ok_or_else(|| {
+        AppIpcError::new(
+            "local_auth_session_missing",
+            "Authorization session was not found",
+        )
+    })?;
+    validate_session_identity(&payload, session)?;
+    let session = sessions
+        .remove(&session_id)
+        .expect("validated authorization session must still exist");
+    session.task.abort();
+    Ok(json!({
+        "status": "cancelled",
+        "sessionId": session_id,
+        "hint": "Authorization was cancelled",
+    }))
 }
 
 fn resolve_request(payload: &Value) -> Result<(PathBuf, LocalAuthSpec), AppIpcError> {
@@ -200,11 +276,29 @@ fn load_local_auth_spec(
     let local_auth = connector
         .get("localAuth")
         .ok_or_else(|| AppIpcError::new("local_auth_missing", "localAuth is required"))?;
+    let kind = local_auth
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("local_qr")
+        .to_owned();
+    if kind != "local_qr" && kind != "browser_oauth" {
+        return Err(AppIpcError::new(
+            "local_auth_invalid",
+            format!("Unsupported localAuth kind: {kind}"),
+        ));
+    }
+    let poll = if kind == "local_qr" {
+        command_list(local_auth.get("poll"))?
+    } else {
+        optional_command_list(local_auth.get("poll"))?
+    };
+    let default_timeout = if kind == "browser_oauth" { 300 } else { 45 };
     Ok(LocalAuthSpec {
+        kind,
         health: command_list(local_auth.get("health"))?,
         start: command_list(local_auth.get("start"))?,
-        poll: command_list(local_auth.get("poll"))?,
-        logout: command_list(local_auth.get("logout")).unwrap_or_default(),
+        poll,
+        logout: optional_command_list(local_auth.get("logout"))?,
         qr_field: local_auth
             .get("qrField")
             .and_then(Value::as_str)
@@ -227,6 +321,12 @@ fn load_local_auth_spec(
             })
             .filter(|items| !items.is_empty())
             .unwrap_or_else(|| vec!["ok".to_owned()]),
+        timeout_seconds: local_auth
+            .get("timeoutSeconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(default_timeout)
+            .clamp(15, 600),
+        tool: parse_tool_spec(local_auth.get("tool"))?,
     })
 }
 
@@ -254,9 +354,24 @@ fn command_list(value: Option<&Value>) -> Result<Vec<String>, AppIpcError> {
     Ok(commands)
 }
 
-fn validate_relative_arg(arg: &str) -> Result<(), AppIpcError> {
+fn optional_command_list(value: Option<&Value>) -> Result<Vec<String>, AppIpcError> {
+    match value {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) if items.is_empty() => Ok(Vec::new()),
+        _ => command_list(value),
+    }
+}
+
+pub(super) fn validate_relative_arg(arg: &str) -> Result<(), AppIpcError> {
     let path = Path::new(arg);
-    if path.is_absolute() {
+    if path.is_absolute()
+        || arg.starts_with('~')
+        || arg.contains('\\')
+        || (arg.len() >= 3
+            && arg.as_bytes()[0].is_ascii_alphabetic()
+            && arg.as_bytes()[1] == b':'
+            && matches!(arg.as_bytes()[2], b'/' | b'\\'))
+    {
         return Err(AppIpcError::new(
             "local_auth_invalid",
             "Absolute paths are not allowed in localAuth commands",
@@ -284,7 +399,187 @@ fn ensure_wait_seconds_zero(command: &mut Vec<String>) {
     command.push("0".to_owned());
 }
 
-async fn run_plugin_command(plugin_root: &Path, args: &[String]) -> Result<Value, AppIpcError> {
+fn browser_auth_sessions() -> &'static Mutex<HashMap<String, BrowserAuthSession>> {
+    BROWSER_AUTH_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn start_browser_auth(
+    payload: Value,
+    plugin_root: PathBuf,
+    spec: LocalAuthSpec,
+) -> Result<Value, AppIpcError> {
+    let plugin_key = string_field(&payload, "pluginKey")
+        .or_else(|| string_field(&payload, "plugin_key"))
+        .ok_or_else(|| AppIpcError::new("bad_request", "pluginKey is required"))?;
+    let connector_slug = string_field(&payload, "connectorSlug")
+        .or_else(|| string_field(&payload, "connector_slug"))
+        .or_else(|| string_field(&payload, "slug"))
+        .ok_or_else(|| AppIpcError::new("bad_request", "connectorSlug is required"))?;
+    let session_id = Uuid::new_v4().to_string();
+    let state = Arc::new(Mutex::new(browser_session_state(
+        "preparing",
+        "Preparing the local authorization tool",
+        &session_id,
+    )));
+    let task_state = Arc::clone(&state);
+    let task_session_id = session_id.clone();
+    let task = tokio::spawn(async move {
+        let tool = match resolve_auth_tool(spec.tool.as_ref(), true).await {
+            Ok(tool) => tool,
+            Err(error) => {
+                *task_state.lock().await = browser_session_state(
+                    "error",
+                    &redact_secrets(&error.message),
+                    &task_session_id,
+                );
+                return;
+            }
+        };
+        *task_state.lock().await = browser_session_state(
+            "waiting_browser",
+            "Complete authorization in the browser",
+            &task_session_id,
+        );
+        let started = run_plugin_command(
+            &plugin_root,
+            &spec.start,
+            tool.as_deref(),
+            spec.timeout_seconds,
+        )
+        .await;
+        let started = match started {
+            Ok(result) => normalize_status_response(&result, &spec, None),
+            Err(error) => {
+                *task_state.lock().await = browser_session_state(
+                    "error",
+                    &redact_secrets(&error.message),
+                    &task_session_id,
+                );
+                return;
+            }
+        };
+        if started.get("status").and_then(Value::as_str) != Some("ok") {
+            let hint = started
+                .get("hint")
+                .and_then(Value::as_str)
+                .unwrap_or("Browser authorization did not complete");
+            *task_state.lock().await = browser_session_state("error", hint, &task_session_id);
+            return;
+        }
+        *task_state.lock().await = browser_session_state(
+            "verifying",
+            "Verifying the local authorization",
+            &task_session_id,
+        );
+        let verified = run_plugin_command(
+            &plugin_root,
+            &spec.health,
+            tool.as_deref(),
+            DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        )
+        .await;
+        let mut final_state = match verified {
+            Ok(result) => normalize_status_response(&result, &spec, None),
+            Err(error) => {
+                browser_session_state("error", &redact_secrets(&error.message), &task_session_id)
+            }
+        };
+        final_state["sessionId"] = Value::String(task_session_id);
+        *task_state.lock().await = final_state;
+    });
+
+    let mut sessions = browser_auth_sessions().lock().await;
+    let stale_ids = sessions
+        .iter()
+        .filter(|(_, session)| {
+            session.plugin_key == plugin_key && session.connector_slug == connector_slug
+        })
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    for stale_id in stale_ids {
+        if let Some(stale) = sessions.remove(&stale_id) {
+            stale.task.abort();
+        }
+    }
+    sessions.insert(
+        session_id.clone(),
+        BrowserAuthSession {
+            plugin_key,
+            connector_slug,
+            state,
+            task,
+        },
+    );
+    Ok(browser_session_state(
+        "preparing",
+        "Preparing the local authorization tool",
+        &session_id,
+    ))
+}
+
+async fn poll_browser_auth(payload: &Value) -> Result<Value, AppIpcError> {
+    let session_id = request_session_id(payload)?;
+    let sessions = browser_auth_sessions().lock().await;
+    let session = sessions.get(&session_id).ok_or_else(|| {
+        AppIpcError::new(
+            "local_auth_session_missing",
+            "Authorization session was not found",
+        )
+    })?;
+    validate_session_identity(payload, session)?;
+    let state = Arc::clone(&session.state);
+    drop(sessions);
+    let response = state.lock().await.clone();
+    if matches!(
+        response.get("status").and_then(Value::as_str),
+        Some("ok" | "error" | "expired" | "cancelled")
+    ) {
+        browser_auth_sessions().lock().await.remove(&session_id);
+    }
+    Ok(response)
+}
+
+fn request_session_id(payload: &Value) -> Result<String, AppIpcError> {
+    string_field(payload, "sessionId")
+        .or_else(|| string_field(payload, "session_id"))
+        .ok_or_else(|| AppIpcError::new("bad_request", "sessionId is required"))
+}
+
+fn validate_session_identity(
+    payload: &Value,
+    session: &BrowserAuthSession,
+) -> Result<(), AppIpcError> {
+    let plugin_key = string_field(payload, "pluginKey")
+        .or_else(|| string_field(payload, "plugin_key"))
+        .unwrap_or_default();
+    let connector_slug = string_field(payload, "connectorSlug")
+        .or_else(|| string_field(payload, "connector_slug"))
+        .or_else(|| string_field(payload, "slug"))
+        .unwrap_or_default();
+    if plugin_key != session.plugin_key || connector_slug != session.connector_slug {
+        return Err(AppIpcError::new(
+            "local_auth_session_mismatch",
+            "Authorization session does not belong to this connector",
+        ));
+    }
+    Ok(())
+}
+
+fn browser_session_state(status: &str, hint: &str, session_id: &str) -> Value {
+    json!({
+        "status": status,
+        "rawStatus": status,
+        "hint": hint,
+        "sessionId": session_id,
+    })
+}
+
+async fn run_plugin_command(
+    plugin_root: &Path,
+    args: &[String],
+    tool: Option<&Path>,
+    timeout_seconds: u64,
+) -> Result<Value, AppIpcError> {
     if args.is_empty() {
         return Err(AppIpcError::new(
             "local_auth_invalid",
@@ -321,7 +616,10 @@ async fn run_plugin_command(plugin_root: &Path, args: &[String]) -> Result<Value
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(45), command.output())
+    if let Some(tool) = tool {
+        command.env("WEGENT_LOCAL_AUTH_TOOL", tool);
+    }
+    let output = tokio::time::timeout(Duration::from_secs(timeout_seconds), command.output())
         .await
         .map_err(|_| AppIpcError::new("local_auth_timeout", "localAuth command timed out"))?
         .map_err(|error| AppIpcError::new("local_auth_failed", error.to_string()))?;
@@ -356,6 +654,17 @@ async fn run_plugin_command(plugin_root: &Path, args: &[String]) -> Result<Value
 fn resolve_program(plugin_root: &Path, arg: &str) -> Result<PathBuf, AppIpcError> {
     validate_relative_arg(arg)?;
     let candidate = plugin_root.join(arg);
+    if cfg!(windows)
+        && candidate
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("sh")
+    {
+        let powershell = candidate.with_extension("ps1");
+        if powershell.is_file() {
+            return Ok(powershell);
+        }
+    }
     if candidate.exists() {
         return Ok(candidate);
     }
@@ -416,9 +725,8 @@ fn normalize_status_response(
         "ok".to_owned()
     } else {
         match status.as_str() {
-            "need_login" | "need_scan" | "waiting_scan" | "scanned" | "expired" | "ok" => {
-                status.clone()
-            }
+            "preparing" | "waiting_browser" | "verifying" | "need_login" | "need_scan"
+            | "waiting_scan" | "scanned" | "expired" | "cancelled" | "ok" => status.clone(),
             _ => "error".to_owned(),
         }
     };
@@ -445,6 +753,7 @@ fn redact_secrets(value: &str) -> String {
     let mut text = value.to_owned();
     for pattern in [
         r"(?i)(cookie\s*[:=]\s*)([^\s;]+)",
+        r"(?i)((?:access[_-]?token|refresh[_-]?token|private[_-]?token|authorization)\s*[:=]\s*)([^\s;,]+)",
         r"(?i)((?:qrc_key|qrc_sign|sid|lt)=)([^&\s]+)",
         r"(opentwiki_ow__session=)[^;\s]+",
         r"(JSESSIONID=)[^;\s]+",
@@ -493,6 +802,7 @@ mod tests {
     #[test]
     fn normalize_ok_status() {
         let spec = LocalAuthSpec {
+            kind: "local_qr".to_owned(),
             health: vec![],
             start: vec![],
             poll: vec![],
@@ -500,6 +810,8 @@ mod tests {
             qr_field: "qr_path".to_owned(),
             status_field: "status".to_owned(),
             ok_values: vec!["ok".to_owned()],
+            timeout_seconds: 45,
+            tool: None,
         };
         let result =
             normalize_status_response(&json!({"status": "ok", "hint": "ready"}), &spec, None);

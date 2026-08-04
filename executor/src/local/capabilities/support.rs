@@ -23,7 +23,7 @@ const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
 const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
 const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
 const UNIX_MODE_SYMLINK: u32 = 0o120_000;
-const CODEX_MANIFEST_FIELDS: [&str; 10] = [
+const CODEX_MANIFEST_FIELDS: [&str; 11] = [
     "name",
     "version",
     "description",
@@ -34,9 +34,10 @@ const CODEX_MANIFEST_FIELDS: [&str; 10] = [
     "keywords",
     "skills",
     "mcpServers",
+    "connectors",
 ];
 // Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
-const CLAUDE_MANIFEST_FIELDS: [&str; 21] = [
+const CLAUDE_MANIFEST_FIELDS: [&str; 22] = [
     "name",
     "version",
     "description",
@@ -58,6 +59,7 @@ const CLAUDE_MANIFEST_FIELDS: [&str; 21] = [
     "channels",
     "themes",
     "monitors",
+    "connectors",
 ];
 
 pub(super) fn extract_plugin_zip(
@@ -857,4 +859,36 @@ pub(super) fn now_rfc3339_like() -> String {
         .unwrap_or_default()
         .as_millis();
     format!("{millis}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dual_manifest_conversion_preserves_connector_auth_contracts() {
+        let connectors = json!([{
+            "slug": "gitlab-intra",
+            "authPolicy": "on_install",
+            "localAuth": {
+                "kind": "browser_oauth",
+                "health": ["scripts/local-auth.sh", "health"],
+                "start": ["scripts/local-auth.sh", "login"]
+            }
+        }]);
+        let manifest = json!({
+            "name": "gitlab-intra",
+            "version": "1.0.0",
+            "connectors": connectors,
+        });
+
+        assert_eq!(
+            convert_plugin_manifest(&manifest, false)["connectors"],
+            manifest["connectors"]
+        );
+        assert_eq!(
+            convert_plugin_manifest(&manifest, true)["connectors"],
+            manifest["connectors"]
+        );
+    }
 }

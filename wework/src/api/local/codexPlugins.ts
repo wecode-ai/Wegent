@@ -203,15 +203,31 @@ interface CodexPluginDetail {
     slug: string
     authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
     localAuth?: {
-      kind?: 'local_qr'
+      kind?: 'local_qr' | 'browser_oauth'
       health?: string[]
       start?: string[]
       poll?: string[]
       logout?: string[]
+      tool?: {
+        id: string
+        source: 'bundled' | 'managed'
+        version?: string | null
+        artifacts?: Record<
+          string,
+          {
+            url: string
+            sha256: string
+            archive: 'tar_gz' | 'zip'
+            binaryPath: string
+          }
+        >
+      } | null
       qrField?: string
       statusField?: string
       okValues?: string[]
       pollIntervalSeconds?: number
+      timeoutSeconds?: number
+      logoutOnUninstall?: boolean
     } | null
     description?: string | null
   }>
@@ -465,12 +481,14 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
           ? connector.authPolicy
           : 'optional',
       localAuth:
-        localAuth?.health && localAuth.start && localAuth.poll
+        localAuth?.health &&
+        localAuth.start &&
+        (localAuth.kind === 'browser_oauth' || localAuth.poll)
           ? {
               ...localAuth,
               health: localAuth.health,
               start: localAuth.start,
-              poll: localAuth.poll,
+              poll: localAuth.poll ?? [],
             }
           : null,
     }
@@ -1116,7 +1134,14 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         )
       })
       if (!installed) throw new Error('Codex plugin installed but not returned by app-server')
-      return installed
+      const detail = await readPluginDetail(marketplace, item.name)
+      return {
+        ...installed,
+        spec: {
+          ...installed.spec,
+          components: pluginComponents(detail),
+        },
+      }
     },
     async updateInstalledPlugin(id, data) {
       const currentState = cachedState ?? (await readState())

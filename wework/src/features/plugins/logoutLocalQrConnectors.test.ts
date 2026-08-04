@@ -4,12 +4,12 @@ import type { InstalledPlugin } from '@/types/api'
 const logoutMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/local/localConnectorAuth', () => ({
-  isLocalQrConnector: (connector: { localAuth?: { kind?: string; start?: string[] } | null }) =>
-    Boolean(connector?.localAuth?.kind === 'local_qr' || connector?.localAuth?.start?.length),
+  isLocalConnector: (connector: { localAuth?: { kind?: string; start?: string[] } | null }) =>
+    Boolean(connector?.localAuth?.kind || connector?.localAuth?.start?.length),
   localConnectorAuthLogout: logoutMock,
 }))
 
-import { logoutLocalQrConnectorsForPlugin } from './logoutLocalQrConnectors'
+import { logoutLocalConnectorsForPlugin } from './logoutLocalQrConnectors'
 
 function pluginWithConnectors(connectors: InstalledPlugin['spec']['components']['connectors']) {
   return {
@@ -45,14 +45,14 @@ function pluginWithConnectors(connectors: InstalledPlugin['spec']['components'][
   } satisfies InstalledPlugin
 }
 
-describe('logoutLocalQrConnectorsForPlugin', () => {
+describe('logoutLocalConnectorsForPlugin', () => {
   beforeEach(() => {
     logoutMock.mockReset()
     logoutMock.mockResolvedValue({ status: 'ok' })
   })
 
   test('logs out each local_qr connector', async () => {
-    await logoutLocalQrConnectorsForPlugin(
+    await logoutLocalConnectorsForPlugin(
       pluginWithConnectors([
         {
           slug: 'weibo-wiki',
@@ -76,7 +76,7 @@ describe('logoutLocalQrConnectorsForPlugin', () => {
   })
 
   test('ignores connectors without local QR auth', async () => {
-    await logoutLocalQrConnectorsForPlugin(
+    await logoutLocalConnectorsForPlugin(
       pluginWithConnectors([{ slug: 'github', authPolicy: 'on_install' }])
     )
     expect(logoutMock).not.toHaveBeenCalled()
@@ -85,7 +85,7 @@ describe('logoutLocalQrConnectorsForPlugin', () => {
   test('continues when logout fails', async () => {
     logoutMock.mockRejectedValueOnce(new Error('logout failed'))
     await expect(
-      logoutLocalQrConnectorsForPlugin(
+      logoutLocalConnectorsForPlugin(
         pluginWithConnectors([
           {
             slug: 'weibo-wiki',
@@ -98,5 +98,24 @@ describe('logoutLocalQrConnectorsForPlugin', () => {
         ])
       )
     ).resolves.toBeUndefined()
+  })
+
+  test('preserves browser oauth credentials by default during uninstall', async () => {
+    await logoutLocalConnectorsForPlugin(
+      pluginWithConnectors([
+        {
+          slug: 'gitlab-intra',
+          authPolicy: 'on_install',
+          localAuth: {
+            kind: 'browser_oauth',
+            health: ['scripts/local-auth.sh', 'health'],
+            start: ['scripts/local-auth.sh', 'login'],
+            poll: [],
+            logout: ['scripts/local-auth.sh', 'logout'],
+          },
+        },
+      ])
+    )
+    expect(logoutMock).not.toHaveBeenCalled()
   })
 })

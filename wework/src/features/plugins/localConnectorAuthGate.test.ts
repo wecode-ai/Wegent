@@ -1,10 +1,10 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
-  enrichInstalledPluginsForLocalQr,
+  enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
-  filterLocalQrRequirements,
-  findLocalQrConnectorsForMessage,
-  listLocalQrConnectors,
+  filterLocalRequirements,
+  findLocalConnectorsForMessage,
+  listLocalConnectors,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
@@ -62,13 +62,13 @@ function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugi
 
 describe('localConnectorAuthGate', () => {
   test('lists local qr connectors', () => {
-    const items = listLocalQrConnectors([pluginWithLocalQr()])
+    const items = listLocalConnectors([pluginWithLocalQr()])
     expect(items).toHaveLength(1)
     expect(items[0]?.connectorSlug).toBe('weibo-wiki')
   })
 
   test('finds connectors from plugin mention', () => {
-    const items = findLocalQrConnectorsForMessage(
+    const items = findLocalConnectorsForMessage(
       '[$微博开放平台内部WIKI](plugin://weibo-api-wiki@wegent) 查 users/show',
       [pluginWithLocalQr()]
     )
@@ -113,7 +113,7 @@ describe('localConnectorAuthGate', () => {
       connectorSlug: 'weibo-wiki',
     })
     expect(extractConnectorAuthConnectorSlug(text)).toBe('weibo-wiki')
-    const items = filterLocalQrRequirements([pluginWithLocalQr()], {
+    const items = filterLocalRequirements([pluginWithLocalQr()], {
       pluginKey: 'weibo-api-wiki',
       connectorSlug: 'weibo-wiki',
     })
@@ -140,8 +140,19 @@ describe('localConnectorAuthGate', () => {
       },
     })
     const readDetail = vi.fn(async () => pluginWithLocalQr())
-    const enriched = await enrichInstalledPluginsForLocalQr([bare], readDetail)
+    const enriched = await enrichInstalledPluginsForLocalAuth([bare], readDetail)
     expect(readDetail).toHaveBeenCalledTimes(1)
-    expect(listLocalQrConnectors(enriched)).toHaveLength(1)
+    expect(listLocalConnectors(enriched)).toHaveLength(1)
+  })
+
+  test('lists browser oauth connectors', () => {
+    const plugin = pluginWithLocalQr()
+    plugin.spec.components.connectors![0]!.localAuth = {
+      kind: 'browser_oauth',
+      health: ['scripts/local-auth.sh', 'health'],
+      start: ['scripts/local-auth.sh', 'login'],
+      poll: [],
+    }
+    expect(listLocalConnectors([plugin])).toHaveLength(1)
   })
 })

@@ -5,16 +5,16 @@ import {
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 import {
-  enrichInstalledPluginsForLocalQr,
+  enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
   extractConnectorAuthPluginKey,
-  filterLocalQrRequirements,
-  findFirstLocalQrNeedingLogin,
-  findLocalQrConnectorsForMessage,
+  filterLocalRequirements,
+  findFirstLocalNeedingLogin,
+  findLocalConnectorsForMessage,
   messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
   toLocalConnectorAuthTarget,
-  type LocalQrConnectorRequirement,
+  type LocalConnectorRequirement,
 } from '@/features/plugins/localConnectorAuthGate'
 import type { InstalledPlugin } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -27,8 +27,10 @@ export interface PendingConnectorAuth {
   retryMessage?: WorkbenchMessage
 }
 
-function requirementTitle(requirement: LocalQrConnectorRequirement): string {
-  return `扫码登录 ${requirement.displayName}`
+function requirementTitle(requirement: LocalConnectorRequirement): string {
+  return requirement.localAuth.kind === 'browser_oauth'
+    ? `授权 ${requirement.displayName}`
+    : `扫码登录 ${requirement.displayName}`
 }
 
 function hintTitle(displayName: string): string {
@@ -46,7 +48,7 @@ async function loadInstalledPlugins(): Promise<InstalledPlugin[]> {
   const api = createLocalCodexPluginApi()
   const response = await api.listInstalledPlugins()
   const items = response.items ?? []
-  return enrichInstalledPluginsForLocalQr(items, plugin =>
+  return enrichInstalledPluginsForLocalAuth(items, plugin =>
     api.readInstalledPluginForTrial(installedPluginLookupId(plugin))
   )
 }
@@ -114,7 +116,7 @@ export function useLocalConnectorAuthGate(options: {
       if (pendingRef.current) return 'blocked'
       try {
         const plugins = pluginsRef.current ?? (await refreshPlugins())
-        const requirements = findLocalQrConnectorsForMessage(input, plugins)
+        const requirements = findLocalConnectorsForMessage(input, plugins)
         if (requirements.length === 0) {
           const hint = resolveLocalConnectorAuthHint(input)
           if (!hint) return 'send'
@@ -131,7 +133,7 @@ export function useLocalConnectorAuthGate(options: {
           })
           return 'blocked'
         }
-        const needing = await findFirstLocalQrNeedingLogin(requirements)
+        const needing = await findFirstLocalNeedingLogin(requirements)
         if (!needing) return 'send'
         setPending({
           target: toLocalConnectorAuthTarget(needing),
@@ -162,12 +164,11 @@ export function useLocalConnectorAuthGate(options: {
       try {
         const text = messageText(latest)
         const plugins = pluginsRef.current ?? (await refreshPlugins())
-        const requirements = filterLocalQrRequirements(plugins, {
+        const requirements = filterLocalRequirements(plugins, {
           pluginKey: extractConnectorAuthPluginKey(text),
           connectorSlug: extractConnectorAuthConnectorSlug(text),
         })
-        const needing =
-          (await findFirstLocalQrNeedingLogin(requirements)) ?? requirements[0] ?? null
+        const needing = (await findFirstLocalNeedingLogin(requirements)) ?? requirements[0] ?? null
         if (needing) {
           handledResumeKeysRef.current.add(key)
           setPending({

@@ -457,6 +457,9 @@ impl RuntimeWorkRpcHandler {
                 super::local_connector_auth::start(payload).await
             }
             "runtime.local_connector_auth.poll" => super::local_connector_auth::poll(payload).await,
+            "runtime.local_connector_auth.cancel" => {
+                super::local_connector_auth::cancel(payload).await
+            }
             "runtime.local_connector_auth.logout" => {
                 super::local_connector_auth::logout(payload).await
             }

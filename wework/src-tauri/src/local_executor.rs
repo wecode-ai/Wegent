@@ -35,6 +35,7 @@ const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
+const DWS_BINARY_PATH_ENV: &str = "DWS_BINARY_PATH";
 const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
 const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME: &str = "bundled-plugins";
@@ -1421,7 +1422,18 @@ fn local_executor_sidecar_env(
             ));
         }
     }
+    if std::env::var_os(DWS_BINARY_PATH_ENV).is_none() {
+        if let Some(path) = bundled_dws_path() {
+            envs.push((DWS_BINARY_PATH_ENV.to_string(), path.display().to_string()));
+        }
+    }
     envs
+}
+
+fn bundled_dws_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let sibling = executable.with_file_name(if cfg!(windows) { "dws.exe" } else { "dws" });
+    sibling.is_file().then_some(sibling)
 }
 
 fn append_bundled_codex_envs_for_root(envs: &mut Vec<(String, String)>, root: &Path) {

@@ -5,7 +5,7 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
-import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type {
@@ -258,7 +258,7 @@ export function PluginManagementWorkspace({
       })
       return
     }
-    void logoutLocalQrConnectorsForPlugin(plugin.raw)
+    void logoutLocalConnectorsForPlugin(plugin.raw)
       .catch(() => undefined)
       .then(() =>
         isCloudManagedInstalledPlugin(plugin.raw)

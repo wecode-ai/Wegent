@@ -1,13 +1,15 @@
-import { isLocalQrConnector, localConnectorAuthLogout } from '@/api/local/localConnectorAuth'
+import { isLocalConnector, localConnectorAuthLogout } from '@/api/local/localConnectorAuth'
 import type { InstalledPlugin } from '@/types/api'
 
 /**
- * Best-effort logout for every local_qr connector on an installed plugin.
+ * Best-effort logout for connectors that explicitly request uninstall cleanup.
  * Failures are swallowed so uninstall can continue.
  */
-export async function logoutLocalQrConnectorsForPlugin(plugin: InstalledPlugin): Promise<void> {
-  const connectors = (plugin.spec.components.connectors ?? []).filter(connector =>
-    isLocalQrConnector(connector)
+export async function logoutLocalConnectorsForPlugin(plugin: InstalledPlugin): Promise<void> {
+  const connectors = (plugin.spec.components.connectors ?? []).filter(
+    connector =>
+      isLocalConnector(connector) &&
+      (connector.localAuth?.logoutOnUninstall ?? connector.localAuth?.kind === 'local_qr')
   )
   if (connectors.length === 0) return
 
