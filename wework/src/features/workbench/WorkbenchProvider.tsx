@@ -250,18 +250,9 @@ export function WorkbenchProvider({
     ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
     if (!trackingApis.length) return
     for (const [key, lifecycle] of lifecycleSnapshot.tasks) {
-      const taskStatus = lifecycle.task?.status?.toLowerCase() ?? ''
-      const executionStatus = lifecycle.derived.isRunning
-        ? 'running'
-        : taskStatus === 'failed'
-          ? 'failed'
-          : taskStatus === 'cancelled' || taskStatus === 'canceled'
-            ? 'cancelled'
-            : lifecycle.execution.known && taskStatus === 'done'
-              ? 'succeeded'
-              : null
+      const executionStatus = lifecycle.derived.isRunning ? 'running' : lifecycle.turn.outcome
       if (!executionStatus) continue
-      const signature = `${executionStatus}:${taskStatus}`
+      const signature = executionStatus
       if (trackingStatusSignaturesRef.current.get(key) === signature) continue
       trackingStatusSignaturesRef.current.set(key, signature)
       void Promise.allSettled(
@@ -1284,9 +1275,9 @@ export function WorkbenchProvider({
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address, turnId)
           },
-          onAssistantSettled: (address, turnId) => {
+          onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address, turnId)
+            lifecycleStore.turnSettled(address, turnId, outcome)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,

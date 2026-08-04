@@ -2774,14 +2774,14 @@ async function verifyRunningFollowUpFork({
     text: RUNNING_FORK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedRuntimeIndex = JSON.parse(
+  const settledRuntimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
   const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   assert.equal(
-    completedRuntimeIndex.tasks[sourceTaskId]?.turn_status,
-    'completed',
-    'The source follow-up was interrupted instead of completing after the fork'
+    Object.hasOwn(settledRuntimeIndex.tasks[sourceTaskId] ?? {}, 'turn_status'),
+    false,
+    'The completed source follow-up leaked process-local turn status into the runtime index'
   )
 }
 
