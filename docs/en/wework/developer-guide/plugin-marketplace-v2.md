@@ -96,7 +96,7 @@ Inject CI credentials only through protected secrets. The publisher needs MySQL 
 
 Rollback never mutates an old Release. Fix the source, increment SemVer, and publish a new package. An emergency unlist may change catalog status or the `latest_release_id` pointer while retaining the old package and audit history; restore only to a scanned `ready` Release. S3 upload failure rolls back database state, while database commit failure triggers best-effort deletion of the newly created object.
 
-Migration `d9e0f1a2b3c4` adds `plugins.allow_copy` and `plugin_submissions.purpose`. Deployment must verify upgrade, one-revision downgrade, and re-upgrade, and release Backend before a Wework client that exposes sharing.
+Migration `d4e5f6a7b8c9` creates the plugin marketplace control-plane tables in one revision, including `plugins.allow_copy` and `plugin_submissions.purpose`. Deployment must verify upgrade, one-revision downgrade, and re-upgrade, and release Backend before a Wework client that exposes sharing.
 
 ## Implementation status and verification (2026-07-29)
 

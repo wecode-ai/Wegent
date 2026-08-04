@@ -4,9 +4,13 @@
 
 """add plugin marketplace v2 control-plane tables
 
-Revision ID: e6f7a8b9c0d1
-Revises: d5e6f7a8b9c0
-Create Date: 2026-07-24
+Revision ID: d4e5f6a7b8c9
+Revises: b9c0d1e2f3a4
+Create Date: 2026-08-04
+
+Squashed from the feature-branch chain that previously created the marketplace
+tables, renamed source_provider values, and added restricted-sharing columns.
+Fresh installs get the final schema in one revision.
 """
 
 from typing import Sequence, Union
@@ -15,8 +19,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "e6f7a8b9c0d1"
-down_revision: Union[str, Sequence[str], None] = "d5e6f7a8b9c0"
+revision: str = "d4e5f6a7b8c9"
+down_revision: Union[str, Sequence[str], None] = "b9c0d1e2f3a4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -46,6 +50,12 @@ def upgrade() -> None:
         sa.Column("keywords_json", sa.JSON(), nullable=False),
         sa.Column("interface_json", sa.JSON(), nullable=False),
         sa.Column("visibility", sa.String(20), nullable=False),
+        sa.Column(
+            "allow_copy",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
         sa.Column("status", sa.String(30), nullable=False),
         sa.Column("latest_release_id", _bigint(), nullable=True),
         sa.Column("featured_rank", sa.Integer(), nullable=True),
@@ -149,6 +159,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("submitter_user_id", _bigint(), nullable=False),
+        sa.Column(
+            "purpose",
+            sa.String(30),
+            nullable=False,
+            server_default="marketplace_publish",
+        ),
         sa.Column("status", sa.String(20), nullable=False),
         sa.Column("reviewer_user_id", _bigint(), nullable=True),
         sa.Column("review_note", sa.Text(), nullable=False),

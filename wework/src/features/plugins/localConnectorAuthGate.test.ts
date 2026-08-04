@@ -95,15 +95,56 @@ describe('localConnectorAuthGate', () => {
     expect(messageRequiresConnectorAuth('all good')).toBe(false)
   })
 
-  test('resolves auth hint from paraphrased assistant text', () => {
+  test('resolves auth hint from structured connector_auth_required payload', () => {
     const hint = resolveLocalConnectorAuthHint(
-      '目前尚未登录微博开放平台内部 WIKI。Wework 宿主正在通过 weibo-wiki Connector 发起身份认证。请在界面出现二维码卡片后完成扫码登录'
+      JSON.stringify({
+        error: 'connector_auth_required',
+        pluginKey: 'weibo-api-wiki',
+        connectorSlug: 'weibo-wiki',
+      })
     )
     expect(hint).toEqual({
       pluginKey: 'weibo-api-wiki',
       connectorSlug: 'weibo-wiki',
-      displayName: '微博开放平台内部WIKI',
+      displayName: 'weibo-api-wiki',
     })
+  })
+
+  test('resolves auth hint from connector slug prose without product-specific maps', () => {
+    const hint = resolveLocalConnectorAuthHint(
+      'Login expired. Host is starting weibo-wiki Connector authentication. Complete the QR card when it appears.'
+    )
+    expect(hint).toEqual({
+      pluginKey: 'weibo-wiki',
+      connectorSlug: 'weibo-wiki',
+      displayName: 'weibo-wiki',
+    })
+  })
+
+  test('matches installed plugins by connector slug when pluginKey is absent', () => {
+    const items = filterLocalRequirements([pluginWithLocalQr()], {
+      connectorSlug: 'weibo-wiki',
+    })
+    expect(items).toHaveLength(1)
+    expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
+  })
+
+  test('does not list every local connector when identity is missing', () => {
+    expect(filterLocalRequirements([pluginWithLocalQr()], {})).toEqual([])
+    expect(
+      filterLocalRequirements([pluginWithLocalQr()], {
+        pluginKey: null,
+        connectorSlug: null,
+      })
+    ).toEqual([])
+  })
+
+  test('does not treat generic connector query failures as auth resume', () => {
+    expect(
+      messageRequiresConnectorAuth(
+        '账号信息显示你有 2 个公开项目，但 GitHub 连接器的项目搜索结果暂时返回 0 个项目。可能是项目索引同步延迟或连接器查询异常。'
+      )
+    ).toBe(false)
   })
 
   test('extracts connector slug and filters requirements', () => {

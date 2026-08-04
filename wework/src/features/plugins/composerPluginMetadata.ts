@@ -135,7 +135,9 @@ export function enrichComposerApps(
 ): LocalDeviceApp[] {
   return apps.flatMap(app => {
     const plugin = bestPluginForApp(app, installedPlugins)
-    if (!plugin) return [app]
+    // Composer only lists installed plugins. Remote Codex apps and authorized
+    // cloud connectors are not shown unless they match an installed plugin.
+    if (!plugin) return []
     if (!isComposerVisiblePlugin(plugin)) {
       return []
     }

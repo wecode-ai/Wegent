@@ -172,11 +172,15 @@ export function useLocalConnectorAuthGate(options: {
       try {
         const text = messageText(latest)
         const plugins = pluginsRef.current ?? (await refreshPlugins())
+        const pluginKey = extractConnectorAuthPluginKey(text)
+        const connectorSlug = extractConnectorAuthConnectorSlug(text)
         const requirements = filterLocalRequirements(plugins, {
-          pluginKey: extractConnectorAuthPluginKey(text),
-          connectorSlug: extractConnectorAuthConnectorSlug(text),
+          pluginKey,
+          connectorSlug,
         })
-        const needing = (await findFirstLocalNeedingLogin(requirements)) ?? requirements[0] ?? null
+        // Only resume auth for a connector that still needs login. Do not fall
+        // back to requirements[0] or an unrelated installed local connector.
+        const needing = await findFirstLocalNeedingLogin(requirements)
         if (needing) {
           handledResumeKeysRef.current.add(key)
           setPending({
@@ -190,18 +194,23 @@ export function useLocalConnectorAuthGate(options: {
 
         const hint = resolveLocalConnectorAuthHint(text)
         if (!hint) return
-        const target: LocalConnectorAuthTarget = {
+        const hintedRequirements = filterLocalRequirements(plugins, {
           pluginKey: hint.pluginKey,
           connectorSlug: hint.connectorSlug,
-        }
-        if (!(await targetNeedsLogin(target))) return
-        handledResumeKeysRef.current.add(key)
-        setPending({
-          target,
-          title: hintTitle(hint.displayName, t),
-          mode: 'resume',
-          retryMessage: latest,
         })
+        const hintedNeeding = await findFirstLocalNeedingLogin(hintedRequirements)
+        if (hintedNeeding) {
+          handledResumeKeysRef.current.add(key)
+          setPending({
+            target: toLocalConnectorAuthTarget(hintedNeeding),
+            title: requirementTitle(hintedNeeding, t),
+            mode: 'resume',
+            retryMessage: latest,
+          })
+          return
+        }
+        // No installed local connector matched. Do not invent a QR/browser card
+        // for cloud-only connector failures (e.g. GitHub MCP search anomalies).
       } catch {
         // ignore detection failures; leave unhandled so a later refresh can retry
       }

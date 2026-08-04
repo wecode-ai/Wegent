@@ -272,73 +272,15 @@ Acceptance criteria:
 - Device state becomes `installed` with `actual_release_id` equal to the desired release.
 - Chat mentions activate the expected capability; failures are explicit rather than silent fallbacks.
 
-## 6. Open-source GitHub mirror
+## 6. GitHub plugin (OpenAI official)
 
-The GitHub plugin reuses `plugins/github` from OpenAI's `openai/plugins`
-repository. The repository does not retain a third-party source snapshot;
-Backend maintains only a deterministic audited adapter:
+The GitHub plugin comes from the OpenAI official marketplace entry (`openai/plugins`
+/ Codex official tab). Wework **does not** maintain a domestic-public mirror,
+no longer ships `configure_openai_github_mirror.py`, and no longer exposes a
+Wegent cloud GitHub OAuth “Third-party apps” settings entry.
 
-- upstream URL: `https://github.com/openai/plugins/archive/refs/heads/main.zip`
-- selected plugin: Manifest `name=github`
-- default sync policy: `auto_after_scan`
-- optional review policy: `review_required`
-- release identity: `source_type=mirror`, `source_provider=wework`,
-  `visibility=public` (domestic-public tab; upstream still comes from
-  `openai/plugins`, but it is no longer labeled Codex official)
-- adapted version: `<upstream version>+wegent.<adapter version>`
-
-The package contains no OAuth token, OpenAI connector ID, or package-local
-`.mcp.json`. Its manifest only declares:
-
-```json
-"connectors": [{"slug": "github", "authPolicy": "on_install"}]
-```
-
-Backend setup and release:
-
-```bash
-cd backend
-export GITHUB_OAUTH_CLIENT_ID=...
-export GITHUB_OAUTH_CLIENT_SECRET=...
-export GITHUB_OAUTH_REDIRECT_URI=https://backend.example.com/api/connector-apps/oauth/callback
-export CONNECTOR_OAUTH_STATE_SECRET=...
-
-uv run python scripts/configure_github_connector.py --admin-user-id 1
-
-# Create or migrate the mirror and publish immediately after scanning
-uv run python scripts/configure_openai_github_mirror.py
-
-# Optional: require human review for a higher-risk upstream
-uv run python scripts/configure_openai_github_mirror.py \
-  --sync-policy review_required
-```
-
-The script bootstraps `plugins` and `plugin_upstreams` in an empty database and
-also migrates an existing controlled GitHub record. By default, the initial sync
-and every new upstream version publish immediately after scanning. With
-`review_required`, synchronization creates a pending Submission and publishes
-only after administrator approval. Switching a pending upstream to automatic
-publishes its scanned candidate on the next synchronization.
-
-The adapted GitHub ZIP remains an immutable snapshot in `plugin_releases`; `plugins` stores the
-`mirror/codex` source identity and `plugin_upstreams` stores the selected OpenAI
-source and synchronization state. Celery Beat checks only enabled selected
-upstreams every six hours. Before parsing a GitHub version, Backend applies the
-same deterministic adapter and scans the result: it removes the OpenAI App/MCP
-settings, declares the Wegent Connector, localizes all four skill descriptions
-for the Chinese marketplace, and produces
-`<upstream version>+wegent.<adapter version>`. Content drift under an existing
-version fails synchronization instead of overwriting a Release. A newer version
-is published automatically or staged for review, according to the upstream
-policy, only after both the original and adapted packages pass scans. In review
-mode, users continue installing the current published version until an
-administrator approves the candidate. Content changes under an unchanged OpenAI
-version fail synchronization instead of overwriting a stored Release.
-
-Wework opens GitHub OAuth before installation. Backend encrypts the user token
-and Connector Runtime proxies `https://api.githubcopilot.com/mcp/`. Executor
-receives only a short-lived Connector JWT. Users disconnect the account under
-Settings → Cloud connection → Third-party apps.
+Users install it from the OpenAI Official filter; authorization follows the
+OpenAI / Codex official connector path.
 
 ## 7. Safety limits
 

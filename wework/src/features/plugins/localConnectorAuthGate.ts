@@ -122,14 +122,6 @@ export async function findFirstLocalNeedingLogin(
   return null
 }
 
-const KNOWN_CONNECTOR_PLUGIN_KEYS: Record<string, string> = {
-  'weibo-wiki': 'weibo-api-wiki',
-}
-
-const KNOWN_PLUGIN_DISPLAY_NAMES: Record<string, string> = {
-  'weibo-api-wiki': '微博开放平台内部WIKI',
-}
-
 export function messageRequiresConnectorAuth(text: string | null | undefined): boolean {
   if (!text) return false
   if (
@@ -150,11 +142,7 @@ export function extractConnectorAuthPluginKey(text: string | null | undefined): 
   const match =
     text.match(/"plugin(?:Key|_key)"\s*:\s*"([^"]+)"/i) ||
     text.match(/pluginKey[=:]\s*([a-z0-9._-]+)/i)
-  if (match?.[1]) return match[1]
-  if (/weibo-api-wiki/i.test(text) || /微博开放平台内部\s*WIKI/i.test(text)) {
-    return 'weibo-api-wiki'
-  }
-  return null
+  return match?.[1] ?? null
 }
 
 export function extractConnectorAuthConnectorSlug(text: string | null | undefined): string | null {
@@ -169,27 +157,24 @@ export function extractConnectorAuthConnectorSlug(text: string | null | undefine
 
 /**
  * Build a minimal auth target from assistant/tool text.
- * Executor resolves localAuth from the on-disk plugin manifest, so the UI only
- * needs pluginKey + connectorSlug.
+ * Prefer structured `pluginKey` / `connectorSlug` fields. When only a connector
+ * slug is present, use it as a last-resort pluginKey so the executor can resolve
+ * localAuth from the installed plugin manifest. Prefer matching installed
+ * plugins via `filterLocalRequirements` before relying on this hint.
  */
 export function resolveLocalConnectorAuthHint(
   text: string | null | undefined
 ): { pluginKey: string; connectorSlug: string; displayName: string } | null {
   if (!text || !messageRequiresConnectorAuth(text)) return null
-  let pluginKey = extractConnectorAuthPluginKey(text)
-  let connectorSlug = extractConnectorAuthConnectorSlug(text)
+  const pluginKey = extractConnectorAuthPluginKey(text)
+  const connectorSlug = extractConnectorAuthConnectorSlug(text)
+  if (pluginKey && connectorSlug) {
+    return { pluginKey, connectorSlug, displayName: pluginKey }
+  }
   if (!pluginKey && connectorSlug) {
-    pluginKey = KNOWN_CONNECTOR_PLUGIN_KEYS[connectorSlug] ?? null
+    return { pluginKey: connectorSlug, connectorSlug, displayName: connectorSlug }
   }
-  if (!connectorSlug && pluginKey === 'weibo-api-wiki') {
-    connectorSlug = 'weibo-wiki'
-  }
-  if (!pluginKey || !connectorSlug) return null
-  return {
-    pluginKey,
-    connectorSlug,
-    displayName: KNOWN_PLUGIN_DISPLAY_NAMES[pluginKey] ?? pluginKey,
-  }
+  return null
 }
 
 function pluginHasLocalConnector(plugin: InstalledPlugin): boolean {
@@ -226,6 +211,11 @@ export function filterLocalRequirements(
 ): LocalConnectorRequirement[] {
   const pluginKey = options?.pluginKey?.trim()
   const connectorSlug = options?.connectorSlug?.trim()
+  // Resume/auth cards must target an explicit plugin or connector. Never return
+  // every local connector — that incorrectly surfaces unrelated QR flows
+  // (e.g. Wegent) during GitHub cloud-connector failures.
+  if (!pluginKey && !connectorSlug) return []
+
   let requirements = pluginKey
     ? listLocalConnectors(plugins).filter(
         item =>
@@ -238,6 +228,7 @@ export function filterLocalRequirements(
       item => item.connectorSlug.toLowerCase() === connectorSlug.toLowerCase()
     )
     if (matched.length > 0) requirements = matched
+    else if (!pluginKey) requirements = []
   }
   return requirements
 }

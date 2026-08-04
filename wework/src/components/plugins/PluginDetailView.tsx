@@ -342,7 +342,8 @@ function componentIcon(type: string) {
 
 function detailRows(
   plugin: InstalledPlugin,
-  isExternalSource: boolean
+  isExternalSource: boolean,
+  t: (key: string, defaultValue?: string) => string
 ): Array<{
   label: string
   value: string
@@ -360,7 +361,7 @@ function detailRows(
     href?: string
   }> = [
     {
-      label: '开发者',
+      label: t('workbench.plugin_detail_label_developer', '开发者'),
       value:
         plugin.spec.interface?.developerName ||
         formatManifestValue(manifest.author) ||
@@ -368,27 +369,27 @@ function detailRows(
         '',
     },
     {
-      label: '版本',
+      label: t('workbench.plugin_detail_label_version', '版本'),
       value: formatPluginVersion(plugin.spec.version || formatManifestValue(manifest.version)),
     },
   ]
   if (isExternalSource && homepage) {
     rows.push({
-      label: '网站',
+      label: t('workbench.plugin_detail_label_website', '网站'),
       value: homepage,
       href: homepage.startsWith('http') ? homepage : undefined,
     })
   }
   if (isExternalSource && privacyPolicy) {
     rows.push({
-      label: '隐私政策',
+      label: t('workbench.plugin_detail_label_privacy', '隐私政策'),
       value: privacyPolicy,
       href: privacyPolicy.startsWith('http') ? privacyPolicy : undefined,
     })
   }
   if (isExternalSource && termsOfService) {
     rows.push({
-      label: '服务条款',
+      label: t('workbench.plugin_detail_label_terms', '服务条款'),
       value: termsOfService,
       href: termsOfService.startsWith('http') ? termsOfService : undefined,
     })
@@ -461,7 +462,7 @@ export function PluginDetailView({
   const componentStates = raw.spec.componentStates || {}
   const rows = [
     {
-      label: '来源',
+      label: t('workbench.plugin_detail_label_source', '来源'),
       value:
         normalizedSourceLabel && normalizedSourceLabel.includes(distributionLabel)
           ? normalizedSourceLabel
@@ -469,8 +470,11 @@ export function PluginDetailView({
             ? `${distributionLabel} · ${normalizedSourceLabel}`
             : distributionLabel,
     },
-    { label: '功能', value: pluginCapabilitySummary(plugin) },
-    ...detailRows(raw, isExternalSource),
+    {
+      label: t('workbench.plugin_detail_label_capabilities', '功能'),
+      value: pluginCapabilitySummary(plugin),
+    },
+    ...detailRows(raw, isExternalSource, t),
   ].filter(row => row.value)
   const resolvedBackLabel = backLabel ?? t('workbench.plugins_back_to_marketplace', '返回插件市场')
   const showAccessScope =

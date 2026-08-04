@@ -267,64 +267,14 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 - 安装后设备状态为 `installed`，且 `actual_release_id` 等于期望 Release。
 - 对话 mention 能正确触发能力；失败路径有明确错误，不静默回退。
 
-## 6. GitHub 开源镜像插件
+## 6. GitHub 插件（OpenAI 官方）
 
-GitHub 插件直接复用 OpenAI `openai/plugins` 的 `plugins/github`。仓库不保存
-第三方源码快照，Backend 只维护可审计的确定性适配层：
+GitHub 插件直接使用 OpenAI 官方市场中的 `github` 条目（`openai/plugins` /
+Codex 官方 Tab），**不再**维护 Wework 国内公开镜像，也不再通过
+`configure_openai_github_mirror.py` 发布适配包，也不再提供 Wegent 云端
+GitHub OAuth「第三方应用」设置入口。
 
-- 上游地址：`https://github.com/openai/plugins/archive/refs/heads/main.zip`
-- 目标插件：Manifest `name=github`
-- 默认同步策略：`auto_after_scan`
-- 可选审核策略：`review_required`
-- 发布身份：`source_type=mirror`、`source_provider=wework`、`visibility=public`
-  （国内公开；上游仍取自 `openai/plugins`，但不再归入 Codex 官方 Tab）
-- 适配版本：`<上游版本>+wegent.<适配版本>`
-
-包内不保存 OAuth token，也不使用 OpenAI connector ID 或 `.mcp.json`。Manifest 只声明：
-
-```json
-"connectors": [{"slug": "github", "authPolicy": "on_install"}]
-```
-
-Backend 运维步骤：
-
-```bash
-cd backend
-
-# 1. 配置 GitHub OAuth App 环境变量，回调地址需与 GitHub 后台完全一致
-export GITHUB_OAUTH_CLIENT_ID=...
-export GITHUB_OAUTH_CLIENT_SECRET=...
-export GITHUB_OAUTH_REDIRECT_URI=https://backend.example.com/api/connector-apps/oauth/callback
-export CONNECTOR_OAUTH_STATE_SECRET=...
-
-# 2. 幂等创建 GitHub 远程 MCP Connector
-uv run python scripts/configure_github_connector.py --admin-user-id 1
-
-# 3. 幂等创建或迁移 GitHub 镜像，扫描通过后立即发布
-uv run python scripts/configure_openai_github_mirror.py
-
-# 可选：高风险上游改为人工审核；重复执行也会更新已有上游策略
-uv run python scripts/configure_openai_github_mirror.py \
-  --sync-policy review_required
-```
-
-该脚本可在空数据库直接创建 `plugins` 和 `plugin_upstreams` 记录，也可迁移
-已有的 GitHub 官方记录。默认策略下，首次同步和后续新版本在扫描通过后直接
-发布并更新 `latest_release_id`。选择 `review_required` 时才生成待审核
-Submission，管理员批准后发布；待审核版本切换为自动策略后会在下次同步发布。
-
-GitHub 的适配后 ZIP 以不可变快照存入 `plugin_releases`；`plugins` 保存
-`mirror/codex` 来源身份，`plugin_upstreams` 保存 OpenAI 上游地址和同步状态。
-Celery Beat 每 6 小时只检查已启用的精选上游。GitHub 包在解析版本前会执行
-同一套确定性适配并再次扫描：移除 OpenAI App/MCP 配置、声明 Wegent
-Connector、汉化四个技能的市场展示描述，并生成
-`<上游版本>+wegent.<适配版本>`。同版本内容发生变化时同步
-会失败，不会覆盖已有 Release；新版本只有在原包和适配后包都通过扫描后才会
-按配置策略自动发布或进入 Submission 审核。审核模式下，管理员批准后才会
-更新 `latest_release_id`，审核前用户仍安装当前已发布版本。OpenAI 在相同
-版本下修改内容会导致同步失败，不会覆盖已存储的 Release。
-
-Wework 安装该插件时会先打开 GitHub OAuth 授权窗口；成功后，Backend 按用户加密保存凭据，并由 Connector Runtime 代理 `https://api.githubcopilot.com/mcp/`。Executor 只获取短期 Connector JWT，不接触 GitHub 长期 token。用户可在“设置 → 云端连接 → 第三方应用”断开授权。
+用户从「OpenAI官方」筛选安装即可；授权走 OpenAI / Codex 官方连接器链路。
 
 ## 7. 安全红线
 

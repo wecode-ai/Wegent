@@ -256,7 +256,7 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 6. 发布 Backend/Executor，再发布 Wework UI，避免新 UI 遇到旧 API。
 7. 发布入口保持 Feature Flag 和内部白名单，稳定后再扩大。
 
-迁移 `d9e0f1a2b3c4` 为 `plugins` 增加 `allow_copy`，为 `plugin_submissions` 增加 `purpose`。上线前必须验证升级、回滚一个版本和再次升级；Backend 应先于包含分享入口的 Wework 客户端发布。
+迁移 `d4e5f6a7b8c9` 一次性创建插件市场控制面表，并包含 `plugins.allow_copy` 与 `plugin_submissions.purpose`。上线前必须验证升级、回滚一个版本和再次升级；Backend 应先于包含分享入口的 Wework 客户端发布。
 
 发布能力由 `PLUGIN_PUBLISH_ENABLED`、`PLUGIN_PUBLISH_USER_IDS` 和管理员角色共同决定。Wework 先读取 `/plugins/capabilities`，无权限时不渲染发布入口；后端投稿接口仍独立执行相同校验，不能依赖前端隐藏。
 

@@ -686,7 +686,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       if (submitted) {
         const gate = await connectorAuthGate.gateBeforeSend(submitted)
         if (gate === 'blocked') {
-          paneSession.setInput('')
+          // Keep composer text so cancel does not discard the draft; resume
+          // send still uses pendingInput and clears after a successful send.
           return
         }
       }

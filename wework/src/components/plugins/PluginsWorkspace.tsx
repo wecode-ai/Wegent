@@ -1,24 +1,19 @@
 import {
-  BookOpen,
   Boxes,
   ChevronDown,
-  ImageIcon,
   MoreHorizontal,
   RefreshCw,
   Search,
   Settings,
   Settings2,
-  Sparkles,
   X,
 } from 'lucide-react'
-import JSZip from 'jszip'
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
 import {
@@ -29,7 +24,6 @@ import {
   localQrManageActionFromHealth,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
-import { createSystemSkillApi } from '@/api/systemSkills'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { getRuntimeConfig } from '@/config/runtime'
 import { getErrorMessage } from '@/lib/error-message'
@@ -43,30 +37,18 @@ import {
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
-  InstalledSkill,
   InstalledPlugin,
-  InstalledMCPServerConfig,
-  MCPProviderInfo,
-  MCPServer,
-  PersonalSkill,
   PluginAccessResponse,
   PluginAccessUpdateRequest,
   PluginMarketplaceItem,
-  SystemSkillCatalogItem,
-  SystemSkillProviderError,
 } from '@/types/api'
 import type { LocalCodexMarketplace } from '@/api/local/codexPlugins'
 import { type InstalledPluginItem } from './PluginManagementRows'
-import { ConfirmUninstallDialog, type CatalogItem } from './PluginCatalogSections'
-import { CustomMcpDialog, type CustomMcpFormState } from './McpManagementSections'
-import { parseOptionalStringRecordJson } from './mcp-json-import'
 import { PluginCreateMenu } from './PluginCreateMenu'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
 import { PluginShareDialog } from './PluginShareDialog'
-import { PluginUploadDialog } from './PluginUploadDialog'
-import { SkillUploadDialog } from './SkillUploadDialog'
 import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
 import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
 import { resolvePluginLogo } from './plugin-assets'
@@ -84,7 +66,6 @@ import {
   type PluginDistribution,
 } from './pluginDistribution'
 
-type CatalogTab = 'mcp' | 'skills' | 'plugins'
 type MarketplaceKind = 'local' | 'cloud'
 
 const CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS = 60_000
@@ -105,36 +86,6 @@ interface AddMarketFormData {
   subPath: string
 }
 
-interface PendingMcpUninstall {
-  provider: MCPProviderInfo
-  server: MCPServer
-}
-
-interface SystemSkillState {
-  items: CatalogItem[]
-  providerErrors: SystemSkillProviderError[]
-  total: number
-  page: number
-  pageSize: number
-  isLoading: boolean
-  error: string | null
-}
-
-interface PersonalSkillState {
-  items: CatalogItem[]
-  isLoading: boolean
-  error: string | null
-}
-
-interface McpMarketplaceState {
-  providers: MCPProviderInfo[]
-  providerServers: Record<string, MCPServer[]>
-  providerErrors: Record<string, string>
-  providerLoadingByKey: Record<string, boolean>
-  isLoading: boolean
-  error: string | null
-}
-
 interface PluginMarketplaceState {
   items: PluginMarketplaceItem[]
   isLoading: boolean
@@ -146,121 +97,8 @@ interface PluginShareState {
   access: PluginAccessResponse
 }
 
-const SYSTEM_SKILL_PAGE_SIZE = 20
 const MARKETPLACE_INITIAL_VISIBLE_COUNT = 10
 const MARKETPLACE_REVEAL_BATCH_SIZE = 6
-const emptyCustomMcpForm: CustomMcpFormState = {
-  name: '',
-  displayName: '',
-  description: '',
-  type: 'streamable-http',
-  url: '',
-  command: '',
-  args: '',
-  envJson: '',
-  headersJson: '',
-}
-
-const skillIconByName: Record<string, Pick<CatalogItem, 'icon' | 'iconClassName'>> = {
-  'image-gen': {
-    icon: ImageIcon,
-    iconClassName: 'bg-sky-100 text-sky-600',
-  },
-  'openai-docs': {
-    icon: BookOpen,
-    iconClassName: 'bg-orange-50 text-orange-500',
-  },
-}
-
-function getSkillIcon(item: SystemSkillCatalogItem): Pick<CatalogItem, 'icon' | 'iconClassName'> {
-  if (skillIconByName[item.name]) {
-    return skillIconByName[item.name]
-  }
-  if (item.tags.includes('docs')) {
-    return {
-      icon: BookOpen,
-      iconClassName: 'bg-orange-50 text-orange-500',
-    }
-  }
-  if (
-    item.tags.includes('image') ||
-    item.capabilities.some(capability => capability.includes('image'))
-  ) {
-    return {
-      icon: ImageIcon,
-      iconClassName: 'bg-sky-100 text-sky-600',
-    }
-  }
-  return {
-    icon: Sparkles,
-    iconClassName: 'bg-indigo-50 text-indigo-500',
-  }
-}
-
-function toCatalogItem(item: SystemSkillCatalogItem): CatalogItem {
-  const icon = getSkillIcon(item)
-  return {
-    id: item.id,
-    providerKey: item.providerKey,
-    skillKey: item.name,
-    catalogItemId: item.id,
-    installedSkillId: item.installedSkillId,
-    name: item.displayName || item.name,
-    description: item.description,
-    version: item.version,
-    author: item.author,
-    tags: item.tags,
-    section: 'system',
-    icon: icon.icon,
-    iconClassName: icon.iconClassName,
-    installState: item.installState,
-    enabled: item.enabled,
-    sourceType: 'system',
-  }
-}
-
-function getPersonalSkillId(item: PersonalSkill): number | null {
-  const labels = item.metadata.labels
-  const id = labels && typeof labels === 'object' ? labels.id : undefined
-  const parsed = Number(id)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
-}
-
-function getInstalledSkillKey(item: InstalledSkill): string {
-  return item.spec.skillRef?.name || item.spec.source.skillKey
-}
-
-function toPersonalCatalogItem(
-  item: PersonalSkill,
-  installedBySkillKey: Map<string, InstalledSkill> = new Map()
-): CatalogItem {
-  const installed = installedBySkillKey.get(item.metadata.name)
-  return {
-    id: `personal-${item.metadata.name}`,
-    name: item.spec.displayName || item.metadata.name,
-    description: item.spec.description,
-    personalSkillId: getPersonalSkillId(item),
-    installedSkillId: installed ? getInstalledSkillId(installed) : null,
-    version: item.spec.version,
-    author: item.spec.author,
-    tags: item.spec.tags ?? [],
-    section: 'personal',
-    icon: Sparkles,
-    iconClassName: 'bg-teal-50 text-teal-600',
-    installState: installed?.spec.installState ?? 'not_installed',
-    enabled: installed?.spec.enabled ?? false,
-    sourceType: 'personal',
-  }
-}
-
-function getInstalledSkillId(item: InstalledSkill): number | null {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object' ? (labels as Record<string, unknown>).id : undefined
-  const parsed = Number(id)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
-}
-
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const labels = item.metadata['labels']
   const id =
@@ -375,37 +213,6 @@ function withMarketplacePluginDetail(
       },
     },
   }
-}
-
-function serverConfigFromCustomForm(form: CustomMcpFormState): InstalledMCPServerConfig {
-  if (form.type === 'stdio') {
-    return {
-      type: 'stdio',
-      command: form.command.trim(),
-      args: form.args
-        .split(/\s+/)
-        .map(arg => arg.trim())
-        .filter(Boolean),
-      env: parseOptionalStringRecordJson(form.envJson) ?? undefined,
-    }
-  }
-
-  return {
-    type: form.type,
-    url: form.url.trim(),
-    base_url: form.url.trim(),
-    headers: parseOptionalStringRecordJson(form.headersJson) ?? undefined,
-  }
-}
-
-function createDefaultSystemSkillApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createSystemSkillApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function createDefaultMcpApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createMcpApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
 function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
@@ -1108,7 +915,6 @@ export function PluginsWorkspace({
   hasConversationContext = false,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
-  const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
   const [query, setQuery] = useState('')
   const [marketplaceDistributionFilter, setMarketplaceDistributionFilter] = useState<
     'all' | PluginDistribution
@@ -1116,12 +922,7 @@ export function PluginsWorkspace({
   const [marketplaceVisibleCount, setMarketplaceVisibleCount] = useState(
     MARKETPLACE_INITIAL_VISIBLE_COUNT
   )
-  const [pendingUninstallItem, setPendingUninstallItem] = useState<CatalogItem | null>(null)
-  const [pendingUninstallMcp, setPendingUninstallMcp] = useState<PendingMcpUninstall | null>(null)
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
-  const [showCustomMcpDialog, setShowCustomMcpDialog] = useState(false)
-  const [showSkillUploadDialog, setShowSkillUploadDialog] = useState(false)
-  const [showPluginUploadDialog, setShowPluginUploadDialog] = useState(false)
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [selectedMarketplacePluginId, setSelectedMarketplacePluginId] = useState<
     string | number | null
@@ -1151,14 +952,9 @@ export function PluginsWorkspace({
   const [localConnectorAuthBySlug, setLocalConnectorAuthBySlug] = useState<
     Record<string, 'connected' | 'disconnected'>
   >({})
-  const [customMcpForm, setCustomMcpForm] = useState<CustomMcpFormState>(emptyCustomMcpForm)
-  const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
-  const [isUploadingSkill, setIsUploadingSkill] = useState(false)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
-  const [pluginUploadError, setPluginUploadError] = useState<string | null>(null)
   const [marketplaceLoadingMessage, setMarketplaceLoadingMessage] = useState('')
   const [marketplaceRefreshTick, setMarketplaceRefreshTick] = useState(0)
-  const [systemSkillPage, setSystemSkillPage] = useState(1)
   const [showAddMarketDialog, setShowAddMarketDialog] = useState(false)
   const [addMarketForm, setAddMarketForm] = useState<AddMarketFormData>({
     source: '',
@@ -1166,8 +962,6 @@ export function PluginsWorkspace({
     subPath: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
-  const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
-  const mcpApi = useMemo(() => createDefaultMcpApi(), [])
   const pluginApi = useMemo(
     () => createDefaultPluginApi(cloudApiBaseUrl, cloudToken),
     [cloudApiBaseUrl, cloudToken]
@@ -1190,28 +984,6 @@ export function PluginsWorkspace({
   const [pluginSharePreparing, setPluginSharePreparing] = useState(false)
   const [pluginPublishTarget, setPluginPublishTarget] = useState<InstalledPluginItem | null>(null)
   const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
-  const [, setSystemSkillState] = useState<SystemSkillState>({
-    items: [],
-    providerErrors: [],
-    total: 0,
-    page: 1,
-    pageSize: SYSTEM_SKILL_PAGE_SIZE,
-    isLoading: true,
-    error: null,
-  })
-  const [, setPersonalSkillState] = useState<PersonalSkillState>({
-    items: [],
-    isLoading: true,
-    error: null,
-  })
-  const [, setMcpMarketplaceState] = useState<McpMarketplaceState>({
-    providers: [],
-    providerServers: {},
-    providerErrors: {},
-    providerLoadingByKey: {},
-    isLoading: true,
-    error: null,
-  })
   const [pluginMarketplaceState, setPluginMarketplaceState] = useState<PluginMarketplaceState>({
     items: [],
     isLoading: true,
@@ -1274,233 +1046,6 @@ export function PluginsWorkspace({
     },
     [cloudMarketplaceAvailable, localPluginApi, t]
   )
-
-  const updateCatalogItem = (itemId: string, updates: Partial<CatalogItem>) => {
-    setSystemSkillState(previous => ({
-      ...previous,
-      items: previous.items.map(item => (item.id === itemId ? { ...item, ...updates } : item)),
-    }))
-  }
-
-  const uninstallSystemSkill = async (item: CatalogItem) => {
-    if (item.sourceType === 'personal') {
-      if (!item.installedSkillId) return
-
-      setPersonalSkillState(previous => ({
-        ...previous,
-        items: previous.items.map(skill =>
-          skill.id === item.id
-            ? {
-                ...skill,
-                installState: 'not_installed',
-                installedSkillId: null,
-                enabled: false,
-              }
-            : skill
-        ),
-      }))
-
-      try {
-        await systemSkillApi.uninstallInstalledSystemSkill(item.installedSkillId)
-      } catch (error) {
-        setPersonalSkillState(previous => ({
-          ...previous,
-          items: previous.items.map(skill => (skill.id === item.id ? item : skill)),
-          error: error instanceof Error ? error.message : 'Failed to uninstall personal skill',
-        }))
-      }
-      return
-    }
-
-    if (!item.installedSkillId) return
-
-    updateCatalogItem(item.id, {
-      installState: 'not_installed',
-      installedSkillId: null,
-      enabled: false,
-    })
-
-    try {
-      await systemSkillApi.uninstallInstalledSystemSkill(item.installedSkillId)
-    } catch (error) {
-      updateCatalogItem(item.id, {
-        installState: item.installState,
-        installedSkillId: item.installedSkillId,
-        enabled: item.enabled,
-      })
-      setSystemSkillState(previous => ({
-        ...previous,
-        error: error instanceof Error ? error.message : 'Failed to uninstall system skill',
-      }))
-    }
-  }
-
-  const loadMcpProviderServers = useCallback(
-    (providerKey: string) => {
-      setMcpMarketplaceState(previous => ({
-        ...previous,
-        providerLoadingByKey: {
-          ...previous.providerLoadingByKey,
-          [providerKey]: true,
-        },
-        providerErrors: {
-          ...previous.providerErrors,
-          [providerKey]: '',
-        },
-      }))
-
-      mcpApi
-        .listProviderServers(providerKey)
-        .then(response => {
-          setMcpMarketplaceState(previous => ({
-            ...previous,
-            providerServers: {
-              ...previous.providerServers,
-              [providerKey]: response.success ? response.servers : [],
-            },
-            providerErrors: {
-              ...previous.providerErrors,
-              [providerKey]: response.success ? '' : response.message,
-            },
-          }))
-        })
-        .catch((error: Error) => {
-          setMcpMarketplaceState(previous => ({
-            ...previous,
-            providerErrors: {
-              ...previous.providerErrors,
-              [providerKey]: error.message,
-            },
-          }))
-        })
-        .finally(() => {
-          setMcpMarketplaceState(previous => ({
-            ...previous,
-            providerLoadingByKey: {
-              ...previous.providerLoadingByKey,
-              [providerKey]: false,
-            },
-          }))
-        })
-    },
-    [mcpApi]
-  )
-
-  const uninstallProviderServer = (provider: MCPProviderInfo, server: MCPServer) => {
-    if (!server.installedMcpId) return
-
-    mcpApi.uninstallInstalledMcp(server.installedMcpId).then(() => {
-      setMcpMarketplaceState(previous => ({
-        ...previous,
-        providerServers: {
-          ...previous.providerServers,
-          [provider.key]: (previous.providerServers[provider.key] ?? []).map(candidate =>
-            candidate.id === server.id
-              ? {
-                  ...candidate,
-                  installState: 'not_installed',
-                  installedMcpId: null,
-                  enabled: false,
-                }
-              : candidate
-          ),
-        },
-      }))
-    })
-  }
-
-  const createCustomMcp = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const displayName = customMcpForm.displayName.trim()
-    const name = customMcpForm.name.trim()
-    if (!name || !displayName) return
-
-    setIsCreatingCustomMcp(true)
-    mcpApi
-      .createCustomMcp({
-        name,
-        displayName,
-        description: customMcpForm.description.trim(),
-        server: serverConfigFromCustomForm(customMcpForm),
-        enabled: true,
-      })
-      .then(() => {
-        setCustomMcpForm(emptyCustomMcpForm)
-        setShowCustomMcpDialog(false)
-      })
-      .finally(() => setIsCreatingCustomMcp(false))
-  }
-
-  const uploadPersonalSkill = async (file: File, name: string) => {
-    setIsUploadingSkill(true)
-    try {
-      const uploaded = await systemSkillApi.uploadPersonalSkill(file, name)
-      const personalSkillId = getPersonalSkillId(uploaded)
-      const installed = personalSkillId
-        ? await systemSkillApi.installPersonalSkill(personalSkillId)
-        : null
-      const catalogItem = toPersonalCatalogItem(
-        uploaded,
-        installed ? new Map([[getInstalledSkillKey(installed), installed]]) : new Map()
-      )
-      setPersonalSkillState(previous => ({
-        ...previous,
-        items: [catalogItem, ...previous.items.filter(item => item.id !== catalogItem.id)],
-        error: null,
-      }))
-      setShowSkillUploadDialog(false)
-    } catch (error) {
-      setPersonalSkillState(previous => ({
-        ...previous,
-        error: error instanceof Error ? error.message : 'Failed to upload personal skill',
-      }))
-      throw error
-    } finally {
-      setIsUploadingSkill(false)
-    }
-  }
-
-  const uploadPlugin = async (file: File, listingType: 'plugin' | 'skill' = 'plugin') => {
-    setIsUploadingPlugin(true)
-    setPluginUploadError(null)
-    try {
-      const archive = await JSZip.loadAsync(file)
-      const manifestFile = Object.values(archive.files).find(
-        entry =>
-          !entry.dir &&
-          (entry.name.endsWith('.codex-plugin/plugin.json') ||
-            entry.name.endsWith('.claude-plugin/plugin.json'))
-      )
-      if (!manifestFile) throw new Error('插件包缺少 .codex-plugin/plugin.json')
-      const manifest = JSON.parse(await manifestFile.async('string')) as Record<string, unknown>
-      const pluginName = typeof manifest.name === 'string' ? manifest.name.trim() : ''
-      const version = typeof manifest.version === 'string' ? manifest.version.trim() : ''
-      if (!pluginName || !version) throw new Error('插件 Manifest 必须包含 name 和 version')
-      const interfaceData =
-        manifest.interface && typeof manifest.interface === 'object'
-          ? (manifest.interface as Record<string, unknown>)
-          : {}
-      const displayName =
-        typeof interfaceData.displayName === 'string' && interfaceData.displayName.trim()
-          ? interfaceData.displayName.trim()
-          : pluginName
-      const completed = await pluginApi.publishSubmission(file, {
-        slug: pluginName.toLowerCase().replace(/[^a-z0-9._-]+/g, '-'),
-        displayName,
-        version,
-        listingType,
-      })
-      setPluginMarketplaceState(previous => ({ ...previous, error: null }))
-      setActiveTab('plugins')
-      setShowPluginUploadDialog(false)
-      return completed.submission
-    } catch (error) {
-      setPluginUploadError(error instanceof Error ? error.message : 'Failed to upload plugin')
-      throw error
-    } finally {
-      setIsUploadingPlugin(false)
-    }
-  }
 
   const createdPluginSlug = (plugin: InstalledPluginItem) =>
     plugin.raw.spec.source.pluginKey.toLowerCase().replace(/[^a-z0-9._-]+/g, '-')
@@ -2384,139 +1929,6 @@ export function PluginsWorkspace({
   }
 
   useEffect(() => {
-    if (activeTab !== 'skills') return
-
-    let isCurrent = true
-
-    setSystemSkillState(previous => ({
-      ...previous,
-      isLoading: true,
-      error: null,
-    }))
-
-    systemSkillApi
-      .listSystemSkills({
-        keyword: normalizedQuery || undefined,
-        page: systemSkillPage,
-        pageSize: SYSTEM_SKILL_PAGE_SIZE,
-        category: 'system',
-      })
-      .then(response => {
-        if (!isCurrent) return
-
-        setSystemSkillState({
-          items: response.items.map(toCatalogItem),
-          providerErrors: response.providerErrors,
-          total: response.total,
-          page: response.page,
-          pageSize: response.pageSize,
-          isLoading: false,
-          error: null,
-        })
-      })
-      .catch(error => {
-        if (!isCurrent) return
-
-        setSystemSkillState({
-          items: [],
-          providerErrors: [],
-          total: 0,
-          page: systemSkillPage,
-          pageSize: SYSTEM_SKILL_PAGE_SIZE,
-          isLoading: false,
-          error: error instanceof Error ? error.message : 'Failed to load system skills',
-        })
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [activeTab, normalizedQuery, systemSkillApi, systemSkillPage])
-
-  useEffect(() => {
-    if (activeTab !== 'skills') return
-
-    let isCurrent = true
-
-    setPersonalSkillState(previous => ({
-      ...previous,
-      isLoading: true,
-      error: null,
-    }))
-
-    Promise.all([systemSkillApi.listPersonalSkills(), systemSkillApi.listInstalledSystemSkills()])
-      .then(([personalResponse, installedResponse]) => {
-        if (!isCurrent) return
-        const personalInstalled = installedResponse.items.filter(
-          item => item.spec.source.type === 'personal'
-        )
-        const installedBySkillKey = new Map(
-          personalInstalled.map(item => [getInstalledSkillKey(item), item])
-        )
-        setPersonalSkillState({
-          items: personalResponse.items.map(item =>
-            toPersonalCatalogItem(item, installedBySkillKey)
-          ),
-          isLoading: false,
-          error: null,
-        })
-      })
-      .catch((error: Error) => {
-        if (!isCurrent) return
-        setPersonalSkillState({
-          items: [],
-          isLoading: false,
-          error: error.message,
-        })
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [activeTab, systemSkillApi])
-
-  useEffect(() => {
-    if (activeTab !== 'mcp') return
-
-    let isCurrent = true
-    setMcpMarketplaceState(previous => ({
-      ...previous,
-      isLoading: true,
-      error: null,
-    }))
-
-    mcpApi
-      .listProviders()
-      .then(response => {
-        if (!isCurrent) return
-
-        setMcpMarketplaceState(previous => ({
-          ...previous,
-          providers: response.providers,
-          isLoading: false,
-          error: null,
-        }))
-
-        response.providers
-          .filter(provider => !provider.requires_token || provider.has_token)
-          .forEach(provider => loadMcpProviderServers(provider.key))
-      })
-      .catch((error: Error) => {
-        if (!isCurrent) return
-        setMcpMarketplaceState(previous => ({
-          ...previous,
-          providers: [],
-          isLoading: false,
-          error: error.message,
-        }))
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [activeTab, loadMcpProviderServers, mcpApi])
-
-  useEffect(() => {
     let isCurrent = true
     setIsMarketplaceConfigLoading(true)
     setPluginMarketplaceState(previous => ({
@@ -2586,8 +1998,6 @@ export function PluginsWorkspace({
   }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi, pluginApi, t])
 
   useEffect(() => {
-    if (activeTab !== 'plugins') return
-
     if (isMarketplaceConfigLoading) {
       setPluginMarketplaceState(previous => ({
         ...previous,
@@ -2670,7 +2080,6 @@ export function PluginsWorkspace({
       isCurrent = false
     }
   }, [
-    activeTab,
     cloudMarketplaceAvailable,
     currentDeviceId,
     isMarketplaceConfigLoading,
@@ -2683,7 +2092,7 @@ export function PluginsWorkspace({
   ])
 
   useEffect(() => {
-    if (activeTab !== 'plugins' || !cloudMarketplaceAvailable || isMarketplaceConfigLoading) {
+    if (!cloudMarketplaceAvailable || isMarketplaceConfigLoading) {
       return
     }
 
@@ -2727,7 +2136,6 @@ export function PluginsWorkspace({
       window.clearInterval(intervalId)
     }
   }, [
-    activeTab,
     cloudMarketplaceAvailable,
     currentDeviceId,
     isMarketplaceConfigLoading,
@@ -2770,7 +2178,7 @@ export function PluginsWorkspace({
 
     const connectors = detailPlugin?.raw.spec.components.connectors ?? []
     const localConnectors = connectors.filter(connector => isLocalConnector(connector))
-    if (activeTab !== 'plugins' || !detailPlugin || localConnectors.length === 0) {
+    if (!detailPlugin || localConnectors.length === 0) {
       setLocalConnectorAuthBySlug({})
       return
     }
@@ -2801,10 +2209,10 @@ export function PluginsWorkspace({
     return () => {
       cancelled = true
     }
-  }, [activeTab, installedPlugins, selectedMarketplacePlugin, selectedPlugin])
+  }, [installedPlugins, selectedMarketplacePlugin, selectedPlugin])
 
   useEffect(() => {
-    if (activeTab !== 'plugins' || !selectedMarketplacePlugin) {
+    if (!selectedMarketplacePlugin) {
       setSelectedMarketplacePluginDetail(null)
       return
     }
@@ -2844,7 +2252,7 @@ export function PluginsWorkspace({
     return () => {
       disposed = true
     }
-  }, [activeTab, installedPlugins, localPluginApi, selectedMarketplacePlugin])
+  }, [installedPlugins, localPluginApi, selectedMarketplacePlugin])
   const marketplaceDistributionLabels = useMemo<Record<PluginDistribution, string>>(
     () => ({
       official: t('workbench.plugins_distribution_official', 'OpenAI官方'),
@@ -3013,7 +2421,7 @@ export function PluginsWorkspace({
     </>
   )
 
-  if (activeTab === 'plugins' && selectedPlugin) {
+  if (selectedPlugin) {
     const ownedMarketplace = findOwnedMarketplacePlugin(selectedPlugin)
     const canOpenPublish =
       selectedPlugin.origin === 'created' && (canPublish || canSharePersonalPlugins)
@@ -3109,7 +2517,7 @@ export function PluginsWorkspace({
     )
   }
 
-  if (activeTab === 'plugins' && selectedMarketplacePlugin) {
+  if (selectedMarketplacePlugin) {
     const installedDetail =
       selectedMarketplacePlugin.installedPluginId === null ||
       selectedMarketplacePlugin.installedPluginId === undefined
@@ -3455,7 +2863,6 @@ export function PluginsWorkspace({
                     value={query}
                     onChange={event => {
                       setQuery(event.target.value)
-                      setSystemSkillPage(1)
                     }}
                     placeholder={t('workbench.plugins_marketplace_search', '搜索插件')}
                     data-testid="plugins-search-input"
@@ -3725,68 +3132,6 @@ export function PluginsWorkspace({
       </div>
       {pluginOverlayDialogs}
       {pluginOperationNoticeOverlay}
-      {pendingUninstallItem && (
-        <ConfirmUninstallDialog
-          item={pendingUninstallItem}
-          title={t('workbench.plugins_uninstall_confirm_title', '卸载技能？')}
-          description={t(
-            'workbench.plugins_uninstall_confirm_description',
-            '卸载后可以随时重新安装。'
-          )}
-          cancelLabel={t('workbench.plugins_uninstall_cancel', '取消')}
-          confirmLabel={t('workbench.plugins_uninstall_confirm', '卸载')}
-          onCancel={() => setPendingUninstallItem(null)}
-          onConfirm={() => {
-            const item = pendingUninstallItem
-            setPendingUninstallItem(null)
-            void uninstallSystemSkill(item)
-          }}
-        />
-      )}
-      {pendingUninstallMcp && (
-        <ConfirmUninstallDialog
-          item={{ name: pendingUninstallMcp.server.name }}
-          title={t('workbench.plugins_uninstall_mcp_confirm_title', '卸载 MCP？')}
-          description={t(
-            'workbench.plugins_uninstall_mcp_confirm_description',
-            '卸载后可以在市场中重新安装。'
-          )}
-          cancelLabel={t('workbench.plugins_uninstall_cancel', '取消')}
-          confirmLabel={t('workbench.plugins_uninstall_confirm', '卸载')}
-          confirmTestId="mcp-market-confirm-uninstall-button"
-          onCancel={() => setPendingUninstallMcp(null)}
-          onConfirm={() => {
-            const item = pendingUninstallMcp
-            setPendingUninstallMcp(null)
-            uninstallProviderServer(item.provider, item.server)
-          }}
-        />
-      )}
-      {showCustomMcpDialog && (
-        <CustomMcpDialog
-          form={customMcpForm}
-          isSubmitting={isCreatingCustomMcp}
-          onCancel={() => setShowCustomMcpDialog(false)}
-          onChange={nextForm => setCustomMcpForm(nextForm)}
-          onSubmit={createCustomMcp}
-        />
-      )}
-      {showSkillUploadDialog && (
-        <SkillUploadDialog
-          isUploading={isUploadingSkill}
-          onCancel={() => setShowSkillUploadDialog(false)}
-          onUpload={uploadPersonalSkill}
-        />
-      )}
-      {showPluginUploadDialog && canPublish && (
-        <PluginUploadDialog
-          isUploading={isUploadingPlugin}
-          uploadError={pluginUploadError}
-          onCancel={() => setShowPluginUploadDialog(false)}
-          onErrorReset={() => setPluginUploadError(null)}
-          onUpload={file => uploadPlugin(file).then(() => undefined)}
-        />
-      )}
       {showAddMarketDialog && (
         <AddMarketDialog
           isOpen={showAddMarketDialog}

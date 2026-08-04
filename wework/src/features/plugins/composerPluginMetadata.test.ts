@@ -149,7 +149,7 @@ describe('enrichComposerApps', () => {
     expect(enrichComposerApps([githubApp], [disabledPlugin])).toEqual([])
   })
 
-  test('keeps apps that do not belong to an installed plugin', () => {
+  test('drops apps that do not belong to an installed plugin', () => {
     const unrelatedApp: LocalDeviceApp = {
       ...githubApp,
       id: 'calendar',
@@ -157,7 +157,19 @@ describe('enrichComposerApps', () => {
       pluginDisplayNames: ['Calendar'],
     }
 
-    expect(enrichComposerApps([unrelatedApp], [githubPlugin])).toEqual([unrelatedApp])
+    expect(enrichComposerApps([unrelatedApp], [githubPlugin])).toEqual([])
+  })
+
+  test('drops authorized cloud connectors that are not installed plugins', () => {
+    const connectorApp: LocalDeviceApp = {
+      ...githubApp,
+      id: 'wegent:drive',
+      name: 'Google Drive',
+      pluginDisplayNames: ['Wegent Cloud'],
+      source: 'wegent-connector',
+    }
+
+    expect(enrichComposerApps([connectorApp], [githubPlugin])).toEqual([])
   })
 })
 

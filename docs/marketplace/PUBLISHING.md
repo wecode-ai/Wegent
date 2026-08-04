@@ -81,24 +81,11 @@ source repository is not in the default sibling directory.
 Upstream mirrors are for explicitly reviewed third-party sources. Do not use
 them for local or first-party plugin directories.
 
-The included OpenAI GitHub example can be configured with:
-
-```bash
-cd backend
-uv run python scripts/configure_openai_github_mirror.py
-```
-
-Require manual review when the upstream or adapter needs additional oversight:
-
-```bash
-uv run python scripts/configure_openai_github_mirror.py \
-  --sync-policy review_required
-```
-
-General upstream management is available through the administrator plugin API.
-Only HTTPS URLs resolving to public addresses are accepted. Review licensing,
-provenance, package structure, and update behavior before enabling scheduled
-synchronization.
+GitHub is **not** mirrored into the Wework domestic-public catalog; install the
+OpenAI official marketplace plugin instead. For other reviewed upstreams, use
+the administrator plugin API. Only HTTPS URLs resolving to public addresses are
+accepted. Review licensing, provenance, package structure, and update behavior
+before enabling scheduled synchronization.
 
 ## Review a submission
 

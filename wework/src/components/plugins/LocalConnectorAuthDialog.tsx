@@ -1,17 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { ExternalLink, Loader2, QrCode, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import {
-  isLocalBrowserConnector,
-  isLocalConnector,
-  localConnectorAuthCancel,
-  localConnectorAuthPoll,
-  localConnectorAuthStart,
-  pollIntervalMs,
-  type LocalConnectorAuthResult,
-  type LocalConnectorAuthTarget,
+import type {
+  LocalConnectorAuthResult,
+  LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
+import { useLocalConnectorAuthSession } from '@/features/plugins/useLocalConnectorAuthSession'
 
 interface LocalConnectorAuthDialogProps {
   open: boolean
@@ -31,192 +25,27 @@ export function LocalConnectorAuthDialog({
   onCancel,
 }: LocalConnectorAuthDialogProps) {
   const { t } = useTranslation()
-  const [status, setStatus] = useState<LocalConnectorAuthResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [refreshKey, setRefreshKey] = useState(0)
-  const onSuccessRef = useRef(onSuccess)
-  const tRef = useRef(t)
-  const sessionRef = useRef(0)
-  const activeAuthSessionRef = useRef<string | null>(null)
-  const cancelledAuthSessionsRef = useRef(new Set<string>())
-
-  useEffect(() => {
-    onSuccessRef.current = onSuccess
-    tRef.current = t
-  }, [onSuccess, t])
-
-  const pluginKey = target.pluginKey
-  const connectorSlug = target.connectorSlug
-  const pluginRoot = target.pluginRoot ?? null
-  const intervalMs = pollIntervalMs(target.localAuth)
-  const supportsLocalAuth = isLocalConnector(target)
-  const usesBrowser = isLocalBrowserConnector(target)
-  const cancelAuthSession = useCallback(
-    (authTarget: LocalConnectorAuthTarget, sessionId: string) => {
-      if (cancelledAuthSessionsRef.current.has(sessionId)) return
-      cancelledAuthSessionsRef.current.add(sessionId)
-      void localConnectorAuthCancel(authTarget, sessionId).catch(() => undefined)
-    },
-    []
-  )
-
-  useEffect(() => {
-    if (!open) return
-    const session = ++sessionRef.current
-    const isCurrent = () => sessionRef.current === session
-    let startTimer: ReturnType<typeof setTimeout> | null = null
-    let pollTimer: ReturnType<typeof setTimeout> | null = null
-    let authSessionId: string | null = null
-    const authTarget: LocalConnectorAuthTarget = {
-      pluginKey,
-      connectorSlug,
-      ...(pluginRoot ? { pluginRoot } : {}),
-    }
-
-    const start = async () => {
-      setBusy(true)
-      setError(null)
-      setStatus(null)
-      try {
-        if (!supportsLocalAuth) {
-          throw new Error('Connector does not support local authentication')
-        }
-        const started = await localConnectorAuthStart(authTarget)
-        if (!isCurrent()) {
-          if (started.sessionId) {
-            cancelAuthSession(authTarget, started.sessionId)
-          }
-          return
-        }
-        authSessionId = started.sessionId ?? null
-        activeAuthSessionRef.current = authSessionId
-        setError(null)
-        setStatus(started)
-        if (started.status === 'ok') {
-          onSuccessRef.current(started)
-          return
-        }
-        const tick = async () => {
-          if (!isCurrent()) return
-          try {
-            const next = await localConnectorAuthPoll(authTarget, authSessionId)
-            if (!isCurrent()) return
-            setStatus(previous => ({
-              ...next,
-              qrImage: next.qrImage ?? previous?.qrImage ?? null,
-              qrPath: next.qrPath ?? previous?.qrPath ?? null,
-            }))
-            if (next.status === 'ok') {
-              onSuccessRef.current(next)
-              return
-            }
-            if (
-              next.status === 'expired' ||
-              next.status === 'error' ||
-              next.status === 'cancelled'
-            ) {
-              setError(
-                next.hint ||
-                  (usesBrowser
-                    ? tRef.current(
-                        'workbench.plugins_local_browser_failed',
-                        '浏览器授权未完成，请重新开始登录'
-                      )
-                    : tRef.current(
-                        'workbench.plugins_local_qr_expired',
-                        '二维码已失效，请重新开始登录'
-                      ))
-              )
-              return
-            }
-            pollTimer = setTimeout(tick, intervalMs)
-          } catch (pollError) {
-            if (!isCurrent()) return
-            setError(
-              pollError instanceof Error
-                ? pollError.message
-                : tRef.current('workbench.plugins_local_auth_poll_failed', '检查登录状态失败')
-            )
-          }
-        }
-        pollTimer = setTimeout(tick, intervalMs)
-      } catch (startError) {
-        if (!isCurrent()) return
-        setError(
-          startError instanceof Error
-            ? startError.message
-            : usesBrowser
-              ? tRef.current('workbench.plugins_local_browser_start_failed', '无法启动浏览器授权')
-              : tRef.current('workbench.plugins_local_qr_start_failed', '无法生成登录二维码')
-        )
-      } finally {
-        if (isCurrent()) setBusy(false)
-      }
-    }
-
-    // React StrictMode replays effects during development. Deferring the side
-    // effect lets the replay cleanup discard the first run before it creates a
-    // second authorization session or opens another browser window.
-    startTimer = setTimeout(() => void start(), 0)
-    return () => {
-      if (sessionRef.current === session) {
-        sessionRef.current += 1
-      }
-      if (startTimer) clearTimeout(startTimer)
-      if (pollTimer) clearTimeout(pollTimer)
-      if (authSessionId) {
-        cancelAuthSession(authTarget, authSessionId)
-        if (activeAuthSessionRef.current === authSessionId) {
-          activeAuthSessionRef.current = null
-        }
-      }
-    }
-  }, [
-    open,
-    refreshKey,
-    pluginKey,
-    connectorSlug,
-    pluginRoot,
-    intervalMs,
-    supportsLocalAuth,
+  const {
+    status,
+    error,
+    busy,
     usesBrowser,
-    cancelAuthSession,
-  ])
+    statusText,
+    qrSrc,
+    canRetry,
+    retry,
+    cancelActiveSession,
+  } = useLocalConnectorAuthSession({
+    enabled: open,
+    target,
+    t,
+    onSuccess,
+  })
 
   if (!open) return null
 
-  const qrSrc = status?.qrImage?.dataUrl || null
-  const statusText = usesBrowser
-    ? status?.status === 'verifying'
-      ? t('workbench.plugins_local_browser_verifying', '正在验证本机登录状态…')
-      : status?.status === 'waiting_browser'
-        ? t('workbench.plugins_local_browser_waiting', '请在浏览器中确认授权，完成后会自动继续')
-        : status?.hint || t('workbench.plugins_local_browser_preparing', '正在准备本机授权工具…')
-    : status?.status === 'scanned'
-      ? t('workbench.plugins_local_qr_scanned', '已扫码，请在手机上确认登录')
-      : status?.status === 'waiting_scan' || status?.status === 'need_scan'
-        ? t('workbench.plugins_local_qr_waiting', '请用新浪口袋扫描二维码')
-        : status?.hint || t('workbench.plugins_local_qr_preparing', '正在准备登录二维码…')
-  const canRetry =
-    Boolean(error) ||
-    status?.status === 'expired' ||
-    status?.status === 'error' ||
-    status?.status === 'cancelled'
-
   const cancel = () => {
-    const sessionId = activeAuthSessionRef.current
-    activeAuthSessionRef.current = null
-    if (sessionId) {
-      cancelAuthSession(
-        {
-          pluginKey,
-          connectorSlug,
-          ...(pluginRoot ? { pluginRoot } : {}),
-        },
-        sessionId
-      )
-    }
+    cancelActiveSession()
     onCancel()
   }
 
@@ -248,7 +77,7 @@ export function LocalConnectorAuthDialog({
                     )
                   : t(
                       'workbench.plugins_local_qr_description',
-                      '使用新浪口袋扫描二维码完成授权。登录信息仅保存在本机凭据库。'
+                      '使用对应 App 扫描二维码完成授权。登录信息仅保存在本机凭据库。'
                     ))}
             </p>
           </div>
@@ -314,7 +143,7 @@ export function LocalConnectorAuthDialog({
             <button
               type="button"
               className="inline-flex h-11 items-center gap-1 rounded-lg bg-text-primary px-3 text-sm text-background hover:bg-text-primary/90 md:h-9"
-              onClick={() => setRefreshKey(value => value + 1)}
+              onClick={retry}
               data-testid="local-connector-auth-retry"
             >
               <RefreshCw className="h-3.5 w-3.5" />
