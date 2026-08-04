@@ -56,6 +56,71 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps task supervisor state updates', () => {
+    const onRuntimeSupervisorUpdated = vi.fn()
+    const supervisor = {
+      mode: 'suggest',
+      status: 'active',
+      instructions: 'Keep scope focused',
+      suggestions: [],
+    }
+
+    emitResponseApiEvent(
+      { onRuntimeSupervisorUpdated },
+      'runtime.supervisor.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: 'supervisor-state-1',
+        deviceId: 'device-1',
+        data: { supervisor },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeSupervisorUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'supervisor-state-1',
+      deviceId: 'device-1',
+      supervisor,
+    })
+  })
+
+  test('carries a generated supervisor user message on response start', () => {
+    const onChatStart = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatStart },
+      'response.created',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        deviceId: 'device-1',
+        clientUserMessageId: 'supervisor-correction-1',
+        runtimeGeneratedUserMessage: {
+          id: 'supervisor-correction-1',
+          message: 'Return to scope.',
+          createdAt: 1234,
+          source: { source: 'supervisor' },
+        },
+        data: { response: { status: 'in_progress' } },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatStart).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      clientUserMessageId: 'supervisor-correction-1',
+      runtimeGeneratedUserMessage: {
+        id: 'supervisor-correction-1',
+        message: 'Return to scope.',
+        createdAt: 1234,
+        source: { source: 'supervisor' },
+      },
+    })
+  })
+
   test('maps root goal turn lifecycle events', () => {
     const onRuntimeGoalContinuation = vi.fn()
     const state = createResponseApiStreamState()

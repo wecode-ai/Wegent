@@ -42,10 +42,8 @@ import {
   defaultLocalModelToolProfile,
   deleteLocalModelConfig,
   DEFAULT_LOCAL_MODEL_REQUEST_PATH,
-  ensureLocalModelApiKeysHydrated,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
-  flushLocalModelSecretWrites,
   markLocalModelCatalogReady,
   normalizeLocalModelBaseUrl,
   normalizeLocalModelRequestPath,
@@ -712,14 +710,6 @@ function LocalModelSettingsSection({
     return () => window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, refreshModels)
   }, [refreshModels])
 
-  useEffect(() => {
-    void ensureLocalModelApiKeysHydrated()
-      .then(refreshModels)
-      .catch(hydrationError => {
-        console.error('Failed to restore local model credentials', hydrationError)
-      })
-  }, [refreshModels])
-
   const editingModel = useMemo(
     () => models.find(model => model.id === editingId) ?? null,
     [editingId, models]
@@ -968,7 +958,6 @@ function LocalModelSettingsSection({
           : undefined,
         enabled: form.enabled,
       })
-      await flushLocalModelSecretWrites()
       if (catalogEntry) {
         const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
         const writtenCatalogSnapshot = catalogModels.map(({ id: modelId, updatedAt }) => ({
@@ -1013,7 +1002,7 @@ function LocalModelSettingsSection({
     }
   }
 
-  const clearEditingApiKey = async () => {
+  const clearEditingApiKey = () => {
     if (!editingModel) return
     try {
       saveLocalModelConfig({
@@ -1035,7 +1024,6 @@ function LocalModelSettingsSection({
         catalogReady: editingModel.catalogReady,
         enabled: editingModel.enabled,
       })
-      await flushLocalModelSecretWrites()
       performStartEditing({ ...editingModel, apiKey: undefined })
     } catch (clearError) {
       setError(
@@ -1081,11 +1069,10 @@ function LocalModelSettingsSection({
     }
   }
 
-  const deleteModel = async (model: LocalModelConfig) => {
+  const deleteModel = (model: LocalModelConfig) => {
     setError(null)
     try {
       deleteLocalModelConfig(model.id)
-      await flushLocalModelSecretWrites()
       if (editingId === model.id) resetForm()
     } catch (deleteError) {
       setError(

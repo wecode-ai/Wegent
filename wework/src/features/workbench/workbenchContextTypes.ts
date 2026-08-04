@@ -28,6 +28,7 @@ import type {
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
+  RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
@@ -78,6 +79,7 @@ export interface SendCurrentInputOptions {
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
@@ -99,6 +101,7 @@ export interface CreateProjectRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string

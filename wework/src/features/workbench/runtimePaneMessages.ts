@@ -15,6 +15,7 @@ import type {
   RuntimeGuidanceAppliedPayload,
   RuntimeMessagePresentationReference,
   RuntimeSubagentActivityPayload,
+  RuntimeSupervisorEventPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
   RuntimeTranscriptTurn,
@@ -37,13 +38,14 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
-  onAssistantStart?: () => void
-  onAssistantSettled?: () => void
+  onAssistantStart?: (turnId: string) => void
+  onAssistantSettled?: (turnId: string) => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (payload: RuntimeSupervisorEventPayload) => void
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
@@ -52,8 +54,8 @@ export interface RuntimeTaskStreamHandlers {
 
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
-  onAssistantStart?: (address: RuntimeTaskAddress) => void
-  onAssistantSettled?: (address: RuntimeTaskAddress) => void
+  onAssistantStart?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantSettled?: (address: RuntimeTaskAddress, turnId: string) => void
   onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
   onSubagentActivity?: (
@@ -62,6 +64,10 @@ export interface RuntimeConversationStreamHandlers {
   ) => void
   onRuntimeGoalUpdated?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (address: RuntimeTaskAddress, payload: RuntimeGoalEventPayload) => void
+  onRuntimeSupervisorUpdated?: (
+    address: RuntimeTaskAddress,
+    payload: RuntimeSupervisorEventPayload
+  ) => void
   onRuntimeGoalContinuation?: (
     address: RuntimeTaskAddress,
     payload: RuntimeGoalContinuationPayload
@@ -94,13 +100,15 @@ export function createRuntimeConversationStreamHandlers(
 
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
-      onAssistantStart: () => handlers.onAssistantStart?.(address),
-      onAssistantSettled: () => handlers.onAssistantSettled?.(address),
+      onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantSettled: turnId => handlers.onAssistantSettled?.(address, turnId),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
       onRuntimeGoalUpdated: payload => handlers.onRuntimeGoalUpdated?.(address, payload),
       onRuntimeGoalCleared: payload => handlers.onRuntimeGoalCleared?.(address, payload),
+      onRuntimeSupervisorUpdated: payload =>
+        handlers.onRuntimeSupervisorUpdated?.(address, payload),
       onRuntimeGoalContinuation: payload => handlers.onRuntimeGoalContinuation?.(address, payload),
       onRuntimePlanUpdated: payload => handlers.onRuntimePlanUpdated?.(address, payload),
       onGuidanceApplied: payload => handlers.onGuidanceApplied?.(address, payload),
@@ -119,6 +127,7 @@ export function createRuntimeConversationStreamHandlers(
     onSubagentActivity: payload => resolve(payload)?.onSubagentActivity?.(payload),
     onRuntimeGoalUpdated: payload => resolve(payload)?.onRuntimeGoalUpdated?.(payload),
     onRuntimeGoalCleared: payload => resolve(payload)?.onRuntimeGoalCleared?.(payload),
+    onRuntimeSupervisorUpdated: payload => resolve(payload)?.onRuntimeSupervisorUpdated?.(payload),
     onRuntimeGoalContinuation: payload => resolve(payload)?.onRuntimeGoalContinuation?.(payload),
     onRuntimePlanUpdated: payload => resolve(payload)?.onRuntimePlanUpdated?.(payload),
     onGuidanceApplied: payload => resolve(payload)?.onGuidanceApplied?.(payload),
@@ -139,13 +148,27 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (payload.runtimeGeneratedUserMessage) {
+        handlers.onMessageAction({
+          type: 'user_added',
+          message: {
+            id: payload.runtimeGeneratedUserMessage.id,
+            taskId: address.taskId,
+            role: 'user',
+            content: payload.runtimeGeneratedUserMessage.message,
+            status: 'done',
+            source: payload.runtimeGeneratedUserMessage.source as MessageSource,
+            createdAt: new Date(payload.runtimeGeneratedUserMessage.createdAt).toISOString(),
+          },
+        })
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:start', address, payload)
         return
       }
       debugRuntimeStreamEvent('chat:start', address, payload, true)
-      handlers.onAssistantStart?.()
+      handlers.onAssistantStart?.(identity.subtaskId)
       handlers.onMessageAction({
         type: 'assistant_started',
         taskId: payload.taskId,
@@ -238,10 +261,12 @@ export function createRuntimeTaskStreamHandlers(
             : typeof payload.result.turn_id === 'string'
               ? payload.result.turn_id
               : undefined,
+        ...(typeof payload.result.value === 'string' &&
+          payload.result.value.trim() && { content: payload.result.value }),
         blocks,
         fileChanges,
       })
-      handlers.onAssistantSettled?.()
+      handlers.onAssistantSettled?.(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
@@ -283,7 +308,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      handlers.onAssistantSettled?.()
+      handlers.onAssistantSettled?.(identity.subtaskId)
       streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
@@ -320,7 +345,7 @@ export function createRuntimeTaskStreamHandlers(
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
         })
-        handlers.onAssistantSettled?.()
+        handlers.onAssistantSettled?.(identity.subtaskId)
         handlers.onRefreshWorkLists?.()
       }
     },
@@ -394,6 +419,10 @@ export function createRuntimeTaskStreamHandlers(
     onRuntimeGoalCleared: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
+    },
+    onRuntimeSupervisorUpdated: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeSupervisorUpdated?.(payload)
     },
     onRuntimeGoalContinuation: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return

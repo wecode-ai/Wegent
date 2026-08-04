@@ -69,6 +69,7 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 ## WebView Compatibility
 
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
+- Wegent Agent application tabs in Tauri also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
 - Browser WebViews use a Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
 - Popups, OAuth, SSO, and payment flows may use `window.open` or new-window navigation. Implementations should route them to a controlled browser window or explicitly hand them to the system; the Agent must not operate invisible hidden pages.
 - The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.

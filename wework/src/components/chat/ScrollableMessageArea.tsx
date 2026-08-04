@@ -25,7 +25,7 @@ import {
 
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
-const STABLE_SCROLL_DELAYS = [0, 50, 150, 300]
+const STABLE_SCROLL_DELAYS = [0, 50, 150, 300, 600, 1000]
 const SCROLL_ANCHOR_SELECTOR = '[data-scroll-anchor]'
 interface RuntimeTranscriptGap {
   start: number
@@ -246,6 +246,7 @@ function ScrollableMessagePaneContent({
   const turnNavigationScrollingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
   const previousLastMessageIdRef = useRef<string | null>(null)
+  const pendingAssistantResponseStartRef = useRef(false)
   const previousLatestUserMessageIdRef = useRef<string | null>(null)
   const previousLatestGuidanceMessageIdRef = useRef<string | null>(null)
   const previousMessageCountRef = useRef(0)
@@ -571,6 +572,14 @@ function ScrollableMessagePaneContent({
     [setScrollToBottom]
   )
 
+  const markCurrentConversationPinnedToBottom = useCallback(() => {
+    if (currentScrollKey === null) return
+    setConversationScrollSnapshot(currentScrollKey, {
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
+    })
+  }, [currentScrollKey])
+
   const scheduleStableScrollToBottom = useCallback(
     (
       behavior: ScrollBehavior = 'auto',
@@ -578,6 +587,7 @@ function ScrollableMessagePaneContent({
     ) => {
       clearScheduledScrolls()
       followingBottomKeyRef.current = currentScrollKey
+      markCurrentConversationPinnedToBottom()
       STABLE_SCROLL_DELAYS.forEach(delay => {
         scheduleScrollTimer(() => {
           scrollToBottom(behavior, options)
@@ -604,7 +614,13 @@ function ScrollableMessagePaneContent({
         )
       }
     },
-    [clearScheduledScrolls, currentScrollKey, scheduleScrollTimer, scrollToBottom]
+    [
+      clearScheduledScrolls,
+      currentScrollKey,
+      markCurrentConversationPinnedToBottom,
+      scheduleScrollTimer,
+      scrollToBottom,
+    ]
   )
 
   useLayoutEffect(() => {
@@ -636,6 +652,20 @@ function ScrollableMessagePaneContent({
       previousLatestGuidanceMessageIdRef.current !== latestGuidanceMessageId
     const waitingForAssistantStarted =
       !conversationChanged && !previousWaitingForAssistantRef.current && isWaitingForAssistant
+    const assistantResponseStarted =
+      !conversationChanged &&
+      lastMessageChanged &&
+      lastMessage?.role === 'assistant' &&
+      !userScrollPausedAutoFollowRef.current
+    const autoScrollIsSuspended = autoScrollSuspended || isTurnNavigationAutoScrollSuspended()
+    if (conversationChanged) {
+      pendingAssistantResponseStartRef.current = false
+    }
+    if (assistantResponseStarted && autoScrollIsSuspended) {
+      pendingAssistantResponseStartRef.current = true
+    }
+    const pendingAssistantResponseStarted =
+      pendingAssistantResponseStartRef.current && !autoScrollIsSuspended
     const shouldRestoreScroll = Boolean(
       currentScrollKey &&
       messages.length > 0 &&
@@ -649,6 +679,8 @@ function ScrollableMessagePaneContent({
         guidanceMessageApplied ||
         waitingForAssistantStarted ||
         latestUserMessageChanged ||
+        assistantResponseStarted ||
+        pendingAssistantResponseStarted ||
         (lastMessageChanged && lastMessage?.role === 'user'))
 
     previousConversationKeyRef.current = conversationKey
@@ -671,7 +703,7 @@ function ScrollableMessagePaneContent({
       return
     }
 
-    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+    if (autoScrollIsSuspended) {
       clearScheduledScrolls()
       return
     }
@@ -682,6 +714,7 @@ function ScrollableMessagePaneContent({
     }
 
     if (shouldForceBottom) {
+      pendingAssistantResponseStartRef.current = false
       setScrollToBottom('auto', { saveSnapshot: false })
       if (preserveLatestUserTurnRef.current) {
         scheduleStableScrollToBottom('auto', {
@@ -702,13 +735,22 @@ function ScrollableMessagePaneContent({
     }
 
     if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
-      scrollToBottom('auto', { saveSnapshot: false })
+      const shouldStabilizeExternalBottom =
+        externalScrollRef?.current &&
+        currentScrollKey !== null &&
+        getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true
+      if (shouldStabilizeExternalBottom) {
+        scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+      } else {
+        scrollToBottom('auto', { saveSnapshot: false })
+      }
     }
   }, [
     conversationKey,
     autoScrollSuspended,
     currentScrollKey,
     clearScheduledScrolls,
+    externalScrollRef,
     isTurnNavigationAutoScrollSuspended,
     isWaitingForAssistant,
     lastMessage,
@@ -721,6 +763,31 @@ function ScrollableMessagePaneContent({
     scheduleStableScrollToBottom,
     scrollToBottom,
     setScrollToBottom,
+  ])
+
+  useLayoutEffect(() => {
+    const turnNavigationSettled = !turnNavigationLoading && turnNavigationTargetMessageId === null
+    if (
+      !pendingAssistantResponseStartRef.current ||
+      messages.length === 0 ||
+      autoScrollSuspended ||
+      !turnNavigationSettled ||
+      isTurnNavigationAutoScrollSuspended()
+    ) {
+      return
+    }
+
+    pendingAssistantResponseStartRef.current = false
+    setScrollToBottom('auto', { saveSnapshot: false })
+    scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+  }, [
+    autoScrollSuspended,
+    isTurnNavigationAutoScrollSuspended,
+    messages.length,
+    scheduleStableScrollToBottom,
+    setScrollToBottom,
+    turnNavigationLoading,
+    turnNavigationTargetMessageId,
   ])
 
   useLayoutEffect(() => {
@@ -769,64 +836,65 @@ function ScrollableMessagePaneContent({
     lastScrollTopRef.current = scroller.scrollTop
   }, [])
 
-  useEffect(() => {
-    const content = contentRef.current
-    const footer = stickyFooterRef.current
-    if (!content || typeof ResizeObserver === 'undefined') return
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
-        if (turnNavigationScrollingRef.current) {
-          console.warn('[Wework] Message turn navigation ignored content resize', {
-            conversationKey: currentScrollKey,
-            scrollTop: activeScrollRefRef.current.current?.scrollTop ?? null,
-            scrollHeight: activeScrollRefRef.current.current?.scrollHeight ?? null,
-            clientHeight: activeScrollRefRef.current.current?.clientHeight ?? null,
-          })
-        }
-        return
-      }
-
-      const restoringKey = restoringScrollKeyRef.current
-      if (restoringKey && restoringKey === currentScrollKey) {
-        restoreSavedScrollPosition(restoringKey)
-        return
-      }
-
-      if (preserveLatestUserTurnRef.current) {
-        return
-      }
-
-      if (followingBottomKeyRef.current === currentScrollKey) {
-        setScrollToBottom('auto', { saveSnapshot: false })
-        return
-      }
-
-      if (userScrollPausedAutoFollowRef.current) {
-        restoreUserViewportAnchor()
-        return
-      }
-
-      if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
-        scrollToBottom('auto', { saveSnapshot: false })
-      }
-    })
-
-    resizeObserver.observe(content)
-    if (footer) {
-      resizeObserver.observe(footer)
+  const handleContentLayoutChange = useCallback(() => {
+    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+      return
     }
-    return () => resizeObserver.disconnect()
+
+    const restoringKey = restoringScrollKeyRef.current
+    if (restoringKey && restoringKey === currentScrollKey) {
+      restoreSavedScrollPosition(restoringKey)
+      return
+    }
+
+    if (preserveLatestUserTurnRef.current) {
+      return
+    }
+
+    const shouldFollowBottom =
+      followingBottomKeyRef.current === currentScrollKey ||
+      (currentScrollKey !== null &&
+        getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
+    if (shouldFollowBottom) {
+      setScrollToBottom('auto', { saveSnapshot: false })
+      return
+    }
+
+    if (userScrollPausedAutoFollowRef.current) {
+      restoreUserViewportAnchor()
+      return
+    }
+
+    if (isAtBottomRef.current) {
+      scrollToBottom('auto', { saveSnapshot: false })
+    }
   }, [
-    currentScrollKey,
     autoScrollSuspended,
+    currentScrollKey,
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     restoreUserViewportAnchor,
     scrollToBottom,
     setScrollToBottom,
-    stickyFooter,
   ])
+
+  useEffect(() => {
+    const content = contentRef.current
+    const footer = stickyFooterRef.current
+    const scroller = activeScrollRefRef.current.current
+    if (!content || !scroller || typeof ResizeObserver === 'undefined') return
+
+    const resizeObserver = new ResizeObserver(() => {
+      handleContentLayoutChange()
+    })
+
+    resizeObserver.observe(scroller)
+    resizeObserver.observe(content)
+    if (footer) {
+      resizeObserver.observe(footer)
+    }
+    return () => resizeObserver.disconnect()
+  }, [handleContentLayoutChange, stickyFooter])
 
   useEffect(() => clearScheduledScrolls, [clearScheduledScrolls])
 
@@ -842,6 +910,10 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const handleScroll = useCallback(() => {
+    if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
+      return
+    }
+
     const userInitiated = userScrollIntentRef.current
     userScrollIntentRef.current = false
     if (userInitiated) {
@@ -854,11 +926,36 @@ function ScrollableMessagePaneContent({
       }
       clearScheduledScrolls()
     }
+    if (!userInitiated) {
+      const shouldFollowBottom =
+        followingBottomKeyRef.current === currentScrollKey ||
+        (currentScrollKey !== null &&
+          getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
+      const scroller = activeScrollRefRef.current.current
+      const distanceFromBottom =
+        scroller === null
+          ? Number.POSITIVE_INFINITY
+          : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+      if (shouldFollowBottom && distanceFromBottom > SCROLLED_TO_BOTTOM_THRESHOLD) {
+        setScrollToBottom('auto', { saveSnapshot: false })
+        return
+      }
+      updateScrollState({ skipSave: true })
+      return
+    }
     updateScrollState({ forceSave: true })
     if (userScrollPausedAutoFollowRef.current) {
       captureUserViewportAnchor()
     }
-  }, [captureUserViewportAnchor, clearScheduledScrolls, currentScrollKey, updateScrollState])
+  }, [
+    autoScrollSuspended,
+    captureUserViewportAnchor,
+    clearScheduledScrolls,
+    currentScrollKey,
+    isTurnNavigationAutoScrollSuspended,
+    setScrollToBottom,
+    updateScrollState,
+  ])
 
   useEffect(() => {
     const externalScroller = externalScrollRef?.current
@@ -1012,6 +1109,7 @@ function ScrollableMessagePaneContent({
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
+                onVirtualLayoutChange={handleContentLayoutChange}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
             </>

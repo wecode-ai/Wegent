@@ -18,6 +18,38 @@ use super::util::{
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorSuggestion {
+    pub id: String,
+    pub message: String,
+    pub rationale: String,
+    pub status: String,
+    pub created_at: i64,
+    pub resolved_at: Option<i64>,
+    pub source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorState {
+    pub mode: String,
+    pub status: String,
+    pub instructions: String,
+    pub model_id: Option<String>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    pub interval_seconds: u64,
+    pub last_evaluated_at: Option<i64>,
+    #[serde(default)]
+    pub last_content_hash: Option<String>,
+    pub last_error: Option<String>,
+    pub suggestions: Vec<RuntimeSupervisorSuggestion>,
+}
+
+fn default_supervisor_interval_seconds() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
     pub local_task_id: String,
@@ -32,6 +64,7 @@ pub(crate) struct RuntimeTaskLink {
     pub thread_status: String,
     pub turn_status: Option<String>,
     pub goal_status: Option<String>,
+    pub supervisor: Option<RuntimeSupervisorState>,
     #[serde(skip)]
     pub git_info: Option<Value>,
     pub created_at: i64,
@@ -55,6 +88,28 @@ pub(crate) struct RuntimeTaskLink {
 }
 
 impl RuntimeTaskLink {
+    pub(crate) fn copy_execution_state_from(&mut self, current: &Self) {
+        self.status = current.status.clone();
+        self.running = current.running;
+        self.thread_status = current.thread_status.clone();
+        self.turn_status = current.turn_status.clone();
+        self.updated_at = current.updated_at;
+    }
+
+    pub(crate) fn preserve_runtime_state_from(&mut self, current: &Self) {
+        self.git_info = current.git_info.clone();
+        self.list_order = current.list_order;
+        self.group_workspace_path = current.group_workspace_path.clone();
+        self.group_project_key = current.group_project_key.clone();
+        self.pinned = current.pinned;
+        self.pinned_order = current.pinned_order;
+        let archived = self.status == "archived";
+        let current_archived = current.status == "archived";
+        if archived == current_archived {
+            self.copy_execution_state_from(current);
+        }
+    }
+
     pub fn new_pending(local_task_id: String, workspace_path: String, title: String) -> Self {
         Self {
             local_task_id,
@@ -68,6 +123,7 @@ impl RuntimeTaskLink {
             thread_status: "active".to_owned(),
             turn_status: Some("inProgress".to_owned()),
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -105,6 +161,7 @@ impl RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -135,6 +192,7 @@ impl RuntimeTaskLink {
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
+        let supervisor = local_link.as_ref().and_then(|link| link.supervisor.clone());
         let mut git_info = thread
             .get("gitInfo")
             .or_else(|| thread.get("git_info"))
@@ -186,6 +244,7 @@ impl RuntimeTaskLink {
             thread_status,
             turn_status,
             goal_status,
+            supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
@@ -229,6 +288,7 @@ impl RuntimeTaskLink {
             thread_status: self.thread_status.clone(),
             turn_status: self.turn_status.clone(),
             goal_status: self.goal_status.clone(),
+            supervisor: self.supervisor.clone(),
             git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -282,6 +342,7 @@ impl Default for RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -592,6 +653,11 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     }
     if let Some(goal_status) = link.goal_status.clone() {
         task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    }
+    if let Some(supervisor) = link.supervisor.clone() {
+        if let Ok(supervisor) = serde_json::to_value(supervisor) {
+            task.insert("supervisor".to_owned(), supervisor);
+        }
     }
     task.insert("pinned".to_owned(), Value::Bool(link.pinned));
     if let Some(order) = link.pinned_order {

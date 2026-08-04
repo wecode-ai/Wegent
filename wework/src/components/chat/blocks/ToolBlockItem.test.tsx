@@ -6,15 +6,6 @@ import { describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
 
-const streamingThinkingBlock: ProcessingBlock = {
-  id: 'thinking-1',
-  subtaskId: 1,
-  type: 'thinking',
-  content: 'First step. Latest visible thought',
-  status: 'streaming',
-  createdAt: 1770000000000,
-}
-
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
   subtaskId: 1,
@@ -77,47 +68,6 @@ describe('ToolBlockItem', () => {
     )
 
     expect(screen.getByRole('button')).toHaveClass('min-h-8')
-  })
-
-  test('renders streaming thinking as a single live preview row', () => {
-    render(<ToolBlockItem block={streamingThinkingBlock} />)
-
-    const preview = screen.getByTestId('thinking-live-preview')
-
-    expect(preview).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild).toHaveTextContent('正在思考')
-    expect(preview.firstElementChild?.tagName).toBe('SPAN')
-    expect(preview).toHaveTextContent('Latest visible thought')
-    expect(screen.queryByText('First step. Latest visible thought')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-toggle-button')).not.toBeInTheDocument()
-  })
-
-  test('renders completed thinking collapsed and expands on click', async () => {
-    const user = userEvent.setup()
-
-    render(
-      <ToolBlockItem
-        block={{
-          ...streamingThinkingBlock,
-          status: 'done',
-          content: 'I will inspect the repository before answering.',
-        }}
-      />
-    )
-
-    const toggle = screen.getByTestId('thinking-toggle-button')
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle.firstElementChild).toHaveTextContent('思考过程')
-    expect(toggle.firstElementChild?.tagName).toBe('SPAN')
-    expect(screen.queryByTestId('thinking-detail')).not.toBeInTheDocument()
-
-    await user.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByTestId('thinking-detail')).toHaveTextContent(
-      'I will inspect the repository before answering.'
-    )
   })
 
   test('renders streaming process text directly in the timeline', () => {
@@ -334,7 +284,9 @@ describe('ToolBlockItem', () => {
     scrollHeight.mockRestore()
   })
 
-  test('renders unknown tool as a non-expandable activity row', () => {
+  test('renders unknown tool with generic input and output details', async () => {
+    const user = userEvent.setup()
+
     render(
       <ToolBlockItem
         block={{
@@ -346,6 +298,9 @@ describe('ToolBlockItem', () => {
             action: 'inspect',
             payload: 'raw details should stay hidden',
           },
+          toolOutput: {
+            status: 'ok',
+          },
           status: 'done',
           createdAt: 1770000000002,
         }}
@@ -353,8 +308,43 @@ describe('ToolBlockItem', () => {
     )
 
     expect(screen.getByText('调用 custom agent tool')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
-    expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('generic-tool-block-detail')).toHaveTextContent('custom_agent_tool')
+    expect(screen.getByTestId('generic-tool-input')).toHaveTextContent(
+      'raw details should stay hidden'
+    )
+    expect(screen.getByTestId('generic-tool-output')).toHaveTextContent('"status": "ok"')
+  })
+
+  test('renders node_repl js as JavaScript command activity with details', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'node-repl-js',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'node_repl.js',
+          toolInput: {
+            code: "nodeRepl.write('hello')",
+          },
+          toolOutput: 'hello',
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('运行 JavaScript')).toBeInTheDocument()
+    expect(screen.queryByText('调用 js')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('generic-tool-block-detail')).toHaveTextContent('node_repl.js')
+    expect(screen.getByTestId('generic-tool-input')).toHaveTextContent("nodeRepl.write('hello')")
+    expect(screen.getByTestId('generic-tool-output')).toHaveTextContent('hello')
   })
 
   test('expands view_image tool details with an image preview', async () => {

@@ -11,9 +11,11 @@ export type {
 export { nestMessageBlocks } from './message-blocks'
 export type { MessageBlock, MessageBlockStatus } from './message-blocks'
 export {
+  getLatestThinkingContent,
   isGenericTaskStatusError,
   normalizeWorkbenchBlockStatus,
   reduceWorkbenchMessages,
+  resolveStreamingThinkingContent
 } from './workbench-message-reducer'
 export type {
   BaseWorkbenchProcessingBlock,

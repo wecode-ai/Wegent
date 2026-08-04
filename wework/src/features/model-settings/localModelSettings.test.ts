@@ -100,7 +100,7 @@ describe('localModelSettings', () => {
     expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
   })
 
-  test('preserves legacy persisted API keys when the native credential store is unavailable', () => {
+  test('preserves persisted API keys in local storage', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',
       JSON.stringify([

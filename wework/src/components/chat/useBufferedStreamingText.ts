@@ -5,6 +5,7 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
   const targetContentRef = useRef(content)
   const bufferedContentRef = useRef(content)
   const frameRef = useRef<number | null>(null)
+  const fallbackTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     targetContentRef.current = content
@@ -15,8 +16,15 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
       frameRef.current = null
     }
 
+    const cancelFallbackTimer = () => {
+      if (fallbackTimerRef.current === null) return
+      clearTimeout(fallbackTimerRef.current)
+      fallbackTimerRef.current = null
+    }
+
     const syncImmediately = () => {
       cancelFrame()
+      cancelFallbackTimer()
       bufferedContentRef.current = content
       setBufferedContent(content)
     }
@@ -28,6 +36,7 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
 
     const advanceFrame = () => {
       frameRef.current = null
+      cancelFallbackTimer()
       const target = targetContentRef.current
       bufferedContentRef.current = target
       setBufferedContent(target)
@@ -35,6 +44,13 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
 
     if (frameRef.current === null && bufferedContentRef.current !== content) {
       frameRef.current = requestAnimationFrame(advanceFrame)
+      fallbackTimerRef.current = window.setTimeout(() => {
+        cancelFrame()
+        fallbackTimerRef.current = null
+        const target = targetContentRef.current
+        bufferedContentRef.current = target
+        setBufferedContent(target)
+      }, 100)
     }
   }, [content, isStreaming])
 
@@ -42,6 +58,9 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
     () => () => {
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current)
+      }
+      if (fallbackTimerRef.current !== null) {
+        clearTimeout(fallbackTimerRef.current)
       }
     },
     []
