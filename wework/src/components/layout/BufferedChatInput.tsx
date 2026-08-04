@@ -25,13 +25,6 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   ...props
 }: BufferedChatInputProps) {
   const scopeKey = props.projectChat?.scopeKey
-  const onChangeRef = useRef(onChange)
-  const onSubmitRef = useRef(onSubmit)
-  const valueRef = useRef(value)
-  onChangeRef.current = onChange
-  onSubmitRef.current = onSubmit
-  valueRef.current = value
-
   const [draftState, setDraftState] = useState(() => ({
     scopeKey,
     sourceValue: value,
@@ -54,9 +47,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushDraft = useCallback(
     (nextDraft: string) => {
       cancelPendingFlush()
-      onChangeRef.current(nextDraft)
+      onChange(nextDraft)
     },
-    [cancelPendingFlush]
+    [cancelPendingFlush, onChange]
   )
 
   const scheduleDraftFlush = useCallback(
@@ -64,33 +57,32 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       cancelPendingFlush()
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
-        onChangeRef.current(nextDraft)
+        onChange(nextDraft)
       }, DRAFT_FLUSH_DELAY_MS)
     },
-    [cancelPendingFlush]
+    [cancelPendingFlush, onChange]
   )
 
   // Sync external value changes into composer and local state.
   useEffect(() => {
-    cancelPendingFlush()
     const shouldSetComposer = value !== draftRef.current
     draftRef.current = value
     setDraftState({ scopeKey, sourceValue: value, draft: value })
     if (shouldSetComposer) {
       composerRef.current?.setValue(value, value.length)
     }
-  }, [cancelPendingFlush, scopeKey, value])
+  }, [scopeKey, value])
 
-  // Flush pending draft when the scope changes or on unmount.
+  // Flush pending draft when value changes or on unmount.
   useEffect(() => {
-    const scopeOnChange = onChangeRef.current
     return () => {
-      if (flushTimeoutRef.current !== null) {
+      const pendingDraft = draftRef.current
+      if (pendingDraft !== value) {
         cancelPendingFlush()
-        scopeOnChange(draftRef.current)
+        onChange(pendingDraft)
       }
     }
-  }, [cancelPendingFlush, scopeKey])
+  }, [cancelPendingFlush, onChange, value])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
@@ -98,18 +90,17 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
-    setDraftState({ scopeKey, sourceValue: valueRef.current, draft: nextDraft })
+    setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
     composerRef.current?.setValue(nextDraft, nextDraft.length)
     scheduleDraftFlush(nextDraft)
-  }, [insertion, scheduleDraftFlush, scopeKey])
+  }, [insertion, scheduleDraftFlush, scopeKey, value])
 
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
-      setDraftState({ scopeKey, sourceValue: valueRef.current, draft: nextDraft })
       scheduleDraftFlush(nextDraft)
     },
-    [scheduleDraftFlush, scopeKey]
+    [scheduleDraftFlush]
   )
 
   const handleBlur = useCallback(() => {
@@ -124,19 +115,19 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draftRef.current
       if (options === undefined) {
-        void onSubmitRef.current(submittedDraft)
+        void onSubmit(submittedDraft)
       } else {
-        void onSubmitRef.current(submittedDraft, options)
+        void onSubmit(submittedDraft, options)
       }
       if (submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         composerRef.current?.setValue('', 0)
-        onChangeRef.current('')
+        onChange('')
       }
     },
-    [cancelPendingFlush, scopeKey]
+    [cancelPendingFlush, onChange, onSubmit, scopeKey]
   )
 
   return (
