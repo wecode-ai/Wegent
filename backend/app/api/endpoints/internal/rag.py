@@ -335,19 +335,30 @@ def _scope_kb_ids(scopes: list[KnowledgeBaseScopePayload]) -> list[int]:
     return list(dict.fromkeys(scope.knowledge_base_id for scope in scopes))
 
 
+def _complete_scope_payloads(
+    knowledge_base_ids: list[int],
+    scopes: list[KnowledgeBaseScopePayload],
+) -> list[KnowledgeBaseScopePayload]:
+    """Add unrestricted entries for IDs that have no explicit scope."""
+    scope_by_id = {scope.knowledge_base_id: scope for scope in scopes}
+    completed: list[KnowledgeBaseScopePayload] = []
+    seen_ids: set[int] = set()
+    for knowledge_base_id in knowledge_base_ids:
+        if knowledge_base_id in seen_ids:
+            continue
+        seen_ids.add(knowledge_base_id)
+        completed.append(
+            scope_by_id.get(
+                knowledge_base_id,
+                KnowledgeBaseScopePayload(knowledge_base_id=knowledge_base_id),
+            )
+        )
+    return completed
+
+
 def _external_ref_source_ids(refs: list[ExternalKnowledgeRef]) -> list[str]:
     """Return explicit source IDs from external refs."""
     return [ref.id for ref in refs if ref.id]
-
-
-def _group_external_refs_by_provider(
-    refs: list[ExternalKnowledgeRef],
-) -> dict[str, list[ExternalKnowledgeRef]]:
-    """Group external refs by provider while preserving provider order."""
-    refs_by_provider: dict[str, list[ExternalKnowledgeRef]] = {}
-    for ref in refs:
-        refs_by_provider.setdefault(ref.provider, []).append(ref)
-    return refs_by_provider
 
 
 def _ignored_external_summary(
@@ -372,6 +383,15 @@ def _external_retrieval_context(request: InternalRetrieveRequest) -> RetrievalCo
     return RetrievalContext(user_id=request.user_id, user_name=request.user_name)
 
 
+def _group_external_refs_by_provider(
+    refs: list[ExternalKnowledgeRef],
+) -> dict[str, list[ExternalKnowledgeRef]]:
+    grouped: dict[str, list[ExternalKnowledgeRef]] = {}
+    for ref in refs:
+        grouped.setdefault(ref.provider, []).append(ref)
+    return grouped
+
+
 async def _retrieve_external_sources(
     request: InternalRetrieveRequest,
 ) -> tuple[list[RetrieveRecord], list[RetrievalSourceSummary]]:
@@ -382,9 +402,9 @@ async def _retrieve_external_sources(
 
     external_records: list[RetrieveRecord] = []
     source_summaries: list[RetrievalSourceSummary] = []
+    refs_by_provider = _group_external_refs_by_provider(refs)
     ctx = _external_retrieval_context(request)
-
-    for provider_name, provider_refs in _group_external_refs_by_provider(refs).items():
+    for provider_name, provider_refs in refs_by_provider.items():
         provider = retrieval_source_registry.get(provider_name)
         if provider is None:
             logger.warning(
@@ -674,8 +694,6 @@ async def internal_retrieve(
     try:
         scopes = request.knowledge_base_scopes or []
         knowledge_base_ids = request.knowledge_base_ids or []
-        if scopes:
-            knowledge_base_ids = _scope_kb_ids(scopes)
         if request.knowledge_base_id is not None:
             knowledge_base_ids = [request.knowledge_base_id]
             if scopes:
@@ -686,6 +704,14 @@ async def internal_retrieve(
                 ]
                 if not scopes:
                     raise _scope_violation()
+        elif scopes:
+            scope_ids = _scope_kb_ids(scopes)
+            if knowledge_base_ids and not set(scope_ids).issubset(
+                set(knowledge_base_ids)
+            ):
+                raise _scope_violation()
+            knowledge_base_ids = list(dict.fromkeys([*knowledge_base_ids, *scope_ids]))
+            scopes = _complete_scope_payloads(knowledge_base_ids, scopes)
 
         resolved_document_ids = request.document_ids or []
         if not resolved_document_ids and request.document_names and knowledge_base_ids:
@@ -847,6 +873,16 @@ async def internal_retrieve(
                 records=records,
                 restricted_mode=restricted_mode,
             )
+            retrieval_persistence_service.persist_external_retrieval_result(
+                db=db,
+                user_subtask_id=persistence_context.user_subtask_id,
+                user_id=persistence_context.user_id,
+                query=request.query,
+                mode=response_mode,
+                records=external_records,
+                refs=request.external_knowledge_refs or [],
+                source_summaries=source_summaries,
+            )
 
         if restricted_mode and records:
             mediated_response = await protected_knowledge_mediator.transform(
@@ -864,6 +900,8 @@ async def internal_retrieve(
                 user_id=persistence_context.user_id if persistence_context else None,
                 user_name=request.user_name or "system",
             )
+            if persistence_context is not None:
+                db.commit()
             if external_records or source_summaries:
                 return MixedRestrictedRetrieveResponse(
                     retrieval_mode=internal_mode,
@@ -884,6 +922,9 @@ async def internal_retrieve(
                 )
             return mediated_response
 
+        if persistence_context is not None:
+            db.commit()
+
         return InternalRetrieveResponse(
             mode=response_mode,
             records=[
@@ -897,14 +938,18 @@ async def internal_retrieve(
         )
 
     except ValueError as e:
+        db.rollback()
         logger.warning("[internal_rag] Retrieval error: %s", e)
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
+        db.rollback()
         raise
     except RemoteRagGatewayError as e:
+        db.rollback()
         logger.warning("[internal_rag] Remote retrieval failed: %s", e)
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
     except Exception as e:
+        db.rollback()
         logger.error("[internal_rag] Retrieval failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 

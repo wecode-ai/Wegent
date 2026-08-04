@@ -7,6 +7,7 @@
 import React from 'react'
 import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ContextItem,
@@ -31,6 +32,18 @@ function formatKnowledgeScopeLabel(
     return t('picker.selectedFolders', { count: folderCount })
   }
   return t('picker.selectedDocuments', { count: documentCount })
+}
+
+function formatKnowledgeFullLabel(context: KnowledgeBaseContext) {
+  const scopedNames = [...(context.folder_names ?? []), ...(context.document_names ?? [])]
+  if (scopedNames.length === 0) return context.name
+  return scopedNames.map(name => `${context.name} / ${name}`).join('\n')
+}
+
+function formatExternalKnowledgeFullLabel(context: ExternalKnowledgeContext) {
+  const targetName = context.ref.target_name
+  if (!targetName) return context.ref.name || context.name
+  return `${context.ref.name || context.name} / ${targetName}`
 }
 
 interface ContextBadgeProps {
@@ -111,6 +124,12 @@ export default function ContextBadge({
     (!disableUrlClick &&
       context.type === 'dingtalk_doc' &&
       !!(context as DingTalkDocContext).doc_url)
+  const fullLabel =
+    context.type === 'knowledge_base'
+      ? formatKnowledgeFullLabel(context)
+      : context.type === 'external_knowledge'
+        ? formatExternalKnowledgeFullLabel(context as ExternalKnowledgeContext)
+        : context.name
 
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
@@ -129,60 +148,70 @@ export default function ContextBadge({
   }
 
   return (
-    <div
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${getBadgeColor()} ${
-        isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
-      }`}
-      onClick={handleBadgeClick}
-      role={isClickable ? 'button' : undefined}
-      tabIndex={isClickable ? 0 : undefined}
-      title={isClickable ? t('knowledge:document.document.openLink') : undefined}
-    >
-      <Icon className="h-4 w-4 flex-shrink-0" />
-      <div className="flex flex-col min-w-0 max-w-[200px]">
-        <span className="text-xs font-medium truncate" title={context.name}>
-          {context.name}
-        </span>
-        {context.type === 'knowledge_base' && context.scope_restricted ? (
-          <span className="text-xs opacity-70">{formatKnowledgeScopeLabel(context, t)}</span>
-        ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
-          <span className="text-xs opacity-70">
-            {formatDocumentCount(context.document_count, t)}
-          </span>
-        ) : null}
-        {context.type === 'table' && context.source_config?.url && (
-          <span className="text-xs opacity-70 truncate" title={context.source_config.url}>
-            {new URL(context.source_config.url).hostname}
-          </span>
-        )}
-        {context.type === 'queue_message' && (
-          <span className="text-xs opacity-70 truncate">
-            {t('inbox:message.from', { name: (context as QueueMessageContext).senderName })} ·{' '}
-            {(context as QueueMessageContext).messageCount} {t('inbox:message.messages_count')}
-          </span>
-        )}
-        {context.type === 'dingtalk_doc' && (
-          <span className="text-xs opacity-70 truncate">{t('chat:dingtalkDocs.docBadgeHint')}</span>
-        )}
-        {context.type === 'external_knowledge' && (
-          <span className="text-xs opacity-70 truncate">
-            {(context as ExternalKnowledgeContext).ref.provider}
-          </span>
-        )}
-      </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        onClick={e => {
-          e.stopPropagation()
-          onRemove()
-        }}
-        className={`h-5 w-5 ml-1 hover:bg-opacity-20 ${getRemoveButtonColor()}`}
-        aria-label={`Remove ${context.name}`}
+    <LongTextTooltip content={fullLabel}>
+      <div
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${getBadgeColor()} ${
+          isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
+        }`}
+        onClick={handleBadgeClick}
+        role={isClickable ? 'button' : undefined}
+        tabIndex={isClickable ? 0 : undefined}
+        aria-label={fullLabel}
       >
-        <X className="h-3 w-3" />
-      </Button>
-    </div>
+        <Icon className="h-4 w-4 flex-shrink-0" />
+        <div className="flex flex-col min-w-0 max-w-[200px]">
+          <TruncatedText
+            text={context.name}
+            tooltipText={fullLabel}
+            focusable={false}
+            className="text-xs font-medium"
+          />
+          {context.type === 'knowledge_base' && context.scope_restricted ? (
+            <span className="text-xs opacity-70">{formatKnowledgeScopeLabel(context, t)}</span>
+          ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
+            <span className="text-xs opacity-70">
+              {formatDocumentCount(context.document_count, t)}
+            </span>
+          ) : null}
+          {context.type === 'table' && context.source_config?.url && (
+            <TruncatedText
+              text={new URL(context.source_config.url).hostname}
+              tooltipText={context.source_config.url}
+              focusable={false}
+              className="text-xs opacity-70"
+            />
+          )}
+          {context.type === 'queue_message' && (
+            <span className="text-xs opacity-70 truncate">
+              {t('inbox:message.from', { name: (context as QueueMessageContext).senderName })} ·{' '}
+              {(context as QueueMessageContext).messageCount} {t('inbox:message.messages_count')}
+            </span>
+          )}
+          {context.type === 'dingtalk_doc' && (
+            <span className="text-xs opacity-70 truncate">
+              {t('chat:dingtalkDocs.docBadgeHint')}
+            </span>
+          )}
+          {context.type === 'external_knowledge' && (
+            <span className="text-xs opacity-70 truncate">
+              {(context as ExternalKnowledgeContext).ref.provider}
+            </span>
+          )}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={e => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          className={`h-5 w-5 shrink-0 ml-1 hover:bg-opacity-20 ${getRemoveButtonColor()}`}
+          aria-label={`Remove ${context.name}`}
+        >
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
+    </LongTextTooltip>
   )
 }

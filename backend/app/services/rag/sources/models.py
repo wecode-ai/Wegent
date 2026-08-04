@@ -33,6 +33,8 @@ class RetrievalSourceStatus:
     record_count: int = 0
     citation_count: int = 0
     mode: Optional[str] = None
+    canonical_ref_key: Optional[str] = None
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,36 @@ class RetrievalSourceResult:
     records: list[RetrieveRecord]
     summary: Optional[RetrievalSourceSummary] = None
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ExternalProviderCapabilities:
+    """Security and selection capabilities declared by a retrieval provider."""
+
+    enforces_per_user_access: bool = False
+    supports_virtual_containers: bool = False
+
+
+@dataclass(frozen=True)
+class ExternalRefGateRequest:
+    """Context required to validate an external knowledge binding."""
+
+    refs: list[ExternalKnowledgeRef]
+    binding_level: ExternalKnowledgeBindingLevel
+    actor_user_id: int
+
+
+@dataclass(frozen=True)
+class ExternalRefValidationResult:
+    """Provider-reported validation result for one input ref."""
+
+    ref: ExternalKnowledgeRef
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+    @property
+    def is_valid(self) -> bool:
+        return self.reason is None
 
 
 @dataclass(frozen=True)
@@ -79,13 +111,18 @@ class ExternalKnowledgeDocumentListResult:
 
 
 class ExternalRefValidationError(Exception):
-    """External knowledge binding validation failed."""
+    """External knowledge binding validation failed with a provider-neutral reason."""
+
+    def __init__(self, message: str, *, reason: str = "invalid_selection") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class RetrievalSourceProvider(Protocol):
     """Protocol implemented by external retrieval source providers."""
 
     name: str
+    capabilities: ExternalProviderCapabilities
 
     async def retrieve(
         self,
@@ -98,11 +135,22 @@ class RetrievalSourceProvider(Protocol):
 
     def validate_refs(
         self,
-        refs: list[ExternalKnowledgeRef],
         *,
-        binding_level: ExternalKnowledgeBindingLevel,
+        gate: ExternalRefGateRequest,
     ) -> None:
         """Validate refs for a binding level."""
+        ...
+
+
+class BatchExternalRefValidationProvider(Protocol):
+    """Optional provider capability for one-call, per-ref gate results."""
+
+    def validate_refs_batch(
+        self,
+        *,
+        gate: ExternalRefGateRequest,
+    ) -> list[ExternalRefValidationResult]:
+        """Return one ordered result for every input ref."""
         ...
 
 
@@ -125,15 +173,44 @@ def validate_external_refs(
     refs: list[ExternalKnowledgeRef],
     *,
     binding_level: ExternalKnowledgeBindingLevel,
+    actor_user_id: int,
 ) -> None:
     """Validate external refs and dispatch provider-specific validation."""
     from .registry import retrieval_source_registry
 
     refs_by_provider: dict[str, list[ExternalKnowledgeRef]] = {}
     for ref in refs:
+        if binding_level == "agent" and ref.mode == "all_accessible":
+            raise ExternalRefValidationError(
+                "all_accessible external knowledge refs cannot be saved as agent defaults",
+                reason="unsupported_binding",
+            )
         refs_by_provider.setdefault(ref.provider, []).append(ref)
 
     for provider_name, provider_refs in refs_by_provider.items():
         provider = retrieval_source_registry.get(provider_name)
-        if provider and hasattr(provider, "validate_refs"):
-            provider.validate_refs(provider_refs, binding_level=binding_level)
+        if provider is None:
+            raise ExternalRefValidationError(
+                f"External knowledge provider is not registered: {provider_name}",
+                reason="provider_unavailable",
+            )
+
+        capabilities = getattr(
+            provider,
+            "capabilities",
+            ExternalProviderCapabilities(),
+        )
+        if binding_level == "agent" and not capabilities.enforces_per_user_access:
+            raise ExternalRefValidationError(
+                f"External knowledge provider cannot be saved as an agent default: {provider_name}",
+                reason="unsupported_binding",
+            )
+
+        if hasattr(provider, "validate_refs"):
+            provider.validate_refs(
+                gate=ExternalRefGateRequest(
+                    refs=provider_refs,
+                    binding_level=binding_level,
+                    actor_user_id=actor_user_id,
+                )
+            )

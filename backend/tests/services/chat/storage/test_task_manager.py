@@ -308,8 +308,12 @@ def test_create_new_task_uses_auto_delete_executor_label(
     )
 
     with patch(
-        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-        return_value=[],
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_bindings",
+        return_value={
+            "knowledge_base_refs": [],
+            "external_knowledge_refs": [],
+            "context_warnings": [],
+        },
     ):
         task = create_new_task(test_db, test_user, team, params)
 
@@ -335,8 +339,12 @@ def test_create_new_task_writes_execution_workspace(
     )
 
     with patch(
-        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-        return_value=[],
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_bindings",
+        return_value={
+            "knowledge_base_refs": [],
+            "external_knowledge_refs": [],
+            "context_warnings": [],
+        },
     ):
         task = create_new_task(test_db, test_user, team, params)
 
@@ -420,8 +428,12 @@ def test_create_new_task_uses_real_task_row_without_placeholder(
     )
 
     with patch(
-        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-        return_value=[],
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_bindings",
+        return_value={
+            "knowledge_base_refs": [],
+            "external_knowledge_refs": [],
+            "context_warnings": [],
+        },
     ):
         task = create_new_task(test_db, test_user, team, params)
 
@@ -483,8 +495,12 @@ async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
             return_value=[1255],
         ),
         patch(
-            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-            return_value=[],
+            "app.services.chat.storage.task_manager.build_initial_task_knowledge_bindings",
+            return_value={
+                "knowledge_base_refs": [],
+                "external_knowledge_refs": [],
+                "context_warnings": [],
+            },
         ),
         patch(
             "app.services.project_service.prepare_git_worktree_for_task",

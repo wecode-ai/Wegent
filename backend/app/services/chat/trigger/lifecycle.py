@@ -31,6 +31,7 @@ from app.services.chat.storage.task_manager import (
     get_task_with_access_check,
 )
 from app.services.chat.task_device_resolution import ensure_task_device_id
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
@@ -203,13 +204,12 @@ def prepare_execution_session(
         first_bot_name = ""
         first_bot_namespace = "default"
         for member in team_crd.spec.members:
-            member_bot = kindReader.get_by_name_and_namespace(
+            member_bot = resolve_kind_reference(
                 db,
-                team.user_id,
-                KindType.BOT,
-                member.botRef.namespace,
-                member.botRef.name,
-            )
+                kind="Bot",
+                ref=member.botRef,
+                actor_user_id=team.user_id,
+            ).resource
             if member_bot:
                 first_bot_name = member.botRef.name
                 first_bot_namespace = member.botRef.namespace

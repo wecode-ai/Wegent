@@ -27,6 +27,7 @@ from app.schemas.base_role import BaseRole
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
 from app.services.device.display_name import resolve_device_display_name
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.services.task_fork_history import task_fork_history_resolver
@@ -79,14 +80,12 @@ def create_subtasks(
     # Get bot IDs from team members
     bot_ids = []
     for member in team_crd.spec.members:
-        # Find bot using kindReader
-        bot = kindReader.get_by_name_and_namespace(
+        bot = resolve_kind_reference(
             db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
+            kind="Bot",
+            ref=member.botRef,
+            actor_user_id=team.user_id,
+        ).resource
         if bot:
             bot_ids.append(bot.id)
 
@@ -181,13 +180,12 @@ def _build_pipeline_assistant_subtask_plan(
 
     # Get the target bot for the determined stage
     target_member = team_crd.spec.members[target_stage_index]
-    bot = kindReader.get_by_name_and_namespace(
+    bot = resolve_kind_reference(
         db,
-        team.user_id,
-        KindType.BOT,
-        target_member.botRef.namespace,
-        target_member.botRef.name,
-    )
+        kind="Bot",
+        ref=target_member.botRef,
+        actor_user_id=team.user_id,
+    ).resource
 
     if bot is None:
         raise Exception(f"Bot {target_member.botRef.name} not found in kinds table")

@@ -273,7 +273,6 @@ def _link_contexts_to_user_subtask(
         attachment_ids=request.attachment_ids,
         contexts=request.contexts,
         task=task,
-        user_name=user.user_name,
     )
 
 

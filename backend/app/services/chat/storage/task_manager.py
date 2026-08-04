@@ -27,8 +27,9 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.services.chat.task_default_knowledge_bases import (
-    build_initial_task_knowledge_base_refs,
+    build_initial_task_knowledge_bindings,
 )
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers import KindType, kindReader
 from app.services.task_skill_selection import build_task_skill_labels
 from app.services.task_status import mark_task_completed
@@ -133,13 +134,12 @@ def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
     bot_ids = []
 
     for member in team_crd.spec.members:
-        bot = kindReader.get_by_name_and_namespace(
+        bot = resolve_kind_reference(
             db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
+            kind="Bot",
+            ref=member.botRef,
+            actor_user_id=team.user_id,
+        ).resource
         if bot:
             bot_ids.append(bot.id)
 
@@ -292,12 +292,15 @@ def create_new_task(
         f"[create_new_task] Creating task_json with is_group_chat={params.is_group_chat}"
     )
 
-    knowledge_base_refs = build_initial_task_knowledge_base_refs(
+    knowledge_bindings = build_initial_task_knowledge_bindings(
         db=db,
         user=user,
         team=team,
-        knowledge_base_id=params.knowledge_base_id,
     )
+    knowledge_base_refs = knowledge_bindings["knowledge_base_refs"]
+    knowledge_base_scopes = knowledge_bindings.get("knowledge_base_scopes", [])
+    external_knowledge_refs = knowledge_bindings["external_knowledge_refs"]
+    context_warnings = knowledge_bindings["context_warnings"]
     task_execution = _build_task_execution(params.execution_workspace)
     task_name = params.task_name or f"task-{new_task_id}"
 
@@ -307,6 +310,7 @@ def create_new_task(
             "title": title,
             "prompt": params.message,
             "teamRef": {
+                "id": team.id,
                 "name": team.name,
                 "namespace": team.namespace,
                 "user_id": team.user_id,
@@ -319,6 +323,17 @@ def create_new_task(
                 if knowledge_base_refs
                 else {}
             ),
+            **(
+                {"knowledgeBaseScopes": knowledge_base_scopes}
+                if knowledge_base_scopes
+                else {}
+            ),
+            **(
+                {"externalKnowledgeRefs": external_knowledge_refs}
+                if external_knowledge_refs
+                else {}
+            ),
+            "contextWarnings": context_warnings,
             **({"execution": task_execution} if task_execution else {}),
         },
         "status": {

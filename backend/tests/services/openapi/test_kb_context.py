@@ -6,12 +6,13 @@
 Unit tests for KnowledgeBaseContextCreator.
 """
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.services.openapi.kb_context import (
     KnowledgeBaseContextCreator,
+    get_task_knowledge_base_scope_refs,
 )
 from app.services.openapi.kb_resolver import ResolvedKnowledgeBase
 
@@ -76,7 +77,8 @@ class TestKnowledgeBaseContextCreator:
         assert len(contexts) == 1
         mock_context_class.assert_called_once()
         mock_db.add_all.assert_called_once()
-        mock_db.commit.assert_called_once()
+        mock_db.flush.assert_called_once()
+        mock_db.commit.assert_not_called()
 
     def test_create_contexts_empty_list(self, creator):
         """Test creating contexts with empty KB names list."""
@@ -135,18 +137,14 @@ class TestKnowledgeBaseContextCreator:
         assert mock_context_class.call_count == 2
         mock_db.add_all.assert_called_once()
 
-    @patch(
-        "app.services.openapi.kb_context.task_knowledge_base_service.sync_subtask_kb_to_task"
-    )
-    def test_create_contexts_syncs_selected_kbs_to_task(
+    def test_create_contexts_upserts_selection_to_task(
         self,
-        mock_sync,
         creator,
         mock_resolver,
         mock_db,
         mock_context_class,
     ):
-        """Selected KBs from responses should be promoted to task-level refs."""
+        """OpenAPI selections use the shared Task binding service."""
         resolved_kb = ResolvedKnowledgeBase(
             kb_id=123, namespace="default", name="my_kb", display_name="My KB"
         )
@@ -159,30 +157,30 @@ class TestKnowledgeBaseContextCreator:
         mock_context = MagicMock()
         mock_context.type_data = {"knowledge_id": 123}
         mock_context_class.return_value = mock_context
-        mock_task = MagicMock()
-        mock_task.id = 456
+        task = MagicMock(id=71)
+        with patch(
+            "app.services.chat.task_knowledge_binding_service."
+            "upsert_message_knowledge_bindings",
+            return_value=task,
+        ) as upsert_bindings:
+            creator.create_contexts(
+                subtask_id=789,
+                kb_names=[{"namespace": "default", "name": "my_kb"}],
+                task=task,
+            )
 
-        creator.create_contexts(
-            subtask_id=789,
-            kb_names=[{"namespace": "default", "name": "my_kb"}],
-            task=mock_task,
-            user_name="alice",
+        mock_db.flush.assert_called_once()
+        mock_db.commit.assert_not_called()
+        upsert_bindings.assert_called_once_with(
+            mock_db,
+            task,
+            [mock_context],
+            [],
+            1,
         )
 
-        mock_sync.assert_called_once_with(
-            db=mock_db,
-            task=mock_task,
-            knowledge_id=123,
-            user_id=1,
-            user_name="alice",
-        )
-
-    @patch(
-        "app.services.openapi.kb_context.task_knowledge_base_service.sync_subtask_kb_to_task"
-    )
-    def test_create_contexts_scoped_kb_updates_task_scope_only(
+    def test_create_contexts_scoped_kb_stores_scope_on_context_only(
         self,
-        mock_sync,
         creator,
         mock_resolver,
         mock_context_class,
@@ -207,10 +205,6 @@ class TestKnowledgeBaseContextCreator:
 
         mock_context = MagicMock()
         mock_context_class.return_value = mock_context
-        mock_task = MagicMock()
-        mock_task.id = 456
-        mock_task.json = {"spec": {"title": "task"}}
-
         creator.create_contexts(
             subtask_id=789,
             kb_names=[
@@ -223,17 +217,8 @@ class TestKnowledgeBaseContextCreator:
                     "scope_specified": True,
                 }
             ],
-            task=mock_task,
-            user_name="alice",
         )
 
-        mock_sync.assert_not_called()
-        scope_ref = mock_task.json["spec"]["knowledgeBaseScopes"][0]
-        assert scope_ref["id"] == 123
-        assert scope_ref["scopeRestricted"] is True
-        assert scope_ref["folderIds"] == [9]
-        assert scope_ref["explicitDocumentIds"] == [101]
-        assert scope_ref["includeSubfolders"] is False
         call_kwargs = mock_context_class.call_args.kwargs
         assert call_kwargs["type_data"]["scope_restricted"] is True
         assert call_kwargs["type_data"]["document_ids"] == [101, 102]
@@ -300,3 +285,150 @@ class TestKnowledgeBaseContextCreatorErrorHandling:
             creator.create_contexts(subtask_id=456, kb_names=kb_names)
 
         assert exc_info.value.status_code == 404
+
+
+class TestGetTaskKnowledgeBaseScopeRefs:
+    """Tests for get_task_knowledge_base_scope_refs merging both Task fields."""
+
+    @staticmethod
+    def _make_task(spec: dict) -> MagicMock:
+        task = MagicMock()
+        task.json = {"spec": spec}
+        return task
+
+    def test_legacy_refs_only_scope_is_inherited(self):
+        """Old Task data with scoped binding only in knowledgeBaseRefs runs scoped."""
+        task = self._make_task(
+            {
+                "knowledgeBaseRefs": [
+                    {
+                        "id": 7,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [101, 102],
+                        "folderIds": [9],
+                        "includeSubfolders": False,
+                    }
+                ]
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert len(refs) == 1
+        assert refs[0]["id"] == 7
+        assert refs[0]["scope_specified"] is True
+        assert refs[0]["document_ids"] == [101, 102]
+        assert refs[0]["folder_ids"] == [9]
+        assert refs[0]["include_subfolders"] is False
+
+    def test_scopes_only_scope_is_inherited(self):
+        """New Task data with scoped binding only in knowledgeBaseScopes runs scoped."""
+        task = self._make_task(
+            {
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 8,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [201],
+                    }
+                ]
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert len(refs) == 1
+        assert refs[0]["id"] == 8
+        assert refs[0]["scope_specified"] is True
+        assert refs[0]["document_ids"] == [201]
+
+    def test_both_fields_scope_is_merged(self):
+        """Scoped bindings in both fields are deduplicated by stable ID."""
+        task = self._make_task(
+            {
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 9,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [301],
+                    }
+                ],
+                "knowledgeBaseRefs": [
+                    {
+                        "id": 9,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [302],
+                    }
+                ],
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert len(refs) == 1
+        assert refs[0]["id"] == 9
+        assert refs[0]["scope_specified"] is True
+
+    def test_whole_binding_wins_over_scope(self):
+        """An explicit whole binding overrides a scoped binding for the same KB."""
+        task = self._make_task(
+            {
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 10,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "explicitDocumentIds": [401],
+                    }
+                ],
+                "knowledgeBaseRefs": [
+                    {
+                        "id": 10,
+                        "name": "KB",
+                        "namespace": "default",
+                    }
+                ],
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert len(refs) == 1
+        assert refs[0]["id"] == 10
+        assert refs[0]["scope_specified"] is False
+        assert refs[0]["document_ids"] == []
+
+    def test_unbind_clears_both_fields(self):
+        """After unbinding, neither field contributes scope refs."""
+        task = self._make_task(
+            {
+                "knowledgeBaseScopes": [],
+                "knowledgeBaseRefs": [],
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert refs == []
+
+    def test_legacy_snake_case_scope_fields(self):
+        """Refs using snake_case scope fields are recognized."""
+        task = self._make_task(
+            {
+                "knowledgeBaseRefs": [
+                    {
+                        "id": 11,
+                        "name": "KB",
+                        "namespace": "default",
+                        "scope_restricted": True,
+                        "document_ids": [501],
+                        "folder_ids": [99],
+                        "include_subfolders": True,
+                    }
+                ]
+            }
+        )
+        refs = get_task_knowledge_base_scope_refs(task)
+        assert len(refs) == 1
+        assert refs[0]["scope_specified"] is True
+        assert refs[0]["document_ids"] == [501]
+        assert refs[0]["folder_ids"] == [99]

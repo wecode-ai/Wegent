@@ -104,6 +104,22 @@ jest.mock('@/features/settings/services/teams', () => ({
   updateTeam: jest.fn(),
 }))
 
+jest.mock('@/apis/knowledge-base', () => ({
+  knowledgeBaseApi: {
+    getAllGrouped: jest.fn().mockResolvedValue({
+      personal: { created_by_me: [], shared_with_me: [] },
+      groups: [],
+      organization: { knowledge_bases: [] },
+      summary: {
+        total_count: 0,
+        personal_count: 0,
+        group_count: 0,
+        organization_count: 0,
+      },
+    }),
+  },
+}))
+
 jest.mock('@/apis/bots', () => {
   const actual = jest.requireActual('@/apis/bots')
   return {
@@ -243,6 +259,21 @@ jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector',
     onChange: (value: Array<{ id: number; name: string }>) => void
   }) => (
     <button type="button" onClick={() => onChange([{ id: 10, name: 'Product Docs' }])}>
+      Add knowledge
+    </button>
+  ),
+}))
+
+jest.mock('@/features/settings/components/knowledge/AgentDefaultKnowledgeScopeSelector', () => ({
+  AgentDefaultKnowledgeScopeSelector: ({
+    onDefaultKnowledgeBaseRefsChange,
+  }: {
+    onDefaultKnowledgeBaseRefsChange: (value: Array<{ id: number; name: string }>) => void
+  }) => (
+    <button
+      type="button"
+      onClick={() => onDefaultKnowledgeBaseRefsChange([{ id: 10, name: 'Product Docs' }])}
+    >
       Add knowledge
     </button>
   ),
@@ -500,7 +531,6 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'new-agent' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
     fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
-    fireEvent.click(screen.getByRole('button', { name: 'Add knowledge' }))
     fireEvent.change(screen.getByTestId('simple-prompt-textarea'), {
       target: { value: 'Answer with context.' },
     })
@@ -523,6 +553,7 @@ describe('Simple TeamEditDialog', () => {
           },
           target_group_names: [],
           default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
+          default_external_knowledge_refs: [],
         })
       )
       expect(mockedCreateTeam).toHaveBeenCalledWith(

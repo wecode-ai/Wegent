@@ -98,6 +98,10 @@ class TaskStore(Protocol):
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[TaskResource]: ...
 
+    def get_by_id_for_update(
+        self, db: Session, *, task_id: int
+    ) -> Optional[TaskResource]: ...
+
     def get_active_task(
         self,
         db: Session,

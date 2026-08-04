@@ -576,6 +576,7 @@ class TestCustomTeamTemplate:
         assert captured_team_json["spec"]["members"] == [
             {
                 "botRef": {
+                    "id": 1,
                     "name": captured_team_json["spec"]["members"][0]["botRef"]["name"],
                     "namespace": "default",
                 },

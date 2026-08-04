@@ -4,7 +4,7 @@
 
 """Provider-neutral external knowledge API schemas."""
 
-from typing import Literal, Optional
+from typing import Any, Literal, Mapping, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,6 +20,7 @@ class ExternalKnowledgeRef(BaseModel):
     name: Optional[str] = None
     scope: Optional[str] = None
     target_type: Optional[Literal["knowledge_base", "folder", "document"]] = None
+    workspace_id: Optional[str] = None
     node_id: Optional[str] = None
     document_id: Optional[str] = None
     parent_id: Optional[str] = None
@@ -33,3 +34,20 @@ class ExternalKnowledgeRef(BaseModel):
         if self.mode == "explicit" and not self.id:
             raise ValueError("id is required when mode is explicit")
         return self
+
+
+def external_ref_canonical_key(
+    ref: ExternalKnowledgeRef | Mapping[str, Any],
+) -> str:
+    """Return the full stable target key used across runtime and persistence."""
+    value = ref.model_dump(exclude_none=True) if isinstance(ref, BaseModel) else ref
+    parts = (
+        value.get("provider"),
+        value.get("mode"),
+        value.get("id"),
+        value.get("target_type") or "knowledge_base",
+        value.get("workspace_id"),
+        value.get("node_id"),
+        value.get("document_id"),
+    )
+    return "external:" + ":".join("" if part is None else str(part) for part in parts)

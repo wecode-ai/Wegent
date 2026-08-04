@@ -168,6 +168,8 @@ class TestSyncNodesToDb:
             .all()
         )
         assert len(db_nodes) == 2
+        assert {node.workspace_id for node in db_nodes} == {"ws001"}
+        assert {node.source for node in db_nodes} == {"docs"}
 
     def test_updates_existing_nodes(self, test_db: Session, test_user: User) -> None:
         """Existing nodes are updated when data changes."""

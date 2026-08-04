@@ -49,18 +49,85 @@ def build_context_display_fields(
         }
 
     if context_type == "external_knowledge":
+        external_ref = _normalize_external_ref(data)
+        provider = external_ref.get("provider")
+        source_name = external_ref.get("name") or external_ref.get("id")
+        target_name = external_ref.get("target_name") or source_name
         return {
-            "external_provider": data.get("provider"),
-            "external_mode": data.get("mode"),
-            "external_id": data.get("id"),
-            "external_scope": data.get("scope"),
-            "external_target_type": data.get("target_type"),
-            "external_node_id": data.get("node_id"),
-            "external_document_id": data.get("document_id"),
-            "external_parent_id": data.get("parent_id"),
+            "external_ref": external_ref or None,
+            "external_provider": provider,
+            "external_provider_label": _external_provider_label(provider),
+            "external_source_name": source_name,
+            "external_target_name": target_name,
+            "external_mode": external_ref.get("mode"),
+            "external_id": external_ref.get("id"),
+            "external_scope": external_ref.get("scope"),
+            "external_target_type": external_ref.get("target_type"),
+            "external_node_id": external_ref.get("node_id"),
+            "external_document_id": external_ref.get("document_id"),
+            "external_parent_id": external_ref.get("parent_id"),
+            "retrieval_status": data.get("retrieval_status"),
         }
 
     return {}
+
+
+def build_public_context_display_fields(
+    context_type: str,
+    type_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build share-safe display fields for a SubtaskContext."""
+    fields = build_context_display_fields(context_type, type_data)
+    if context_type != "external_knowledge":
+        return fields
+
+    allowed_keys = {
+        "external_provider",
+        "external_provider_label",
+        "external_source_name",
+        "external_target_name",
+        "external_target_type",
+        "retrieval_status",
+    }
+    return {
+        key: value
+        for key, value in fields.items()
+        if key in allowed_keys and value is not None
+    }
+
+
+def _normalize_external_ref(type_data: dict[str, Any]) -> dict[str, Any]:
+    """Read new external_ref snapshots and legacy flat external data."""
+    external_ref = type_data.get("external_ref")
+    if isinstance(external_ref, dict):
+        return {key: value for key, value in external_ref.items() if value is not None}
+
+    legacy_keys = (
+        "provider",
+        "mode",
+        "id",
+        "name",
+        "scope",
+        "target_type",
+        "node_id",
+        "document_id",
+        "parent_id",
+        "target_name",
+        "boundBy",
+        "boundAt",
+    )
+    return {
+        key: type_data.get(key) for key in legacy_keys if type_data.get(key) is not None
+    }
+
+
+def _external_provider_label(provider: Any) -> str | None:
+    if not provider:
+        return None
+    labels = {
+        "dingtalk": "DingTalk",
+    }
+    return labels.get(str(provider), str(provider))
 
 
 def _build_attachment_fields(type_data: dict[str, Any]) -> dict[str, Any]:

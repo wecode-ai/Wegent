@@ -23,6 +23,7 @@ from app.schemas.admin import (
 )
 from app.schemas.kind import Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
+from app.services.kind_reference import resolve_kind_reference
 
 logger = logging.getLogger(__name__)
 
@@ -90,22 +91,18 @@ def _validate_bot_resource_references(
         ghost_name = ghost_ref.get("name")
         ghost_namespace = ghost_ref.get("namespace", "default")
         if ghost_name and isinstance(ghost_name, str):
-            ghost = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Ghost",
-                    Kind.name == ghost_name,
-                    Kind.namespace == ghost_namespace,
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            ghost = resolve_kind_reference(
+                db,
+                kind="Ghost",
+                ref=ghost_ref,
+                actor_user_id=0,
+            ).resource
             if not ghost:
                 return (
                     False,
                     f"Ghost '{ghost_namespace}/{ghost_name}' is not a public resource. Please create it as a public ghost first.",
                 )
+            ghost_ref["id"] = ghost.id
 
     # Validate shellRef
     shell_ref = spec.get("shellRef", {})
@@ -471,13 +468,18 @@ def _build_bot_json_from_form_data(
     namespace: str,
     shell_name: str,
     shell_namespace: str,
+    ghost_id: int,
     ghost_name: str,
     model_ref_name: Optional[str],
     model_ref_namespace: str,
 ) -> dict:
     """Build Bot CRD JSON from form data."""
     bot_spec = {
-        "ghostRef": {"name": ghost_name, "namespace": namespace},
+        "ghostRef": {
+            "id": ghost_id,
+            "name": ghost_name,
+            "namespace": namespace,
+        },
         "shellRef": {"name": shell_name, "namespace": shell_namespace},
     }
 
@@ -578,6 +580,7 @@ async def create_public_bot(
             bot_data.preload_skill_refs or {},
             bot_data.default_knowledge_base_refs or [],
         )
+        db.flush()
         ghost_name = ghost.name
 
         # Determine model reference
@@ -624,6 +627,7 @@ async def create_public_bot(
             bot_data.namespace,
             bot_data.shell_name,
             shell_namespace,
+            ghost.id,
             ghost_name,
             model_ref_name,
             model_ref_namespace,
@@ -757,6 +761,7 @@ async def update_public_bot(
 
         # Update Ghost if any ghost-related fields are provided
         ghost_name = current_ghost_ref.get("name", f"{new_name}-ghost")
+        ghost_id = current_ghost_ref.get("id")
         if (
             bot_data.system_prompt is not None
             or bot_data.mcp_servers is not None
@@ -779,6 +784,7 @@ async def update_public_bot(
             )
 
             if existing_ghost:
+                ghost_id = existing_ghost.id
                 ghost_crd = Ghost.model_validate(existing_ghost.json)
                 if bot_data.system_prompt is not None:
                     ghost_crd.spec.systemPrompt = bot_data.system_prompt
@@ -816,7 +822,28 @@ async def update_public_bot(
                     bot_data.preload_skill_refs or {},
                     bot_data.default_knowledge_base_refs or [],
                 )
+                db.flush()
+                ghost_id = ghost.id
                 ghost_name = ghost.name
+
+        if ghost_id is None:
+            existing_ghost = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_name,
+                    Kind.namespace == new_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if existing_ghost is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Ghost '{new_namespace}/{ghost_name}' is not available.",
+                )
+            ghost_id = existing_ghost.id
 
         # Determine model reference
         model_ref_name = current_model_ref.get("name") if current_model_ref else None
@@ -869,6 +896,7 @@ async def update_public_bot(
             new_namespace,
             shell_name,
             shell_namespace,
+            ghost_id,
             ghost_name,
             model_ref_name,
             model_ref_namespace,

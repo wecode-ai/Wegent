@@ -60,9 +60,9 @@ def test_create_subtasks_uses_fork_history_next_message_id(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        helpers.kindReader,
-        "get_by_name_and_namespace",
-        lambda db, user_id, kind_type, namespace, name: SimpleNamespace(id=1255),
+        helpers,
+        "resolve_kind_reference",
+        lambda *args, **kwargs: SimpleNamespace(resource=SimpleNamespace(id=1255)),
     )
 
     def create_pair(db, **kwargs):
