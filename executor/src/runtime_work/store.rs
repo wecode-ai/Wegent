@@ -135,14 +135,6 @@ impl RuntimeWorkStore {
         self.update_task_with_persistence(local_task_id, updater, true)
     }
 
-    pub fn update_task_execution_state(&self, runtime_state: &RuntimeTaskLink) {
-        self.update_task_with_persistence(
-            &runtime_state.local_task_id,
-            |task| task.copy_execution_state_from(runtime_state),
-            false,
-        );
-    }
-
     fn update_task_with_persistence(
         &self,
         local_task_id: &str,
@@ -204,13 +196,8 @@ impl RuntimeWorkStore {
             return;
         }
 
-        let mut disk_index = read_index_from_path(&self.index_path);
+        let disk_index = read_index_from_path(&self.index_path);
         if let Ok(mut index) = self.index.lock() {
-            for (task_id, disk_task) in &mut disk_index.tasks {
-                if let Some(current_task) = index.tasks.get(task_id) {
-                    disk_task.preserve_runtime_state_from(current_task);
-                }
-            }
             *index = disk_index;
         }
         if let Ok(mut signature) = self.index_signature.lock() {
@@ -266,13 +253,7 @@ fn strip_transient_task_state(index: &mut Value) {
         task.remove("status");
         task.remove("running");
         task.remove("thread_status");
-        if !task
-            .get("turn_status")
-            .and_then(Value::as_str)
-            .is_some_and(is_terminal_turn_status)
-        {
-            task.remove("turn_status");
-        }
+        task.remove("turn_status");
         task.insert("archived".to_owned(), Value::Bool(archived));
     }
 }
@@ -298,39 +279,18 @@ fn restore_persisted_task_metadata(index: &mut Value) {
                     .as_deref()
                     .is_some_and(|status| status.eq_ignore_ascii_case("archived"))
             });
-        let restored_status = legacy_status
-            .filter(|status| {
-                matches!(
-                    status.trim().to_ascii_lowercase().as_str(),
-                    "done" | "cancelled" | "canceled" | "failed"
-                )
-            })
-            .unwrap_or_else(|| "active".to_owned());
         task.insert(
             "status".to_owned(),
             Value::String(if archived {
                 "archived".to_owned()
             } else {
-                restored_status
+                "active".to_owned()
             }),
         );
         task.remove("running");
         task.remove("thread_status");
-        if !task
-            .get("turn_status")
-            .and_then(Value::as_str)
-            .is_some_and(is_terminal_turn_status)
-        {
-            task.remove("turn_status");
-        }
+        task.remove("turn_status");
     }
-}
-
-fn is_terminal_turn_status(status: &str) -> bool {
-    matches!(
-        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "completed" | "done" | "failed" | "error" | "interrupted" | "cancelled" | "canceled"
-    )
 }
 
 fn index_file_signature(index_path: &Path) -> Option<IndexFileSignature> {
@@ -453,7 +413,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shared_index_reload_preserves_process_local_running_state() {
+    fn shared_index_never_persists_execution_state() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let index_path = directory.path().join("index.json");
         let owner_store = RuntimeWorkStore::new(index_path.clone());
@@ -476,10 +436,10 @@ mod tests {
         let owner_task = owner_store
             .get_task("owner-task")
             .expect("owner task should survive peer writes");
-        assert!(owner_task.running);
-        assert_eq!(owner_task.status, "running");
-        assert_eq!(owner_task.thread_status, "active");
-        assert_eq!(owner_task.turn_status.as_deref(), Some("inProgress"));
+        assert!(!owner_task.running);
+        assert_eq!(owner_task.status, "active");
+        assert_eq!(owner_task.thread_status, "notLoaded");
+        assert_eq!(owner_task.turn_status, None);
 
         let persisted: Value = serde_json::from_slice(
             &fs::read(&index_path).expect("shared index should be readable"),
@@ -493,42 +453,6 @@ mod tests {
         assert!(!persisted_owner.contains_key("thread_status"));
         assert!(!persisted_owner.contains_key("turn_status"));
         assert_eq!(persisted_owner.get("archived"), Some(&Value::Bool(false)));
-    }
-
-    #[test]
-    fn shared_index_reload_preserves_process_local_inactive_execution_state() {
-        let directory = tempfile::tempdir().expect("temporary directory should be created");
-        let index_path = directory.path().join("index.json");
-        let owner_store = RuntimeWorkStore::new(index_path.clone());
-        let peer_store = RuntimeWorkStore::new(index_path);
-        let mut owner_task = RuntimeTaskLink::new_pending(
-            "owner-task".to_owned(),
-            "/tmp/owner".to_owned(),
-            "Owner task".to_owned(),
-        );
-
-        owner_store.upsert_task(owner_task.clone());
-        owner_task.status = "done".to_owned();
-        owner_task.running = false;
-        owner_task.thread_status = "idle".to_owned();
-        owner_task.turn_status = Some("completed".to_owned());
-        owner_store.update_task_execution_state(&owner_task);
-        peer_store.upsert_task(RuntimeTaskLink::new_imported(
-            "peer-task".to_owned(),
-            "/tmp/peer".to_owned(),
-            "Peer task".to_owned(),
-            "codex".to_owned(),
-            serde_json::json!({}),
-            serde_json::json!({}),
-        ));
-
-        let reloaded = owner_store
-            .get_task("owner-task")
-            .expect("owner task should survive peer writes");
-        assert_eq!(reloaded.status, "done");
-        assert!(!reloaded.running);
-        assert_eq!(reloaded.thread_status, "idle");
-        assert_eq!(reloaded.turn_status.as_deref(), Some("completed"));
     }
 
     #[test]
@@ -558,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_turn_status_persists_without_live_execution_state() {
+    fn terminal_turn_status_is_not_persisted() {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let index_path = directory.path().join("index.json");
         let store = RuntimeWorkStore::new(index_path.clone());
@@ -584,10 +508,7 @@ mod tests {
         assert!(!task.contains_key("status"));
         assert!(!task.contains_key("running"));
         assert!(!task.contains_key("thread_status"));
-        assert_eq!(
-            task.get("turn_status"),
-            Some(&Value::String("completed".to_owned()))
-        );
+        assert!(!task.contains_key("turn_status"));
 
         let restored = RuntimeWorkStore::new(index_path)
             .get_task("completed-task")
@@ -595,7 +516,7 @@ mod tests {
         assert!(!restored.running);
         assert_eq!(restored.status, "active");
         assert_eq!(restored.thread_status, "notLoaded");
-        assert_eq!(restored.turn_status.as_deref(), Some("completed"));
+        assert_eq!(restored.turn_status, None);
     }
 
     #[test]

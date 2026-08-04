@@ -470,6 +470,12 @@ export interface RuntimeProjectRef {
   pinnedOrder?: number | null
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
+}
+
+export interface RuntimeProjectSpaceRef {
+  projectStore: 'local' | 'backend'
+  projectId: string
 }
 
 export interface RuntimeProjectRoot {
@@ -813,6 +819,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
 }
 
@@ -822,6 +829,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
   error?: string | null
 }

@@ -60,6 +60,10 @@ const OPLOG_FLUSH_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
 static CODEX_GLOBAL_STATE_OPLOG_FLUSH_WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodexGlobalProject {
     pub key: String,
@@ -73,6 +77,7 @@ pub(crate) struct CodexGlobalProject {
     pub pinned_order: Option<usize>,
     pub active: bool,
     pub appearance: Option<Value>,
+    pub default_project_space: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +137,13 @@ struct CodexGlobalStateOplogRecord {
     pinned: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     appearance: Option<Value>,
+    #[serde(
+        rename = "defaultProjectSpace",
+        skip_serializing_if = "Option::is_none"
+    )]
+    default_project_space: Option<Value>,
+    #[serde(rename = "clearDefaultProjectSpace", skip_serializing_if = "is_false")]
+    clear_default_project_space: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -153,6 +165,8 @@ impl Default for CodexGlobalStateOplogRecord {
             insert_at_end: None,
             pinned: None,
             appearance: None,
+            default_project_space: None,
+            clear_default_project_space: false,
             label: None,
             roots: Vec::new(),
             updated_at: 0,
@@ -410,6 +424,7 @@ pub(crate) fn upsert_codex_global_local_project(
     project_key: &str,
     name: &str,
     roots: &[String],
+    default_project_space: Option<Value>,
 ) -> Result<CodexGlobalProject, String> {
     let project_key = clean_text(project_key).ok_or_else(|| "projectKey is required".to_owned())?;
     let name = clean_text(name).ok_or_else(|| "name is required".to_owned())?;
@@ -423,30 +438,24 @@ pub(crate) fn upsert_codex_global_local_project(
     if roots.is_empty() {
         return Err("roots must contain at least one workspace path".to_owned());
     }
+    let clear_default_project_space = default_project_space.as_ref().is_some_and(Value::is_null);
     append_codex_global_state_op_record(&CodexGlobalStateOplogRecord {
         kind: OPLOG_KIND_UPSERT_LOCAL_PROJECT.to_owned(),
         workspace_path: roots[0].clone(),
         project_key: Some(project_key.clone()),
         label: Some(name.clone()),
         roots: roots.clone(),
+        default_project_space: default_project_space.filter(|value| !value.is_null()),
+        clear_default_project_space,
         updated_at: now_ms(),
         ..Default::default()
     })?;
     flush_or_watch_codex_global_state_oplog();
     refresh_codex_global_project_cache();
-    Ok(CodexGlobalProject {
-        key: project_key,
-        workspace_path: roots[0].clone(),
-        roots,
-        name,
-        source: "local_project".to_owned(),
-        kind: "local".to_owned(),
-        remote_host_id: None,
-        pinned: false,
-        pinned_order: None,
-        active: false,
-        appearance: None,
-    })
+    CodexGlobalProjectIndex::load()
+        .project_for_key(&project_key)
+        .cloned()
+        .ok_or_else(|| "local project was not persisted".to_owned())
 }
 
 pub(crate) fn register_codex_global_thread_workspace_root(
@@ -773,6 +782,15 @@ fn apply_codex_global_state_ops(
                     (op.project_key.as_deref(), op.label.as_deref())
                 {
                     upsert_local_project_payload(payload, project_key, name, &op.roots);
+                    if op.clear_default_project_space {
+                        set_local_project_default_space_payload(payload, project_key, Value::Null);
+                    } else if let Some(default_project_space) = op.default_project_space.clone() {
+                        set_local_project_default_space_payload(
+                            payload,
+                            project_key,
+                            default_project_space,
+                        );
+                    }
                 }
             }
             OPLOG_KIND_UPSERT_REMOTE_PROJECT => {
@@ -1156,6 +1174,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 .get("name")
                 .and_then(clean_string)
                 .unwrap_or_else(|| key.clone());
+            let default_project_space = project.get("defaultProjectSpace").cloned();
             let roots = writable_roots
                 .and_then(|items| items.get(&key).or_else(|| items.get(project_key)))
                 .and_then(Value::as_array)
@@ -1177,6 +1196,7 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 pinned_order: None,
                 active: false,
                 appearance: None,
+                default_project_space,
             }
         })
         .collect()
@@ -1204,6 +1224,7 @@ fn remote_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobal
                 pinned_order: None,
                 active: false,
                 appearance: None,
+                default_project_space: None,
             }
         })
         .collect()
@@ -1346,6 +1367,7 @@ fn local_project_from_label(workspace_path: &str, label: Option<&str>) -> CodexG
         pinned_order: None,
         active: false,
         appearance: None,
+        default_project_space: None,
     }
 }
 
@@ -1371,13 +1393,18 @@ fn upsert_local_project_payload(
     if !projects.is_object() {
         *projects = Value::Object(Map::new());
     }
-    projects
+    let projects = projects
         .as_object_mut()
-        .expect("local projects is an object")
-        .insert(
-            project_key.to_owned(),
-            json!({"id": project_key, "name": name}),
-        );
+        .expect("local projects is an object");
+    let project = projects
+        .entry(project_key.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !project.is_object() {
+        *project = Value::Object(Map::new());
+    }
+    let project = project.as_object_mut().expect("local project is an object");
+    project.insert("id".to_owned(), Value::String(project_key.to_owned()));
+    project.insert("name".to_owned(), Value::String(name.to_owned()));
 
     let writable_roots = payload
         .entry(PROJECT_WRITABLE_ROOTS_KEY.to_owned())
@@ -1398,6 +1425,26 @@ fn upsert_local_project_payload(
             ),
         );
     upsert_project_order(payload, project_key);
+}
+
+fn set_local_project_default_space_payload(
+    payload: &mut Map<String, Value>,
+    project_key: &str,
+    default_project_space: Value,
+) {
+    let Some(project) = payload
+        .get_mut(LOCAL_PROJECTS_KEY)
+        .and_then(Value::as_object_mut)
+        .and_then(|projects| projects.get_mut(project_key))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if default_project_space.is_null() {
+        project.remove("defaultProjectSpace");
+    } else {
+        project.insert("defaultProjectSpace".to_owned(), default_project_space);
+    }
 }
 
 fn rename_codex_global_project_payload(

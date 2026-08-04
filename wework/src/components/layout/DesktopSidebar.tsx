@@ -100,6 +100,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
   RuntimeProjectWork,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -158,6 +159,7 @@ import {
 } from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 
 interface DesktopSidebarProps {
   user: UserProfile | null
@@ -240,6 +242,7 @@ interface DesktopSidebarProps {
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -250,6 +253,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
+  projectSpaceApis?: ProjectSpaceApi[]
   onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
 }
@@ -2583,6 +2587,7 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
   onCreateDeviceDirectory,
+  projectSpaceApis,
   onOpenSettings,
   onLogout,
   collapsed = false,
@@ -4132,6 +4137,7 @@ export function DesktopSidebar({
             onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
             onListDeviceDirectories={onListDeviceDirectories}
             onCreateDeviceDirectory={onCreateDeviceDirectory}
+            projectSpaceApis={experimentalFeaturesEnabled ? projectSpaceApis : undefined}
             onClose={() => setEditingLocalProject(null)}
             onSave={data =>
               onUpdateLocalRuntimeProject

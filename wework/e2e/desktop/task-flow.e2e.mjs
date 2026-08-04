@@ -2770,14 +2770,14 @@ async function verifyRunningFollowUpFork({
     text: RUNNING_FORK_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedRuntimeIndex = JSON.parse(
+  const settledRuntimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
   const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   assert.equal(
-    completedRuntimeIndex.tasks[sourceTaskId]?.turn_status,
-    'completed',
-    'The source follow-up was interrupted instead of completing after the fork'
+    Object.hasOwn(settledRuntimeIndex.tasks[sourceTaskId] ?? {}, 'turn_status'),
+    false,
+    'The completed source follow-up leaked process-local turn status into the runtime index'
   )
 }
 
@@ -3466,6 +3466,85 @@ async function verifyWorkspaceDocumentTabs(control) {
     'Closing the added project-space document tab did not preserve the original tabs'
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-02-task-restored.png')
+}
+
+async function configureDefaultProjectSpaceAssociation(control, localProjectId) {
+  const taskTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="task"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.ok(taskTabTestId, 'The active task tab identity was unavailable before association setup')
+
+  await control.command('click', '[data-testid^="workspace-tab-select-board-"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const boardSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const createSelector = boardSnapshot.testIds.includes('cloud-projects-home-create')
+    ? '[data-testid="cloud-projects-home-create"]'
+    : '[data-testid="cloud-project-add"]'
+  await control.command('click', createSelector)
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: 'Task Follow-up Board',
+  })
+  await control.command('click', '[data-testid="cloud-project-location-local"]')
+  await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]')
+  await control.command('waitFor', '[data-testid="cloud-project-manage-view"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-space-created-for-local-project.png')
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="project-menu-${localProjectId}"]`)
+  await control.command('click', `[data-testid="edit-project-${localProjectId}"]`)
+  await control.command('waitFor', '[data-testid="local-project-edit-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('select', '[data-testid="local-project-auto-join-space-select"]', {
+    by: 'label',
+    value: 'Task Follow-up Board',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="save-local-project-button"]')
+  await control.command('waitFor', '[data-testid="project-space-context-pill"]', {
+    text: '加入看板 · Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('waitFor', '[data-testid="add-project-space-context-button"]', {
+    text: 'Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="add-project-space-context-button"]')
+  await control.command('waitFor', '[data-testid^="add-context-cloud-project-space-"]', {
+    text: 'Task Follow-up Board',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', 'body', { key: 'Escape' })
+  return taskTabTestId
+}
+
+async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
+  await control.command('click', '[data-testid^="workspace-tab-select-board-"]')
+  await control.command('waitFor', '[data-testid="cloud-project-board-view"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="cloud-project-board-view"]')
+  await control.command('waitFor', '[data-testid="cloud-todo-column-in_review"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'project-space-selected-task-in-review.png')
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 }
 
 function workspaceTabIds(snapshot, kind) {
@@ -9432,15 +9511,15 @@ class DesktopE2EServer {
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(
-          createSse([
-            responseCreated(responseId),
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-          ])
-        )
+        response.write(createSse([responseCreated(responseId)]))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(createSse([responseCompleted(responseId)]))
+        response.end(
+          createSse([
+            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
@@ -12624,6 +12703,12 @@ last_updated = "2026-07-30T00:00:00Z"`
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
 
+    let associatedTaskTabTestId = null
+    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+      phase = 'project-space-default-association-setup'
+      associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
+    }
+
     if (GUIDANCE_SCROLL_ONLY) {
       phase = 'guidance-scroll'
       await verifyForegroundGuidanceScroll({ composerSelector, control })
@@ -12829,6 +12914,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         taskRowTestId,
         userText: TASK_PROMPT,
       })
+      if (associatedTaskTabTestId) {
+        phase = 'project-space-selected-task-tracked'
+        await verifyExplicitlyTrackedTask(control, associatedTaskTabTestId)
+      }
       if (MESSAGE_RESTORATION_ONLY) {
         await verifyFollowUpMessageRestoration({
           composerSelector,
