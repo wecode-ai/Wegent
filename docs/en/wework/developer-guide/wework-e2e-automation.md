@@ -149,7 +149,9 @@ separate Codex Home initialization environment. Its ordered segments are
 `plugin-lifecycle`, `skill-mention-rendering`, and
 `sites-plugin-auto-install`. Each segment establishes the minimal plugin
 fixture it needs, so it can run alone or continue through the later plugin
-features:
+features. `plugin-lifecycle` also covers: the composer plugin picker no longer
+listing a plugin after uninstall, and unmatched assistant `need_login` /
+`connector_auth_required` resume text not opening a local auth card.
 
 ```bash
 pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
@@ -183,7 +185,7 @@ Before validating local-executor models for a connected account, the cloud scena
 
 The GitHub Actions Executor E2E job loads a prebuilt Docker image after restoring Python, Node.js, and Playwright caches. It must first remove unused hosted-runner SDKs (.NET, Android, GHC, and CodeQL) and print disk usage so image extraction has stable headroom. The cleanup must not remove the running MySQL or Redis service images.
 
-The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
+The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, the install-time local authorization dialog, insertion of the plugin reference into the chat composer, unmatched resume auth text not opening a local auth card, composer filtering after uninstall, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for the critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
 The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. The test first waits for the Web Content memory baseline to stabilize, then samples the aggregate physical footprint of all associated WebKit Web Content processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
 

@@ -2573,9 +2573,10 @@ fn resolve_local_plugin_root(
     marketplace_path: &Path,
     plugin_name: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
-    let marketplace_root = marketplace_path
+    let resolved_marketplace_path = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve local marketplace: {error}"))?;
+    let marketplace_root = marketplace_root_from_path(&resolved_marketplace_path);
     let mut candidates = vec![
         marketplace_root.join("plugins").join(plugin_name),
         marketplace_root.join(plugin_name),
@@ -2601,11 +2602,42 @@ fn resolve_local_plugin_root(
         if !seen.insert(normalized.clone()) {
             continue;
         }
-        if normalized.join(".codex-plugin/plugin.json").is_file() {
+        if normalized.join(".codex-plugin/plugin.json").is_file()
+            || normalized.join(".claude-plugin/plugin.json").is_file()
+        {
             return Ok((marketplace_root, normalized));
         }
     }
-    Err("Local plugin is missing .codex-plugin/plugin.json".to_string())
+    Err("Local plugin manifest is unavailable".to_string())
+}
+
+fn marketplace_root_from_path(path: &Path) -> PathBuf {
+    if path
+        .file_name()
+        .is_none_or(|name| name != "marketplace.json")
+    {
+        return path.to_path_buf();
+    }
+    let Some(parent) = path.parent() else {
+        return path.to_path_buf();
+    };
+    if parent.file_name().is_some_and(|name| name == "plugins") {
+        if let Some(scope) = parent.parent() {
+            if scope
+                .file_name()
+                .is_some_and(|name| name == ".agents" || name == ".claude-plugin")
+            {
+                return scope.parent().unwrap_or(scope).to_path_buf();
+            }
+        }
+    }
+    if parent
+        .file_name()
+        .is_some_and(|name| name == ".agents" || name == ".claude-plugin")
+    {
+        return parent.parent().unwrap_or(parent).to_path_buf();
+    }
+    parent.to_path_buf()
 }
 
 fn validate_plugin_name(plugin_name: &str) -> Result<&str, String> {
@@ -2835,6 +2867,38 @@ pub async fn local_executor_package_plugin(
     })
     .await
     .map_err(|error| format!("Failed to join plugin packaging task: {error}"))?
+}
+
+#[tauri::command]
+pub async fn local_executor_read_plugin_manifest(
+    marketplace_path: String,
+    plugin_name: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_local_plugin_manifest(Path::new(&marketplace_path), &plugin_name)
+    })
+    .await
+    .map_err(|error| format!("Failed to join plugin manifest task: {error}"))?
+}
+
+fn read_local_plugin_manifest(marketplace_path: &Path, plugin_name: &str) -> Result<Value, String> {
+    let normalized_name = validate_plugin_name(plugin_name)?;
+    let (_marketplace_root, plugin_root) =
+        resolve_local_plugin_root(marketplace_path, normalized_name)?;
+    let manifest_path = [
+        plugin_root.join(".codex-plugin/plugin.json"),
+        plugin_root.join(".claude-plugin/plugin.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or_else(|| "Local plugin manifest is unavailable".to_string())?;
+    let content = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("Failed to read plugin manifest: {error}"))?;
+    let manifest = serde_json::from_str::<Value>(&content)
+        .map_err(|error| format!("Invalid plugin manifest: {error}"))?;
+    Ok(json!({
+        "connectors": manifest.get("connectors").cloned().unwrap_or_else(|| json!([])),
+    }))
 }
 
 #[tauri::command]
@@ -3562,6 +3626,34 @@ mod tests {
         assert_eq!(package.name, "gitlab.zip");
         assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
         assert!(archive.by_name("skills/review/SKILL.md").is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_plugin_connectors_from_a_marketplace_manifest_path() {
+        let root = import_test_root("read-plugin-manifest");
+        let marketplace_manifest = root.join(".agents/plugins/marketplace.json");
+        let plugin_manifest = root.join("plugins/browser-auth/.codex-plugin/plugin.json");
+        fs::create_dir_all(marketplace_manifest.parent().unwrap()).unwrap();
+        fs::create_dir_all(plugin_manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &marketplace_manifest,
+            r#"{"name":"local","plugins":[{"name":"browser-auth","source":{"source":"local","path":"./plugins/browser-auth"}}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            plugin_manifest,
+            r#"{"name":"browser-auth","version":"1.0.0","connectors":[{"slug":"browser-auth","authPolicy":"on_install","localAuth":{"kind":"browser_oauth","health":["auth","health"],"start":["auth","login"]}}]}"#,
+        )
+        .unwrap();
+
+        let manifest = read_local_plugin_manifest(&marketplace_manifest, "browser-auth").unwrap();
+
+        assert_eq!(manifest["connectors"][0]["slug"], "browser-auth");
+        assert_eq!(
+            manifest["connectors"][0]["localAuth"]["kind"],
+            "browser_oauth"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

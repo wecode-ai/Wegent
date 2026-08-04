@@ -405,6 +405,11 @@ const PLUGIN_REFINEMENT_PROMPT =
 const PLUGIN_REFINEMENT_COMPLETION_TEXT =
   'Summarize the current project status, focusing on changed files, open risks, and next actions.'
 const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
+const CONNECTOR_AUTH_MARKER_NAME = 'desktop-e2e-browser-auth'
+const CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT =
+  'Trigger unmatched connector auth resume without a local connector identity.'
+const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
+  'connector_auth_required need_login pluginKey=github connectorSlug=github WEWORK_DESKTOP_E2E_UNMATCHED_CONNECTOR_AUTH_RESUME'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
@@ -4149,6 +4154,31 @@ async function verifyOfficialPluginSource(repositoryRoot) {
   )
 }
 
+async function revealMarketplacePluginActions(control, { pluginId, marketplaceName, displayName }) {
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
+    return actionsSelector
+  }
+  if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+  } else if (snapshot.testIds.includes('plugins-search-input')) {
+    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+  }
+  await control.command('waitFor', marketplaceTabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', marketplaceTabSelector)
+  await control.command('fill', '[data-testid="plugins-search-input"]', {
+    value: displayName,
+  })
+  await control.command('waitFor', actionsSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  return actionsSelector
+}
+
 async function installOfficialPluginFixture({
   codexHome,
   control,
@@ -4163,26 +4193,27 @@ async function installOfficialPluginFixture({
   })
   await verifyOfficialPluginSource(repositoryPath)
 
-  await control.command('waitFor', '[data-testid="plugins-marketplace-tab-wework-personal"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="plugins-marketplace-tab-wework-personal"]')
-  await control.command('waitFor', '[data-testid="plugins-bundled-marketplace-empty"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-
-  const initialSnapshot = await waitForSnapshot(
+  await waitForSnapshot(
     control,
     snapshot =>
+      snapshot.testIds.includes('plugins-search-input') ||
+      snapshot.testIds.includes('plugins-marketplace-tab-default') ||
       snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
-      snapshot.testIds.includes('plugins-add-marketplace-button'),
+      snapshot.testIds.includes('plugins-add-marketplace-button') ||
+      snapshot.testIds.includes('plugins-create-button'),
     'The plugin marketplace controls did not become ready'
   )
+  await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
-  } else {
+  } else if (initialSnapshot.testIds.includes('plugins-add-marketplace-button')) {
     await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+  } else {
+    await control.command('click', '[data-testid="plugins-create-button"]')
+    await control.command('click', '[data-testid="plugins-add-market-option"]')
   }
   await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
     value: marketplacePath,
@@ -4217,14 +4248,34 @@ async function installOfficialPluginFixture({
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', installSelector)
+  await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
-    'The official plugin was not shown as installed after the real app-server request'
+    snapshot =>
+      snapshot.testIds.includes(`plugins-installed-strip-item-${pluginId}`) ||
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The official plugin was not shown as installed after the real app-server request',
+    WORKBENCH_READY_TIMEOUT_MS
   )
+  await revealMarketplacePluginActions(control, {
+    pluginId,
+    marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+    displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
+  })
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  await control.command('click', actionsSelector)
+  await control.command('waitFor', trySelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   assert.match(
-    await control.command('getText', installSelector),
-    /Try in chat|在对话中试用/,
+    await control.command('getText', trySelector),
+    /Try in chat|Start chat|在对话中试用|立即对话/,
     'The installed plugin did not expose its chat action'
   )
   await captureVerificationScreenshot(control, 'plugins-02-installed.png')
@@ -4253,11 +4304,41 @@ async function installOfficialPluginFixture({
 }
 
 async function openOfficialPluginChat(control, installSelector) {
+  const pluginId = installSelector
+    .replace(/^\[data-testid="plugin-marketplace-install-/, '')
+    .replace(/"\]$/, '')
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
+  const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
+  const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
   await control.command('click', '[data-testid="plugins-button"]')
-  await control.command('waitFor', installSelector, {
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', installSelector)
+  const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (pluginsSnapshot.testIds.includes(`plugins-installed-strip-item-${pluginId}`)) {
+    await control.command('click', installedStripSelector)
+    await control.command('waitFor', detailTrySelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    assert.match(
+      await control.command('getText', detailTrySelector),
+      /Try in chat|Start chat|在对话中试用|立即对话/,
+      'The installed official plugin detail did not expose its chat action'
+    )
+    await control.command('click', detailTrySelector)
+  } else {
+    await revealMarketplacePluginActions(control, {
+      pluginId,
+      marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+      displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    })
+    await control.command('click', actionsSelector)
+    await control.command('waitFor', trySelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', trySelector)
+  }
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -4319,13 +4400,31 @@ async function verifyPluginLifecycle({ control, fixture }) {
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
 
-async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
-  const activeTaskBeforePluginTrial = await waitForWorkbenchDebugState(
-    control,
-    snapshot => Boolean(snapshot.workbench?.currentRuntimeTask?.taskId),
-    'The marketplace plugin lifecycle requires an active conversation'
-  )
-  let activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask.taskId
+async function verifyMarketplacePluginLifecycle({
+  control,
+  executorHome,
+  marketplacePath,
+  workspacePath,
+}) {
+  let bootstrap = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  if (!bootstrap.workbench?.currentProject?.id) {
+    await control.command('waitFor', '[data-testid="projects-create-button"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await createSingleRootLocalProject(control, workspacePath, 'marketplace-plugin')
+    await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    bootstrap = await waitForWorkbenchDebugState(
+      control,
+      snapshot => Boolean(snapshot.workbench?.currentProject?.id),
+      'Creating a local project did not open an active marketplace project'
+    )
+  }
+
+  const activeTaskBeforePluginTrial = bootstrap
+  let activeTaskId = activeTaskBeforePluginTrial.workbench.currentRuntimeTask?.taskId ?? null
   const activeProjectId = activeTaskBeforePluginTrial.workbench.currentProject?.id
   assert.ok(activeProjectId, 'The marketplace plugin lifecycle requires an active project')
 
@@ -4429,7 +4528,7 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
       snapshot.testIds.includes('plugin-use-case-context-toggle') &&
       snapshot.testIds.includes('plugin-use-case-draft-input') &&
       snapshot.testIds.includes('plugin-use-case-start-button') &&
-      snapshot.text.includes('Use Desktop E2E Plugin to summarize the current project status'),
+      snapshot.text.includes('Verify the Wework desktop plugin lifecycle.'),
     'The plugin use-case guide dialog did not show the editable task-draft flow'
   )
   assert.match(
@@ -4438,7 +4537,7 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
     'The plugin use-case guide was not clearly identified as guidance'
   )
   await control.command('click', '[data-testid="plugin-use-case-context-suggestion"]')
-  await control.command('click', '[data-testid="plugin-use-case-option-quick"]')
+  await control.command('click', '[data-testid="plugin-use-case-option-complete-steps"]')
   await control.command('click', '[data-testid="plugin-use-case-context-toggle"]')
   await control.command('fill', '[data-testid="plugin-use-case-context-input"]', {
     value: 'Only inspect changed files.',
@@ -4446,7 +4545,9 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
   await waitForSnapshot(
     control,
     snapshot =>
-      /Complete the core task quickly first|先快速完成核心任务/.test(snapshot.text) &&
+      /Complete reversible actions and confirm before submitting or deleting|自动完成场景中的可逆操作，遇到提交或删除时先确认/.test(
+        snapshot.text
+      ) &&
       /recent conversation|当前对话/.test(snapshot.text) &&
       snapshot.text.includes('Only inspect changed files.'),
     'The plugin task preview did not react to the selected preference and added context'
@@ -4575,6 +4676,34 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
     'Selecting the installed plugin from slash commands did not expose its templates'
   )
 
+  await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
+  await rm(join(executorHome, CONNECTOR_AUTH_MARKER_NAME), { force: true })
+  control.scenarioRequests.delete('connector_auth_unmatched_resume')
+  control.setScenario('connector_auth_unmatched_resume')
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+    value: CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT,
+  })
+  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 2000))
+  const unmatchedResumeSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !unmatchedResumeSnapshot.testIds.includes('connector-auth-card'),
+    'Unmatched connector auth resume incorrectly showed the chat auth card'
+  )
+  assert.ok(
+    !unmatchedResumeSnapshot.testIds.includes('local-connector-auth-dialog'),
+    'Unmatched connector auth resume incorrectly showed the install auth dialog'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'marketplace-plugins-05b-unmatched-resume-no-auth-card.png'
+  )
+
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4599,6 +4728,24 @@ async function verifyMarketplacePluginLifecycle({ control, marketplacePath }) {
     'The marketplace did not return to the install state after uninstall'
   )
   await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const composerAfterUninstall = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !composerAfterUninstall.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
+    'The uninstalled marketplace plugin remained available in the composer plugin picker'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'marketplace-plugins-06-composer-after-uninstall.png'
+  )
 }
 
 async function verifySkillMentionRendering({ control, fixture }) {
@@ -4668,16 +4815,10 @@ async function uninstallOfficialPlugin(control, fixture) {
   if (pluginsSnapshot.testIds.includes('plugin-detail-back-button')) {
     await control.command('click', '[data-testid="plugin-detail-back-button"]')
   }
-  const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${OFFICIAL_PLUGIN_MARKETPLACE_NAME}"]`
-  await control.command('waitFor', marketplaceTabSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await control.command('click', marketplaceTabSelector)
-  await control.command('fill', '[data-testid="plugins-search-input"]', {
-    value: OFFICIAL_PLUGIN_DISPLAY_NAME,
-  })
-  await control.command('waitFor', fixture.actionsSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  await revealMarketplacePluginActions(control, {
+    pluginId: fixture.pluginId,
+    marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
+    displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
   await control.command('click', fixture.actionsSelector)
   await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
@@ -8045,6 +8186,7 @@ class DesktopE2EServer {
         'official_plugin',
         'automation',
         'skill_mention_display',
+        'connector_auth_unmatched_resume',
         'supervisor',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
@@ -9576,6 +9718,21 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -11289,7 +11446,9 @@ async function buildDesktopApp(
   )
   const mainBinaryName = await readTauriMainBinaryName()
   const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
+  const cargoTargetDir = process.env.CARGO_TARGET_DIR?.trim()
   const candidates = [
+    ...(cargoTargetDir ? [join(cargoTargetDir, 'debug', binaryName)] : []),
     join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
     join(
       weworkDir,
@@ -12505,13 +12664,15 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       if (shouldRunPluginSegment('plugin-lifecycle')) {
         phase = 'plugin-lifecycle'
+        await verifyMarketplacePluginLifecycle({
+          control,
+          executorHome,
+          marketplacePath: marketplacePluginPath,
+          workspacePath,
+        })
         await verifyPluginLifecycle({
           control,
           fixture: await ensureOfficialPluginFixture(),
-        })
-        await verifyMarketplacePluginLifecycle({
-          control,
-          marketplacePath: marketplacePluginPath,
         })
       }
       if (shouldRunPluginSegment('skill-mention-rendering')) {

@@ -83,7 +83,10 @@ class PluginConnectorComponent(BaseModel):
 
     slug: str
     authPolicy: Literal["on_install", "on_use", "optional"] = "optional"
-    localAuth: Optional[PluginLocalAuthDefinition] = None
+    localAuth: Optional[PluginLocalAuthDefinition] = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class InstalledPluginComponents(BaseModel):

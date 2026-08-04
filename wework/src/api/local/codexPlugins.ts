@@ -178,6 +178,39 @@ export interface CodexPluginSummary {
   keywords?: string[]
 }
 
+interface CodexPluginConnector {
+  slug: string
+  authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
+  localAuth?: {
+    kind?: 'local_qr' | 'browser_oauth'
+    health?: string[]
+    start?: string[]
+    poll?: string[]
+    logout?: string[]
+    tool?: {
+      id: string
+      source: 'bundled' | 'managed'
+      version?: string | null
+      artifacts?: Record<
+        string,
+        {
+          url: string
+          sha256: string
+          archive: 'tar_gz' | 'zip'
+          binaryPath: string
+        }
+      >
+    } | null
+    qrField?: string
+    statusField?: string
+    okValues?: string[]
+    pollIntervalSeconds?: number
+    timeoutSeconds?: number
+    logoutOnUninstall?: boolean
+  } | null
+  description?: string | null
+}
+
 interface CodexPluginDetail {
   marketplaceName: string
   marketplacePath?: string | null
@@ -209,38 +242,7 @@ interface CodexPluginDetail {
     description?: string | null
   }>
   mcpServers?: string[]
-  connectors?: Array<{
-    slug: string
-    authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
-    localAuth?: {
-      kind?: 'local_qr' | 'browser_oauth'
-      health?: string[]
-      start?: string[]
-      poll?: string[]
-      logout?: string[]
-      tool?: {
-        id: string
-        source: 'bundled' | 'managed'
-        version?: string | null
-        artifacts?: Record<
-          string,
-          {
-            url: string
-            sha256: string
-            archive: 'tar_gz' | 'zip'
-            binaryPath: string
-          }
-        >
-      } | null
-      qrField?: string
-      statusField?: string
-      okValues?: string[]
-      pollIntervalSeconds?: number
-      timeoutSeconds?: number
-      logoutOnUninstall?: boolean
-    } | null
-    description?: string | null
-  }>
+  connectors?: CodexPluginConnector[]
 }
 
 interface CodexAppInfo {
@@ -794,7 +796,30 @@ async function readPluginDetail(
     remoteMarketplaceName: localMarketplace ? null : marketplace.id,
     pluginName,
   })
-  return response.plugin
+  if (!localMarketplace) return response.plugin
+
+  try {
+    const manifest = await invoke<{ connectors?: CodexPluginConnector[] }>(
+      'local_executor_read_plugin_manifest',
+      {
+        marketplacePath: marketplace.path,
+        pluginName,
+      }
+    )
+    const connectors = manifest?.connectors
+    if (!connectors || connectors.length === 0) return response.plugin
+    return {
+      ...response.plugin,
+      connectors: response.plugin.connectors?.length ? response.plugin.connectors : connectors,
+    }
+  } catch (error) {
+    console.warn('[Wework plugins] failed to read local plugin manifest', {
+      marketplaceId: marketplace.id,
+      pluginName,
+      error: getErrorMessage(error, 'unknown error'),
+    })
+    return response.plugin
+  }
 }
 
 function filterPluginItems(

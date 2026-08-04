@@ -142,7 +142,9 @@ pnpm --filter wework e2e:desktop -- --segment workspace-attachments
 插件桌面套件也复用同一套分段参数，但保持独立的 Codex Home 初始化环境。插件
 segment 依次为 `plugin-lifecycle`、`skill-mention-rendering` 和
 `sites-plugin-auto-install`。每个 segment 都会建立自身所需的最小插件 fixture，
-可以单独运行，也可以从指定功能继续执行后续插件功能：
+可以单独运行，也可以从指定功能继续执行后续插件功能。`plugin-lifecycle` 额外覆盖：
+卸载后 Composer 插件选择器不再列出该插件，以及助手消息携带无匹配身份的
+`need_login` / `connector_auth_required` 时不误弹本地授权卡。
 
 ```bash
 pnpm --filter wework e2e:desktop:plugins -- --segment skill-mention-rendering
@@ -174,7 +176,7 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 GitHub Actions 的 Executor E2E job 会在恢复 Python、Node.js 和 Playwright 缓存后加载预构建 Docker 镜像。该 job 必须先删除不使用的 hosted-runner SDK（.NET、Android、GHC 和 CodeQL）并记录磁盘用量，为镜像解压保留稳定空间；清理逻辑不得删除正在运行的 MySQL 或 Redis service 镜像。
 
-插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
+插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、安装时本地授权对话框、在对话编辑器中插入插件引用、无匹配 resume 不弹本地授权卡、卸载后 Composer 过滤及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 
 内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先等待 Web Content 内存基线稳定，再每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 384 MiB、完成后的稳定态增长不超过 224 MiB、稳定窗口内最大波动范围不超过 16 MiB。DOM 门禁检查虚拟列表收敛后的稳定窗口，默认不得保留超过 900 个节点；流式渲染期间的瞬时峰值仍会记录在诊断中，但不会把收敛前的短暂渲染误判为泄漏。各阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`、`WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES` 调整。
 

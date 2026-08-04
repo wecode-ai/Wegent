@@ -4624,6 +4624,7 @@ pub fn run() {
             local_executor::local_executor_link_plugin_release,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_package_plugin,
+            local_executor::local_executor_read_plugin_manifest,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
             local_executor::local_executor_request,
