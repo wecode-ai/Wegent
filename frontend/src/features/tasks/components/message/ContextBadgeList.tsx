@@ -17,7 +17,14 @@ import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { parseHostname } from '@/lib/url-utils'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
+import {
+  getExternalKnowledgeSourceLabel,
+  useExternalKnowledgeSources,
+} from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import {
+  formatCompactKnowledgeScope,
+  formatKnowledgeScopeSummary,
+} from '@/features/knowledge/knowledgeContextPresentation'
 
 /**
  * Base preview component for context items (attachments, knowledge bases, etc.)
@@ -30,11 +37,19 @@ interface ContextPreviewBaseProps {
   title: string
   /** Secondary text (file size, document count, etc.) */
   subtitle?: string
+  /** Optional source/provider label shown below the scope summary */
+  sourceLabel?: string
   /** Optional className for customization */
   className?: string
 }
 
-function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPreviewBaseProps) {
+function ContextPreviewBase({
+  icon,
+  title,
+  subtitle,
+  sourceLabel,
+  className = '',
+}: ContextPreviewBaseProps) {
   return (
     <div
       className={`flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full ${className}`}
@@ -45,6 +60,7 @@ function ContextPreviewBase({ icon, title, subtitle, className = '' }: ContextPr
           {title}
         </div>
         {subtitle && <div className="text-xs text-text-muted">{subtitle}</div>}
+        {sourceLabel && <div className="text-xs text-text-muted">{sourceLabel}</div>}
       </div>
     </div>
   )
@@ -57,6 +73,38 @@ interface ContextBadgeListProps {
   onContextReselect?: (context: SubtaskContextBrief) => void
   /** Share token for public access (no login required) */
   shareToken?: string
+}
+
+interface MessageContextGroup {
+  key: string
+  context: SubtaskContextBrief
+  count: number
+}
+
+export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageContextGroup[] {
+  const groups: MessageContextGroup[] = []
+  const groupIndexes = new Map<string, number>()
+
+  for (const context of contexts) {
+    const isExternalDocument =
+      context.context_type === 'external_knowledge' &&
+      context.external_target_type === 'document' &&
+      context.external_provider &&
+      context.external_mode
+    const key = isExternalDocument
+      ? `external:${context.external_provider}:${context.external_mode}:${context.external_id ?? 'all'}`
+      : `${context.context_type}:${context.id}`
+    const existingIndex = groupIndexes.get(key)
+
+    if (existingIndex === undefined) {
+      groupIndexes.set(key, groups.length)
+      groups.push({ key, context, count: 1 })
+    } else {
+      groups[existingIndex].count += 1
+    }
+  }
+
+  return groups
 }
 
 /**
@@ -80,10 +128,11 @@ export function ContextBadgeList({
 
   return (
     <div className="flex flex-wrap gap-2 mb-3">
-      {contexts.map(context => (
+      {groupMessageContexts(contexts).map(group => (
         <ContextBadgeItem
-          key={`${context.context_type}-${context.id}`}
-          context={context}
+          key={group.key}
+          context={group.context}
+          count={group.count}
           onReselect={onContextReselect}
           shareToken={shareToken}
         />
@@ -97,10 +146,12 @@ export function ContextBadgeList({
  */
 function ContextBadgeItem({
   context,
+  count,
   onReselect,
   shareToken,
 }: {
   context: SubtaskContextBrief
+  count: number
   onReselect?: (context: SubtaskContextBrief) => void
   shareToken?: string
 }) {
@@ -118,7 +169,7 @@ function ContextBadgeItem({
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
     case 'external_knowledge':
-      return <ExternalKnowledgeBadge context={context} />
+      return <ExternalKnowledgeBadge context={context} count={count} />
     case 'table':
       return <TableBadge context={context} _onReselect={onReselect} />
     default:
@@ -187,13 +238,15 @@ function AttachmentContextBadge({
  */
 function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   const { t } = useTranslation('knowledge')
-
-  const subtitle =
-    context.document_count !== undefined &&
-    context.document_count !== null &&
-    context.document_count > 0
-      ? formatDocumentCount(context.document_count, t)
-      : undefined
+  const subtitle = formatKnowledgeScopeSummary(
+    {
+      documentCount: context.document_count,
+      documentIds: context.document_ids,
+      folderIds: context.folder_ids,
+      scopeRestricted: context.scope_restricted,
+    },
+    t
+  )
 
   return (
     <div>
@@ -206,24 +259,35 @@ function KnowledgeBaseBadge({ context }: { context: SubtaskContextBrief }) {
   )
 }
 
-function ExternalKnowledgeBadge({ context }: { context: SubtaskContextBrief }) {
+function ExternalKnowledgeBadge({
+  context,
+  count,
+}: {
+  context: SubtaskContextBrief
+  count: number
+}) {
   const { t } = useTranslation('knowledge')
-  const targetLabel =
+  const externalSources = useExternalKnowledgeSources()
+  const externalSource = externalSources.find(
+    source => source.providerId === context.external_provider
+  )
+  const scopeLabel =
     context.external_target_type === 'document'
-      ? t('picker.target.document')
+      ? formatCompactKnowledgeScope(0, count, t)
       : context.external_target_type === 'folder'
-        ? t('picker.target.folder')
-        : t('picker.target.knowledgeBase')
-  const subtitle = [context.external_provider?.toUpperCase(), targetLabel]
-    .filter(Boolean)
-    .join(' · ')
+        ? formatCompactKnowledgeScope(count, 0, t)
+        : undefined
+  const sourceLabel = context.external_provider
+    ? getExternalKnowledgeSourceLabel(context.external_provider, externalSource)
+    : undefined
 
   return (
     <div>
       <ContextPreviewBase
         icon={<Database className="text-primary" />}
         title={context.name}
-        subtitle={subtitle}
+        subtitle={scopeLabel}
+        sourceLabel={sourceLabel}
       />
     </div>
   )

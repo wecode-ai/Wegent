@@ -7,37 +7,26 @@
 import React from 'react'
 import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  getExternalKnowledgeSourceLabel,
+  useExternalKnowledgeSources,
+} from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import { formatKnowledgeScopeSummary } from '@/features/knowledge/knowledgeContextPresentation'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   ContextItem,
   DingTalkDocContext,
   ExternalKnowledgeContext,
-  KnowledgeBaseContext,
   QueueMessageContext,
 } from '@/types/context'
-import { formatDocumentCount } from '@/lib/i18n-helpers'
-
-function formatKnowledgeScopeLabel(
-  context: KnowledgeBaseContext,
-  t: (key: string, options?: Record<string, unknown>) => string
-) {
-  const documentCount = context.document_ids?.length ?? 0
-  const folderCount = context.folder_ids?.length ?? 0
-
-  if (folderCount > 0 && documentCount > 0) {
-    return t('picker.selectedScope', { folderCount, documentCount })
-  }
-  if (folderCount > 0) {
-    return t('picker.selectedFolders', { count: folderCount })
-  }
-  return t('picker.selectedDocuments', { count: documentCount })
-}
 
 interface ContextBadgeProps {
   context: ContextItem
   onRemove: () => void
   /** Disable URL opening on click (for input area badges) */
   disableUrlClick?: boolean
+  displayName?: string
+  displaySubtitle?: string
 }
 
 /**
@@ -68,8 +57,11 @@ export default function ContextBadge({
   context,
   onRemove,
   disableUrlClick = false,
+  displayName,
+  displaySubtitle,
 }: ContextBadgeProps) {
   const { t } = useTranslation('knowledge')
+  const externalSources = useExternalKnowledgeSources()
   const Icon = getContextIcon(context.type)
 
   // Get badge color based on context type
@@ -112,6 +104,24 @@ export default function ContextBadge({
       context.type === 'dingtalk_doc' &&
       !!(context as DingTalkDocContext).doc_url)
 
+  const externalProvider =
+    context.type === 'external_knowledge'
+      ? (context as ExternalKnowledgeContext).ref.provider
+      : undefined
+  const externalSource = externalSources.find(source => source.providerId === externalProvider)
+  const knowledgeScopeLabel =
+    context.type === 'knowledge_base'
+      ? formatKnowledgeScopeSummary(
+          {
+            documentCount: context.document_count,
+            documentIds: context.document_ids,
+            folderIds: context.folder_ids,
+            scopeRestricted: context.scope_restricted,
+          },
+          t
+        )
+      : undefined
+
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
     switch (context.type) {
@@ -140,15 +150,13 @@ export default function ContextBadge({
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
       <div className="flex flex-col min-w-0 max-w-[200px]">
-        <span className="text-xs font-medium truncate" title={context.name}>
-          {context.name}
+        <span className="text-xs font-medium truncate" title={displayName ?? context.name}>
+          {displayName ?? context.name}
         </span>
-        {context.type === 'knowledge_base' && context.scope_restricted ? (
-          <span className="text-xs opacity-70">{formatKnowledgeScopeLabel(context, t)}</span>
-        ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
-          <span className="text-xs opacity-70">
-            {formatDocumentCount(context.document_count, t)}
-          </span>
+        {displaySubtitle ? (
+          <span className="text-xs opacity-70 truncate">{displaySubtitle}</span>
+        ) : knowledgeScopeLabel ? (
+          <span className="text-xs opacity-70">{knowledgeScopeLabel}</span>
         ) : null}
         {context.type === 'table' && context.source_config?.url && (
           <span className="text-xs opacity-70 truncate" title={context.source_config.url}>
@@ -166,7 +174,7 @@ export default function ContextBadge({
         )}
         {context.type === 'external_knowledge' && (
           <span className="text-xs opacity-70 truncate">
-            {(context as ExternalKnowledgeContext).ref.provider}
+            {getExternalKnowledgeSourceLabel(externalProvider ?? '', externalSource)}
           </span>
         )}
       </div>
@@ -179,7 +187,7 @@ export default function ContextBadge({
           onRemove()
         }}
         className={`h-5 w-5 ml-1 hover:bg-opacity-20 ${getRemoveButtonColor()}`}
-        aria-label={`Remove ${context.name}`}
+        aria-label={`Remove ${displayName ?? context.name}`}
       >
         <X className="h-3 w-3" />
       </Button>

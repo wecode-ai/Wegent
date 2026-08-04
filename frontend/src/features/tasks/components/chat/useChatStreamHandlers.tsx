@@ -44,6 +44,7 @@ import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
 import { getAttachmentLikeContextIds } from '@/features/tasks/utils/contextAttachments'
+import { formatDingTalkReferences } from './dingtalkReferences'
 
 export interface SendMessageOptions {
   interactiveFormAnswer?: InteractiveFormAnswerPayload
@@ -539,14 +540,11 @@ export function useChatStreamHandlers({
         messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
       }
 
-      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+      const dingtalkDocContexts = snapshotContexts.filter(
+        (ctx): ctx is import('@/types/context').DingTalkDocContext => ctx.type === 'dingtalk_doc'
+      )
       if (dingtalkDocContexts.length > 0) {
-        const docRefs = dingtalkDocContexts
-          .map(ctx => {
-            const docCtx = ctx as import('@/types/context').DingTalkDocContext
-            return `- [${docCtx.name}](${docCtx.doc_url})`
-          })
-          .join('\n')
+        const docRefs = formatDingTalkReferences(dingtalkDocContexts, t)
         const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
         messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
       }
@@ -692,7 +690,7 @@ export function useChatStreamHandlers({
           pendingContexts.push({
             id: -(pendingContexts.length + 1),
             context_type: 'external_knowledge',
-            name: ctx.name,
+            name: externalContext.ref.name ?? ctx.name,
             status: 'ready',
             external_provider: externalContext.ref.provider,
             external_mode: externalContext.ref.mode,
