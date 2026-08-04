@@ -197,6 +197,38 @@ describe('DocumentDetailDialog permissions', () => {
   })
 })
 
+describe('DocumentDetailDialog processing errors', () => {
+  it('renders the localized message for a known public error code', () => {
+    const failedDocument: KnowledgeDocument = {
+      ...baseDocument,
+      index_status: 'failed',
+      processing_error: {
+        stage: 'conversion',
+        code: 'model_quota_exhausted',
+        message: 'English fallback.',
+        retryable: false,
+        generation: 1,
+        occurred_at: '2026-04-02T00:01:00Z',
+      },
+    }
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={failedDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByTestId('document-processing-error-detail-11')).toBeInTheDocument()
+    expect(
+      screen.getByText('knowledge:document.document.processingError.codes.modelQuotaExhausted')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('English fallback.')).not.toBeInTheDocument()
+  })
+})
+
 describe('DocumentDetailDialog original file preview', () => {
   const officeDocument: KnowledgeDocument = {
     ...baseDocument,
