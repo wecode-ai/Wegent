@@ -165,11 +165,15 @@ flowchart LR
 
 本地创建不会产生云端 Plugin、Release 或包。发布完成后，本地原件仍是“我创建的 · 已发布”，不会被市场副本替换。
 
+发布入口统一为「人 / 组织 / 全部」三个范围：`visibility=personal` 对应定向分享（扫描通过后立即生效，`purpose=restricted_share`）；`workspace` / `public` 进入人工审核（`purpose=marketplace_publish`）。个人范围可在投稿时携带 `targets` 与 `allowCopy`，服务端在 init 阶段校验接收者，并在扫描通过后写入 `resource_members`。
+
+创建任务应写入受管市场 `wework-personal`。若 Plugin Creator 仍落到 Codex 默认 `personal`（`~/plugins` + `~/.agents`），列表刷新与发布打包前会把插件原子迁入 `wework-personal`、同步市场清单并优先以该市场为准，避免重复条目。
+
 Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本地 Marketplace 和插件键定位目录，原生打包并校验 `.codex-plugin/plugin.json`、符号链接、越界路径、50 MB 压缩包上限和 200 MB 展开上限；单 Skill Plugin 自动以 `listing_type=skill` 投稿。
 
 ### 定向分享与个人副本
 
-所有者首次分享本地插件时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
+所有者首次按「人」发布或后续管理可见成员时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
 
 接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Tauri 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
 

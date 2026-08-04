@@ -32,11 +32,15 @@ Installation upserts account intent, creates pending device rows, sends a short-
 
 Wework sends the local Executor's stable `device_id` to catalog and mutation APIs. A catalog item is installed only when that device reports `state=installed` with `actual_release_id` equal to the desired Release. A mutation returns `502` only when the requesting device fails; failures on other devices remain visible for reconnect reconciliation. WebSocket reconnect sync writes per-plugin results back and clears completed uninstall or stale failure rows.
 
+Publishing uses a unified scope picker: people (`visibility=personal`, auto-approved after scan as `purpose=restricted_share`), organization (`workspace`), or everyone (`public`). Organization and public scopes still require human review (`purpose=marketplace_publish`). Personal publish may include `targets` and `allowCopy`; the server validates recipients at submission init and applies `resource_members` after a successful scan.
+
+Create flows must target the managed `wework-personal` marketplace. If Plugin Creator still lands in the Codex default `personal` marketplace (`~/plugins` + `~/.agents`), list refresh and publish packaging atomically migrate the plugin into `wework-personal`, keep marketplace manifests in sync, and prefer that marketplace to avoid duplicates.
+
 Publishing a local creation does not require a manually selected ZIP. Tauri locates the plugin in the local marketplace, packages it natively, and validates the Codex manifest, symlinks, path containment, the 50 MB archive limit, and the 200 MB expanded-size limit. A single-Skill plugin is submitted with `listing_type=skill` automatically.
 
 ## Restricted sharing and personal copies
 
-The first restricted share uploads the local package with `purpose=restricted_share` through the same object-storage and security-scanning pipeline. A successful scan creates a `visibility=personal` cloud Plugin and Release without public-market review. User and Namespace grants atomically replace existing `resource_members`; selecting owner-only access clears all grants and disables copying.
+Publishing to people, or later managing personal visibility, uploads the local package with `purpose=restricted_share` through the same object-storage and security-scanning pipeline. A successful scan creates a `visibility=personal` cloud Plugin and Release without public-market review. User and Namespace grants atomically replace existing `resource_members`; selecting owner-only access clears all grants and disables copying.
 
 Only the owner and matching recipients can discover, inspect, and install a personal plugin. Revoking a recipient removes the original account install intent immediately, uninstalls online devices, and leaves offline devices pending reconciliation. When `allowCopy` is enabled, the copy endpoint returns short-lived download metadata. Tauri verifies SHA256, ZIP paths, duplicate entries, symlinks, and the manifest, then atomically imports a uniquely named `0.1.0` copy into `wework-personal`. Provenance stays in the local registry and is never embedded in the uploaded package; revoking the original does not remove an independent copy.
 
