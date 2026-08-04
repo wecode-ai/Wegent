@@ -31,6 +31,7 @@ import { getKnowledgeVideoDownloader } from '../video-download-registry'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
+import { getProcessingErrorMessage } from '../utils/processing-error'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import {
@@ -282,11 +283,17 @@ export function DocumentItem({
     })
   } else if (isNotIndexed) {
     unavailableHint = t('knowledge:document.document.indexStatus.notIndexedHint')
+  } else if (isIndexFailed && document.processing_error) {
+    unavailableHint = getProcessingErrorMessage(document.processing_error, t)
+  } else if (isIndexFailed) {
+    unavailableHint = t('knowledge:document.document.indexStatus.failedHint')
   }
 
-  const unavailableLabel = isNotIndexed
-    ? t('knowledge:document.document.indexStatus.notIndexed')
-    : t('knowledge:document.document.indexStatus.unavailable')
+  const unavailableLabel = isIndexFailed
+    ? t('knowledge:document.document.indexStatus.failed')
+    : isNotIndexed
+      ? t('knowledge:document.document.indexStatus.notIndexed')
+      : t('knowledge:document.document.indexStatus.unavailable')
 
   const unavailableDotColor = isNotIndexed ? 'bg-slate-400' : 'bg-yellow-500'
 
@@ -398,6 +405,17 @@ export function DocumentItem({
                             ? t('knowledge:document.document.indexStatus.convertingHint')
                             : t('knowledge:document.document.indexStatus.indexingHint')}
                       </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : isIndexFailed ? (
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span className="w-1 h-1 rounded-full flex-shrink-0 bg-error cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">{unavailableHint}</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -686,6 +704,26 @@ export function DocumentItem({
                       ? t('knowledge:document.document.indexStatus.convertingHint')
                       : t('knowledge:document.document.indexStatus.indexingHint')}
                 </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : isIndexFailed ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <span>
+                  <Badge
+                    variant="error"
+                    size="sm"
+                    className="whitespace-nowrap cursor-help"
+                    data-testid={`document-processing-error-${document.id}`}
+                  >
+                    {unavailableLabel}
+                  </Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">{unavailableHint}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
