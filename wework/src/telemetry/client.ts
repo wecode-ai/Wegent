@@ -1,6 +1,7 @@
 import type { CaptureResult, PostHog } from 'posthog-js'
 import {
   ANALYTICS_EVENT_PROPERTY_KEYS,
+  ANALYTICS_EVENT_VALUE_CONSTRAINTS,
   type AnalyticsEventMap,
   type AnalyticsEventName,
   type QueuedAnalyticsEvent,
@@ -316,6 +317,10 @@ function flushQueuedEvents(): void {
   pending.forEach(event => posthog?.capture(event.name, event.properties))
 }
 
+export function isTelemetryEnabled(): boolean {
+  return enabled
+}
+
 export async function installTelemetry(initiallyEnabled: boolean): Promise<void> {
   enabled = initiallyEnabled
   if (!enabled) return
@@ -327,10 +332,14 @@ export function track<EventName extends AnalyticsEventName>(
   properties: AnalyticsEventMap[EventName]
 ): void {
   if (!enabled) return
+  const valueConstraints = ANALYTICS_EVENT_VALUE_CONSTRAINTS[name]
   const allowedProperties = Object.fromEntries(
     ANALYTICS_EVENT_PROPERTY_KEYS[name].flatMap(key => {
       const value = properties[key]
-      return value === undefined ? [] : [[key, value]]
+      if (value === undefined) return []
+      const allowedValues = valueConstraints?.[key]
+      if (allowedValues && !allowedValues.includes(value as never)) return []
+      return [[key, value]]
     })
   )
   const event = {
@@ -369,6 +378,7 @@ export async function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   posthog?.opt_out_capturing()
   sentry?.setUser(null)
   await sentry?.close(0)
+  posthog = null
   sentry = null
   localStorage.removeItem(INSTALLATION_ID_KEY)
   resetTelemetrySessionId()

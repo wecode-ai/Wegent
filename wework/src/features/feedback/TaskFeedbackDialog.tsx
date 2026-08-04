@@ -13,6 +13,8 @@ import {
   Send,
   ShieldAlert,
   Loader2,
+  ThumbsDown,
+  ThumbsUp,
   X,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
@@ -88,6 +90,7 @@ interface FeedbackApi {
 interface TaskFeedbackDialogProps {
   open: boolean
   hasActiveTask: boolean
+  taskId?: string
   getTaskContext: () => Promise<Record<string, unknown>>
   feedbackApi?: FeedbackApi
   onClose: () => void
@@ -138,6 +141,7 @@ const MAX_ATTACHMENT_TOTAL_BYTES = 100 * 1024 * 1024
 export function TaskFeedbackDialog({
   open,
   hasActiveTask,
+  taskId,
   getTaskContext,
   feedbackApi,
   onClose,
@@ -146,6 +150,7 @@ export function TaskFeedbackDialog({
   return (
     <TaskFeedbackDialogContent
       hasActiveTask={hasActiveTask}
+      taskId={taskId}
       getTaskContext={getTaskContext}
       feedbackApi={feedbackApi}
       onClose={onClose}
@@ -155,6 +160,7 @@ export function TaskFeedbackDialog({
 
 function TaskFeedbackDialogContent({
   hasActiveTask,
+  taskId,
   getTaskContext,
   feedbackApi,
   onClose,
@@ -162,6 +168,7 @@ function TaskFeedbackDialogContent({
   const { t, i18n } = useTranslation('common')
   const [selection, setSelection] = useState<FeedbackSelection>(standardSelection)
   const [note, setNote] = useState('')
+  const [rating, setRating] = useState<'positive' | 'negative' | null>(null)
   const [attachments, setAttachments] = useState<File[]>([])
   const [exporting, setExporting] = useState(false)
   const [capturingScreenshot, setCapturingScreenshot] = useState(false)
@@ -175,7 +182,10 @@ function TaskFeedbackDialogContent({
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
   const hasFeedback =
-    Object.values(selection).some(Boolean) || note.trim() !== '' || attachments.length > 0
+    Object.values(selection).some(Boolean) ||
+    note.trim() !== '' ||
+    attachments.length > 0 ||
+    rating !== null
 
   const addAttachments = (incoming: File[]) => {
     setError(null)
@@ -344,6 +354,22 @@ function TaskFeedbackDialogContent({
                 ? '2-5'
                 : '6+',
       })
+      if (rating) {
+        track('$ai_feedback', {
+          ...(taskId && { $ai_trace_id: taskId }),
+          $ai_feedback_type: rating,
+          source: 'task_dialog',
+          attachment_count:
+            attachmentCount === 0
+              ? '0'
+              : attachmentCount === 1
+                ? '1'
+                : attachmentCount <= 5
+                  ? '2-5'
+                  : '6+',
+          has_comment: note.trim().length > 0,
+        })
+      }
     } catch {
       track('operation_failed', { operation: 'feedback' })
       setError(
@@ -563,6 +589,43 @@ function TaskFeedbackDialogContent({
         ) : (
           <>
             <div className="mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto">
+              {hasActiveTask ? (
+                <div>
+                  <p className="text-sm font-medium">{t('workbench.feedback_rating_label')}</p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      data-testid="task-feedback-rating-positive"
+                      onClick={() => setRating(rating === 'positive' ? null : 'positive')}
+                      className={cn(
+                        'inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors',
+                        rating === 'positive'
+                          ? 'bg-green-500/15 text-green-600 ring-1 ring-green-500/40'
+                          : 'bg-muted text-text-secondary hover:bg-muted/80'
+                      )}
+                      aria-pressed={rating === 'positive'}
+                    >
+                      <ThumbsUp className="h-4 w-4" />
+                      {t('workbench.feedback_rating_positive')}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="task-feedback-rating-negative"
+                      onClick={() => setRating(rating === 'negative' ? null : 'negative')}
+                      className={cn(
+                        'inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors',
+                        rating === 'negative'
+                          ? 'bg-red-500/15 text-red-600 ring-1 ring-red-500/40'
+                          : 'bg-muted text-text-secondary hover:bg-muted/80'
+                      )}
+                      aria-pressed={rating === 'negative'}
+                    >
+                      <ThumbsDown className="h-4 w-4" />
+                      {t('workbench.feedback_rating_negative')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <label className="block text-sm font-medium">
                 {t('workbench.feedback_note')}
                 <textarea

@@ -36,9 +36,22 @@ Events cover feature adoption, funnel outcomes, and reliability outcomes that su
 | Cloud, deliveries, and updates | `cloud_connection_changed`, `delivery_completed`, `app_update_install_started`             |
 | Feedback and Appshots          | `feedback_submitted`, `appshot_received`                                                   |
 | Workspace panels               | `workspace_panel_added`                                                                    |
+| AI analytics                   | `$ai_trace`, `$ai_generation`, `$ai_feedback`                                              |
 | Privacy preference             | `telemetry_preference_changed`, emitted only after telemetry is re-enabled                 |
 
 Cross-domain resource operations use `feature_action_completed` with bounded `domain` and `action` enums for project spaces, board items, task bindings, attachments and workspace files, AI tables, plugins, skills, MCP servers, hooks, Sites, models, Git, cloud devices, quick phrases, and archived conversations. Handled failures for critical operations use `operation_failed` with a bounded operation type and never include the error message. Resource IDs, project names, plugin names, URLs, file paths, and user input are never event properties. Feature code must emit success events only after the API or native operation succeeds; rollback paths must not report success.
+
+## AI Analytics Events
+
+Wework emits PostHog AI analytics events for agent task traces, LLM generations, and user feedback. These events follow the same privacy boundary: they contain only metadata and bounded categorical values, never prompts, outputs, user text, file paths, or credentials.
+
+| Event             | Purpose                                                                                       | Key properties                                                                                                                                                                                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$ai_trace`       | One complete agent task / conversation turn, emitted at task start and end.                   | `$ai_trace_id` (stable task ID), `$ai_trace_phase` (`start` or `end`), `execution_target`, `duration_ms` (end only), `result` (`success`, `failure`, or `cancelled`; end only), `failure_reason` (bounded failure category; end only when result is `failure`).         |
+| `$ai_generation`  | Each LLM-backed assistant response, measured from assistant start to settled.                 | `$ai_generation_id`, `$ai_parent_id` (parent task ID), `$ai_model`, `$ai_provider`, `$ai_input_tokens`, `$ai_output_tokens`, `$ai_total_tokens`, `$ai_latency`, `$ai_latency_ms`, `$ai_cost` (best-effort USD estimate when the model is recognized), `result`.         |
+| `$ai_feedback`    | User thumbs-up / thumbs-down rating of an AI result, captured from the task feedback dialog.  | `$ai_trace_id` (task ID when available), `$ai_feedback_type` (`positive` or `negative`), `source` (`task_dialog`), `attachment_count` (binned as `0`, `1`, `2-5`, or `6+`), `has_comment`.                                                                               |
+
+`$ai_trace_id` and `$ai_parent_id` reuse the existing stable `taskId` so traces, generations, and feedback can be correlated without introducing a new identifier. `$ai_cost` is estimated on the client from a small, known-model pricing table because the backend does not currently expose per-call cost; it should be replaced with backend-supplied cost when available.
 
 ## Configuration
 
@@ -47,13 +60,58 @@ Frontend build variables:
 | Variable                                | Purpose                                                     |
 | --------------------------------------- | ----------------------------------------------------------- |
 | `VITE_WEWORK_POSTHOG_KEY`               | PostHog project key; product events are disabled when empty |
-| `VITE_WEWORK_POSTHOG_HOST`              | PostHog ingestion endpoint                                  |
+| `VITE_WEWORK_POSTHOG_HOST`              | PostHog ingestion endpoint; defaults to `https://us.i.posthog.com`; use `https://eu.i.posthog.com` for EU-hosted projects |
 | `VITE_WEWORK_SENTRY_DSN`                | WebView Sentry DSN                                          |
 | `VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE` | WebView performance sample rate, default `0.05`             |
 | `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`, `staging`, or `production`                   |
 | `VITE_WEWORK_RELEASE_CHANNEL`           | Release channel                                             |
 
 The native Tauri layer reads `WEWORK_SENTRY_DSN` and `WEWORK_TELEMETRY_ENVIRONMENT`. The DSN may be embedded at build time or supplied at runtime.
+
+## Defense-in-depth deployment settings
+
+Client-side scrubbing is the first line of defense, but project-level server settings must also minimize retained data.
+
+For the Sentry project used by WebView and native Tauri:
+
+- Enable `scrubIPAddresses` so Sentry does not store client IP addresses.
+- Enable `dataScrubberDefaults` and `enhancedPrivacy` to apply built-in PII scrubbing to events, breadcrumbs, and trace data.
+- Configure `relayPiiConfig` to redact local file paths, email addresses, bearer tokens, and any values that resemble API keys before they are persisted. Example:
+
+```json
+{
+  "rules": {
+    "remove_ips": { "type": "ip", "redaction": { "method": "remove" } },
+    "remove_emails": {
+      "type": "pattern",
+      "pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+      "redaction": { "method": "remove" }
+    },
+    "remove_paths": {
+      "type": "pattern",
+      "pattern": "([A-Za-z]:)?(/|\\\\)(Users|home|tmp|var|private)(/|\\\\)[^\\s\\\"]*",
+      "redaction": { "method": "replace", "text": "<redacted>" }
+    },
+    "remove_tokens": {
+      "type": "pattern",
+      "pattern": "(token|key|bearer)\\s*[:=]\\s*[\"']?[^\\s\"']+[\"']?",
+      "redaction": { "method": "replace", "text": "<redacted>" }
+    }
+  },
+  "applications": {
+    "freeform": ["remove_ips", "remove_emails", "remove_paths", "remove_tokens"],
+    "username": ["remove_ips", "remove_emails"],
+    "$string": ["remove_emails", "remove_paths", "remove_tokens"]
+  }
+}
+```
+
+For the PostHog project:
+
+- Set `VITE_WEWORK_POSTHOG_HOST` to the correct ingestion endpoint. The default is `https://us.i.posthog.com`; EU-hosted projects should use `https://eu.i.posthog.com`. Self-hosted instances should use their own ingestion URL.
+- Disable Session Replay and autocapture at the project level as a backup to the client-side flags; Wework never sends replay data or autocaptured events.
+- Keep person profiles disabled; Wework sets `person_profiles: 'never'` and `$process_person_profile: false` so PostHog does not build per-user profiles from anonymous events.
+- Use the project-level IP anonymization or `$_` capture settings as a fallback to `$geoip_disable: true`, which Wework already sends on every event.
 
 ## Metric Cardinality
 

@@ -38,7 +38,7 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
   onAssistantStart?: () => void
-  onAssistantSettled?: () => void
+  onAssistantSettled?: (result: 'success' | 'failure' | 'cancelled') => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
@@ -53,7 +53,10 @@ export interface RuntimeTaskStreamHandlers {
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
   onAssistantStart?: (address: RuntimeTaskAddress) => void
-  onAssistantSettled?: (address: RuntimeTaskAddress) => void
+  onAssistantSettled?: (
+    address: RuntimeTaskAddress,
+    result: 'success' | 'failure' | 'cancelled'
+  ) => void
   onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
   onSubagentActivity?: (
@@ -95,7 +98,7 @@ export function createRuntimeConversationStreamHandlers(
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
       onAssistantStart: () => handlers.onAssistantStart?.(address),
-      onAssistantSettled: () => handlers.onAssistantSettled?.(address),
+      onAssistantSettled: result => handlers.onAssistantSettled?.(address, result),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
@@ -241,7 +244,7 @@ export function createRuntimeTaskStreamHandlers(
         blocks,
         fileChanges,
       })
-      handlers.onAssistantSettled?.()
+      handlers.onAssistantSettled?.('success')
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
@@ -283,7 +286,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      handlers.onAssistantSettled?.()
+      handlers.onAssistantSettled?.(isCancelledRuntimeError(payload) ? 'cancelled' : 'failure')
       streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
@@ -320,7 +323,7 @@ export function createRuntimeTaskStreamHandlers(
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
         })
-        handlers.onAssistantSettled?.()
+        handlers.onAssistantSettled?.('success')
         handlers.onRefreshWorkLists?.()
       }
     },

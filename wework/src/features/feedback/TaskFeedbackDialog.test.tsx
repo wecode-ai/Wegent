@@ -5,8 +5,10 @@ import { TaskFeedbackDialog } from './TaskFeedbackDialog'
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
 }))
+const trackMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('@/telemetry/client', () => ({ track: trackMock }))
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) =>
@@ -70,6 +72,7 @@ const previewResult = {
 describe('TaskFeedbackDialog', () => {
   beforeEach(() => {
     invokeMock.mockReset()
+    trackMock.mockReset()
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
       callback(0)
       return 1
@@ -505,33 +508,83 @@ describe('TaskFeedbackDialog', () => {
     expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
   })
 
-  test('discards the staged bundle when the dialog is closed from the preview', async () => {
-    const onClose = vi.fn()
+  test('emits $ai_feedback when a rating is selected and submitted', async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === 'capture_main_webview')
-        return Promise.resolve('data:image/png;base64,aGVsbG8=')
       if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
-      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
       return Promise.reject(new Error(`Unexpected command: ${command}`))
     })
+    const feedbackApi = {
+      submit: vi.fn().mockResolvedValue({
+        report_id: 'WF-1',
+        item_id: 'FEEDBACK-1',
+        duplicate: false,
+      }),
+    }
     render(
       <TaskFeedbackDialog
         open
         hasActiveTask
-        getTaskContext={async () => ({ taskId: 'task-1' })}
-        onClose={onClose}
+        taskId="task-42"
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({ task: { title: 'Broken task' } })}
+        onClose={vi.fn()}
       />
     )
 
-    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
-    await waitFor(() =>
-      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
-    )
-    fireEvent.click(screen.getByTestId('task-feedback-close-button'))
-
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
-      decision: { stagingId: 'staging-1' },
+    fireEvent.click(screen.getByTestId('task-feedback-rating-positive'))
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Great result' },
     })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    await waitFor(() => expect(feedbackApi.submit).toHaveBeenCalledOnce())
+    expect(trackMock).toHaveBeenCalledWith(
+      '$ai_feedback',
+      expect.objectContaining({
+        $ai_trace_id: 'task-42',
+        $ai_feedback_type: 'positive',
+        source: 'task_dialog',
+        attachment_count: '2-5',
+        has_comment: true,
+      })
+    )
+  })
+
+  test('does not emit $ai_feedback when no rating is selected', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    const feedbackApi = {
+      submit: vi.fn().mockResolvedValue({
+        report_id: 'WF-1',
+        item_id: 'FEEDBACK-1',
+        duplicate: false,
+      }),
+    }
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        taskId="task-42"
+        feedbackApi={feedbackApi}
+        getTaskContext={async () => ({ task: { title: 'Broken task' } })}
+        onClose={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'No rating' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+    fireEvent.click(screen.getByTestId('task-feedback-submit-button'))
+
+    await waitFor(() => expect(feedbackApi.submit).toHaveBeenCalledOnce())
+    const aiFeedbackCalls = trackMock.mock.calls.filter(call => call[0] === '$ai_feedback')
+    expect(aiFeedbackCalls).toHaveLength(0)
   })
 })

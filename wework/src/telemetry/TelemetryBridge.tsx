@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { installTelemetry, setTelemetryEnabled, track } from './client'
+import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { updateAppPreferences } from '@/tauri/appPreferences'
@@ -31,7 +31,7 @@ export function TelemetryBridge() {
     }
     initializedRef.current = true
     void installTelemetry(effectiveTelemetryEnabled).then(() => {
-      if (!effectiveTelemetryEnabled || startedRef.current) return
+      if (!isTelemetryEnabled() || startedRef.current) return
       startedRef.current = true
       track('app_started', { surface: appSurface() })
     })

@@ -64,11 +64,163 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       'task_started',
       expect.objectContaining({
+        $geoip_disable: true,
         app_version: __WEWORK_APP_VERSION__,
         execution_target: 'local',
       })
     )
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('prompt')
+  })
+
+  test('drops invalid enum values from event properties', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('task_started', {
+      execution_target: '/Users/private/repository' as 'local',
+    })
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      'task_started',
+      expect.objectContaining({
+        $geoip_disable: true,
+        app_version: __WEWORK_APP_VERSION__,
+      })
+    )
+    expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('execution_target')
+  })
+
+  test('captures $ai_trace start and end with bounded properties', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('$ai_trace', {
+      $ai_trace_id: 'task-42',
+      $ai_trace_phase: 'start',
+      execution_target: 'local',
+    })
+    track('$ai_trace', {
+      $ai_trace_id: 'task-42',
+      $ai_trace_phase: 'end',
+      execution_target: 'cloud',
+      duration_ms: 1234,
+      result: 'failure',
+      failure_reason: 'model_error',
+      prompt: 'must not leave the device',
+    } as {
+      $ai_trace_id: string
+      $ai_trace_phase: 'end'
+      execution_target: 'cloud'
+      duration_ms: number
+      result: 'failure'
+      failure_reason: 'model_error'
+      prompt: string
+    })
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      '$ai_trace',
+      expect.objectContaining({
+        $geoip_disable: true,
+        app_version: __WEWORK_APP_VERSION__,
+        $ai_trace_id: 'task-42',
+        $ai_trace_phase: 'start',
+        execution_target: 'local',
+      })
+    )
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      '$ai_trace',
+      expect.objectContaining({
+        $geoip_disable: true,
+        app_version: __WEWORK_APP_VERSION__,
+        $ai_trace_id: 'task-42',
+        $ai_trace_phase: 'end',
+        execution_target: 'cloud',
+        duration_ms: 1234,
+        result: 'failure',
+        failure_reason: 'model_error',
+      })
+    )
+    const endCall = posthogMocks.capture.mock.calls.find(
+      call => call[0] === '$ai_trace' && call[1]?.$ai_trace_phase === 'end'
+    )
+    expect(endCall?.[1]).not.toHaveProperty('prompt')
+  })
+
+  test('captures $ai_generation with model, tokens, latency, and estimated cost', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('$ai_generation', {
+      $ai_generation_id: 'gen-1',
+      $ai_parent_id: 'task-42',
+      $ai_model: 'gpt-4o',
+      $ai_provider: 'openai',
+      $ai_input_tokens: 1000,
+      $ai_output_tokens: 500,
+      $ai_total_tokens: 1500,
+      $ai_latency: 2.5,
+      $ai_latency_ms: 2500,
+      $ai_cost: 0.0075,
+      result: 'success',
+    })
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      '$ai_generation',
+      expect.objectContaining({
+        $geoip_disable: true,
+        app_version: __WEWORK_APP_VERSION__,
+        $ai_generation_id: 'gen-1',
+        $ai_parent_id: 'task-42',
+        $ai_model: 'gpt-4o',
+        $ai_provider: 'openai',
+        $ai_input_tokens: 1000,
+        $ai_output_tokens: 500,
+        $ai_total_tokens: 1500,
+        $ai_latency: 2.5,
+        $ai_latency_ms: 2500,
+        $ai_cost: 0.0075,
+        result: 'success',
+      })
+    )
+  })
+
+  test('captures $ai_feedback with allowed properties and strips task context', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('$ai_feedback', {
+      $ai_trace_id: 'task-42',
+      $ai_feedback_type: 'positive',
+      source: 'task_dialog',
+      attachment_count: '1',
+      has_comment: true,
+      note: 'must not leave the device',
+      task_title: 'private project',
+    } as {
+      $ai_trace_id: string
+      $ai_feedback_type: 'positive'
+      source: 'task_dialog'
+      attachment_count: '1'
+      has_comment: true
+      note: string
+      task_title: string
+    })
+
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      '$ai_feedback',
+      expect.objectContaining({
+        $geoip_disable: true,
+        app_version: __WEWORK_APP_VERSION__,
+        $ai_trace_id: 'task-42',
+        $ai_feedback_type: 'positive',
+        source: 'task_dialog',
+        attachment_count: '1',
+        has_comment: true,
+      })
+    )
+    const feedbackCall = posthogMocks.capture.mock.calls.find(call => call[0] === '$ai_feedback')
+    expect(feedbackCall?.[1]).not.toHaveProperty('note')
+    expect(feedbackCall?.[1]).not.toHaveProperty('task_title')
   })
 
   test('uses immediate requests and disables persistence after opt-out', async () => {
@@ -495,5 +647,26 @@ describe('telemetry client', () => {
     )
     expect(sentryMocks.setUser).toHaveBeenCalledWith(null)
     expect(sentryMocks.close).toHaveBeenCalledWith(0)
+  })
+
+  test('re-initializes SDKs with fresh instances after disable and re-enable', async () => {
+    const { installTelemetry, setTelemetryEnabled, track } = await import('./client')
+    await installTelemetry(true)
+
+    await setTelemetryEnabled(false)
+    posthogMocks.init.mockClear()
+    sentryMocks.init.mockClear()
+    posthogMocks.capture.mockClear()
+
+    await setTelemetryEnabled(true)
+
+    expect(posthogMocks.init).toHaveBeenCalledTimes(1)
+    expect(sentryMocks.init).toHaveBeenCalledTimes(1)
+
+    track('app_started', { surface: 'main' })
+    expect(posthogMocks.capture).toHaveBeenCalledWith(
+      'app_started',
+      expect.objectContaining({ surface: 'main' })
+    )
   })
 })

@@ -116,6 +116,7 @@ import {
   publishWorkspaceTabTransferState,
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
+import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -1159,6 +1160,28 @@ export function WorkbenchProvider({
     },
     [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
+  const resolveModelForAddress = useCallback(
+    (address: RuntimeTaskAddress): UnifiedModel | null => {
+      const taskSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const selectedModel = modelSelection.selectedModel
+      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
+      const matchingSelectedModel =
+        taskSelection?.modelName &&
+        selectedModel?.name === taskSelection.modelName &&
+        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
+          ? selectedModel
+          : null
+      return taskModel ?? matchingSelectedModel
+    },
+    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+  )
+  const aiGenerationTelemetry = useAiGenerationTelemetry({
+    resolveModel: resolveModelForAddress,
+    contextUsageByRuntimeTask,
+  })
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
       address: RuntimeTaskAddress,
@@ -1253,10 +1276,12 @@ export function WorkbenchProvider({
           onAssistantStart: address => {
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address)
+            aiGenerationTelemetry.onAssistantStart(address)
           },
-          onAssistantSettled: address => {
+          onAssistantSettled: (address, result) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address)
+            aiGenerationTelemetry.onAssistantSettled(address, result)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1281,6 +1306,7 @@ export function WorkbenchProvider({
         })
       ),
     [
+      aiGenerationTelemetry,
       applyCanonicalRuntimeAction,
       lifecycleStore,
       refreshRuntimeWorkLists,

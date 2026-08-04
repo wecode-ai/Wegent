@@ -76,6 +76,11 @@ export function useWorkbenchTelemetry({
       if (!current.running && snapshot.derived.isRunning) {
         current.startedAt = now
         track('task_started', { execution_target: target })
+        track('$ai_trace', {
+          $ai_trace_id: snapshot.address.taskId,
+          $ai_trace_phase: 'start',
+          execution_target: target,
+        })
       }
       if (current.turnActive && !snapshot.derived.isTurnActive && !current.firstResponseRecorded) {
         current.firstResponseRecorded = true
@@ -90,6 +95,14 @@ export function useWorkbenchTelemetry({
         track('task_completed', {
           duration_ms: Math.max(0, now - current.startedAt),
           execution_target: target,
+          result,
+          ...(result === 'failure' && { failure_reason: failureReason(snapshot.task) }),
+        })
+        track('$ai_trace', {
+          $ai_trace_id: snapshot.address.taskId,
+          $ai_trace_phase: 'end',
+          execution_target: target,
+          duration_ms: Math.max(0, now - current.startedAt),
           result,
           ...(result === 'failure' && { failure_reason: failureReason(snapshot.task) }),
         })

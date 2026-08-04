@@ -43,6 +43,7 @@ function architecture(): CommonTelemetryProperties['arch'] {
 export function getCommonTelemetryProperties(): CommonTelemetryProperties {
   const config = getTelemetryConfig()
   return {
+    $geoip_disable: true,
     app_version: __WEWORK_APP_VERSION__,
     arch: architecture(),
     locale: navigator.language || 'unknown',
