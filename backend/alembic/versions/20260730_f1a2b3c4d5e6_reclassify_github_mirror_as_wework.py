@@ -24,6 +24,8 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 GITHUB_SOURCE_LABEL = "Wegent 官方"
+PLUGIN_SNAPSHOT_TABLE = "migration_f1a2b3c4d5e6_plugins"
+KIND_SNAPSHOT_TABLE = "migration_f1a2b3c4d5e6_kinds"
 
 
 def _as_dict(value: Any) -> dict[str, Any] | None:
@@ -42,15 +44,39 @@ def _as_dict(value: Any) -> dict[str, Any] | None:
 
 def upgrade() -> None:
     conn = op.get_bind()
+    op.create_table(
+        PLUGIN_SNAPSHOT_TABLE,
+        sa.Column("plugin_id", sa.BigInteger(), primary_key=True),
+        sa.Column("source_provider", sa.String(length=50), nullable=False),
+        sa.Column("visibility", sa.String(length=20), nullable=False),
+    )
+    op.create_table(
+        KIND_SNAPSHOT_TABLE,
+        sa.Column("kind_id", sa.BigInteger(), primary_key=True),
+        sa.Column("payload", sa.JSON(), nullable=False),
+    )
     conn.execute(
         sa.text(
-            """
-            UPDATE plugins
-            SET source_provider = 'wework',
-                visibility = 'public'
+            f"""
+            INSERT INTO {PLUGIN_SNAPSHOT_TABLE}
+                (plugin_id, source_provider, visibility)
+            SELECT id, source_provider, visibility
+            FROM plugins
             WHERE slug = 'github'
               AND source_type = 'mirror'
               AND source_provider = 'codex'
+            """
+        )
+    )
+    conn.execute(
+        sa.text(
+            f"""
+            UPDATE plugins
+            SET source_provider = 'wework',
+                visibility = 'public'
+            WHERE id IN (
+                SELECT plugin_id FROM {PLUGIN_SNAPSHOT_TABLE}
+            )
             """
         )
     )
@@ -58,12 +84,9 @@ def upgrade() -> None:
         row["id"]
         for row in conn.execute(
             sa.text(
-                """
-                SELECT id
-                FROM plugins
-                WHERE slug = 'github'
-                  AND source_type = 'mirror'
-                  AND source_provider = 'wework'
+                f"""
+                SELECT plugin_id AS id
+                FROM {PLUGIN_SNAPSHOT_TABLE}
                 """
             )
         ).mappings()
@@ -89,6 +112,22 @@ def upgrade() -> None:
             continue
         if spec.get("pluginId") not in plugin_ids:
             continue
+        original_payload = row["json"]
+        if isinstance(original_payload, (dict, list)):
+            original_payload = json.dumps(original_payload, ensure_ascii=False)
+        elif isinstance(original_payload, (bytes, bytearray)):
+            original_payload = original_payload.decode("utf-8")
+        if not isinstance(original_payload, str):
+            continue
+        conn.execute(
+            sa.text(
+                f"""
+                INSERT INTO {KIND_SNAPSHOT_TABLE} (kind_id, payload)
+                VALUES (:kind_id, :payload)
+                """
+            ),
+            {"kind_id": row["id"], "payload": original_payload},
+        )
         spec["sourceProvider"] = "wegent"
         spec["sourceLabel"] = GITHUB_SOURCE_LABEL
         spec["visibility"] = "public"
@@ -103,14 +142,31 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
-    conn.execute(
+    for row in conn.execute(
+        sa.text(f"SELECT kind_id, payload FROM {KIND_SNAPSHOT_TABLE}")
+    ).mappings():
+        conn.execute(
+            sa.text("UPDATE kinds SET json = :payload WHERE id = :kind_id"),
+            {"payload": row["payload"], "kind_id": row["kind_id"]},
+        )
+    for row in conn.execute(
         sa.text(
-            """
-            UPDATE plugins
-            SET source_provider = 'codex'
-            WHERE slug = 'github'
-              AND source_type = 'mirror'
-              AND source_provider = 'wework'
+            f"""
+            SELECT plugin_id, source_provider, visibility
+            FROM {PLUGIN_SNAPSHOT_TABLE}
             """
         )
-    )
+    ).mappings():
+        conn.execute(
+            sa.text(
+                """
+                UPDATE plugins
+                SET source_provider = :source_provider,
+                    visibility = :visibility
+                WHERE id = :plugin_id
+                """
+            ),
+            dict(row),
+        )
+    op.drop_table(KIND_SNAPSHOT_TABLE)
+    op.drop_table(PLUGIN_SNAPSHOT_TABLE)

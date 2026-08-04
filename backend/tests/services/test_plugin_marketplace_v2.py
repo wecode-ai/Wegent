@@ -7,7 +7,7 @@ import io
 import json
 import stat
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -324,6 +324,114 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
         test_db.query(SkillBinary).filter(SkillBinary.kind_id == installed_id).first()
         is None
     )
+
+
+def test_cancelled_submission_can_retry_the_same_version(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    request = PluginSubmissionInitRequest(
+        slug="retry-cancelled",
+        displayName="Retry Cancelled",
+        version="1.0.0",
+        filename="plugin.zip",
+        sha256=hashlib.sha256(package).hexdigest(),
+        sizeBytes=len(package),
+    )
+    first = service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    cancelled = service.cancel_submission(
+        test_db, user_id=test_user.id, submission_id=first.submissionId
+    )
+    second = service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    assert cancelled.status == "cancelled"
+    assert second.releaseId > 0
+    assert test_db.query(PluginRelease).count() == 1
+    assert test_db.query(PluginSubmission).count() == 1
+    assert test_db.get(PluginSubmission, second.submissionId).status == "uploading"
+
+
+def test_rejected_submission_can_retry_the_same_version(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    request = PluginSubmissionInitRequest(
+        slug="retry-rejected",
+        displayName="Retry Rejected",
+        version="1.0.0",
+        filename="plugin.zip",
+        sha256=hashlib.sha256(package).hexdigest(),
+        sizeBytes=len(package),
+    )
+    first = service.init_submission(test_db, user_id=test_user.id, request=request)
+    submission = test_db.get(PluginSubmission, first.submissionId)
+    release = test_db.get(PluginRelease, first.releaseId)
+    submission.status = "rejected"
+    release.status = "rejected"
+    test_db.commit()
+
+    second = service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    assert second.releaseId > 0
+    assert test_db.query(PluginRelease).count() == 1
+    assert test_db.query(PluginSubmission).count() == 1
+    assert test_db.get(PluginSubmission, second.submissionId).status == "uploading"
+
+
+def test_expired_upload_can_retry_the_same_version(test_db, test_user, monkeypatch):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    request = PluginSubmissionInitRequest(
+        slug="retry-expired",
+        displayName="Retry Expired",
+        version="1.0.0",
+        filename="plugin.zip",
+        sha256=hashlib.sha256(package).hexdigest(),
+        sizeBytes=len(package),
+    )
+    first = service.init_submission(test_db, user_id=test_user.id, request=request)
+    submission = test_db.get(PluginSubmission, first.submissionId)
+    submission.submitted_at = datetime.now() - timedelta(
+        seconds=settings.PLUGIN_PACKAGE_URL_EXPIRES_SECONDS + 1
+    )
+    test_db.commit()
+
+    second = service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    assert second.releaseId > 0
+    assert test_db.query(PluginRelease).count() == 1
+    assert test_db.query(PluginSubmission).count() == 1
+    assert test_db.get(PluginSubmission, second.submissionId).status == "uploading"
+
+
+def test_active_upload_cannot_reuse_the_same_version(test_db, test_user, monkeypatch):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    request = PluginSubmissionInitRequest(
+        slug="active-upload",
+        displayName="Active Upload",
+        version="1.0.0",
+        filename="plugin.zip",
+        sha256=hashlib.sha256(package).hexdigest(),
+        sizeBytes=len(package),
+    )
+    service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.init_submission(test_db, user_id=test_user.id, request=request)
+
+    assert exc_info.value.status_code == 409
 
 
 def test_pending_update_keeps_the_published_release_visible(

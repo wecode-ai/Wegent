@@ -243,6 +243,7 @@ CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的�
 | POST   | `/plugins/marketplace/{id}/copy`         | 校验访问权和复制许可并返回短期下载信息         |
 | POST   | `/plugins/submissions/init`              | 创建投稿并取得签名上传 URL                     |
 | POST   | `/plugins/submissions/{id}/complete`     | 完成上传并触发扫描                             |
+| POST   | `/plugins/submissions/{id}/cancel`       | 取消未完成上传并释放版本号                     |
 | GET    | `/plugins/submissions/{id}`              | 查询投稿状态                                   |
 | GET    | `/admin/plugins/upstreams`               | 管理端查看精选镜像源和同步状态                 |
 | POST   | `/admin/plugins/upstreams`               | 录入精选 Codex 插件                            |

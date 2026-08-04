@@ -220,6 +220,15 @@ describe('REST adapters', () => {
     expect(formData.get('enabled')).toBe('false')
   })
 
+  test('cancels an unfinished plugin submission', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({ status: 'cancelled' })
+
+    await createPluginApi(client).cancelSubmission(17)
+
+    expect(client.post).toHaveBeenCalledWith('/plugins/submissions/17/cancel')
+  })
+
   test('ensures a built-in plugin through its stable key', async () => {
     const client = mockClient()
     vi.mocked(client.post).mockResolvedValueOnce({ plugin: {} })

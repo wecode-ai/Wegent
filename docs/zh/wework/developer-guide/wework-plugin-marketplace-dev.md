@@ -162,7 +162,10 @@ pnpm --filter wework dev:mac -- --executor-isolation
    - `POST /plugins/submissions/init`
    - 预签名 PUT 到 `plugins/staging/...`
    - `POST /plugins/submissions/{id}/complete`
+   - 上传或完成失败时，`POST /plugins/submissions/{id}/cancel`
 4. 扫描通过后进入待审；管理员审核通过后才可被搜索安装。
+
+取消、扫描拒绝或超过上传/扫描超时的投稿不会永久占用版本号。客户端可以用相同 `version` 重新调用 `init`；仍在有效上传或扫描中的版本会返回 `409`，避免并发投稿互相覆盖。
 
 ### WeWork 官方插件
 

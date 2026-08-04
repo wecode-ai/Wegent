@@ -540,6 +540,7 @@ class Settings(BaseSettings):
     # Plugin marketplace package storage and controlled publishing.
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
+    PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200
     PLUGIN_PUBLISH_ENABLED: bool = False
     PLUGIN_PUBLISH_USER_IDS: list[int] = []
     PLUGIN_LEGACY_UPLOAD_ENABLED: bool = False

@@ -165,7 +165,10 @@ Best for personal or team-owned plugins.
    - `POST /plugins/submissions/init`
    - Presigned PUT to `plugins/staging/...`
    - `POST /plugins/submissions/{id}/complete`
+   - On upload or completion failure, `POST /plugins/submissions/{id}/cancel`
 4. After scanning passes, the release waits for human review before it becomes searchable.
+
+Cancelled, scan-rejected, or upload/scan-expired submissions do not reserve a version permanently. The client may call `init` again with the same `version`; an upload or scan that is still active returns `409` so concurrent submissions cannot overwrite each other.
 
 ### WeWork official plugins
 

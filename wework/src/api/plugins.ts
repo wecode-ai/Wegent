@@ -109,6 +109,9 @@ export function createPluginApi(client: HttpClient) {
     completeSubmission(id: number): Promise<PluginSubmissionCompleteResponse> {
       return client.post(`/plugins/submissions/${id}/complete`)
     },
+    cancelSubmission(id: number): Promise<PluginSubmissionItem> {
+      return client.post(`/plugins/submissions/${id}/cancel`)
+    },
     getSubmission(id: number): Promise<PluginSubmissionItem> {
       return client.get(`/plugins/submissions/${id}`)
     },
@@ -147,17 +150,25 @@ export function createPluginApi(client: HttpClient) {
           sizeBytes: file.size,
         }
       )
-      const uploadTransport = shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
-      const upload = await uploadTransport(initialized.uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/zip' },
-        body: file,
-      })
-      if (!upload.ok) throw new Error(`Plugin upload failed with HTTP ${upload.status}`)
-      const completed = await client.post<PluginSubmissionCompleteResponse>(
-        `/plugins/submissions/${initialized.submissionId}/complete`
-      )
-      return completed
+      try {
+        const uploadTransport = shouldUseTauriFetch()
+          ? tauriFetch
+          : globalThis.fetch.bind(globalThis)
+        const upload = await uploadTransport(initialized.uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/zip' },
+          body: file,
+        })
+        if (!upload.ok) throw new Error(`Plugin upload failed with HTTP ${upload.status}`)
+        return await client.post<PluginSubmissionCompleteResponse>(
+          `/plugins/submissions/${initialized.submissionId}/complete`
+        )
+      } catch (error) {
+        await client
+          .post(`/plugins/submissions/${initialized.submissionId}/cancel`)
+          .catch(() => undefined)
+        throw error
+      }
     },
   }
 }

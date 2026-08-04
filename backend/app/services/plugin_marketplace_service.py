@@ -9,10 +9,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import re
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Any, Iterable
 
@@ -21,6 +22,7 @@ from packaging.version import Version
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.plugin_marketplace import (
@@ -78,6 +80,7 @@ SEMVER_PATTERN = re.compile(
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -435,43 +438,6 @@ class PluginMarketplaceService:
         purpose = (
             "restricted_share" if visibility == "personal" else "marketplace_publish"
         )
-        plugin = db.query(Plugin).filter(Plugin.slug == request.slug).first()
-        if plugin and plugin.owner_user_id != user_id:
-            raise HTTPException(status_code=409, detail="Plugin slug is already owned")
-        if plugin and plugin.listing_type != request.listingType:
-            raise HTTPException(
-                status_code=409, detail="Plugin listing type cannot be changed"
-            )
-        if not plugin:
-            plugin = Plugin(
-                slug=request.slug,
-                name=request.slug,
-                display_name=request.displayName.strip() or request.slug,
-                listing_type=request.listingType,
-                source_type="submission",
-                source_provider="user",
-                owner_user_id=user_id,
-                keywords_json=[],
-                interface_json={},
-                visibility=visibility,
-                status="draft",
-            )
-            db.add(plugin)
-            db.flush()
-        else:
-            self._apply_submission_visibility_upgrade(
-                db, plugin=plugin, visibility=visibility
-            )
-        duplicate = (
-            db.query(PluginRelease)
-            .filter(
-                PluginRelease.plugin_id == plugin.id,
-                PluginRelease.version == request.version,
-            )
-            .first()
-        )
-        if duplicate:
-            raise HTTPException(status_code=409, detail="Plugin version already exists")
         pending_access = None
         if visibility == "personal" and (request.targets or request.allowCopy):
             # Validate recipients up front so publish fails before package upload.
@@ -484,43 +450,94 @@ class PluginMarketplaceService:
                 "targets": [target.model_dump() for target in validated_targets],
                 "allowCopy": bool(request.allowCopy and validated_targets),
             }
-        release = PluginRelease(
-            plugin_id=plugin.id,
-            version=request.version,
-            manifest_json={},
-            interface_json={},
-            storage_key="pending",
-            sha256=request.sha256.lower(),
-            size_bytes=request.sizeBytes,
-            status="processing",
-            scan_status="pending",
-            scan_report_json={
-                "filename": request.filename,
-                "requestedVisibility": visibility,
-                **({"pendingAccess": pending_access} if pending_access else {}),
-            },
-            created_by_user_id=user_id,
-        )
-        db.add(release)
-        db.flush()
-        release.storage_key = self._staging_storage_key(release.id, release.sha256)
-        submission = PluginSubmission(
-            plugin_id=plugin.id,
-            release_id=release.id,
-            submitter_user_id=user_id,
-            purpose=purpose,
-            status="uploading",
-        )
-        db.add(submission)
-        db.flush()
+        reclaimed_storage_key: str | None = None
         try:
+            plugin = db.query(Plugin).filter(Plugin.slug == request.slug).first()
+            if plugin and plugin.owner_user_id != user_id:
+                raise HTTPException(
+                    status_code=409, detail="Plugin slug is already owned"
+                )
+            if plugin and plugin.listing_type != request.listingType:
+                raise HTTPException(
+                    status_code=409, detail="Plugin listing type cannot be changed"
+                )
+            if not plugin:
+                plugin = Plugin(
+                    slug=request.slug,
+                    name=request.slug,
+                    display_name=request.displayName.strip() or request.slug,
+                    listing_type=request.listingType,
+                    source_type="submission",
+                    source_provider="user",
+                    owner_user_id=user_id,
+                    keywords_json=[],
+                    interface_json={},
+                    visibility=visibility,
+                    status="draft",
+                )
+                db.add(plugin)
+                db.flush()
+            else:
+                self._apply_submission_visibility_upgrade(
+                    db, plugin=plugin, visibility=visibility
+                )
+            duplicate = (
+                db.query(PluginRelease)
+                .filter(
+                    PluginRelease.plugin_id == plugin.id,
+                    PluginRelease.version == request.version,
+                )
+                .with_for_update()
+                .first()
+            )
+            if duplicate:
+                reclaimed, reclaimed_storage_key = (
+                    self._discard_reclaimable_submission_release(
+                        db,
+                        release=duplicate,
+                    )
+                )
+                if not reclaimed:
+                    raise HTTPException(
+                        status_code=409, detail="Plugin version already exists"
+                    )
+            release = PluginRelease(
+                plugin_id=plugin.id,
+                version=request.version,
+                manifest_json={},
+                interface_json={},
+                storage_key="pending",
+                sha256=request.sha256.lower(),
+                size_bytes=request.sizeBytes,
+                status="processing",
+                scan_status="pending",
+                scan_report_json={
+                    "filename": request.filename,
+                    "requestedVisibility": visibility,
+                    **({"pendingAccess": pending_access} if pending_access else {}),
+                },
+                created_by_user_id=user_id,
+            )
+            db.add(release)
+            db.flush()
+            release.storage_key = self._staging_storage_key(release.id, release.sha256)
+            submission = PluginSubmission(
+                plugin_id=plugin.id,
+                release_id=release.id,
+                submitter_user_id=user_id,
+                purpose=purpose,
+                status="uploading",
+            )
+            db.add(submission)
+            db.flush()
             upload_url, expires_at = plugin_package_storage.presign_upload(
                 release.storage_key
             )
+            db.commit()
         except Exception:
             db.rollback()
             raise
-        db.commit()
+        self._delete_submission_object_best_effort(reclaimed_storage_key)
         return PluginSubmissionInitResponse(
             submissionId=submission.id,
             pluginId=plugin.id,
@@ -528,6 +545,80 @@ class PluginMarketplaceService:
             uploadUrl=upload_url,
             expiresAt=expires_at,
         )
+
+    def _discard_reclaimable_submission_release(
+        self,
+        db: Session,
+        *,
+        release: PluginRelease,
+    ) -> tuple[bool, str | None]:
+        submission = (
+            db.query(PluginSubmission)
+            .filter(PluginSubmission.release_id == release.id)
+            .first()
+        )
+        if not submission:
+            return False, None
+        timeout_seconds = (
+            settings.PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS
+            if submission.status == "scanning"
+            else settings.PLUGIN_PACKAGE_URL_EXPIRES_SECONDS
+        )
+        expired_at = submission.submitted_at + timedelta(seconds=timeout_seconds)
+        expired = submission.status in {"uploading", "scanning"} and (
+            datetime.now() >= expired_at
+        )
+        terminal = submission.status in {"rejected", "cancelled"}
+        if not expired and not terminal:
+            return False, None
+        storage_key = release.storage_key
+        db.delete(submission)
+        db.delete(release)
+        db.flush()
+        return True, storage_key if storage_key != "pending" else None
+
+    def _delete_submission_object_best_effort(self, storage_key: str | None) -> None:
+        if not storage_key:
+            return
+        try:
+            plugin_package_storage.delete(storage_key)
+        except Exception:
+            logger.warning(
+                "Failed to delete plugin submission object: key=%s",
+                storage_key,
+                exc_info=True,
+            )
+
+    def cancel_submission(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        submission_id: int,
+    ) -> PluginSubmissionItem:
+        submission = self._owned_submission(db, user_id, submission_id, for_update=True)
+        if submission.status != "uploading":
+            raise HTTPException(
+                status_code=409, detail="Submission cannot be cancelled"
+            )
+        release = db.get(PluginRelease, submission.release_id)
+        submission.status = "cancelled"
+        submission.reviewed_at = datetime.now()
+        if release:
+            release.status = "rejected"
+            release.scan_status = "failed"
+            release.scan_report_json = {"error": "Submission cancelled"}
+        storage_key = release.storage_key if release else None
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        self._delete_submission_object_best_effort(
+            storage_key if storage_key != "pending" else None
+        )
+        db.refresh(submission)
+        return self._submission_item(submission)
 
     def _resolve_submission_visibility(
         self, request: PluginSubmissionInitRequest
@@ -581,7 +672,7 @@ class PluginMarketplaceService:
     def complete_submission(
         self, db: Session, *, user_id: int, submission_id: int
     ) -> PluginSubmissionItem:
-        submission = self._owned_submission(db, user_id, submission_id)
+        submission = self._owned_submission(db, user_id, submission_id, for_update=True)
         if submission.status not in {"uploading", "scanning"}:
             raise HTTPException(status_code=409, detail="Submission is not uploading")
         if submission.status == "uploading":
@@ -2070,8 +2161,18 @@ class PluginMarketplaceService:
             raise HTTPException(status_code=404, detail="Installed plugin not found")
         return row
 
-    def _owned_submission(self, db, user_id, submission_id):
-        row = db.get(PluginSubmission, submission_id)
+    def _owned_submission(
+        self,
+        db: Session,
+        user_id: int,
+        submission_id: int,
+        *,
+        for_update: bool = False,
+    ) -> PluginSubmission:
+        query = db.query(PluginSubmission).filter(PluginSubmission.id == submission_id)
+        if for_update:
+            query = query.with_for_update()
+        row = query.first()
         if not row or row.submitter_user_id != user_id:
             raise HTTPException(status_code=404, detail="Submission not found")
         return row

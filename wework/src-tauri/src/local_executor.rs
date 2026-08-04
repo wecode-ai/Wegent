@@ -1,3 +1,4 @@
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -65,6 +66,7 @@ const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_PLUGIN_EXPANDED_BYTES: u64 = 200 * 1024 * 1024;
+const PLUGIN_MUTATION_LOCK_FILE: &str = "plugin-mutations.lock";
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
@@ -2675,6 +2677,7 @@ fn ensure_plugin_in_personal_marketplace(
             .canonicalize()
             .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?
     };
+    let _mutation_lock = acquire_plugin_mutation_lock(&destination_root)?;
     let destination_plugin = destination_root.join("plugins").join(normalized_name);
     if destination_plugin
         .join(".codex-plugin/plugin.json")
@@ -3018,6 +3021,36 @@ fn copy_registry_path(marketplace_root: &Path) -> PathBuf {
     marketplace_root.join(".wegent/plugin-copy-sources.json")
 }
 
+fn acquire_plugin_mutation_lock(marketplace_root: &Path) -> Result<fs::File, String> {
+    let lock_directory = marketplace_root.join(".wegent");
+    fs::create_dir_all(&lock_directory).map_err(|error| {
+        format!(
+            "Failed to create plugin mutation lock directory {}: {error}",
+            lock_directory.display()
+        )
+    })?;
+    let lock_path = lock_directory.join(PLUGIN_MUTATION_LOCK_FILE);
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| {
+            format!(
+                "Failed to open plugin mutation lock {}: {error}",
+                lock_path.display()
+            )
+        })?;
+    lock.lock_exclusive().map_err(|error| {
+        format!(
+            "Failed to lock personal marketplace {}: {error}",
+            marketplace_root.display()
+        )
+    })?;
+    Ok(lock)
+}
+
 fn updated_copy_registry(path: &Path, record: LocalPluginCopyRecord) -> Result<Vec<u8>, String> {
     let mut registry = if path.is_file() {
         let bytes = fs::read(path)
@@ -3075,6 +3108,7 @@ fn import_plugin_copy_package(
     let marketplace_root = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     fs::create_dir_all(&plugins_root)
         .map_err(|error| format!("Failed to create plugin directory: {error}"))?;
@@ -3194,6 +3228,7 @@ fn rollback_plugin_copy(marketplace_path: &Path, plugin_name: &str) -> Result<()
     let marketplace_root = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugins_root = marketplace_root.join("plugins");
     let plugin_path = plugins_root.join(plugin_name);
     if plugin_name.is_empty()
@@ -3256,6 +3291,7 @@ fn link_local_plugin_release(
     let marketplace_root = marketplace_path
         .canonicalize()
         .map_err(|error| format!("Failed to resolve personal marketplace: {error}"))?;
+    let _mutation_lock = acquire_plugin_mutation_lock(&marketplace_root)?;
     let plugin_root = marketplace_root.join("plugins").join(local_plugin_name);
     if !plugin_root.join(".codex-plugin/plugin.json").is_file() {
         return Err("Local plugin manifest is unavailable".to_string());
@@ -3576,7 +3612,9 @@ mod tests {
         assert!(destination
             .join("plugins/dev-tools/.codex-plugin/plugin.json")
             .is_file());
-        assert!(destination.join("plugins/dev-tools/skills/ip/SKILL.md").is_file());
+        assert!(destination
+            .join("plugins/dev-tools/skills/ip/SKILL.md")
+            .is_file());
         let agents_manifest: Value = serde_json::from_str(
             &fs::read_to_string(destination.join(".agents/plugins/marketplace.json")).unwrap(),
         )
@@ -3682,6 +3720,60 @@ mod tests {
         assert_eq!(first.plugin_name, "source-plugin-copy");
         assert_eq!(second.plugin_name, "source-plugin-copy-2");
         assert!(root.join("plugins/source-plugin-copy-2").is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_plugin_copy_mutations_preserve_registry_entries() {
+        let root = import_test_root("plugin-copy-concurrent");
+        let package = valid_plugin_copy_zip();
+        let mut imports = Vec::new();
+        for source_plugin_id in 1..=4 {
+            let root = root.clone();
+            let package = package.clone();
+            imports.push(std::thread::spawn(move || {
+                let mut options = plugin_copy_options(&package, &root);
+                options.source_plugin_id = source_plugin_id;
+                import_plugin_copy_package(&root, &package, &options).unwrap()
+            }));
+        }
+        let imported = imports
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+
+        let mut links = Vec::new();
+        for (index, plugin) in imported.iter().enumerate() {
+            let root = root.clone();
+            let plugin_name = plugin.plugin_name.clone();
+            links.push(std::thread::spawn(move || {
+                link_local_plugin_release(
+                    &root,
+                    &plugin_name,
+                    100 + index as i64,
+                    200 + index as i64,
+                )
+                .unwrap();
+            }));
+        }
+        for link in links {
+            link.join().unwrap();
+        }
+
+        let registry: LocalPluginCopyRegistry = serde_json::from_slice(
+            &fs::read(root.join(".wegent/plugin-copy-sources.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(registry.copies.len(), 4);
+        assert_eq!(registry.cloud_links.len(), 4);
+        assert_eq!(
+            fs::read_dir(root.join("plugins"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
+                .count(),
+            4
+        );
         let _ = fs::remove_dir_all(root);
     }
 

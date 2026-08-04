@@ -50,6 +50,8 @@ Administrative APIs include `GET/POST /admin/plugins/upstreams`, `PATCH /admin/p
 
 `GET /plugins/capabilities` exposes publishing and personal-sharing capabilities separately. The server grants publishing only to administrators, the global `PLUGIN_PUBLISH_ENABLED` flag, or IDs in `PLUGIN_PUBLISH_USER_IDS`; submission endpoints repeat the authorization check. Restricted sharing is not controlled by the public publishing allowlist but still requires the same security scan. Owners manage grants through `GET/PUT /plugins/marketplace/{id}/access`; authorized recipients use `POST /plugins/marketplace/{id}/copy` only when `allowCopy` is enabled. Upstream synchronization never replaces `latest_release_id` with an older SemVer and preserves the current Release after scan failures or upstream removal.
 
+Submission clients call `POST /plugins/submissions/{id}/cancel` when the presigned upload or completion request fails. Cancelled, rejected, and expired submissions can reuse the same version; active uploads and scans remain protected from replacement.
+
 Use `uv run python scripts/migrate_plugin_marketplace_v2.py` for a restartable legacy migration. After validating counts, checksums, downloads, and install references, rerun it with `--retire-legacy` to deactivate legacy marketplace Kinds and remove copied marketplace blobs.
 
 The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and Chrome DevTools, followed by high-value Chinese collaboration plugins. Every candidate requires a product-value, license, ownership, authentication, and security review; the Codex marketplace is never mirrored wholesale.

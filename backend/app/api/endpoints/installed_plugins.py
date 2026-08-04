@@ -630,6 +630,22 @@ def complete_plugin_submission(
     return PluginSubmissionCompleteResponse(submission=item, plugin=plugin)
 
 
+@router.post(
+    "/submissions/{submission_id}/cancel",
+    response_model=PluginSubmissionItem,
+)
+def cancel_plugin_submission(
+    submission_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginSubmissionItem:
+    return plugin_marketplace_service.cancel_submission(
+        db,
+        user_id=current_user.id,
+        submission_id=submission_id,
+    )
+
+
 @router.get("/submissions/{submission_id}", response_model=PluginSubmissionItem)
 def get_plugin_submission(
     submission_id: int,

@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
+
 MAX_REDIRECTS = 5
 
 
@@ -70,15 +72,36 @@ def fetch_upstream_package(url: str) -> bytes:
     current = url.strip()
     with httpx.Client(timeout=60, follow_redirects=False) as client:
         for _ in range(MAX_REDIRECTS + 1):
-            response = client.get(current)
-            if response.status_code in {301, 302, 303, 307, 308}:
-                location = response.headers.get("location")
-                if not location:
-                    raise UpstreamFetchError("Upstream redirect is missing location")
-                next_url = str(httpx.URL(current).join(location))
-                validate_upstream_url(next_url)
-                current = next_url
-                continue
-            response.raise_for_status()
-            return response.content
+            with client.stream("GET", current) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise UpstreamFetchError(
+                            "Upstream redirect is missing location"
+                        )
+                    next_url = str(httpx.URL(current).join(location))
+                    validate_upstream_url(next_url)
+                    current = next_url
+                    continue
+                response.raise_for_status()
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        declared_size = int(content_length)
+                    except ValueError as exc:
+                        raise UpstreamFetchError(
+                            "Upstream response has an invalid Content-Length"
+                        ) from exc
+                    if declared_size < 0:
+                        raise UpstreamFetchError(
+                            "Upstream response has an invalid Content-Length"
+                        )
+                    if declared_size > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+                        raise UpstreamFetchError("Upstream plugin package is too large")
+                package = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(package) + len(chunk) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+                        raise UpstreamFetchError("Upstream plugin package is too large")
+                    package.extend(chunk)
+                return bytes(package)
     raise UpstreamFetchError("Too many upstream redirects")
