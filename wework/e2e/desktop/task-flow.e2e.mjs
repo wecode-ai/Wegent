@@ -9324,15 +9324,15 @@ class DesktopE2EServer {
           Connection: 'keep-alive',
           'Content-Type': 'text/event-stream; charset=utf-8',
         })
-        response.write(
-          createSse([
-            responseCreated(responseId),
-            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
-          ])
-        )
+        response.write(createSse([responseCreated(responseId)]))
         this.resolveSupervisorCorrectionStarted()
         await this.supervisorCorrectionRelease
-        response.end(createSse([responseCompleted(responseId)]))
+        response.end(
+          createSse([
+            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+        )
         return
       }
       assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
