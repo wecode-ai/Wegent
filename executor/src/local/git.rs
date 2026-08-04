@@ -172,6 +172,111 @@ pub fn resolve_merge_base(cwd: &str, extra_env: &HashMap<String, String>) -> Opt
     None
 }
 
+/// Async variant of [`run_git`]; spawns the synchronous git runner on the
+/// blocking thread pool so it cannot starve the tokio runtime.
+pub async fn run_git_async(
+    cwd: &str,
+    args: &[&str],
+    extra_env: &HashMap<String, String>,
+) -> GitOutput {
+    let cwd = cwd.to_owned();
+    let args: Vec<String> = args.iter().map(|&arg| arg.to_owned()).collect();
+    let extra_env = extra_env.clone();
+    tokio::task::spawn_blocking(move || {
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(&cwd, &arg_refs, &extra_env)
+    })
+    .await
+    .unwrap_or_else(|error| GitOutput {
+        stdout: String::new(),
+        stderr: format!("git task panicked: {error}"),
+        exit_code: None,
+        duration: 0.0,
+    })
+}
+
+/// Async variant of [`git_stdout`].
+pub async fn git_stdout_async(
+    cwd: &str,
+    args: &[&str],
+    extra_env: &HashMap<String, String>,
+) -> Option<String> {
+    let output = run_git_async(cwd, args, extra_env).await;
+    if !output.success() {
+        return None;
+    }
+    let trimmed = output.stdout.trim().to_owned();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed)
+}
+
+/// Async variant of [`is_worktree`].
+pub async fn is_worktree_async(path: &str, extra_env: &HashMap<String, String>) -> bool {
+    git_stdout_async(path, &["rev-parse", "--is-inside-work-tree"], extra_env)
+        .await
+        .map(|output| output == "true")
+        .unwrap_or(false)
+        || git_stdout_async(path, &["rev-parse", "--git-dir"], extra_env)
+            .await
+            .is_some()
+}
+
+/// Async variant of [`resolve_merge_base`].
+pub async fn resolve_merge_base_async(
+    cwd: &str,
+    extra_env: &HashMap<String, String>,
+) -> Option<String> {
+    if let Some(remote_default) = git_stdout_async(
+        cwd,
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ],
+        extra_env,
+    )
+    .await
+    {
+        if git_rev_parse_verify_async(cwd, &format!("{remote_default}^{{commit}}"), extra_env).await
+        {
+            if let Some(base) =
+                git_stdout_async(cwd, &["merge-base", &remote_default, "HEAD"], extra_env).await
+            {
+                return Some(base);
+            }
+        }
+    }
+
+    for candidate in ["origin/main", "main", "origin/master", "master"] {
+        if git_rev_parse_verify_async(cwd, &format!("{candidate}^{{commit}}"), extra_env).await {
+            if let Some(base) =
+                git_stdout_async(cwd, &["merge-base", candidate, "HEAD"], extra_env).await
+            {
+                return Some(base);
+            }
+        }
+    }
+
+    None
+}
+
+async fn git_rev_parse_verify_async(
+    cwd: &str,
+    reference: &str,
+    extra_env: &HashMap<String, String>,
+) -> bool {
+    run_git_async(
+        cwd,
+        &["rev-parse", "--verify", "--quiet", reference],
+        extra_env,
+    )
+    .await
+    .success()
+}
+
 fn git_rev_parse_verify(cwd: &str, reference: &str, extra_env: &HashMap<String, String>) -> bool {
     run_git(
         cwd,
