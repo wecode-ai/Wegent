@@ -531,6 +531,7 @@ describe('Simple TeamEditDialog', () => {
     fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'new-agent' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
     fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add knowledge' }))
     fireEvent.change(screen.getByTestId('simple-prompt-textarea'), {
       target: { value: 'Answer with context.' },
     })

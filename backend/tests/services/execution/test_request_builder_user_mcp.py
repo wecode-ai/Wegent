@@ -538,9 +538,12 @@ class TestUserScopedMcpInjection:
             json={},
         )
 
-        mock_query = mocker.Mock()
-        mock_query.filter.return_value.first.return_value = ghost
-        mocker.patch.object(builder.db, "query", return_value=mock_query)
+        # resolve_kind_reference queries Kind by ID first, then by name/namespace;
+        # patch it directly so the Ghost lookup returns the shared ghost.
+        mocker.patch(
+            "app.services.execution.request_builder.resolve_kind_reference",
+            return_value=SimpleNamespace(resource=ghost),
+        )
         find_attached_skill_by_ref = mocker.patch.object(
             builder, "_find_attached_skill_by_ref", return_value=skill
         )
