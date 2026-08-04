@@ -82,7 +82,7 @@ export interface SendCurrentInputOptions {
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
-  ) => void
+  ) => void | Promise<void>
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
 }
@@ -102,6 +102,7 @@ export interface CreateProjectRuntimeTaskOptions {
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  modelId?: string | null
   additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']

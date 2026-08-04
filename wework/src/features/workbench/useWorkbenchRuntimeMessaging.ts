@@ -725,7 +725,7 @@ export function useWorkbenchRuntimeMessaging({
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
       }
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
       if (options?.openInMainPane !== false) {
         runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
       }
@@ -1167,7 +1167,10 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+      const payload = options.modelId
+        ? { ...prepared.payload, force_override_bot_model: options.modelId }
+        : prepared.payload
+      return sendPreparedRuntimeMessage(message, payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,

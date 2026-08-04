@@ -297,6 +297,16 @@ impl AppIpcServer {
         self
     }
 
+    pub fn with_shared_runtime_work_handler(
+        mut self,
+        handler: Arc<dyn RuntimeWorkHandler>,
+        event_tx: broadcast::Sender<Value>,
+    ) -> Self {
+        self.runtime_work_handler = Some(handler);
+        self.event_tx = event_tx;
+        self
+    }
+
     pub fn with_local_runtime_work_handler(mut self, codex_binary: impl Into<String>) -> Self {
         self.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::with_event_sender(
             self.device_id.clone(),

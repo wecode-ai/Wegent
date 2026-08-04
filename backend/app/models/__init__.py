@@ -35,6 +35,7 @@ from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.project import Project
+from app.models.project_chat_message import ProjectChatMessage
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.skill_binary import SkillBinary
@@ -91,6 +92,7 @@ __all__ = [
     "KnowledgeDocument",
     "KnowledgeArtifactRecord",
     "Project",
+    "ProjectChatMessage",
     "MarketplaceResource",
     "SubscriptionFollow",
     "SubscriptionShareNamespace",

@@ -9,12 +9,21 @@ import uuid
 from typing import Any, Optional
 
 import socketio
+from fastapi import HTTPException
+from pydantic import ValidationError
 from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.config import settings
+from app.schemas.project_chat import (
+    ProjectChatAgentFailure,
+    ProjectChatAgentStart,
+    ProjectChatSend,
+    ProjectChatSubscribe,
+)
 from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.device.command_registry import (
     CommandRegistryError,
     resolve_local_device_command,
@@ -24,6 +33,7 @@ from app.services.device.command_service import (
     local_device_command_service,
 )
 from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
+from app.services.project_chat.service import project_chat_service
 from shared.telemetry.context import set_request_context, set_user_context
 
 logger = logging.getLogger(__name__)
@@ -33,6 +43,15 @@ WEWORK_RUNTIME_EVENT = "runtime:event"
 WEWORK_RUNTIME_REQUEST_EVENT = "runtime:request"
 WEWORK_RUNTIME_USER_ROOM_PREFIX = "wework-runtime:user:"
 DEFAULT_IPC_TIMEOUT_SECONDS = 75
+PROJECT_CHAT_SUBSCRIBE_EVENT = "wework:project_chat:subscribe"
+PROJECT_CHAT_UNSUBSCRIBE_EVENT = "wework:project_chat:unsubscribe"
+PROJECT_CHAT_SEND_EVENT = "wework:project_chat:message:send"
+PROJECT_CHAT_CREATED_EVENT = "wework:project_chat:message:created"
+PROJECT_CHAT_AGENT_CHUNK_EVENT = "wework:project_chat:agent:chunk"
+PROJECT_CHAT_AGENT_START_EVENT = "wework:project_chat:agent:start"
+PROJECT_CHAT_AGENT_FAILED_EVENT = "wework:project_chat:agent:failed"
+PROJECT_CHAT_PROJECT_ROOM_PREFIX = "wework-project-chat:project:"
+PROJECT_CHAT_TASK_ROOM_PREFIX = "wework-project-chat:task:"
 
 
 def wework_runtime_user_room(user_id: int) -> str:
@@ -48,6 +67,11 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         super().__init__(namespace)
         self._event_handlers: dict[str, str] = {
             WEWORK_RUNTIME_REQUEST_EVENT: "on_runtime_request",
+            PROJECT_CHAT_SUBSCRIBE_EVENT: "on_project_chat_subscribe",
+            PROJECT_CHAT_UNSUBSCRIBE_EVENT: "on_project_chat_unsubscribe",
+            PROJECT_CHAT_SEND_EVENT: "on_project_chat_message_send",
+            PROJECT_CHAT_AGENT_START_EVENT: "on_project_chat_agent_start",
+            PROJECT_CHAT_AGENT_FAILED_EVENT: "on_project_chat_agent_failed",
         }
 
     @trace_websocket_event(exclude_events={"connect"}, extract_event_data=True)
@@ -145,6 +169,122 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
 
         return {"id": request_id, "ok": True, "result": result}
 
+    async def on_project_chat_subscribe(self, sid: str, data: dict) -> dict:
+        """Authorize a project chat subscription and return missed messages."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatSubscribe.model_validate(project_chat_payload(data))
+            messages = await run_sync_in_executor(
+                _subscribe_project_chat_sync,
+                int(identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+
+        room = project_chat_room(request.project_id, request.task_id)
+        await self.enter_room(sid, room)
+        return {
+            "ok": True,
+            "result": {
+                "messages": messages,
+                "currentUserId": str(identity["user_id"]),
+                "latestSequence": (
+                    messages[-1]["sequenceNumber"]
+                    if messages
+                    else request.after_sequence
+                ),
+            },
+        }
+
+    async def on_project_chat_unsubscribe(self, sid: str, data: dict) -> dict:
+        """Leave one project chat or task-thread room."""
+
+        try:
+            request = ProjectChatSubscribe.model_validate(project_chat_payload(data))
+        except ValidationError as exc:
+            return project_chat_exception_ack(exc)
+        await self.leave_room(
+            sid, project_chat_room(request.project_id, request.task_id)
+        )
+        return {"ok": True}
+
+    async def on_project_chat_message_send(self, sid: str, data: dict) -> dict:
+        """Persist one user message, ACK it, then fan it out to subscribers."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatSend.model_validate(project_chat_payload(data))
+            result = await run_sync_in_executor(
+                _send_project_chat_sync,
+                int(identity["user_id"]),
+                str(identity.get("user_name") or identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+
+        if result["created"]:
+            message = result["message"]
+            await self.emit(
+                PROJECT_CHAT_CREATED_EVENT,
+                message,
+                room=project_chat_room(request.project_id, request.task_id),
+            )
+        return {
+            "ok": True,
+            "created": result["created"],
+            "clientMessageId": request.client_message_id,
+            "result": result["message"],
+        }
+
+    async def _project_chat_identity(self, sid: str) -> dict | None:
+        session = await self.get_session(sid)
+        if not session or not session.get("user_id"):
+            return None
+        return session
+
+    async def on_project_chat_agent_start(self, sid: str, data: dict) -> dict:
+        """Create the single streaming chat row for a mentioned AI run."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatAgentStart.model_validate(project_chat_payload(data))
+            message = await run_sync_in_executor(
+                _start_project_chat_agent_sync,
+                int(identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        await emit_project_chat_message(self, message)
+        return {"ok": True, "result": message}
+
+    async def on_project_chat_agent_failed(self, sid: str, data: dict) -> dict:
+        """Close an optimistic response when runtime task creation is rejected."""
+
+        identity = await self._project_chat_identity(sid)
+        if identity is None:
+            return project_chat_error("UNAUTHENTICATED", "Not authenticated")
+        try:
+            request = ProjectChatAgentFailure.model_validate(project_chat_payload(data))
+            message = await run_sync_in_executor(
+                _fail_project_chat_agent_sync,
+                int(identity["user_id"]),
+                request,
+            )
+        except (ValidationError, HTTPException) as exc:
+            return project_chat_exception_ack(exc)
+        await emit_project_chat_message(self, message)
+        return {"ok": True, "result": message}
+
 
 async def relay_ipc_request(
     *,
@@ -224,6 +364,98 @@ def timeout_seconds_from(data: dict) -> int:
     except (TypeError, ValueError):
         return DEFAULT_IPC_TIMEOUT_SECONDS
     return parsed if parsed > 0 else DEFAULT_IPC_TIMEOUT_SECONDS
+
+
+def project_chat_payload(data: Any) -> dict[str, Any]:
+    """Normalize the public camelCase Socket payload for Pydantic validation."""
+
+    if not isinstance(data, dict):
+        return {}
+    aliases = {
+        "clientMessageId": "client_message_id",
+        "projectId": "project_id",
+        "taskId": "task_id",
+        "afterSequence": "after_sequence",
+    }
+    payload = {aliases.get(key, key): value for key, value in data.items()}
+    return payload
+
+
+def project_chat_room(project_id: str, task_id: str | None) -> str:
+    if task_id:
+        return f"{PROJECT_CHAT_TASK_ROOM_PREFIX}{project_id}:{task_id}"
+    return f"{PROJECT_CHAT_PROJECT_ROOM_PREFIX}{project_id}"
+
+
+async def emit_project_chat_message(
+    namespace: WeworkRuntimeNamespace, message: dict[str, Any]
+) -> None:
+    project_id = str(message["projectId"])
+    task_id = message.get("taskId")
+    await namespace.emit(
+        PROJECT_CHAT_CREATED_EVENT,
+        message,
+        room=project_chat_room(project_id, str(task_id) if task_id else None),
+    )
+
+
+def project_chat_error(code: str, message: str) -> dict[str, Any]:
+    return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def project_chat_exception_ack(exc: ValidationError | HTTPException) -> dict[str, Any]:
+    if isinstance(exc, ValidationError):
+        return project_chat_error("INVALID_MESSAGE", str(exc))
+    code = {
+        403: "SCOPE_FORBIDDEN",
+        404: "SCOPE_NOT_FOUND",
+        409: "MESSAGE_CONFLICT",
+    }.get(exc.status_code, "INVALID_MESSAGE")
+    return project_chat_error(code, str(exc.detail))
+
+
+def _subscribe_project_chat_sync(
+    user_id: int, request: ProjectChatSubscribe
+) -> list[dict[str, Any]]:
+    with get_db_session() as db:
+        messages = project_chat_service.subscribe(db, user_id=user_id, request=request)
+        return [message.model_dump(mode="json", by_alias=True) for message in messages]
+
+
+def _send_project_chat_sync(
+    user_id: int, user_name: str, request: ProjectChatSend
+) -> dict[str, Any]:
+    with get_db_session() as db:
+        result = project_chat_service.send(
+            db,
+            user_id=user_id,
+            user_name=user_name,
+            request=request,
+        )
+        return {
+            "created": result.created,
+            "message": result.message.model_dump(mode="json", by_alias=True),
+        }
+
+
+def _fail_project_chat_agent_sync(
+    user_id: int, request: ProjectChatAgentFailure
+) -> dict[str, Any]:
+    with get_db_session() as db:
+        message = project_chat_service.fail_agent_response(
+            db, user_id=user_id, request=request
+        )
+        return message.model_dump(mode="json", by_alias=True)
+
+
+def _start_project_chat_agent_sync(
+    user_id: int, request: ProjectChatAgentStart
+) -> dict[str, Any]:
+    with get_db_session() as db:
+        message = project_chat_service.start_agent_response(
+            db, user_id=user_id, request=request
+        )
+        return message.model_dump(mode="json", by_alias=True)
 
 
 def register_wework_runtime_namespace(sio: socketio.AsyncServer) -> None:

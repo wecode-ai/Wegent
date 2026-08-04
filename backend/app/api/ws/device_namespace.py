@@ -46,8 +46,11 @@ from app.api.ws.local_task_responses import (
     emit_response_api_event,
 )
 from app.api.ws.wework_runtime_namespace import (
+    PROJECT_CHAT_AGENT_CHUNK_EVENT,
+    PROJECT_CHAT_CREATED_EVENT,
     WEWORK_RUNTIME_EVENT,
     WEWORK_RUNTIME_NAMESPACE,
+    project_chat_room,
     wework_runtime_user_room,
 )
 from app.core.auth_utils import is_api_key, verify_api_key
@@ -83,6 +86,7 @@ from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
 from app.services.im.notification_dispatcher import im_notification_dispatcher
+from app.services.project_chat.service import project_chat_service
 from app.services.user_runtime_config import (
     UserRuntimeConfigError,
     UserRuntimeConfigSyncError,
@@ -574,6 +578,30 @@ def response_api_payload(*, data: dict[str, Any], device_id: str) -> dict[str, A
     payload = dict(data)
     payload["device_id"] = device_id
     return payload
+
+
+def _project_chat_runtime_event_sync(
+    device_id: str, event: dict[str, Any]
+) -> dict[str, Any] | None:
+    event_name = event.get("event")
+    payload = event.get("payload")
+    if not isinstance(event_name, str) or not isinstance(payload, dict):
+        return None
+    runtime_task_id = payload.get("taskId") or payload.get("task_id")
+    if not isinstance(runtime_task_id, str) or not runtime_task_id:
+        return None
+    with get_db_session() as db:
+        projected = project_chat_service.project_runtime_event(
+            db,
+            device_id=device_id,
+            runtime_task_id=runtime_task_id,
+            event_name=event_name,
+            payload=payload,
+        )
+        if projected is None:
+            return None
+        message, mode = projected
+        return {"message": message.model_dump(mode="json", by_alias=True), "mode": mode}
 
 
 async def emit_chat_user_event(
@@ -1817,6 +1845,27 @@ class DeviceNamespace(socketio.AsyncNamespace):
         else:
             payload["payload"] = {"deviceId": device_id, "device_id": device_id}
 
+        # Persist project-chat output before acknowledging the executor event.
+        # The browser relay is an ephemeral projection; it must not be able to
+        # prevent the durable chat record from advancing.
+        projected = await run_sync_in_executor(
+            _project_chat_runtime_event_sync, device_id, payload
+        )
+        if projected:
+            message = projected["message"]
+            project_id = str(message["projectId"])
+            task_id = message.get("taskId")
+            event_name = (
+                PROJECT_CHAT_AGENT_CHUNK_EVENT
+                if projected["mode"] == "delta"
+                else PROJECT_CHAT_CREATED_EVENT
+            )
+            await get_sio().emit(
+                event_name,
+                message,
+                room=project_chat_room(project_id, str(task_id) if task_id else None),
+                namespace=WEWORK_RUNTIME_NAMESPACE,
+            )
         await get_sio().emit(
             WEWORK_RUNTIME_EVENT,
             payload,

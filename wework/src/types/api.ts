@@ -37,6 +37,7 @@ export interface ProjectWorkPreference {
 export interface Team {
   id: number
   name: string
+  namespace?: string | null
   displayName?: string | null
   is_active: boolean
   default_for_modes?: string[]

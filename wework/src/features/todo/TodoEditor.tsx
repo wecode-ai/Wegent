@@ -228,6 +228,7 @@ export interface TodoEditorEditProps {
   onUpdated: (item: CloudLoopItem) => void
   onAddChild: () => void
   onStartConversation: () => void
+  onOpenGroupChat?: () => void
 }
 
 export type TodoEditorProps = {
@@ -1074,13 +1075,15 @@ export function TodoEditor(props: TodoEditorProps) {
           <span className="flex-1" />
           {isCreate ? (
             <>
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
-              >
-                取消
-              </button>
+              {editProps?.onOpenGroupChat ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
+                >
+                  取消
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-testid="cloud-todo-create-confirm"
@@ -1093,6 +1096,14 @@ export function TodoEditor(props: TodoEditorProps) {
             </>
           ) : (
             <>
+              <button
+                type="button"
+                data-testid="cloud-todo-open-group-chat"
+                onClick={() => editProps?.onOpenGroupChat()}
+                className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
+              >
+                群聊
+              </button>
               <button
                 type="button"
                 data-testid="cloud-todo-start-task"

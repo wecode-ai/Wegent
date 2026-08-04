@@ -1072,6 +1072,42 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
   })
 
+  it('stores a Wework runtime AI as a project chat agent', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => []),
+      create: vi.fn(async () => ({
+        id: 'agent-1',
+        projectId: project.id,
+        name: '新 AI',
+        runtime: 'codex',
+        model: null,
+        systemPrompt: '',
+        status: 'active',
+        version: 1,
+        createdAt: '',
+        updatedAt: '',
+      })),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
+
+    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
+    await waitFor(() => expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalled())
+    expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toBeInTheDocument()
+  })
+
   it('opens the global search with Command+K and opens a task result', async () => {
     render(
       <CloudTodoWorkspace

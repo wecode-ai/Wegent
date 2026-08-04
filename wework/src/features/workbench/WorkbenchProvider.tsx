@@ -345,6 +345,10 @@ export function WorkbenchProvider({
       socketClient.dispose()
     }
   }, [resolvedServices.socketClient])
+  useEffect(() => {
+    const projectChatClient = resolvedServices.projectChatClient
+    return () => projectChatClient?.dispose()
+  }, [resolvedServices.projectChatClient])
 
   const selectProjectExecutionMode = useCallback(
     (mode: ProjectExecutionMode) => {

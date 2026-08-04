@@ -2817,6 +2817,20 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(socketClient.dispose).toHaveBeenCalledTimes(1)
   })
 
+  test('disposes the project chat socket while unmounting', () => {
+    const projectChatClient = {
+      subscribe: vi.fn(),
+      send: vi.fn(),
+      dispose: vi.fn(),
+    }
+    const services = createWorkbenchServices({ projectChatClient } as Partial<WorkbenchServices>)
+
+    const { unmount } = renderWorkbench(<BootstrapProbe />, services)
+    unmount()
+
+    expect(projectChatClient.dispose).toHaveBeenCalledTimes(1)
+  })
+
   test('restores project execution mode and worktree branch per project preference', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(

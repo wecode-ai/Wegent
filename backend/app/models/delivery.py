@@ -197,6 +197,16 @@ class LoopItem(LoopNode):
         return [str(tag) for tag in tags]
 
 
+class ProjectChatAgent(LoopNode):
+    """A Wework-owned AI member in one cloud project's group chat."""
+
+    __mapper_args__ = {"polymorphic_identity": "chat_agent"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        super().__init__(**kwargs)
+
+
 class CloudProjectLocalBinding(LoopNode):
     __mapper_args__ = {"polymorphic_identity": "local_binding"}
 

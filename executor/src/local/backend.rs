@@ -13,6 +13,7 @@ use std::{
 use serde_json::{json, Value};
 use tokio::{
     sync::broadcast,
+    task::JoinHandle,
     time::{sleep, sleep_until, Instant},
 };
 
@@ -78,6 +79,7 @@ const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
 const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
+const RUNTIME_EVENT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -108,7 +110,6 @@ pub trait LocalBackendTransport: Clone + Send + Sync + 'static {
     fn on(&self, event: &str, handler: EventHandler);
 }
 
-#[derive(Clone)]
 pub struct LocalBackendRunner<
     T,
     R = ManagedLocalTaskRunner<AgentProcessEngine, LocalBackendEventSink<T>>,
@@ -128,6 +129,19 @@ pub struct LocalBackendRunner<
     upgrade_service: Option<Arc<dyn LocalUpgradeService>>,
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
     cancellations: LocalCancellationRegistry,
+    runtime_event_forwarder: Option<JoinHandle<()>>,
+}
+
+impl<T, R> Drop for LocalBackendRunner<T, R>
+where
+    T: LocalBackendTransport,
+    R: TaskRunner,
+{
+    fn drop(&mut self) {
+        if let Some(forwarder) = self.runtime_event_forwarder.take() {
+            forwarder.abort();
+        }
+    }
 }
 
 impl<T> LocalBackendRunner<T>
@@ -200,6 +214,7 @@ where
             upgrade_service: None,
             extension_handler: None,
             cancellations: LocalCancellationRegistry::default(),
+            runtime_event_forwarder: None,
         }
     }
 
@@ -216,6 +231,16 @@ where
         H: RuntimeWorkHandler + 'static,
     {
         self.runtime_work_handler = Some(Arc::new(handler));
+        self
+    }
+
+    pub fn with_shared_runtime_work_handler(
+        mut self,
+        handler: Arc<dyn RuntimeWorkHandler>,
+        events: broadcast::Receiver<Value>,
+    ) -> Self {
+        self.runtime_work_handler = Some(handler);
+        self.start_runtime_event_forwarder(events);
         self
     }
 
@@ -267,13 +292,18 @@ where
         self.cancellations.snapshot()
     }
 
-    fn start_runtime_event_forwarder(&self, mut events: broadcast::Receiver<Value>) {
+    fn start_runtime_event_forwarder(&mut self, mut events: broadcast::Receiver<Value>) {
+        if let Some(forwarder) = self.runtime_event_forwarder.take() {
+            forwarder.abort();
+        }
         let client = self.client.clone();
-        tokio::spawn(async move {
+        self.runtime_event_forwarder = Some(tokio::spawn(async move {
             loop {
                 match events.recv().await {
                     Ok(event) => {
-                        if let Err(error) = client.emit_raw_event(RUNTIME_EVENT_EVENT, event).await
+                        if let Err(error) = client
+                            .call_raw_event(RUNTIME_EVENT_EVENT, event, RUNTIME_EVENT_ACK_TIMEOUT)
+                            .await
                         {
                             write_executor_error_line(&format_executor_log(
                                 "runtime event relay failed",
@@ -294,7 +324,7 @@ where
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
             }
-        });
+        }));
     }
 
     pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
@@ -865,11 +895,23 @@ pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String>
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
-    let backend_connection = LocalBackendConnectionController::start(config).await;
+    let (runtime_event_tx, _) = broadcast::channel(512);
+    let runtime_work_handler: Arc<dyn RuntimeWorkHandler> =
+        Arc::new(RuntimeWorkRpcHandler::with_event_sender(
+            app_ipc_device_id.clone(),
+            resolve_codex_binary(),
+            runtime_event_tx.clone(),
+        ));
+    let backend_connection = LocalBackendConnectionController::start_with_runtime(
+        config,
+        runtime_work_handler.clone(),
+        runtime_event_tx.clone(),
+    )
+    .await;
     let server = AppIpcServer::new()
         .with_device_id(app_ipc_device_id)
         .with_runtime_instance_id(runtime_instance_id)
-        .with_local_runtime_work_handler(resolve_codex_binary())
+        .with_shared_runtime_work_handler(runtime_work_handler, runtime_event_tx)
         .with_backend_connection_handler(backend_connection);
     server.serve_stdio().await
 }

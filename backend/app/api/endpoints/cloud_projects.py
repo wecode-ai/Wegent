@@ -30,8 +30,14 @@ from app.schemas.cloud_project import (
     LocalBindingCreate,
     LocalBindingResponse,
 )
+from app.schemas.project_chat import (
+    ProjectChatAgentCreate,
+    ProjectChatAgentUpdate,
+    ProjectChatAgentView,
+)
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
+from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
 
@@ -92,6 +98,52 @@ def update_cloud_project(
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
+
+
+@router.get("/{project_id}/chat-agents", response_model=list[ProjectChatAgentView])
+def list_project_chat_agents(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ProjectChatAgentView]:
+    return project_chat_service.list_agents(
+        db, user_id=current_user.id, project_id=str(project_id)
+    )
+
+
+@router.post(
+    "/{project_id}/chat-agents",
+    response_model=ProjectChatAgentView,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_chat_agent(
+    project_id: int,
+    values: ProjectChatAgentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectChatAgentView:
+    return project_chat_service.create_agent(
+        db, user_id=current_user.id, project_id=str(project_id), request=values
+    )
+
+
+@router.patch(
+    "/{project_id}/chat-agents/{agent_id}", response_model=ProjectChatAgentView
+)
+def update_project_chat_agent(
+    project_id: int,
+    agent_id: str,
+    values: ProjectChatAgentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectChatAgentView:
+    return project_chat_service.update_agent(
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        agent_id=agent_id,
+        request=values,
+    )
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

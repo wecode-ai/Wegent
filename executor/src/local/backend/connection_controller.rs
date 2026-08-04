@@ -5,11 +5,14 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use serde_json::{json, Value};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, Mutex},
+    task::JoinHandle,
+};
 
 use crate::{
     config::device::{ConnectionConfig, DeviceConfig},
-    local::app_ipc::{AppIpcError, BackendConnectionHandler},
+    local::app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
 
@@ -18,6 +21,8 @@ use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, Socke
 #[derive(Clone)]
 pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
+    runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    runtime_event_tx: Option<broadcast::Sender<Value>>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
 }
 
@@ -29,11 +34,29 @@ struct LocalBackendConnectionState {
 }
 
 impl LocalBackendConnectionController {
-    pub async fn start(mut config: DeviceConfig) -> Self {
+    pub async fn start(config: DeviceConfig) -> Self {
+        Self::start_internal(config, None, None).await
+    }
+
+    pub async fn start_with_runtime(
+        config: DeviceConfig,
+        runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
+        runtime_event_tx: broadcast::Sender<Value>,
+    ) -> Self {
+        Self::start_internal(config, Some(runtime_work_handler), Some(runtime_event_tx)).await
+    }
+
+    async fn start_internal(
+        mut config: DeviceConfig,
+        runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+        runtime_event_tx: Option<broadcast::Sender<Value>>,
+    ) -> Self {
         let initial_connection = normalized_connection(&config.connection);
         config.connection = ConnectionConfig::default();
         let controller = Self {
             base_config: config,
+            runtime_work_handler,
+            runtime_event_tx,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
         };
         controller.replace_connection(initial_connection).await;
@@ -63,10 +86,16 @@ impl LocalBackendConnectionController {
             config.connection = connection.clone();
             let backend_url = connection.backend_url.clone();
             let transport = SocketIoTransport::default();
-            let runner = LocalBackendRunner::new(
+            let mut runner = LocalBackendRunner::new(
                 LocalBackendConfig::from_device_config(config),
                 transport.clone(),
             );
+            if let (Some(handler), Some(event_tx)) =
+                (&self.runtime_work_handler, &self.runtime_event_tx)
+            {
+                runner =
+                    runner.with_shared_runtime_work_handler(handler.clone(), event_tx.subscribe());
+            }
             state.transport = Some(transport);
             state.task = Some(tokio::spawn(async move {
                 if let Err(error) = runner.run_forever().await {

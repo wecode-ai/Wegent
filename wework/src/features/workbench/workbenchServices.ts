@@ -44,6 +44,8 @@ import type {
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { createExternalIssueApi } from '@/api/local/localDelivery'
+import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 
 export interface WorkspaceSessionApi {
   startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
@@ -124,6 +126,8 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  projectChatClient?: ProjectChatClient
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {

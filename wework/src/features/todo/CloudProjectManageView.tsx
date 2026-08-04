@@ -1,4 +1,4 @@
-import { Check, GitBranch, LockKeyhole, Pencil, Search, Trash2, X } from 'lucide-react'
+import { Bot, Check, GitBranch, LockKeyhole, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { AITableApi } from '@/api/aitable'
 import type { DwsApi, DwsAuthStatus } from '@/api/dws'
@@ -10,6 +10,8 @@ import type {
 } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { BoardLayoutEditor } from './BoardLayoutEditor'
 import type { BoardCardDisplaySettings } from './CloudTodoBoardCard'
@@ -57,6 +59,7 @@ export function CloudProjectManageView({
   api,
   aitableApi,
   dwsApi,
+  projectChatAgentApi,
   project,
   boardCardDisplay,
   onProjectUpdated,
@@ -64,10 +67,12 @@ export function CloudProjectManageView({
   api: DeliveryApi
   aitableApi?: AITableApi
   dwsApi?: DwsApi
+  projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   project: CloudProject
   boardCardDisplay?: BoardCardDisplaySettings
   onProjectUpdated?: (project: CloudProject) => void
 }) {
+  const { t } = useTranslation('common')
   const [version, setVersion] = useState(project.version)
   const [error, setError] = useState<string | null>(null)
   const [members, setMembers] = useState<CloudProjectMember[]>([])
@@ -76,6 +81,12 @@ export function CloudProjectManageView({
   const [display, setDisplay] = useState(() => initialDisplay(project, boardCardDisplay))
   const [statuses, setStatuses] = useState<BoardStatuses>(project.board_config?.statuses ?? [])
   const [visibility, setVisibility] = useState(project.visibility ?? 'private')
+  const [chatAgents, setChatAgents] = useState<ProjectChatAgent[]>([])
+  const [agentBusy, setAgentBusy] = useState(false)
+  const [editingChatAgent, setEditingChatAgent] = useState<ProjectChatAgent | null>(null)
+  const [agentName, setAgentName] = useState('')
+  const [agentModel, setAgentModel] = useState('')
+  const [agentSystemPrompt, setAgentSystemPrompt] = useState('')
 
   const [membersOpen, setMembersOpen] = useState(false)
   const [memberQuery, setMemberQuery] = useState('')
@@ -123,6 +134,24 @@ export function CloudProjectManageView({
   }, [api, project.id])
 
   useEffect(() => {
+    if (!projectChatAgentApi) return
+    let active = true
+    void projectChatAgentApi
+      .list(project.id)
+      .then(agents => active && setChatAgents(agents))
+      .catch(
+        cause =>
+          active &&
+          setError(
+            cause instanceof Error ? cause.message : t('workbench.project_chat_agents_load_failed')
+          )
+      )
+    return () => {
+      active = false
+    }
+  }, [project.id, projectChatAgentApi, t])
+
+  useEffect(() => {
     if (!isAITable || !aitableApi) return
     void aitableApi
       .configureProject(project)
@@ -159,6 +188,7 @@ export function CloudProjectManageView({
     [items, tags]
   )
   const visibleMemberResults = memberQuery.trim() ? memberResults : []
+  const activeChatAgents = chatAgents.filter(agent => agent.status === 'active')
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const item of items) {
@@ -187,6 +217,73 @@ export function CloudProjectManageView({
       setError(cause instanceof Error ? cause.message : '更新项目权限失败')
     } finally {
       setVisibilityBusy(false)
+    }
+  }
+
+  async function createChatAgent() {
+    if (agentBusy) return
+    setAgentBusy(true)
+    try {
+      if (!projectChatAgentApi) throw new Error(t('workbench.project_chat_cloud_required'))
+      const agent = await projectChatAgentApi.create(project.id, {
+        name: t('workbench.project_chat_new_agent'),
+        runtime: 'codex',
+        model: null,
+        systemPrompt: '',
+      })
+      setChatAgents(current => [...current, agent])
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
+      )
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  async function archiveChatAgent(agent: ProjectChatAgent) {
+    if (agentBusy || !projectChatAgentApi) return
+    setAgentBusy(true)
+    try {
+      const updated = await projectChatAgentApi.update(project.id, agent.id, {
+        version: agent.version,
+        status: 'archived',
+      })
+      setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
+      )
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  function editChatAgent(agent: ProjectChatAgent) {
+    setEditingChatAgent(agent)
+    setAgentName(agent.name)
+    setAgentModel(agent.model ?? '')
+    setAgentSystemPrompt(agent.systemPrompt)
+  }
+
+  async function saveChatAgent() {
+    if (agentBusy || !projectChatAgentApi || !editingChatAgent || !agentName.trim()) return
+    setAgentBusy(true)
+    try {
+      const updated = await projectChatAgentApi.update(project.id, editingChatAgent.id, {
+        version: editingChatAgent.version,
+        name: agentName.trim(),
+        model: agentModel.trim() || null,
+        systemPrompt: agentSystemPrompt,
+      })
+      setChatAgents(current => current.map(item => (item.id === updated.id ? updated : item)))
+      setEditingChatAgent(null)
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : t('workbench.project_chat_agents_save_failed')
+      )
+    } finally {
+      setAgentBusy(false)
     }
   }
 
@@ -535,6 +632,118 @@ export function CloudProjectManageView({
               </div>
             </div>
           )}
+        </section>
+
+        <section className="border-t border-border py-6" data-testid="cloud-project-chat-agents">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-heading-md font-semibold">
+                {t('workbench.project_chat_agents_title')}
+              </h2>
+              <p className="mt-1 text-sm text-text-muted">
+                {t('workbench.project_chat_agents_description')}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="cloud-project-chat-agent-add"
+              disabled={agentBusy}
+              onClick={() => void createChatAgent()}
+              className="flex h-8 items-center gap-1 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted disabled:opacity-40"
+            >
+              <Plus className="h-3.5 w-3.5" /> {t('workbench.project_chat_agents_add')}
+            </button>
+          </div>
+          <div className="mt-4 space-y-1 rounded-xl bg-muted p-1.5">
+            {activeChatAgents.length === 0 ? (
+              <div className="flex h-14 items-center justify-center text-sm text-text-muted">
+                {t('workbench.project_chat_agents_empty')}
+              </div>
+            ) : (
+              activeChatAgents.map(agent => (
+                <div
+                  key={agent.id}
+                  data-testid={`cloud-project-chat-agent-${agent.id}`}
+                  className="flex items-center gap-3 rounded-lg bg-background/70 px-3 py-2"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-500/10 text-violet-600">
+                    <Bot className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{agent.name}</span>
+                    <span className="block truncate text-xs text-text-muted">
+                      {agent.runtime}
+                      {agent.model ? ` · ${agent.model}` : ''}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    data-testid={`cloud-project-chat-agent-edit-${agent.id}`}
+                    disabled={agentBusy}
+                    onClick={() => editChatAgent(agent)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary"
+                    aria-label={t('workbench.project_chat_agents_edit', { name: agent.name })}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`cloud-project-chat-agent-remove-${agent.id}`}
+                    disabled={agentBusy}
+                    onClick={() => void archiveChatAgent(agent)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-red-600"
+                    aria-label={t('workbench.project_chat_agents_remove', { name: agent.name })}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+          {editingChatAgent ? (
+            <div className="mt-3 space-y-2 rounded-xl border border-border bg-background p-3">
+              <input
+                data-testid="cloud-project-chat-agent-name"
+                value={agentName}
+                onChange={event => setAgentName(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_name')}
+                className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+              />
+              <input
+                data-testid="cloud-project-chat-agent-model"
+                value={agentModel}
+                onChange={event => setAgentModel(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_model')}
+                className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none"
+              />
+              <textarea
+                data-testid="cloud-project-chat-agent-system-prompt"
+                value={agentSystemPrompt}
+                onChange={event => setAgentSystemPrompt(event.target.value)}
+                placeholder={t('workbench.project_chat_agent_prompt')}
+                rows={3}
+                className="w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingChatAgent(null)}
+                  className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="cloud-project-chat-agent-save"
+                  disabled={agentBusy || !agentName.trim()}
+                  onClick={() => void saveChatAgent()}
+                  className="h-8 rounded-lg bg-primary px-3 text-sm text-primary-foreground disabled:opacity-40"
+                >
+                  {t('workbench.project_chat_agent_save')}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="border-t border-border py-6">
