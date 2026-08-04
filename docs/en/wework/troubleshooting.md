@@ -45,7 +45,7 @@ When the network is working but the cloud status occasionally shows unavailable,
 - `[Wework] HTTP ... failed.` means that no HTTP response was received; inspect the error under `phase: "transport"`.
 - `[Wework] HTTP ... returned ...` means that the server returned an HTTP error; inspect the status and error under `phase: "http_error"`.
 
-Every request has a `requestId`. In the desktop client, this value is sent to the Backend as `X-Request-ID`; when the response includes a backend request ID, the frontend also records `backendRequestId`. Use these IDs to correlate frontend and Backend logs. The logs do not include Authorization headers, tokens, or request bodies.
+Every request has a `requestId`. In the desktop client, this value is sent to the Backend as `X-Request-ID`; `backendRequestId` is recorded only when a slow-response or HTTP-error diagnostic event includes the backend's returned request ID. Use these IDs to correlate frontend and Backend logs. The logs do not include Authorization headers, tokens, or request bodies.
 
 ## Getting help
 

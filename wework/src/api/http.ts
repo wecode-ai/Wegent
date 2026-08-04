@@ -46,6 +46,18 @@ interface HttpRequestLogContext {
   startedAt: number
 }
 
+interface HttpResponseDiagnostics {
+  response: Response
+  logContext: HttpRequestLogContext
+  backendRequestId: string | null
+}
+
+interface HttpFetchOptions {
+  token: string | null
+  signal?: AbortSignal
+  contentType?: string | null
+}
+
 function requestLogFields(
   context: HttpRequestLogContext,
   fields: Record<string, unknown> = {}
@@ -96,6 +108,7 @@ export interface HttpClientOptions {
 
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 export interface HttpClient {
@@ -153,12 +166,12 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   const getToken = options.getToken ?? defaultGetToken
   const inFlightGetRequests = new Map<string, Promise<unknown>>()
 
-  async function request<T>(
+  async function fetchWithDiagnostics(
     endpoint: string,
     init: RequestInit,
-    requestOptions: HttpRequestOptions = {}
-  ): Promise<T> {
-    const token = getToken()
+    fetchOptions: HttpFetchOptions
+  ): Promise<HttpResponseDiagnostics> {
+    const { token, signal } = fetchOptions
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()
@@ -180,8 +193,15 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     try {
       response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
         ...init,
+        ...(signal ? { signal } : {}),
         headers: {
-          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+          ...(fetchOptions.contentType === undefined
+            ? isFormData
+              ? {}
+              : { 'Content-Type': 'application/json' }
+            : fetchOptions.contentType
+              ? { 'Content-Type': fetchOptions.contentType }
+              : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(shouldUseTauriFetch() ? { 'X-Request-ID': requestId } : {}),
           ...init.headers,
@@ -213,17 +233,39 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       )
     }
 
+    return { response, logContext, backendRequestId }
+  }
+
+  async function parseAndLogHttpError(
+    response: Response,
+    diagnostics: HttpResponseDiagnostics
+  ): Promise<ApiError> {
+    const error = await parseError(response)
+    console.warn(
+      `[Wework] HTTP ${diagnostics.logContext.method} ${diagnostics.logContext.endpoint} returned ${response.status}.`,
+      requestLogFields(diagnostics.logContext, {
+        phase: 'http_error',
+        status: response.status,
+        backendRequestId: diagnostics.backendRequestId,
+        error: errorDetails(error),
+      })
+    )
+    return error
+  }
+
+  async function request<T>(
+    endpoint: string,
+    init: RequestInit,
+    requestOptions: HttpRequestOptions = {}
+  ): Promise<T> {
+    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
+      token: getToken(),
+      signal: requestOptions.signal,
+    })
+    const { response } = diagnostics
+
     if (!response.ok) {
-      const error = await parseError(response)
-      console.warn(
-        `[Wework] HTTP ${method} ${endpoint} returned ${response.status}.`,
-        requestLogFields(logContext, {
-          phase: 'http_error',
-          status: response.status,
-          backendRequestId,
-          error: errorDetails(error),
-        })
-      )
+      const error = await parseAndLogHttpError(response, diagnostics)
       const redirectOnUnauthorized =
         requestOptions.redirectOnUnauthorized ?? options.redirectOnUnauthorized ?? true
       if (response.status === 401 && redirectOnUnauthorized) {
@@ -244,25 +286,37 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const token = getToken()
     const redirectKey = requestOptions.redirectOnUnauthorized === false ? 'no-redirect' : 'redirect'
     const cacheKey = `${redirectKey}:${token ?? ''}:${endpoint}`
-    const currentRequest = inFlightGetRequests.get(cacheKey)
-    if (currentRequest) {
-      return currentRequest as Promise<T>
+    if (!requestOptions.signal) {
+      const currentRequest = inFlightGetRequests.get(cacheKey)
+      if (currentRequest) {
+        return currentRequest as Promise<T>
+      }
     }
 
     const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
-      inFlightGetRequests.delete(cacheKey)
+      if (!requestOptions.signal) {
+        inFlightGetRequests.delete(cacheKey)
+      }
     })
-    inFlightGetRequests.set(cacheKey, nextRequest)
+    if (!requestOptions.signal) {
+      inFlightGetRequests.set(cacheKey, nextRequest)
+    }
     return nextRequest
   }
 
   async function getBlob(endpoint: string): Promise<Blob> {
-    const token = getToken()
-    const response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!response.ok) throw await parseError(response)
-    return response.blob()
+    const diagnostics = await fetchWithDiagnostics(
+      endpoint,
+      {},
+      {
+        token: getToken(),
+        contentType: null,
+      }
+    )
+    if (!diagnostics.response.ok) {
+      throw await parseAndLogHttpError(diagnostics.response, diagnostics)
+    }
+    return diagnostics.response.blob()
   }
 
   return {

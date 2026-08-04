@@ -63,7 +63,7 @@ localStorage.setItem("wework:debug-runtime", "1");
 - `[Wework] HTTP ... failed.`：请求没有收到 HTTP 响应，查看 `phase: "transport"` 下的错误。
 - `[Wework] HTTP ... returned ...`：服务端已返回 HTTP 错误，查看 `phase: "http_error"` 下的状态码和错误信息。
 
-每条请求都有 `requestId`。在桌面客户端中，该值会通过 `X-Request-ID` 传给 Backend；如果响应包含后端请求 ID，日志会同时记录 `backendRequestId`。用这两个 ID 可以把客户端日志与 Backend 日志关联起来。日志不会记录 Authorization、token 或请求正文。
+每条请求都有 `requestId`。在桌面客户端中，该值会通过 `X-Request-ID` 传给 Backend；只有慢响应或 HTTP 错误诊断事件包含后端返回的请求 ID 时，日志才会记录 `backendRequestId`。用这两个 ID 可以把客户端日志与 Backend 日志关联起来。日志不会记录 Authorization、token 或请求正文。
 
 ## 获取帮助
 

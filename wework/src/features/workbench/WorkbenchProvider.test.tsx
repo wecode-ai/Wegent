@@ -2471,20 +2471,25 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('ignores a manual device refresh after its cloud sync revision is replaced', async () => {
+  test('cancels an in-flight cloud sync before a manual device refresh', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const manualDevices = deferred<DeviceInfo[]>()
+    let initialRuntimeSignal: AbortSignal | undefined
     const listDevices = vi
       .fn()
       .mockResolvedValueOnce([
         createDevice({ device_id: 'current-device', device_type: 'remote', is_default: false }),
       ])
       .mockImplementationOnce(() => manualDevices.promise)
+    const listRuntimeWork = vi.fn((requestOptions?: { signal?: AbortSignal }) => {
+      initialRuntimeSignal = requestOptions?.signal
+      return runtimeWork.promise
+    })
     const services = createWorkbenchServices({
       cloudBackgroundApi: {
         listTeams: vi.fn().mockResolvedValue([]),
         listDevices,
-        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+        listRuntimeWork,
       },
     })
 
@@ -2495,16 +2500,17 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
     await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+    expect(initialRuntimeSignal?.aborted).toBe(true)
     await act(async () => {
       runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
       await Promise.resolve()
       manualDevices.resolve([
-        createDevice({ device_id: 'stale-device', device_type: 'remote', is_default: false }),
+        createDevice({ device_id: 'refreshed-device', device_type: 'remote', is_default: false }),
       ])
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('device-ids')).not.toHaveTextContent('stale-device')
+      expect(screen.getByTestId('device-ids')).toHaveTextContent('refreshed-device')
     )
   })
 
@@ -2854,6 +2860,67 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await act(async () => {
       streamHandlers.onDeviceOffline?.({ device_id: 'device-1' })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
+  })
+
+  test('keeps the last confirmed online state when an offline status event refresh fails', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockRejectedValue(new Error('network unavailable'))
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'offline' })
+    })
+
+    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+  })
+
+  test('applies an offline state after an offline status event is confirmed', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'offline' })
     })
 
     await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))

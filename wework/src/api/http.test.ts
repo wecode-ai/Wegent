@@ -198,19 +198,55 @@ describe('createHttpClient', () => {
 
   test('logs transport error details without logging the authorization token', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    fetchMock.mockRejectedValueOnce(new TypeError('Load failed'))
-    const client = createHttpClient({
-      baseUrl: 'https://cloud.example.com/api',
-      getToken: () => 'secret-cloud-token',
+    try {
+      fetchMock.mockRejectedValueOnce(new TypeError('Load failed'))
+      const client = createHttpClient({
+        baseUrl: 'https://cloud.example.com/api',
+        getToken: () => 'secret-cloud-token',
+      })
+
+      await expect(client.get('/devices')).rejects.toThrow('Load failed')
+
+      const serializedCalls = JSON.stringify(warn.mock.calls)
+      expect(serializedCalls).toContain('Load failed')
+      expect(serializedCalls).toContain('"phase":"transport"')
+      expect(serializedCalls).not.toContain('secret-cloud-token')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('uses the diagnostic lifecycle for blob requests', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      headers: new Headers({ 'X-Request-ID': 'backend-blob-request' }),
+      text: async () => 'blob service unavailable',
     })
 
-    await expect(client.get('/devices')).rejects.toThrow('Load failed')
+    try {
+      const client = createHttpClient({
+        baseUrl: 'https://cloud.example.com/api',
+        getToken: () => 'secret-cloud-token',
+      })
 
-    const serializedCalls = JSON.stringify(warn.mock.calls)
-    expect(serializedCalls).toContain('Load failed')
-    expect(serializedCalls).toContain('"phase":"transport"')
-    expect(serializedCalls).not.toContain('secret-cloud-token')
-    warn.mockRestore()
+      await expect(client.getBlob('/attachments/1')).rejects.toMatchObject({
+        status: 502,
+        message: 'blob service unavailable',
+      })
+
+      expect(warn).toHaveBeenCalledWith(
+        '[Wework] HTTP GET /attachments/1 returned 502.',
+        expect.objectContaining({
+          phase: 'http_error',
+          backendRequestId: 'backend-blob-request',
+        })
+      )
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-cloud-token')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   test('throws ApiError with parsed detail message', async () => {
