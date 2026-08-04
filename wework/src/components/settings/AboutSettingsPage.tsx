@@ -1,6 +1,7 @@
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './settings-ui'
@@ -76,6 +77,7 @@ function AboutActionButton({
 
 export function AboutSettingsPage() {
   const { t } = useTranslation('common')
+  const appVersion = useAppVersion()
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateChannel = appUpdate?.updateChannel ?? 'stable'
@@ -128,7 +130,9 @@ export function AboutSettingsPage() {
       </div>
 
       <h1 className="heading-lg mt-6 tracking-normal text-text-primary">Wework</h1>
-      <div className="mt-2 text-sm font-medium text-text-secondary">v{__WEWORK_APP_VERSION__}</div>
+      <div data-testid="about-app-version" className="mt-2 text-sm font-medium text-text-secondary">
+        {appVersion ? `v${appVersion}` : '—'}
+      </div>
       <p className="mt-4 max-w-[420px] text-sm leading-6 text-text-secondary">
         {t('workbench.about_settings_description', '面向办公和编码场景的 AI 工作台。')}
       </p>
