@@ -356,6 +356,73 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('keeps the clicked file link fixed while the desktop file panel opens', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const onOpenWorkspaceFile = vi.fn()
+    const externalScrollRef = createRef<HTMLDivElement>()
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="file-panel-reflow"
+          externalScrollRef={externalScrollRef}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          messages={[
+            {
+              id: 'file-panel-reflow-message',
+              role: 'assistant',
+              content:
+                '查看 [application_monitor.go](/workspace/application_monitor.go:272) 的实现。',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    const anchor = screen.getByText('查看', { exact: false }).closest('[data-scroll-anchor]')!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 300,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 100, 300)
+    mockScrollRelativeRect(anchor, scroller, 450, 40)
+
+    fireEvent.pointerDown(screen.getByTestId('assistant-markdown-link'))
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/workspace/application_monitor.go', {
+      lineStart: 272,
+      lineEnd: undefined,
+    })
+
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
+    mockScrollRelativeRect(anchor, scroller, 690, 40)
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(540)
+    expect(anchor.getBoundingClientRect().top).toBe(150)
+  })
+
   test('tracks scrolling from the external desktop scroll container', () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const messages = [

@@ -820,6 +820,27 @@ function ScrollableMessagePaneContent({
     userViewportAnchorRef.current = createUserViewportAnchor(scroller, content)
   }, [])
 
+  const prepareForWorkspaceFileOpen = useCallback(
+    (sourceElement: HTMLElement) => {
+      const scroller = activeScrollRefRef.current.current
+      const content = contentRef.current
+      if (!scroller || !content) return
+      const distanceToBottom = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+      if (distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD) return
+
+      userScrollIntentRef.current = false
+      userScrollPausedAutoFollowRef.current = true
+      clearScheduledScrolls()
+      userViewportAnchorRef.current = createUserViewportAnchorFromElement(
+        content,
+        sourceElement,
+        scroller.getBoundingClientRect().top
+      )
+      saveCurrentScrollPosition()
+    },
+    [clearScheduledScrolls, saveCurrentScrollPosition]
+  )
+
   const restoreUserViewportAnchor = useCallback(() => {
     const scroller = activeScrollRefRef.current.current
     const content = contentRef.current
@@ -1096,6 +1117,7 @@ function ScrollableMessagePaneContent({
                 onOpenFileChangesReview={onOpenFileChangesReview}
                 fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onBeforeOpenWorkspaceFile={prepareForWorkspaceFileOpen}
                 onOpenLocalSkillFile={onOpenLocalSkillFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -1155,8 +1177,9 @@ function getInitialDistanceFromBottomPx(key: string | null): number {
 
 function createUserViewportAnchor(
   scroller: HTMLElement,
-  content: HTMLElement
+  content: HTMLElement | null
 ): UserViewportAnchor | null {
+  if (!content) return null
   const scrollerRect = scroller.getBoundingClientRect()
   const visibleAnchor = Array.from(
     content.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR)
@@ -1166,6 +1189,16 @@ function createUserViewportAnchor(
   })
   if (!visibleAnchor) return null
 
+  return createUserViewportAnchorFromElement(content, visibleAnchor, scrollerRect.top)
+}
+
+function createUserViewportAnchorFromElement(
+  content: HTMLElement,
+  element: HTMLElement,
+  scrollerTop: number
+): UserViewportAnchor | null {
+  const visibleAnchor = element.closest<HTMLElement>(SCROLL_ANCHOR_SELECTOR)
+  if (!visibleAnchor || !content.contains(visibleAnchor)) return null
   const message = visibleAnchor.closest<HTMLElement>('[data-message-id]')
   const messageId = message?.dataset.messageId
   if (!message || !messageId) return null
@@ -1176,7 +1209,7 @@ function createUserViewportAnchor(
   return {
     messageId,
     anchorIndex,
-    offsetFromScrollerTop: visibleAnchor.getBoundingClientRect().top - scrollerRect.top,
+    offsetFromScrollerTop: visibleAnchor.getBoundingClientRect().top - scrollerTop,
   }
 }
 
