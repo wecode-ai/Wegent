@@ -26,7 +26,6 @@ use std::{
 
 use crate::local::command::build_env;
 
-/// Maximum time we are willing to wait for a single Git device command.
 /// Common installation directories for Git on Windows. These are appended to the process PATH
 /// so that `git` can be resolved even when the executor is started from an environment that
 /// does not include them.
@@ -90,6 +89,7 @@ pub fn run_git(cwd: &str, args: &[&str], extra_env: &HashMap<String, String>) ->
         .args(args)
         .env_clear()
         .envs(build_env(extra_env))
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

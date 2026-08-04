@@ -1543,11 +1543,11 @@ async fn handle_builtin_device_command(
         "git_push" => {
             let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
             let env = string_env(params.get("env")).ok()?;
-            let branch = run_git_async(&path, &["branch", "--show-current"], &env)
-                .await
-                .stdout
-                .trim()
-                .to_owned();
+            let branch_output = run_git_async(&path, &["branch", "--show-current"], &env).await;
+            if !branch_output.success() {
+                return Some((branch_output.into_command_result(false), None));
+            }
+            let branch = branch_output.stdout.trim().to_owned();
             if branch.is_empty() {
                 return Some((
                     CommandResult::error("Cannot push detached HEAD".to_owned(), 0.0, false),
