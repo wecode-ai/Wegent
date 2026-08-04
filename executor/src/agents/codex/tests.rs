@@ -1147,6 +1147,51 @@ fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
 }
 
 #[test]
+fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "phase": "final_answer",
+                "delta": "Final answer."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Final answer.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn goal_created_during_turn_keeps_notification_reader_alive() {
     let mut state = CodexRunState::default();
 

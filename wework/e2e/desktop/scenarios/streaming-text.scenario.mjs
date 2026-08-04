@@ -832,6 +832,11 @@ export function createDesktopScenario({
         text: PHASE_FLIP_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command(
+        'waitFor',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
+        { stableMs: 750, timeoutMs: uiTimeoutMs }
+      )
       assert.equal(
         Number(await control.command('getElementCount', ASSISTANT_CONTENT_SELECTOR)),
         0,

@@ -308,7 +308,10 @@ impl CodexRunState {
     }
 
     fn clear_reclassified_final_message(&mut self, item_id: Option<&str>) {
-        if !final_message_ids_match(self.final_message_id.as_deref(), item_id) {
+        let Some(item_id) = item_id else {
+            return;
+        };
+        if self.final_message_id.as_deref() != Some(item_id) {
             return;
         }
         self.final_text.clear();
