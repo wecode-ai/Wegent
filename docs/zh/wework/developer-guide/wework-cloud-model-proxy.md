@@ -34,6 +34,16 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 - `https://proxy.example.com/v1` 和 Anthropic Messages 仍解析为 `/v1/messages`，不会生成 `/v1/v1/messages`。
 - 已包含 `/responses`、`/chat/completions` 或 `/v1/messages` 的地址不会重复追加端点。
 
+#### Kimi K3 Chat Completions 兼容
+
+云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，如果 Model CRD 未配置 `codex_catalog_model_id` 或 `codexCatalogModelId`，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。显式配置的模型目录始终优先于 Kimi K3 自动选择。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：
+
+- 使用 Kimi 支持的 `thinking` 字段，而不是通用的 `reasoning_effort`。
+- 在多轮消息和工具调用中保留 `reasoning_content`。
+- 可逆地保留 namespace tool 的身份，确保同名工具仍能路由到正确的执行器。
+
+显式配置的 Anthropic Messages 不会被自动改写。运维人员必须在 Model CRD 中通过 `protocol` 或 `apiFormat` 明确选择 OpenAI Chat Completions；如果只保留 `env.model=claude` 且没有协议元数据，请求仍会按 Anthropic Messages 路由到 `/v1/messages`。
+
 云端或远端设备执行任务时，模型选择器同时展示当前桌面端配置的本地模型。首次使用或配置变化后，Wework 会要求用户确认，将自定义 Codex 模型目录同步到目标 Executor，并在设备空闲时重启其 Codex app-server、校验模型已加载，然后再发送任务。Codex 内置模型和云端 Model CRD 仍可直接用于本机或云端执行。
 
 ### 模型限流重试
