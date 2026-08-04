@@ -6,7 +6,10 @@ export interface WorkspaceTabsContextValue {
   activeTabId: string
   activeTab: WorkspaceTab
   openTab: (kind: WorkspaceTabKind, overrides?: Partial<WorkspaceTab>) => WorkspaceTab
-  selectTab: (tabId: string) => void
+  selectTab: (
+    tabId: string,
+    updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>
+  ) => void
   closeTab: (tabId: string) => void
   closeOtherTabs: (tabId: string) => void
   restoreClosedTab: () => void
