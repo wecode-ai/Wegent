@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -68,11 +69,13 @@ const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS 
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+const EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT: usize = 1_000;
 const EMBEDDED_BROWSER_DIAGNOSTICS_SCRIPT: &str = include_str!("embedded_browser_diagnostics.js");
 const EMBEDDED_BROWSER_ACTION_SCRIPT: &str = include_str!("embedded_browser_action.js");
 const EMBEDDED_BROWSER_INSPECT_SCRIPT: &str = include_str!("embedded_browser_inspect.js");
 const EMBEDDED_BROWSER_WAIT_SCRIPT: &str = include_str!("embedded_browser_wait.js");
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_BROWSER_DIRECTORY_INDEX_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_NATIVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_SCREENSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -82,6 +85,7 @@ static EMBEDDED_BROWSER_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
+    directory_previews: Arc<Mutex<HashMap<String, String>>>,
     agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
     agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
     lifecycle: Arc<AsyncMutex<()>>,
@@ -289,6 +293,318 @@ fn apply_webview_bounds(webview: &Webview<Wry>, bounds: NormalizedBounds) -> Res
 
 fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            '\'' => "&#39;".to_string(),
+            _ => character.to_string(),
+        })
+        .collect()
+}
+
+fn browser_file_url_from_path(path: &Path) -> Result<tauri::Url, String> {
+    tauri::Url::from_file_path(path)
+        .map_err(|_| format!("Failed to create file URL from path: {}", path.display()))
+}
+
+fn browser_directory_cache_directory() -> Result<PathBuf, String> {
+    Ok(std::env::temp_dir().join("wework-embedded-browser"))
+}
+
+fn file_url_path(url: &tauri::Url) -> Result<PathBuf, String> {
+    if url.scheme() != "file" {
+        return Err("Embedded browser URL is not a file URL".to_string());
+    }
+    url.to_file_path()
+        .map_err(|_| format!("Unable to convert file URL to a path: {url}"))
+}
+
+fn directory_preview_source_url(state: &EmbeddedBrowserState, display_url: &str) -> Option<String> {
+    state
+        .directory_previews
+        .lock()
+        .ok()
+        .and_then(|previews| previews.get(display_url).cloned())
+}
+
+fn register_directory_preview(
+    state: &EmbeddedBrowserState,
+    display_url: &str,
+    requested_url: &str,
+) {
+    if let Ok(mut previews) = state.directory_previews.lock() {
+        previews.insert(display_url.to_string(), requested_url.to_string());
+    }
+}
+
+#[derive(Clone)]
+struct DirectoryEntry {
+    name: String,
+    url: String,
+    kind: &'static str,
+    size: Option<u64>,
+    modified: Option<String>,
+}
+
+fn format_directory_entry_modified(modified: std::io::Result<SystemTime>) -> Option<String> {
+    let modified = modified.ok()?;
+    let unix = modified.duration_since(UNIX_EPOCH).ok()?;
+    Some(format!("{}s", unix.as_secs()))
+}
+
+fn build_directory_entries(directory: &Path) -> Result<(Vec<DirectoryEntry>, bool), String> {
+    let mut entries = Vec::new();
+    let mut children = fs::read_dir(directory)
+        .map_err(|error| {
+            format!(
+                "Failed to inspect directory {}: {error}",
+                directory.display()
+            )
+        })?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+
+    children.sort_by_key(|entry| {
+        (
+            entry.file_type().map(|kind| !kind.is_dir()).unwrap_or(true),
+            entry.file_name(),
+        )
+    });
+
+    for entry in children
+        .into_iter()
+        .take(EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT)
+    {
+        let file_type = entry.file_type().map_err(|error| {
+            format!(
+                "Failed to inspect directory entry {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        let child_url = browser_file_url_from_path(&path)?.to_string();
+        let metadata = entry.metadata().ok();
+        let is_directory = file_type.is_dir();
+        entries.push(DirectoryEntry {
+            name: if is_directory {
+                format!("{name}/")
+            } else {
+                name
+            },
+            url: if is_directory {
+                format!("{child_url}/")
+            } else {
+                child_url
+            },
+            kind: if is_directory { "directory" } else { "file" },
+            size: metadata
+                .as_ref()
+                .and_then(|metadata| (!is_directory).then_some(metadata.len())),
+            modified: metadata
+                .as_ref()
+                .and_then(|metadata| format_directory_entry_modified(metadata.modified())),
+        });
+    }
+
+    let truncated = directory.read_dir().map(|iter| iter.count()).unwrap_or(0) > entries.len();
+    Ok((entries, truncated))
+}
+
+fn directory_listing_html(
+    directory: &Path,
+    directory_url: &tauri::Url,
+    entries: &[DirectoryEntry],
+    truncated: bool,
+) -> String {
+    let title = escape_html(&format!("Index of {}", directory.display()));
+    let directory_url = escape_html(directory_url.as_str());
+    let parent_url = directory
+        .parent()
+        .and_then(|parent| browser_file_url_from_path(parent).ok());
+    let parent_link = parent_url
+        .map(|url| {
+            format!(
+                "<a class=\"entry parent\" href=\"{}\"><span class=\"name\">../</span><span class=\"meta\">Parent directory</span></a>",
+                escape_html(url.as_str())
+            )
+        })
+        .unwrap_or_default();
+    let rows = entries
+        .iter()
+        .map(|entry| {
+            let size = entry
+                .size
+                .map(|bytes| format!("{bytes} bytes"))
+                .unwrap_or_else(|| String::from("-"));
+            let modified = entry.modified.clone().unwrap_or_else(|| String::from("-"));
+            format!(
+                "<a class=\"entry entry-{kind}\" href=\"{url}\"><span class=\"name\">{name}</span><span class=\"meta\">{kind} · {size} · {modified}</span></a>",
+                kind = entry.kind,
+                url = escape_html(&entry.url),
+                name = escape_html(&entry.name),
+                size = escape_html(&size),
+                modified = escape_html(&modified),
+            )
+        })
+        .collect::<String>();
+    let truncated_notice = if truncated {
+        "<p class=\"notice\">Showing the first 1,000 entries.</p>"
+    } else {
+        ""
+    };
+
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #f6f7f8;
+      --panel: #ffffff;
+      --line: #d9dee3;
+      --text: #1f2328;
+      --muted: #66707a;
+      --accent: #0969da;
+    }}
+    body {{
+      margin: 0;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    header {{
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      word-break: break-all;
+    }}
+    .path {{
+      margin-top: 4px;
+      color: var(--muted);
+      word-break: break-all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }}
+    main {{
+      padding: 12px 20px 20px;
+    }}
+    .entry {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: inherit;
+      text-decoration: none;
+    }}
+    .entry:hover {{
+      border-color: var(--accent);
+    }}
+    .name {{
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
+    .meta {{
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .notice {{
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{title}</h1>
+    <div class="path">{directory_url}</div>
+  </header>
+  <main>
+    {parent_link}
+    {rows}
+    {truncated_notice}
+  </main>
+</body>
+</html>"#
+    )
+}
+
+fn build_directory_preview(directory_url: &tauri::Url) -> Result<(tauri::Url, String), String> {
+    let directory = file_url_path(directory_url)?;
+    if !directory.is_dir() {
+        return Err("File URL is not a directory".to_string());
+    }
+
+    let cache_directory = browser_directory_cache_directory()?;
+    fs::create_dir_all(&cache_directory)
+        .map_err(|error| format!("Failed to create embedded browser directory cache: {error}"))?;
+
+    let preview_path = cache_directory.join(format!(
+        "directory-{}-{}.html",
+        std::process::id(),
+        EMBEDDED_BROWSER_DIRECTORY_INDEX_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (entries, truncated) = build_directory_entries(&directory)?;
+    let html = directory_listing_html(&directory, directory_url, &entries, truncated);
+    fs::write(&preview_path, html)
+        .map_err(|error| format!("Failed to write embedded browser directory preview: {error}"))?;
+
+    browser_file_url_from_path(&preview_path).map(|url| (url, directory_url.to_string()))
+}
+
+fn resolve_browser_navigation_url(
+    state: &EmbeddedBrowserState,
+    requested_url: &str,
+) -> Result<tauri::Url, String> {
+    let parsed_url = browser_url(requested_url)?;
+    if parsed_url.scheme() != "file" {
+        return Ok(parsed_url);
+    }
+
+    let Ok(path) = file_url_path(&parsed_url) else {
+        return Ok(parsed_url);
+    };
+    if !path.is_dir() {
+        return Ok(parsed_url);
+    }
+
+    let (display_url, source_url) = build_directory_preview(&parsed_url)?;
+    register_directory_preview(state, display_url.as_str(), &source_url);
+    Ok(display_url)
+}
+
+fn loaded_browser_url(state: &EmbeddedBrowserState, loaded_url: &str) -> Option<String> {
+    if !should_record_loaded_url(loaded_url) {
+        return None;
+    }
+    Some(directory_preview_source_url(state, loaded_url).unwrap_or_else(|| loaded_url.to_string()))
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
@@ -772,8 +1088,8 @@ fn log_embedded_browser_page_diagnostics(
 }
 
 fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Result<(), String> {
-    let parsed_url = browser_url(&url)?;
-    let parsed_url_string = parsed_url.to_string();
+    let display_url = resolve_browser_navigation_url(state, &url)?;
+    let display_url_string = display_url.to_string();
     let entry = get_entry(state, label)?;
     log_embedded_browser_diagnostic(
         state,
@@ -781,10 +1097,10 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
         "navigate_requested",
         json!({
             "requestedUrl": &url,
-            "parsedUrl": parsed_url_string,
+            "displayUrl": display_url_string,
         }),
     );
-    if let Err(error) = entry.ready_webview()?.navigate(parsed_url) {
+    if let Err(error) = entry.ready_webview()?.navigate(display_url) {
         let message = format!("Failed to navigate embedded browser: {error}");
         log_embedded_browser_diagnostic(
             state,
@@ -1130,7 +1446,7 @@ pub async fn embedded_browser_open(
 ) -> Result<EmbeddedBrowserPageState, String> {
     let label = browser_label(label);
     let _lifecycle = state.lifecycle.lock().await;
-    let parsed_url = browser_url(&url)?;
+    let display_url = resolve_browser_navigation_url(&state, &url)?;
     let normalized_bounds = normalize_bounds(bounds);
 
     let existing = {
@@ -1159,7 +1475,7 @@ pub async fn embedded_browser_open(
                 "nativeLabel": &entry.native_label,
             }),
         );
-        if let Err(error) = webview.navigate(parsed_url) {
+        if let Err(error) = webview.navigate(display_url) {
             let message = format!("Failed to navigate embedded browser: {error}");
             log_embedded_browser_diagnostic(
                 &state,
@@ -1228,6 +1544,7 @@ pub async fn embedded_browser_open(
     let label_for_navigation = label.clone();
     let label_for_load = label.clone();
     let label_for_popup = label.clone();
+    let app_for_navigation = app.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
@@ -1263,7 +1580,7 @@ pub async fn embedded_browser_open(
     #[cfg(target_os = "macos")]
     let initial_url = initial_browser_webview_url()?;
     #[cfg(not(target_os = "macos"))]
-    let initial_url = browser_webview_url(parsed_url.clone());
+    let initial_url = browser_webview_url(display_url.clone());
     let builder = tauri::webview::WebviewBuilder::new(&native_label, initial_url)
         .user_agent(EMBEDDED_BROWSER_USER_AGENT)
         .data_directory(data_directory)
@@ -1274,6 +1591,7 @@ pub async fn embedded_browser_open(
         .on_navigation({
             let state = state.inner().clone();
             move |url| {
+                let requested_url = url.to_string();
                 let owner = current_logical_owner_or(
                     &state,
                     &native_label_for_navigation,
@@ -1284,9 +1602,65 @@ pub async fn embedded_browser_open(
                     &owner,
                     "navigation_requested",
                     json!({
-                        "requestedUrl": url.to_string(),
+                        "requestedUrl": &requested_url,
                     }),
                 );
+                if url.scheme() == "file" {
+                    if let Ok(path) = file_url_path(&url) {
+                        if path.is_dir() {
+                            match resolve_browser_navigation_url(&state, &requested_url) {
+                                Ok(display_url) => {
+                                    if display_url.as_str() == requested_url {
+                                        return true;
+                                    }
+                                    let _ = set_entry_url_for_native_label(
+                                        &state,
+                                        &native_label_for_navigation,
+                                        requested_url.clone(),
+                                    );
+                                    if let Some(webview) =
+                                        app_for_navigation.get_webview(&native_label_for_navigation)
+                                    {
+                                        if let Err(error) = webview.navigate(display_url.clone()) {
+                                            log_embedded_browser_diagnostic(
+                                                &state,
+                                                &owner,
+                                                "navigation_directory_preview_failed",
+                                                json!({
+                                                    "requestedUrl": &requested_url,
+                                                    "displayUrl": display_url.to_string(),
+                                                    "error": error.to_string(),
+                                                }),
+                                            );
+                                            return true;
+                                        }
+                                    }
+                                    log_embedded_browser_diagnostic(
+                                        &state,
+                                        &owner,
+                                        "navigation_directory_preview",
+                                        json!({
+                                            "requestedUrl": &requested_url,
+                                            "displayUrl": display_url.to_string(),
+                                        }),
+                                    );
+                                    return false;
+                                }
+                                Err(error) => {
+                                    log_embedded_browser_diagnostic(
+                                        &state,
+                                        &owner,
+                                        "navigation_directory_preview_failed",
+                                        json!({
+                                            "requestedUrl": &requested_url,
+                                            "error": error,
+                                        }),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 true
             }
         })
@@ -1316,7 +1690,9 @@ pub async fn embedded_browser_open(
                     &current_url,
                 );
                 let loaded_url = webview_url.clone().or(Some(current_url.clone()));
-                if let Some(loaded_url) = loaded_url.filter(|url| should_record_loaded_url(url)) {
+                if let Some(loaded_url) =
+                    loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
+                {
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
@@ -1462,7 +1838,7 @@ pub async fn embedded_browser_open(
         .await
         .and_then(|_| {
             webview
-                .navigate(parsed_url)
+                .navigate(display_url)
                 .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
         });
         if let Err(error) = tls_result {

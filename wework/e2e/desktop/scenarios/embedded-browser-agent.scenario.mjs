@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -29,6 +29,7 @@ const SELECT_TEXT = 'selected: finance'
 const CHECKED_TEXT = 'checked: true'
 const SCROLLED_TEXT = 'scroll marker visible'
 const LOCAL_FILE_TEXT = 'Local File Browser Fixture'
+const LOCAL_DIRECTORY_TEXT = 'local-directory-readme.txt'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
 
@@ -312,7 +313,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         uiTimeoutMs,
         'Browser URL input did not receive fixture URL before submit'
       )
-      await control.command('press', BROWSER_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, payload)
       const openResult = await bridgeCall({
@@ -608,6 +609,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         true,
         `Bridge file:// open failed: ${JSON.stringify(localOpenResult)}`
       )
+      const localFileWaitResult = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_FILE_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(localFileWaitResult.kind, 'browser.wait')
+      assert.equal(localFileWaitResult.ok, true)
       const localFileInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 40 },
@@ -616,6 +624,38 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.ok(
         localFileInspect.inspectText.includes(LOCAL_FILE_TEXT),
         `file:// page was not rendered: ${localFileInspect.inspectText}`
+      )
+
+      const localDirectoryPath = join(resultDir, 'local-directory-fixture')
+      await mkdir(join(localDirectoryPath, 'nested'), { recursive: true })
+      await writeFile(join(localDirectoryPath, LOCAL_DIRECTORY_TEXT), 'directory fixture', 'utf8')
+      const localDirectoryOpenResult = await bridgeCall({
+        action: 'open',
+        url: pathToFileURL(localDirectoryPath).href,
+        timeoutMs: 8_000,
+      })
+      assert.equal(
+        localDirectoryOpenResult.ok,
+        true,
+        `Bridge file:// directory open failed: ${JSON.stringify(localDirectoryOpenResult)}`
+      )
+      const localDirectoryWaitResult = await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: LOCAL_DIRECTORY_TEXT } },
+        timeoutMs: 5_000,
+      })
+      assert.equal(localDirectoryWaitResult.kind, 'browser.wait')
+      assert.equal(localDirectoryWaitResult.ok, true)
+      const localDirectoryInspect = await bridgeCall({
+        action: 'inspect',
+        options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
+        timeoutMs: 5_000,
+      })
+      assert.ok(
+        localDirectoryInspect.inspectText.includes('Index of') &&
+          localDirectoryInspect.inspectText.includes('nested/') &&
+          localDirectoryInspect.inspectText.includes(LOCAL_DIRECTORY_TEXT),
+        `file:// directory was not rendered: ${localDirectoryInspect.inspectText}`
       )
 
       const localZipPath = join(resultDir, 'local-file-fixture.zip')

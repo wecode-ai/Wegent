@@ -1,28 +1,41 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
     io::Write,
     net::TcpListener,
+    path::Path,
     sync::{Arc, Barrier, Mutex},
     thread,
     time::Duration,
 };
 
 use super::{
-    bridge_navigation_url, bridge_request_authorized, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, download_event_owner, logical_owner_for_native_label,
+    bridge_navigation_url, bridge_request_authorized, browser_file_url_from_path,
+    browser_open_action, browser_webview_url, consume_approved_agent_risk, directory_listing_html,
+    download_event_owner, file_url_path, loaded_browser_url, logical_owner_for_native_label,
     merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
-    register_agent_approval, relabel_logical_entry, remove_logical_entry_if_native_matches,
-    script_browser_action, script_resolve_inspect_target, script_semantic_inspect,
-    should_record_loaded_url, update_logical_entry_if_native_matches, wait_for_browser_ready,
-    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
+    register_agent_approval, register_directory_preview, relabel_logical_entry,
+    remove_logical_entry_if_native_matches, script_browser_action, script_resolve_inspect_target,
+    script_semantic_inspect, should_record_loaded_url, update_logical_entry_if_native_matches,
+    wait_for_browser_ready, DirectoryEntry, EmbeddedBrowserBridgeRequest,
+    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
+    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+    EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use serde_json::{json, Value};
 use tauri::WebviewUrl;
 
 static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn test_temp_dir(name: &str) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "wework-embedded-browser-test-{}-{name}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("test temp directory should be created");
+    directory
+}
 
 #[test]
 fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
@@ -44,6 +57,66 @@ fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
 fn placeholder_load_does_not_replace_the_requested_url() {
     assert!(!should_record_loaded_url("about:blank"));
     assert!(should_record_loaded_url("https://example.com/"));
+}
+
+#[test]
+fn directory_file_url_converts_back_to_path() {
+    let root = test_temp_dir("directory-file-url");
+    let directory = root.join("reports");
+    fs::create_dir_all(&directory).unwrap();
+    let url = browser_file_url_from_path(&directory).unwrap();
+
+    assert_eq!(file_url_path(&url).unwrap(), directory);
+}
+
+#[test]
+fn directory_listing_html_links_files_and_directories() {
+    let directory_url = tauri::Url::parse("file:///Users/me/reports").unwrap();
+    let html = directory_listing_html(
+        Path::new("/Users/me/reports"),
+        &directory_url,
+        &[
+            DirectoryEntry {
+                name: "nested/".to_string(),
+                url: "file:///Users/me/reports/nested/".to_string(),
+                kind: "directory",
+                size: None,
+                modified: None,
+            },
+            DirectoryEntry {
+                name: "a < b.txt".to_string(),
+                url: "file:///Users/me/reports/a%20%3C%20b.txt".to_string(),
+                kind: "file",
+                size: Some(12),
+                modified: Some("42s".to_string()),
+            },
+        ],
+        false,
+    );
+
+    assert!(html.contains("Index of /Users/me/reports"));
+    assert!(html.contains("href=\"file:///Users/me/reports/nested/\""));
+    assert!(html.contains("a &lt; b.txt"));
+    assert!(html.contains("12 bytes"));
+}
+
+#[test]
+fn loaded_directory_preview_url_preserves_requested_directory_url() {
+    let state = EmbeddedBrowserState::default();
+    register_directory_preview(
+        &state,
+        "file:///tmp/wework-embedded-browser/directory-1.html",
+        "file:///Users/me/reports",
+    );
+
+    assert_eq!(
+        loaded_browser_url(
+            &state,
+            "file:///tmp/wework-embedded-browser/directory-1.html"
+        ),
+        Some("file:///Users/me/reports".to_string())
+    );
+    assert_eq!(loaded_browser_url(&state, "about:blank"), None);
 }
 
 #[test]
