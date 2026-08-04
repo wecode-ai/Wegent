@@ -46,7 +46,9 @@ Tasks created from the Popout Window still run on the local execution device and
 
 ## Tray Display
 
-**Settings → General → Tray display** controls unread completions, running tasks, and Codex quota independently. When **Codex quota** is enabled, the 5-hour and 7-day remaining quota appears next to the tray icon only when local Codex is available and its quota was read successfully. Wework does not show empty quota placeholders when Codex is unavailable. The tray tooltip and settings menu identify the data as Codex quota.
+**Settings → General → Tray display** independently controls unread completions, running tasks, Codex quota, and cloud quota. When **Codex quota** is enabled, the 5-hour and 7-day remaining quota appears next to the tray icon only when local Codex is available and its quota was read successfully. Wework does not show empty quota placeholders when Codex is unavailable. When **Cloud quota** is enabled, Wework displays the quota source's ASCII abbreviation (up to five letters) and remaining value next to the tray icon after a cloud connection is established and the quota is read successfully, for example `AIGC -85.68`.
+
+The lower-left quota menu and the settings item use the full quota source name, such as `AIGC额度`. Usage rate is calculated from used value divided by total quota, and a negative remaining value is preserved to make over-quota usage explicit. The tray tooltip and settings menu identify whether the data belongs to Codex or the cloud quota source.
 
 ## Import from Other AI Apps
 
