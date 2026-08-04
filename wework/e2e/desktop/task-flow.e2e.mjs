@@ -13312,7 +13312,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         value: 'file-panel-anchor',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('scrollIntoViewAsUser', filePanelAnchorSelector)
+      await control.command('scrollIntoViewAsUser', filePanelAnchorSelector, { value: 'start' })
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const { element: filePanelAnchorBeforeOpen, scroller: filePanelScrollerBeforeOpen } =
         await waitForElementInsideScroller(
@@ -13347,6 +13347,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         'The linked file paragraph after opening the file panel'
       )
       assert.ok(
+        filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
+        `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
+      )
+      assert.ok(
         Math.abs(filePanelAnchorAfterOpen.top - filePanelAnchorBeforeOpen.top) <= 8,
         `Opening the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterOpen.top}px`
       )
@@ -13368,6 +13372,26 @@ last_updated = "2026-07-30T00:00:00Z"`
         'The file panel remained open after the anchor regression check',
         DEFAULT_STEP_TIMEOUT_MS,
         ACTIVE_WORKBENCH_SELECTOR
+      )
+      await control.command('finishAnimations', 'body')
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+      const filePanelScrollerAfterClose = await getSingleElementMetrics(
+        control,
+        conversationScrollerSelector,
+        'The conversation after closing a linked file'
+      )
+      const filePanelAnchorAfterClose = await getSingleElementMetrics(
+        control,
+        filePanelAnchorSelector,
+        'The linked file paragraph after closing the file panel'
+      )
+      assert.ok(
+        Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
+        `Closing the file panel did not restore the conversation width from ${filePanelScrollerAfterOpen.width}px; after=${filePanelScrollerAfterClose.width}px`
+      )
+      assert.ok(
+        Math.abs(filePanelAnchorAfterClose.top - filePanelAnchorBeforeOpen.top) <= 8,
+        `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
 
       phase = 'workspace-resources-across-conversation-switch'

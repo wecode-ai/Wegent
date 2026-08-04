@@ -42,7 +42,6 @@ interface AssistantMarkdownProps {
   isStreaming?: boolean
   variant?: 'default' | 'process'
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onBeforeOpenFile?: (sourceElement: HTMLElement) => void
   fileChanges?: TurnFileChangesSummary
 }
 
@@ -55,7 +54,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   isStreaming = false,
   variant = 'default',
   onOpenFile,
-  onBeforeOpenFile,
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
@@ -179,11 +177,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <td className="border-b border-border px-3 py-2">{children}</td>
       ),
       a: ({ href, children }: { href?: string; children?: ReactNode }) => (
-        <AssistantMarkdownLink
-          href={href}
-          onOpenFile={openFile}
-          onBeforeOpenFile={onBeforeOpenFile}
-        >
+        <AssistantMarkdownLink href={href} onOpenFile={openFile}>
           {children}
         </AssistantMarkdownLink>
       ),
@@ -191,7 +185,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [onBeforeOpenFile, openFile, variant]
+    [openFile, variant]
   )
 
   return (
@@ -448,12 +442,10 @@ function getMarkdownFileIcon(path: string): ReactNode {
 function AssistantMarkdownLink({
   href,
   onOpenFile,
-  onBeforeOpenFile,
   children,
 }: {
   href?: string
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onBeforeOpenFile?: (sourceElement: HTMLElement) => void
   children?: ReactNode
 }) {
   const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
@@ -486,12 +478,11 @@ function AssistantMarkdownLink({
         type="button"
         className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
         data-testid="assistant-markdown-link"
-        onClick={event => {
+        onClick={() => {
           if (isHtmlFilePath(filePath)) {
             const browserUrl = localHtmlBrowserUrl(filePath)
             if (browserUrl && requestEmbeddedBrowserOpen(browserUrl)) return
           }
-          onBeforeOpenFile?.(event.currentTarget)
           if (openOptions) {
             onOpenFile?.(filePath, openOptions)
             return

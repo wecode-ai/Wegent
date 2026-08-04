@@ -103,7 +103,6 @@ interface MessageListProps {
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onBeforeOpenWorkspaceFile?: (sourceElement: HTMLElement) => void
   onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -199,7 +198,6 @@ export const MessageList = memo(function MessageList({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
-  onBeforeOpenWorkspaceFile,
   onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -612,7 +610,6 @@ export const MessageList = memo(function MessageList({
                 onOpenFileChangesReview={onOpenFileChangesReview}
                 fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onBeforeOpenWorkspaceFile={onBeforeOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
@@ -733,9 +730,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
-    previous.onBeforeOpenWorkspaceFile !== next.onBeforeOpenWorkspaceFile
-      ? 'onBeforeOpenWorkspaceFile'
-      : null,
     previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
@@ -1904,7 +1898,6 @@ function AssistantMessage({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
-  onBeforeOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
@@ -1936,7 +1929,6 @@ function AssistantMessage({
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onBeforeOpenWorkspaceFile?: (sourceElement: HTMLElement) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
@@ -2114,7 +2106,6 @@ function AssistantMessage({
                 content={visibleContent}
                 isStreaming={isStreaming}
                 onOpenFile={openFileFromLink}
-                onBeforeOpenFile={onBeforeOpenWorkspaceFile}
                 fileChanges={message.fileChanges}
               />
             </div>
