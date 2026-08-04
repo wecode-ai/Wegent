@@ -950,6 +950,7 @@ mod tests {
     fn backend_config(device_id: &str) -> LocalBackendConfig {
         LocalBackendConfig {
             backend_url: "https://backend.example.com".to_string(),
+            socket_url: "wss://socket.example.com".to_string(),
             auth_token: "token".to_string(),
             device_id: device_id.to_string(),
             runtime_instance_id: "runtime-1".to_string(),

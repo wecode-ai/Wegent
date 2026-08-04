@@ -100,10 +100,9 @@ impl RuntimeWorkRpcHandler {
             {
                 continue;
             }
-            if !self.is_active_local_task(&link.local_task_id)
-                && normalize_inactive_running_codex_task(&mut link)
-            {
-                self.store.upsert_task(link.clone());
+            let running = self.is_active_local_task(&link.local_task_id);
+            if apply_local_execution_state(&mut link, running) {
+                self.store.update_task_execution_state(&link);
             }
             link.list_order = Some(links.len());
             links.push(link);
@@ -550,7 +549,7 @@ impl RuntimeWorkRpcHandler {
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
         if let Some(link) = &mut local_link {
             if !local_active && normalize_inactive_running_codex_task(link) {
-                self.store.upsert_task(link.clone());
+                self.store.update_task_execution_state(link);
             }
         }
         let workspace_path = string_field(thread, "cwd")

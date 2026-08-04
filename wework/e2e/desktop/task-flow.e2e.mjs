@@ -3630,64 +3630,128 @@ async function verifyWorkspaceTabIsolation(control) {
 
   const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
   const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`
-  const firstAgentIframe = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
+  const firstAgentWebview = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
   await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
-  await control.command('waitFor', firstAgentIframe, {
+  await control.command('waitFor', firstAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', firstAgentIframe, {
+    await control.command('getAttribute', firstAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
     firstAgentId,
-    'The first Agent iframe was not bound to its tab identity'
+    'The first Agent webview was not bound to its tab identity'
   )
+  const agentStorageKey = 'wework-e2e-agent-storage'
+  const agentStorageValue = `persisted-${Date.now()}`
+  await control.command('setEmbeddedBrowserLocalStorageItem', 'body', {
+    value: JSON.stringify({
+      key: agentStorageKey,
+      label: `app-wegent-${firstAgentId}`,
+      value: agentStorageValue,
+    }),
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getEmbeddedBrowserLocalStorageItem', 'body', {
+      value: JSON.stringify({
+        key: agentStorageKey,
+        label: `app-wegent-${firstAgentId}`,
+      }),
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }),
+    agentStorageValue,
+    'The first Agent webview did not retain its localStorage write'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 3000))
+  await control.command('click', `[data-testid="workspace-tab-close-${firstAgentId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-${firstAgentId}`),
+    'Closing the first Agent tab did not remove its webview host'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1500))
 
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withSecondAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
-    'The explicit new-Agent action did not create a second tab'
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 1,
+    'The explicit new-Agent action did not reopen an Agent tab'
   )
-  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent').find(
-    testId => !initialAgentIds.includes(testId)
-  )
+  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent')[0]
   assert.ok(secondAgentTestId, 'The second Agent tab identity was not observable')
   const secondAgentId = secondAgentTestId.slice('workspace-tab-'.length)
   const secondAgentContent = `[data-testid="workspace-tab-content-${secondAgentId}"]`
-  const secondAgentIframe = `${secondAgentContent} [data-testid="app-iframe-wegent"]`
-  await control.command('waitFor', secondAgentIframe, {
+  const secondAgentWebview = `${secondAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('waitFor', secondAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', secondAgentIframe, {
+    await control.command('getAttribute', secondAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
     secondAgentId,
-    'The second Agent tab reused the first iframe identity'
+    'The second Agent tab reused the first webview identity'
+  )
+  assert.equal(
+    await control.command('getEmbeddedBrowserLocalStorageItem', 'body', {
+      value: JSON.stringify({
+        key: agentStorageKey,
+        label: `app-wegent-${secondAgentId}`,
+      }),
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }),
+    agentStorageValue,
+    'Reopening Wegent did not restore its persisted localStorage'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-agent"]')
+  const withThirdAgent = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    'The explicit new-Agent action did not create an independent Agent tab'
+  )
+  const thirdAgentTestId = workspaceTabIds(withThirdAgent, 'agent').find(
+    testId => testId !== secondAgentTestId
+  )
+  assert.ok(thirdAgentTestId, 'The third Agent tab identity was not observable')
+  const thirdAgentId = thirdAgentTestId.slice('workspace-tab-'.length)
+  const thirdAgentContent = `[data-testid="workspace-tab-content-${thirdAgentId}"]`
+  const thirdAgentWebview = `${thirdAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('waitFor', thirdAgentWebview, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', thirdAgentWebview, {
+      value: 'data-workspace-tab-id',
+    }),
+    thirdAgentId,
+    'The third Agent tab reused the reopened webview identity'
   )
   const agentSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
-    agentSnapshot.testIds.includes(`workspace-tab-content-${firstAgentId}`) &&
-      agentSnapshot.testIds.includes(`workspace-tab-content-${secondAgentId}`),
-    'Switching Agent tabs unmounted one of the iframe instances'
+    agentSnapshot.testIds.includes(`workspace-tab-content-${secondAgentId}`) &&
+      agentSnapshot.testIds.includes(`workspace-tab-content-${thirdAgentId}`),
+    'Switching Agent tabs unmounted one of the webview hosts'
   )
-  await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
-  await control.command('waitFor', firstAgentIframe, {
+  await control.command('click', `[data-testid="workspace-tab-select-${secondAgentId}"]`)
+  await control.command('waitFor', secondAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', secondAgentIframe, {
+    await control.command('getAttribute', thirdAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
-    secondAgentId,
-    'The hidden Agent iframe was recreated or detached after switching tabs'
+    thirdAgentId,
+    'The hidden Agent webview host was recreated or detached after switching tabs'
   )
-  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-03-agent-iframes.png')
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-03-agent-webviews.png')
 
   await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
   await control.command('waitFor', `${firstTaskContent} [data-testid="plugins-button"]`, {
@@ -6942,6 +7006,7 @@ class RealCloudEnvironment {
     this.redisPort = await reservePort()
     this.backendPort = await reservePort()
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -6963,6 +7028,7 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
     }
@@ -7012,6 +7078,7 @@ class RealCloudEnvironment {
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
+      WEGENT_SOCKET_URL: this.socketUrl,
       WEGENT_AUTH_TOKEN: this.authToken,
       DEVICE_ID: CLOUD_DEVICE_ID,
       DEVICE_NAME: 'Wework E2E Cloud Device',
@@ -7193,6 +7260,37 @@ class RealCloudEnvironment {
     await stopProcess(this.backend)
     await stopProcess(this.redis)
   }
+}
+
+async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) {
+  assert.notEqual(
+    cloudEnvironment.socketUrl,
+    cloudEnvironment.backendUrl,
+    'Cloud E2E must use distinct backend and socket URLs'
+  )
+  const startedAt = Date.now()
+  let executorLog = null
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    executorLog = JSON.parse(await control.command('getLocalExecutorLog', 'body'))
+    if (
+      executorLog.backendUrl === cloudEnvironment.backendUrl &&
+      executorLog.socketUrl === cloudEnvironment.socketUrl
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  assert.deepEqual(
+    {
+      backendUrl: executorLog?.backendUrl ?? null,
+      socketUrl: executorLog?.socketUrl ?? null,
+    },
+    {
+      backendUrl: cloudEnvironment.backendUrl,
+      socketUrl: cloudEnvironment.socketUrl,
+    },
+    'Local executor did not apply the server-downlinked socket URL'
+  )
 }
 
 class DesktopE2EServer {
@@ -7931,7 +8029,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (request.method === 'GET' && url.pathname === '/') {
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/login/oidc')) {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -11720,6 +11818,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (CLOUD_ONLY) {
+      phase = 'server-downlinked-socket-url'
+      await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
         control,

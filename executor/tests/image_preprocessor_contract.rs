@@ -8,7 +8,9 @@ use image::{
     codecs::gif::{GifEncoder, Repeat},
     DynamicImage, Frame, ImageBuffer, ImageFormat, Rgb, Rgba,
 };
-use wegent_executor::image_preprocessor::prepare_image_bytes_for_model;
+use wegent_executor::image_preprocessor::{
+    prepare_image_bytes_for_model, prepare_image_bytes_for_model_with_short_edge_limit,
+};
 
 fn image_bytes(format: ImageFormat, size: (u32, u32)) -> Vec<u8> {
     let image = ImageBuffer::from_pixel(size.0, size.1, Rgb([32, 144, 208]));
@@ -69,4 +71,52 @@ fn animated_gif_resize_outputs_first_frame_as_png() {
     assert_eq!(prepared.mime_type, "image/png");
     assert_eq!(png_dimensions(&prepared.data), (128, 64));
     assert!(prepared.resized);
+}
+
+#[test]
+fn short_edge_limit_resizes_landscape_and_portrait_images() {
+    let landscape = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_bytes(ImageFormat::Png, (3000, 2000)),
+        "image/png",
+        720,
+    );
+    let portrait = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_bytes(ImageFormat::Png, (2000, 3000)),
+        "image/png",
+        720,
+    );
+
+    assert_eq!(landscape.size, Some((1080, 720)));
+    assert_eq!(portrait.size, Some((720, 1080)));
+    assert!(landscape.resized);
+    assert!(portrait.resized);
+}
+
+#[test]
+fn short_edge_limit_preserves_the_long_dimension_of_panorama_images() {
+    let panorama = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_bytes(ImageFormat::Png, (10_000, 1000)),
+        "image/png",
+        720,
+    );
+    let tall = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_bytes(ImageFormat::Png, (1000, 10_000)),
+        "image/png",
+        720,
+    );
+
+    assert_eq!(panorama.size, Some((7200, 720)));
+    assert_eq!(tall.size, Some((720, 7200)));
+}
+
+#[test]
+fn short_edge_limit_leaves_images_below_720p_unchanged() {
+    let original = image_bytes(ImageFormat::Png, (640, 360));
+    let prepared = prepare_image_bytes_for_model_with_short_edge_limit(&original, "image/png", 720);
+
+    assert_eq!(prepared.original_size, Some((640, 360)));
+    assert_eq!(prepared.size, Some((640, 360)));
+    assert_eq!(prepared.mime_type, "image/png");
+    assert!(!prepared.resized);
+    assert_eq!(prepared.data, original);
 }

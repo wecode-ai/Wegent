@@ -270,6 +270,7 @@ function WorkspaceTabSurface({
           {renderedIframe ? (
             <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
               <AppIframe
+                active={active && Boolean(iframe)}
                 src={renderedIframe.src}
                 title={renderedIframe.title}
                 workspaceTabId={tab.id}
@@ -420,6 +421,7 @@ function AppShell() {
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
     backendUrl: cloudConnection.backendUrl,
+    socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
   }
@@ -673,6 +675,7 @@ function AppShell() {
           <LocalExecutorCloudBridge
             apiBaseUrl={cloudConnection.apiBaseUrl}
             backendUrl={cloudConnection.backendUrl}
+            socketBaseUrl={cloudConnection.socketBaseUrl}
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />

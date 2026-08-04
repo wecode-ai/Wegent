@@ -12,12 +12,15 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
+from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
     _utcnow,
+    mark_document_index_failed,
     mark_document_index_started,
     mark_document_index_succeeded,
     prepare_document_index_enqueue,
 )
+from app.services.knowledge.processing_errors import build_processing_error
 
 
 def _create_knowledge_base(test_db: Session, test_user: User) -> Kind:
@@ -354,3 +357,64 @@ def test_mark_document_index_succeeded_only_updates_active_generation(
     assert finalized is False
     assert document.index_status == DocumentIndexStatus.QUEUED
     assert document.index_generation == 2
+
+
+def test_mark_document_index_failed_persists_error_and_preserves_source_config(
+    test_db: Session, test_user: User
+):
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.INDEXING,
+        index_generation=2,
+    )
+    document.source_config = {"converted_attachment_id": 99}
+    test_db.commit()
+
+    finalized = mark_document_index_failed(
+        test_db,
+        document.id,
+        2,
+        error=build_processing_error(
+            stage=DocumentProcessingStage.INDEXING,
+            code="indexing_failed",
+            message="Document indexing failed. Please retry.",
+            retryable=True,
+            generation=2,
+        ),
+    )
+
+    test_db.refresh(document)
+    assert finalized is True
+    assert document.index_status == DocumentIndexStatus.FAILED
+    assert document.source_config["converted_attachment_id"] == 99
+    assert document.processing_error_payload["code"] == "indexing_failed"
+    assert document.processing_error_payload["generation"] == 2
+
+
+def test_new_generation_clears_processing_error_and_preserves_source_config(
+    test_db: Session, test_user: User
+):
+    knowledge_base = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        knowledge_base,
+        index_status=DocumentIndexStatus.FAILED,
+        index_generation=2,
+    )
+    document.source_config = {
+        "converted_attachment_id": 99,
+        "processing_error": {"code": "old"},
+    }
+    test_db.commit()
+
+    decision = prepare_document_index_enqueue(test_db, document.id)
+
+    test_db.refresh(document)
+    assert decision.should_enqueue is True
+    assert document.index_generation == 3
+    assert document.processing_error_payload is None
+    assert document.source_config["converted_attachment_id"] == 99
