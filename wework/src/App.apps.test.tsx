@@ -5,6 +5,22 @@ import './i18n'
 import App from './App'
 import { saveStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 
+const embeddedBrowserMocks = vi.hoisted(() => ({
+  closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
+  navigateEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
+  openEmbeddedBrowser: vi.fn().mockResolvedValue({
+    nativeLabel: 'embedded-browser-native-1',
+    title: null,
+    url: 'https://app.example.com',
+  }),
+  setEmbeddedBrowserBounds: vi.fn().mockResolvedValue(undefined),
+}))
+
+vi.mock('@/lib/embedded-browser', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
+  ...embeddedBrowserMocks,
+}))
+
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     startDragging: vi.fn(),
@@ -266,7 +282,7 @@ describe('App center route', () => {
     render(<App />)
 
     expect(await screen.findByTestId('app-iframe-wegent')).toHaveAttribute(
-      'src',
+      'data-src',
       'https://app.example.com/login/oidc?access_token=cloud-token&token_type=bearer&login_success=true'
     )
   })
