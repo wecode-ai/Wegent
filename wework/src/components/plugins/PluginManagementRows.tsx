@@ -25,6 +25,7 @@ const distributionPillClass: Record<PluginDistribution, string> = {
   workspace: 'plugin-management-pill-workspace',
   personal: 'plugin-management-pill-personal',
   public: 'plugin-management-pill-public',
+  external: 'plugin-management-pill-external',
 }
 
 export function InstalledPluginRow({
@@ -67,7 +68,9 @@ export function InstalledPluginRow({
         ? t('workbench.plugins_distribution_workspace', '企业内部')
         : plugin.distribution === 'personal'
           ? t('workbench.plugins_distribution_personal', '个人创建')
-          : t('workbench.plugins_distribution_public', 'Wework官方')
+          : plugin.distribution === 'external'
+            ? t('workbench.plugins_distribution_external', '第三方市场')
+            : t('workbench.plugins_distribution_public', 'Wework官方')
   const subtitle = buildInstalledPluginSubtitle(plugin, marketplaceItem, t)
 
   useEffect(() => {

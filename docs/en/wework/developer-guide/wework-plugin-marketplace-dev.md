@@ -108,23 +108,28 @@ Local creations **do not** upload automatically. Only an explicit “Publish to 
 
 ### Option B: Develop official plugins in wework-plugins
 
-WeWork-maintained plugins live in:
+WeWork-maintained plugins use **two separate source repos** (different content,
+not mirrors of each other), chosen by target marketplace tab:
 
-```text
-https://github.com/wecode-ai/wework-plugins
-```
+| Source repo | Target tab | Publish `--visibility` |
+| --- | --- | --- |
+| [github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework official | `public` |
+| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | Enterprise internal | `workspace` |
 
 Layout matches openai/plugins: after checkout each plugin is
 `<checkout>/plugins/<slug>/`, registered in `.agents/plugins/marketplace.json`.
-That repository is for development, review, and CI only. Backend and Wework
-**do not** scan it at startup.
+Those repositories are for development, review, and CI only. Backend and Wework
+**do not** scan them at startup. Check them out as siblings of Wegent under
+distinct directory names (for example `wework-plugins-public` and
+`wework-plugins`) so they do not overwrite each other.
 
-Build and scan locally (sibling checkout next to Wegent):
+Build and scan locally:
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> --dry-run
+  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
+# or enterprise checkout: ../wework-plugins/plugins/<plugin-slug>
 ```
 
 Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
@@ -170,8 +175,23 @@ Best for company-maintained built-in capabilities. Identity fields:
 - `source_provider=wework`
 - `owner_user_id=NULL`
 
+Publish from the matching source repo with the correct `--visibility`:
+
 ```bash
 cd backend
+
+# Empty DB / rebuild: seed Wework official tab only (public repo plugins)
+uv run python scripts/seed_wework_public_plugins.py
+
+# Wework official tab (public GitHub repo, single plugin)
+uv run python scripts/publish_official_plugin.py \
+  ../wework-plugins-public/plugins/<plugin-slug> \
+  --visibility public \
+  --commit-sha "$CI_COMMIT_SHA" \
+  --build-url "$CI_JOB_URL" \
+  --publisher release-bot
+
+# Enterprise-internal tab (intranet GitLab repo)
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins/plugins/<plugin-slug> \
   --visibility workspace \
@@ -181,7 +201,7 @@ uv run python scripts/publish_official_plugin.py \
 ```
 
 `--visibility workspace` (default) maps to the enterprise-internal tab; `public`
-maps to the domestic-public tab.
+maps to the Wework official tab.
 
 Rules:
 

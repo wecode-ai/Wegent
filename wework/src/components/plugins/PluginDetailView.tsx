@@ -436,7 +436,9 @@ export function PluginDetailView({
         ? t('workbench.plugins_distribution_workspace', '企业内部')
         : plugin.distribution === 'personal'
           ? t('workbench.plugins_distribution_personal', '个人创建')
-          : t('workbench.plugins_distribution_public', 'Wework官方')
+          : plugin.distribution === 'external'
+            ? t('workbench.plugins_distribution_external', '第三方市场')
+            : t('workbench.plugins_distribution_public', 'Wework官方')
   const normalizedSourceLabel =
     plugin.distribution === 'official' &&
     /^(?:Codex|OpenAI)\s*(?:官方|official)$/i.test(plugin.sourceLabel.trim())

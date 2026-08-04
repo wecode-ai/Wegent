@@ -18,13 +18,7 @@ sidebar_position: 2
 
 ### 检出插件源码仓库
 
-公开仓库（若有权限）：
-
-```text
-https://github.com/wecode-ai/wework-plugins
-```
-
-企业内部可用内网仓库，例如：
+EchoID 属于**企业内部**插件，源码在内网仓（与 GitHub 公开仓内容不同，不要从公开仓发）：
 
 ```bash
 git clone ssh://git@git.intra.weibo.com:2222/weibo_rd/common/wecode/wework-plugins.git \
@@ -80,7 +74,7 @@ uv run python scripts/publish_official_plugin.py \
 
 说明：
 
-- `--visibility workspace` → 桌面端「企业内部」；改成 `public` 会进「国内公开」。
+- `--visibility workspace` → 桌面端「企业内部」。公开仓插件应使用 `public`（Wework官方 Tab），不要把 EchoID 发成 `public`。
 - 同一 `slug + version + SHA256` 可幂等重试；**同版本改了内容会失败**，需在源码里升 SemVer 后再发。
 - **不要**手工 `INSERT` `plugin_releases`，也**不要**给 EchoID 配 `plugin_upstreams`（那是 GitHub 等 mirror 用的）。
 

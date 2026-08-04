@@ -108,22 +108,25 @@ description: Review a merge request and summarize risks
 
 ### 方式 B：在独立仓库开发官方插件
 
-WeWork 自研插件统一放在：
+WeWork 自研插件按目标 Tab 分两个源码仓（**内容不同，不是互为镜像**）：
 
-```text
-https://github.com/wecode-ai/wework-plugins
-```
+| 源码仓 | 目标 Tab | 发布 `--visibility` |
+| --- | --- | --- |
+| [github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework官方 | `public` |
+| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | 企业内部 | `workspace` |
 
-布局对齐 openai/plugins：检出后目录为 `<checkout>/plugins/<slug>/`，并在
-`.agents/plugins/marketplace.json` 登记。该仓库只服务开发、评审、CI；
-Backend / Wework **不会**在启动时扫描它。
+布局均对齐 openai/plugins：检出后目录为 `<checkout>/plugins/<slug>/`，并在
+`.agents/plugins/marketplace.json` 登记。源码仓只服务开发、评审、CI；
+Backend / Wework **不会**在启动时扫描它。建议与 Wegent 同级分别检出（例如
+`wework-plugins-public` 与 `wework-plugins`），避免互相覆盖。
 
-本地只构建扫描（假设与 Wegent 同级检出）：
+本地只构建扫描：
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> --dry-run
+  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
+# 或企业内部仓：../wework-plugins/plugins/<plugin-slug>
 ```
 
 成功时输出 `name`、`version`、`sha256`。失败时先修扫描错误，再进入发布。
@@ -169,8 +172,23 @@ pnpm --filter wework dev:mac -- --executor-isolation
 - `source_provider=wework`
 - `owner_user_id=NULL`
 
+从对应源码仓发布，并设置正确的 `--visibility`：
+
 ```bash
 cd backend
+
+# 空库/重建：一次性初始化 Wework官方 Tab（仅公开仓 4 个插件，不含企业内部）
+uv run python scripts/seed_wework_public_plugins.py
+
+# Wework官方 Tab（公开仓，单个插件）
+uv run python scripts/publish_official_plugin.py \
+  ../wework-plugins-public/plugins/<plugin-slug> \
+  --visibility public \
+  --commit-sha "$CI_COMMIT_SHA" \
+  --build-url "$CI_JOB_URL" \
+  --publisher release-bot
+
+# 企业内部 Tab（内网仓）
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins/plugins/<plugin-slug> \
   --visibility workspace \
@@ -179,7 +197,7 @@ uv run python scripts/publish_official_plugin.py \
   --publisher release-bot
 ```
 
-`--visibility workspace`（默认）进入「企业内部」Tab；`public` 进入「国内公开」。
+`--visibility workspace`（默认）进入「企业内部」Tab；`public` 进入「Wework官方」Tab。
 
 规则：
 

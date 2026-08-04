@@ -38,10 +38,7 @@ import {
   queuePluginPromptTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
-import {
-  CODEX_PERSONAL_MARKETPLACE_ID,
-  WEWORK_PERSONAL_MARKETPLACE_ID,
-} from '@/features/plugins/builtinPlugins'
+import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { logoutLocalQrConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
   InstalledSkill,
@@ -77,7 +74,9 @@ import {
   mergeInstalledPlugins,
 } from './installedPluginMerge'
 import {
+  installedPluginMarketplaceId,
   installedPluginDistribution,
+  marketplaceItemMarketplaceId,
   marketplacePluginDistribution,
   type PluginDistribution,
 } from './pluginDistribution'
@@ -471,22 +470,12 @@ function cloudMarketplaceKey(): string {
   return 'cloud:default'
 }
 
-const BUILT_IN_LOCAL_MARKETPLACE_IDS = new Set([
-  'openai-api-curated',
-  'openai-bundled',
-  'openai-primary-runtime',
-  CODEX_PERSONAL_MARKETPLACE_ID,
-  'wegent',
-  WEWORK_PERSONAL_MARKETPLACE_ID,
-])
-
 function isUserAddedMarketplace(marketplace: MarketplaceOption): boolean {
-  return marketplace.kind === 'local' && !BUILT_IN_LOCAL_MARKETPLACE_IDS.has(marketplace.id)
+  return marketplace.kind === 'local' && !isBuiltInMarketplaceId(marketplace.id)
 }
 
 function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
-  const marketplaceId = item.manifest?.marketplaceId
-  return typeof marketplaceId === 'string' && marketplaceId.trim() ? marketplaceId.trim() : null
+  return marketplaceItemMarketplaceId(item)
 }
 
 function isMarketplaceSourceValid(value: string): boolean {
@@ -511,10 +500,14 @@ function mergeMarketplaceCatalog(
 ): PluginMarketplaceItem[] {
   const merged = new Map<string, PluginMarketplaceItem>()
   for (const item of cloudItems) {
-    merged.set(item.name.toLowerCase(), item)
+    merged.set(`canonical:${item.name.toLowerCase()}`, item)
   }
   for (const item of localItems) {
-    const key = item.name.toLowerCase()
+    const marketplaceId = localMarketplaceIdFromItem(item)
+    const key =
+      marketplaceId && !isBuiltInMarketplaceId(marketplaceId)
+        ? `local:${marketplaceId.toLowerCase()}:${item.name.toLowerCase()}`
+        : `canonical:${item.name.toLowerCase()}`
     if (!merged.has(key)) {
       merged.set(key, item)
     }
@@ -1181,10 +1174,9 @@ export function PluginsWorkspace({
   const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState(rememberedMarketplaceKey)
-  const [marketplaceSourceFilterKey, setMarketplaceSourceFilterKey] = useState(() => {
-    const rememberedKey = rememberedMarketplaceKey()
-    return rememberedKey.startsWith('local:') ? rememberedKey : ''
-  })
+  // Always open the marketplace on the "全部" distribution tab; do not restore a
+  // previously selected local marketplace filter when navigating back from another route.
+  const [marketplaceSourceFilterKey, setMarketplaceSourceFilterKey] = useState('')
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
   const [currentDeviceId, setCurrentDeviceId] = useState('')
   const [canPublish, setCanPublish] = useState(false)
@@ -2813,6 +2805,7 @@ export function PluginsWorkspace({
       workspace: t('workbench.plugins_distribution_workspace', '企业内部'),
       personal: t('workbench.plugins_distribution_personal', '个人创建'),
       public: t('workbench.plugins_distribution_public', 'Wework官方'),
+      external: t('workbench.plugins_distribution_external', '第三方市场'),
     }),
     [t]
   )
@@ -2852,6 +2845,10 @@ export function PluginsWorkspace({
   const visibleInstalledPlugins = useMemo(
     () =>
       installedPlugins.filter(plugin => {
+        if (marketplaceSourceFilterKey) {
+          const marketplaceId = marketplaceSourceFilterKey.slice('local:'.length)
+          if (installedPluginMarketplaceId(plugin.raw) !== marketplaceId) return false
+        }
         if (
           marketplaceDistributionFilter !== 'all' &&
           plugin.distribution !== marketplaceDistributionFilter
@@ -2865,7 +2862,7 @@ export function PluginsWorkspace({
           .toLowerCase()
           .includes(normalizedQuery)
       }),
-    [installedPlugins, marketplaceDistributionFilter, normalizedQuery]
+    [installedPlugins, marketplaceDistributionFilter, marketplaceSourceFilterKey, normalizedQuery]
   )
   const installedStripPlugins = visibleInstalledPlugins.slice(0, INSTALLED_STRIP_VISIBLE_COUNT)
   const hiddenInstalledPlugins = visibleInstalledPlugins.slice(INSTALLED_STRIP_VISIBLE_COUNT)
@@ -3322,6 +3319,7 @@ export function PluginsWorkspace({
                     data-testid={`plugins-distribution-tab-${distribution}`}
                     className="plugin-market-filter"
                     onClick={() => {
+                      rememberMarketplaceKey('')
                       setMarketplaceSourceFilterKey('')
                       setMarketplaceDistributionFilter(distribution)
                     }}

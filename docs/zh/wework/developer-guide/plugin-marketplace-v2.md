@@ -179,22 +179,36 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 ### WeWork 官方插件发布
 
-官方插件源码统一维护在
-[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)。
+官方插件按目标 Tab 分两个源码仓维护（**内容不同，不是互为镜像**）：
+
+| 源码仓 | Tab | `--visibility` |
+| --- | --- | --- |
+| [wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework官方 | `public` |
+| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | 企业内部 | `workspace` |
+
 布局对齐 openai/plugins：每个插件位于 `plugins/<slug>/`，必须包含
-`.codex-plugin/plugin.json`、能力文件和测试；该仓库只用于开发与 CI，Backend
-和 Wework 运行时不得直接读取它。
+`.codex-plugin/plugin.json`、能力文件和测试；源码仓只用于开发与 CI，Backend
+和 Wework 运行时不得直接读取它。建议与 Wegent 同级分别检出
+（例如 `wework-plugins-public` 与 `wework-plugins`）。
 
 发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入
 `source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin
-和不可变 Release（假设与 Wegent 同级检出）：
+和不可变 Release：
 
 ```bash
 # 本地只构建、扫描并输出 SHA256，不连接 MySQL/S3
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> --dry-run
+  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
 
-# 由受保护的 CI 环境发布（workspace=企业内部，public=国内公开）
+# Wework官方 Tab（公开仓）
+uv run python scripts/publish_official_plugin.py \
+  ../wework-plugins-public/plugins/<plugin-slug> \
+  --visibility public \
+  --commit-sha "$CI_COMMIT_SHA" \
+  --build-url "$CI_JOB_URL" \
+  --publisher release-bot
+
+# 企业内部 Tab（内网仓）
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins/plugins/<plugin-slug> \
   --visibility workspace \

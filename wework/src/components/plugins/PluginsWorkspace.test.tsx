@@ -973,7 +973,9 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace />)
 
-    expect(await screen.findByTestId('plugin-marketplace-row-101')).toHaveTextContent('Documents')
+    expect(
+      await screen.findByTestId('plugin-marketplace-row-desktop-e2e-marketplace:101')
+    ).toHaveTextContent('Documents')
     expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
   })
 
@@ -1334,7 +1336,7 @@ describe('PluginsWorkspace', () => {
     })
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toBeInTheDocument()
     await installPluginFromMarketCard('plugin-marketplace-install-101')
 
     expect(await screen.findByTestId('plugin-marketplace-actions-101')).toBeInTheDocument()
@@ -1394,17 +1396,21 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     expect(await screen.findByText('Superpowers')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugin-marketplace-actions-superpowers-local-id'))
-    await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-superpowers-local-id'))
+    await userEvent.click(
+      screen.getByTestId('plugin-marketplace-actions-openai-official:superpowers-local-id')
+    )
+    await userEvent.click(
+      screen.getByTestId('plugin-marketplace-uninstall-openai-official:superpowers-local-id')
+    )
     expect(screen.getByTestId('plugin-uninstall-confirm-button')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
     expectCodexAppServerRequest('plugin/uninstall', { pluginId: 'superpowers-local-id' })
     expect(
-      await screen.findByTestId('plugin-marketplace-install-superpowers-local-id')
+      await screen.findByTestId('plugin-marketplace-install-openai-official:superpowers-local-id')
     ).toHaveTextContent('安装')
     expect(
-      screen.queryByTestId('plugin-marketplace-actions-superpowers-local-id')
+      screen.queryByTestId('plugin-marketplace-actions-openai-official:superpowers-local-id')
     ).not.toBeInTheDocument()
   })
 
@@ -1493,7 +1499,8 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugin-marketplace-install-101')).toBeInTheDocument()
+    expect(screen.getAllByText('Documents').length).toBeGreaterThan(1)
     await installPluginFromMarketCard('plugin-marketplace-install-101')
 
     await waitFor(() =>
@@ -1736,7 +1743,7 @@ describe('PluginsWorkspace', () => {
     })
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
-    expect(await screen.findByText('Documents')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
     await userEvent.click(screen.getByTestId('plugin-detail-toggle-101'))
     await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
@@ -1909,6 +1916,87 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByText('Team Tool')).toBeInTheDocument()
   })
 
+  test('keeps OpenAI official, enterprise, and user marketplace plugins in separate filters', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-bundled',
+          displayName: 'OpenAI Bundled',
+          path: 'openai-bundled',
+          plugins: [
+            {
+              id: 'mailagent',
+              name: 'mailagent',
+              displayName: 'MailAgent',
+              description: 'Official mail plugin',
+            },
+          ],
+        },
+        {
+          name: 'wegent',
+          displayName: 'Wegent',
+          path: 'wegent',
+          plugins: [
+            {
+              id: 'echoid',
+              name: 'echoid',
+              displayName: 'EchoID',
+              description: 'Enterprise speaker id plugin',
+            },
+          ],
+        },
+        {
+          name: 'awesome-codex-plugins',
+          displayName: 'Awesome Codex Plugins',
+          path: 'https://github.com/example/awesome-codex-plugins',
+          plugins: [
+            {
+              id: 'superpowers',
+              name: 'superpowers',
+              displayName: 'SuperPowers',
+              description: 'Community plugin',
+            },
+          ],
+        },
+      ],
+      installedPluginNames: ['mailagent', 'echoid', 'superpowers'],
+    })
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(await screen.findByText('MailAgent')).toBeInTheDocument()
+    expect(screen.getByText('EchoID')).toBeInTheDocument()
+    expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-official'))
+    expect(screen.getByText('MailAgent')).toBeInTheDocument()
+    expect(screen.queryByText('EchoID')).not.toBeInTheDocument()
+    expect(screen.queryByText('SuperPowers')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-installed-strip-item-mailagent')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip-item-echoid')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip-item-superpowers')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-distribution-tab-workspace'))
+    expect(screen.getByText('EchoID')).toBeInTheDocument()
+    expect(screen.queryByText('MailAgent')).not.toBeInTheDocument()
+    expect(screen.queryByText('SuperPowers')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-installed-strip-item-echoid')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip-item-mailagent')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-marketplace-tab-awesome-codex-plugins'))
+    expect(screen.getByText('SuperPowers')).toBeInTheDocument()
+    expect(screen.queryByText('MailAgent')).not.toBeInTheDocument()
+    expect(screen.queryByText('EchoID')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-installed-strip-item-superpowers')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip-item-mailagent')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip-item-echoid')).not.toBeInTheDocument()
+  })
+
   test('selects a newly added local marketplace', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
@@ -1956,9 +2044,12 @@ describe('PluginsWorkspace', () => {
     unmount()
     render(<PluginsWorkspace />)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('plugins-marketplace-tab-local-1234')).toHaveClass('bg-surface')
+    // Navigating back into the marketplace always defaults to the "全部" tab.
+    expect(await screen.findByTestId('plugins-distribution-tab-all')).toHaveAttribute(
+      'aria-selected',
+      'true'
     )
+    expect(screen.getByTestId('plugins-marketplace-tab-local-1234')).not.toHaveClass('bg-surface')
   })
 
   test('shows add-marketplace state when no marketplace is configured', async () => {
@@ -2034,7 +2125,7 @@ describe('PluginsWorkspace', () => {
     const localPluginApi = createLocalCodexPluginApi()
 
     await localPluginApi.readState({ refresh: true })
-    await localPluginApi.installAvailablePlugin('5715908889684902000')
+    await localPluginApi.installAvailablePlugin('local-openai:5715908889684902000')
 
     expectCodexAppServerRequest('plugin/install', {
       pluginName: 'openai-documents',
@@ -2066,7 +2157,7 @@ describe('PluginsWorkspace', () => {
     const localPluginApi = createLocalCodexPluginApi()
 
     await localPluginApi.readState({ refresh: true })
-    await localPluginApi.installAvailablePlugin('5715908889684902000')
+    await localPluginApi.installAvailablePlugin('local-openai:5715908889684902000')
 
     expectCodexAppServerRequest('plugin/install', {
       marketplacePath: '/Users/test/.codex/plugins/marketplaces/openai',

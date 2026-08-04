@@ -904,6 +904,7 @@
     "plugins_distribution_personal": "Personal creations",
     "plugins_distribution_workspace": "Enterprise internal",
     "plugins_distribution_public": "Wework official",
+    "plugins_distribution_external": "Third-party marketplace",
     "plugins_uninstall_confirm_title": "Uninstall skill?",
     "plugins_uninstall_confirm_description": "You can reinstall it anytime.",
     "plugins_uninstall_cancel": "Cancel",

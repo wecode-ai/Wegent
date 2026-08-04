@@ -903,6 +903,7 @@
     "plugins_distribution_personal": "个人创建",
     "plugins_distribution_workspace": "企业内部",
     "plugins_distribution_public": "Wework官方",
+    "plugins_distribution_external": "第三方市场",
     "plugins_uninstall_confirm_title": "卸载技能？",
     "plugins_uninstall_confirm_description": "卸载后可以随时重新安装。",
     "plugins_uninstall_cancel": "取消",

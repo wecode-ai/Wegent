@@ -22,6 +22,11 @@ import {
   isPersonalMarketplaceId,
   WEWORK_PERSONAL_MARKETPLACE_ID,
 } from '@/features/plugins/builtinPlugins'
+import {
+  isBuiltInMarketplaceId,
+  isInternalDeviceMarketplaceId,
+  isOpenAiOfficialMarketplaceId,
+} from '@/features/plugins/marketplaceIdentity'
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -245,8 +250,6 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
-const INTERNAL_DEVICE_MARKETPLACE_IDS = new Set(['wegent'])
-
 let cachedState: LocalCodexPluginsState | null = null
 let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
@@ -369,6 +372,39 @@ function pluginDescription(summary: CodexPluginSummary, detail?: CodexPluginDeta
 
 function pluginDisplayName(summary: CodexPluginSummary): string {
   return summary.interface?.displayName?.trim() || summary.name
+}
+
+function catalogItemId(
+  marketplace: CodexPluginMarketplaceEntry,
+  plugin: CodexPluginSummary
+): string {
+  // Keep built-in / personal ids stable for cloud merge and install lookups. Namespace
+  // user-added marketplace rows so they never collide with cloud numeric plugin ids.
+  if (isBuiltInMarketplaceId(marketplace.name) || isPersonalMarketplaceId(marketplace.name)) {
+    return String(plugin.id)
+  }
+  return `${marketplace.name}:${plugin.id}`
+}
+
+function localMarketplaceSource(marketplace: CodexPluginMarketplaceEntry): {
+  sourceProvider: 'wegent' | 'codex' | 'user'
+  sourceLabel: string
+  visibility: 'personal' | 'workspace' | 'public'
+} {
+  if (isPersonalMarketplaceId(marketplace.name)) {
+    return { sourceProvider: 'user', sourceLabel: '个人分享', visibility: 'personal' }
+  }
+  if (isInternalDeviceMarketplaceId(marketplace.name)) {
+    return { sourceProvider: 'wegent', sourceLabel: 'Wegent 官方', visibility: 'workspace' }
+  }
+  if (isOpenAiOfficialMarketplaceId(marketplace.name)) {
+    return { sourceProvider: 'codex', sourceLabel: 'OpenAI 官方', visibility: 'public' }
+  }
+  return {
+    sourceProvider: 'codex',
+    sourceLabel: marketplace.interface?.displayName?.trim() || marketplace.name,
+    visibility: 'public',
+  }
 }
 
 function sourcePayload(
@@ -500,16 +536,16 @@ function toMarketplaceItem(
   detail?: CodexPluginDetail | null
 ): PluginMarketplaceItem {
   const components = pluginComponents(detail)
-  const isPersonal = isPersonalMarketplaceId(marketplace.name)
+  const source = localMarketplaceSource(marketplace)
   return {
-    id: plugin.id,
+    id: catalogItemId(marketplace, plugin),
     remotePluginId: plugin.remotePluginId ?? plugin.id,
     name: plugin.name,
     displayName: pluginDisplayName(plugin),
     description: pluginDescription(plugin, detail),
     version: plugin.localVersion ?? null,
     author: plugin.interface?.developerName ?? null,
-    visibility: isPersonal ? 'personal' : 'public',
+    visibility: source.visibility,
     featured: false,
     installed: plugin.installed,
     installedPluginId: plugin.installed ? plugin.id : null,
@@ -527,8 +563,8 @@ function toMarketplaceItem(
       availability: plugin.availability ?? null,
     },
     ownerUserId: 0,
-    sourceProvider: isPersonal ? 'user' : 'codex',
-    sourceLabel: isPersonal ? '个人分享' : 'Codex 官方',
+    sourceProvider: source.sourceProvider,
+    sourceLabel: source.sourceLabel,
   }
 }
 
@@ -539,6 +575,7 @@ function toInstalledPlugin(
 ): InstalledPlugin {
   const components = pluginComponents(detail)
   const isCreated = isPersonalMarketplaceId(marketplace.name)
+  const source = localMarketplaceSource(marketplace)
   const skillStates = Object.fromEntries(
     (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
   )
@@ -556,11 +593,12 @@ function toInstalledPlugin(
         providerKey: marketplace.name,
         pluginKey: plugin.name,
         catalogItemId: plugin.remotePluginId ?? plugin.id,
+        marketplace: marketplace.name,
       },
       origin: isCreated ? 'created' : 'market',
-      sourceProvider: isCreated ? 'user' : 'codex',
-      sourceLabel: isCreated ? '个人分享' : 'Codex 官方',
-      visibility: isCreated ? 'personal' : 'public',
+      sourceProvider: source.sourceProvider,
+      sourceLabel: source.sourceLabel,
+      visibility: source.visibility,
       displayName: pluginDisplayName(plugin),
       description: pluginDescription(plugin, detail),
       version: plugin.localVersion ?? null,
@@ -615,14 +653,6 @@ function withInitializedBundledMarketplace(
   ]
 }
 
-function visibleMarketplaces(
-  marketplaces: CodexPluginMarketplaceEntry[]
-): CodexPluginMarketplaceEntry[] {
-  return marketplaces.filter(
-    marketplace => !INTERNAL_DEVICE_MARKETPLACE_IDS.has(marketplace.name.trim().toLowerCase())
-  )
-}
-
 async function readPluginDetail(
   marketplace: LocalCodexMarketplace,
   pluginName: string
@@ -674,9 +704,7 @@ async function readState(
       installSuggestionPluginNames: null,
     }),
   ])
-  const availableMarketplaces = visibleMarketplaces(
-    withInitializedBundledMarketplace(availableResponse.marketplaces)
-  )
+  const availableMarketplaces = withInitializedBundledMarketplace(availableResponse.marketplaces)
   const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
   const selectedId = availableMarketplaces.some(
     marketplace => marketplace.name === requestedSelectedId
@@ -1074,9 +1102,19 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         marketplaceId: currentState.selectedMarketplaceId,
         refresh: true,
       })
-      const installed = state.installedPlugins.find(
-        plugin => String(installedPluginId(plugin)) === String(pluginId)
-      )
+      const installed = state.installedPlugins.find(plugin => {
+        if (String(installedPluginId(plugin)) === String(pluginId)) return true
+        const marketplaceName =
+          typeof plugin.spec.sourcePayload?.marketplaceName === 'string'
+            ? plugin.spec.sourcePayload.marketplaceName
+            : typeof plugin.metadata.namespace === 'string'
+              ? plugin.metadata.namespace
+              : plugin.spec.source.marketplace || plugin.spec.source.providerKey
+        return (
+          plugin.spec.source.pluginKey === item.name &&
+          marketplaceName === (item.manifest?.marketplaceId || marketplace.id)
+        )
+      })
       if (!installed) throw new Error('Codex plugin installed but not returned by app-server')
       return installed
     },

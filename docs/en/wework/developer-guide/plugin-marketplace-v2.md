@@ -52,25 +52,38 @@ The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and C
 
 ## Publishing WeWork official plugins
 
-Official plugin sources live in
-[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins).
+Official plugins use **two separate source repos** (different content, not
+mirrors), chosen by target marketplace tab:
+
+| Source repo | Tab | `--visibility` |
+| --- | --- | --- |
+| [wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework official | `public` |
+| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | Enterprise internal | `workspace` |
+
 Layout matches openai/plugins: each plugin lives under `plugins/<slug>/` and
-must contain `.codex-plugin/plugin.json`, capability files, and tests. It is a
-development and CI input only; Backend and Wework must never read it as a
-runtime package source.
+must contain `.codex-plugin/plugin.json`, capability files, and tests. These are
+development and CI inputs only; Backend and Wework must never read them as a
+runtime package source. Check them out as siblings of Wegent under distinct
+names (for example `wework-plugins-public` and `wework-plugins`).
 
 The publisher sorts paths and normalizes ZIP timestamps and permissions, runs
 the shared package scanner, and then creates a `source_type=native`,
-`source_provider=wework`, `owner_user_id=NULL` Plugin and immutable Release
-(sibling checkout next to Wegent):
+`source_provider=wework`, `owner_user_id=NULL` Plugin and immutable Release:
 
 ```bash
 # Build, scan, and print the SHA256 without MySQL or S3 writes.
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> --dry-run
+  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
 
-# Run only in an approved CI release environment.
-# workspace = enterprise-internal tab; public = domestic-public tab.
+# Wework official tab (public GitHub repo)
+uv run python scripts/publish_official_plugin.py \
+  ../wework-plugins-public/plugins/<plugin-slug> \
+  --visibility public \
+  --commit-sha "$CI_COMMIT_SHA" \
+  --build-url "$CI_JOB_URL" \
+  --publisher release-bot
+
+# Enterprise-internal tab (intranet GitLab repo)
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins/plugins/<plugin-slug> \
   --visibility workspace \

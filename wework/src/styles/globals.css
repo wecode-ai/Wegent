@@ -334,6 +334,11 @@ button:disabled {
     color: rgb(114 89 163);
   }
 
+  .plugin-management-pill-external {
+    background: rgb(245 245 245);
+    color: rgb(82 82 82);
+  }
+
   .plugin-management-pill-public {
     background: rgb(250 245 237);
     color: rgb(151 103 45);
