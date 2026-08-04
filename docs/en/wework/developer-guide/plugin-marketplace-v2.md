@@ -58,19 +58,19 @@ The first curated set should prioritize GitLab Engineering, GitHub, Gitee, and C
 
 ## Publishing WeWork official plugins
 
-Official plugins use **two separate source repos** (different content, not
-mirrors), chosen by target marketplace tab:
-
-| Source repo | Tab | `--visibility` |
-| --- | --- | --- |
-| [wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework official | `public` |
-| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | Enterprise internal | `workspace` |
+First-party plugins are maintained in
+[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) and
+published to the Wework official tab with `--visibility public`.
 
 Layout matches openai/plugins: each plugin lives under `plugins/<slug>/` and
 must contain `.codex-plugin/plugin.json`, capability files, and tests. These are
 development and CI inputs only; Backend and Wework must never read them as a
-runtime package source. Check them out as siblings of Wegent under distinct
-names (for example `wework-plugins-public` and `wework-plugins`).
+runtime package source. Check the repository out as a sibling of Wegent (for
+example `wework-plugins-public`).
+
+Use `--visibility workspace` only when a deployment maintains its own reviewed
+source tree for a deployment-wide internal catalog. Do not document private
+hostnames or internal repository paths in shared docs.
 
 The publisher sorts paths and normalizes ZIP timestamps and permissions, runs
 the shared package scanner, and then creates a `source_type=native`,
@@ -85,14 +85,6 @@ uv run python scripts/publish_official_plugin.py \
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins-public/plugins/<plugin-slug> \
   --visibility public \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
-
-# Enterprise-internal tab (intranet GitLab repo)
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> \
-  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot

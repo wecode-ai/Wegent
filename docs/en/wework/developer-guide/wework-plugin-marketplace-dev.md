@@ -108,20 +108,19 @@ Local creations **do not** upload automatically. Only an explicit “Publish to 
 
 ### Option B: Develop official plugins in wework-plugins
 
-WeWork-maintained plugins use **two separate source repos** (different content,
-not mirrors of each other), chosen by target marketplace tab:
-
-| Source repo | Target tab | Publish `--visibility` |
-| --- | --- | --- |
-| [github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework official | `public` |
-| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | Enterprise internal | `workspace` |
+WeWork-maintained first-party plugins live in
+[github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)
+and publish to the Wework official tab with `--visibility public`.
 
 Layout matches openai/plugins: after checkout each plugin is
 `<checkout>/plugins/<slug>/`, registered in `.agents/plugins/marketplace.json`.
-Those repositories are for development, review, and CI only. Backend and Wework
-**do not** scan them at startup. Check them out as siblings of Wegent under
-distinct directory names (for example `wework-plugins-public` and
-`wework-plugins`) so they do not overwrite each other.
+That repository is for development, review, and CI only. Backend and Wework
+**do not** scan it at startup. Check it out as a sibling of Wegent (for example
+`wework-plugins-public`).
+
+Use `--visibility workspace` only for a deployment-local reviewed source tree
+that should appear in the organization catalog. Keep private hostnames and
+internal repository paths out of shared documentation.
 
 Build and scan locally:
 
@@ -129,7 +128,6 @@ Build and scan locally:
 cd backend
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins-public/plugins/<plugin-slug> --dry-run
-# or enterprise checkout: ../wework-plugins/plugins/<plugin-slug>
 ```
 
 Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
@@ -178,12 +176,12 @@ Best for company-maintained built-in capabilities. Identity fields:
 - `source_provider=wework`
 - `owner_user_id=NULL`
 
-Publish from the matching source repo with the correct `--visibility`:
+Publish from the public first-party source repo:
 
 ```bash
 cd backend
 
-# Empty DB / rebuild: seed Wework official tab only (public repo plugins)
+# Empty DB / rebuild: seed Wework official tab (public repo plugins)
 uv run python scripts/seed_wework_public_plugins.py
 
 # Wework official tab (public GitHub repo, single plugin)
@@ -193,18 +191,11 @@ uv run python scripts/publish_official_plugin.py \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
-
-# Enterprise-internal tab (intranet GitLab repo)
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> \
-  --visibility workspace \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
 ```
 
-`--visibility workspace` (default) maps to the enterprise-internal tab; `public`
-maps to the Wework official tab.
+`--visibility public` maps to the Wework official tab. Use
+`--visibility workspace` only when publishing a reviewed local source tree into
+the organization catalog.
 
 Rules:
 

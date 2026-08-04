@@ -183,17 +183,17 @@ Wework 的“发布到市场”不要求用户手工选择 ZIP。Tauri 根据本
 
 ### WeWork 官方插件发布
 
-官方插件按目标 Tab 分两个源码仓维护（**内容不同，不是互为镜像**）：
-
-| 源码仓 | Tab | `--visibility` |
-| --- | --- | --- |
-| [wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins) | Wework官方 | `public` |
-| `git.intra.weibo.com/weibo_rd/common/wecode/wework-plugins` | 企业内部 | `workspace` |
+官方插件维护在
+[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)，并以
+`--visibility public` 发布到「Wework官方」Tab。
 
 布局对齐 openai/plugins：每个插件位于 `plugins/<slug>/`，必须包含
 `.codex-plugin/plugin.json`、能力文件和测试；源码仓只用于开发与 CI，Backend
-和 Wework 运行时不得直接读取它。建议与 Wegent 同级分别检出
-（例如 `wework-plugins-public` 与 `wework-plugins`）。
+和 Wework 运行时不得直接读取它。建议与 Wegent 同级检出（例如
+`wework-plugins-public`）。
+
+若部署方需要把已评审的本地源码树发布到组织目录，可使用
+`--visibility workspace`。共享文档中不要写入私有主机名或内网仓库路径。
 
 发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入
 `source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin
@@ -208,14 +208,6 @@ uv run python scripts/publish_official_plugin.py \
 uv run python scripts/publish_official_plugin.py \
   ../wework-plugins-public/plugins/<plugin-slug> \
   --visibility public \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
-
-# 企业内部 Tab（内网仓）
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins/plugins/<plugin-slug> \
-  --visibility workspace \
   --commit-sha "$CI_COMMIT_SHA" \
   --build-url "$CI_JOB_URL" \
   --publisher release-bot
