@@ -832,6 +832,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: localModel.modelId,
+      wework_model_kind: 'model-interface',
       codex_catalog_model_id: localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
@@ -883,6 +884,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: modelName,
+      wework_model_kind: 'cloud',
       codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
@@ -918,6 +920,7 @@ function localRuntimeModelConfig(
   return {
     model: 'openai',
     model_id: builtInCodexModelId(modelName),
+    wework_model_kind: codexProviderId ? 'codex-provider' : 'codex-official',
     api_format: RESPONSES_API_FORMAT,
     protocol: OPENAI_RESPONSES_PROTOCOL,
     ...(codexProviderId ? { model_provider: codexProviderId } : {}),

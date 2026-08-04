@@ -605,6 +605,7 @@ describe('createLocalAppServices', () => {
         model_config: expect.objectContaining({
           model: 'openai',
           model_id: 'gpt-5',
+          wework_model_kind: 'codex-official',
           api_format: 'responses',
           protocol: 'openai-responses',
           runtime_config: {
@@ -1743,6 +1744,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'Doubao-Seed-2.0-pro-260215',
+        wework_model_kind: 'codex-provider',
         api_format: 'responses',
         protocol: 'openai-responses',
         model_provider: 'wecode-openai',
