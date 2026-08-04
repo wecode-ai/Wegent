@@ -43,6 +43,7 @@ import type {
   RuntimeWorkspaceSearchRequest,
   RuntimeWorkspaceSearchResponse,
 } from '@/types/api'
+import type { HttpRequestOptions } from './http'
 import type {
   WorkspaceFileApi,
   WorkspaceTextFileResponse,
@@ -62,13 +63,13 @@ export interface ExecutorRegistryEntry {
 }
 
 export interface ExecutorRegistry {
-  refresh: () => Promise<ExecutorRegistryEntry[]>
+  refresh: (signal?: AbortSignal) => Promise<ExecutorRegistryEntry[]>
   list: () => ExecutorRegistryEntry[]
   resolve: (deviceId: string) => Promise<ExecutorRegistryEntry>
 }
 
 export interface ExecutorCommandClient {
-  listDevices: () => Promise<DeviceInfo[]>
+  listDevices: (requestOptions?: Pick<HttpRequestOptions, 'signal'>) => Promise<DeviceInfo[]>
   getHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -91,7 +92,9 @@ export interface ExecutorCommandClient {
 
 export interface ExecutorRuntimeClient {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
-  listRuntimeWork: () => Promise<RuntimeWorkListResponse>
+  listRuntimeWork: (
+    requestOptions?: Pick<HttpRequestOptions, 'signal'>
+  ) => Promise<RuntimeWorkListResponse>
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']
   getRuntimeTranscript: (data: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
@@ -191,13 +194,13 @@ interface ExecutorAccessApis {
 }
 
 export function createInMemoryExecutorRegistry(
-  loadEntries: () => Promise<ExecutorRegistryEntry[]>,
+  loadEntries: (signal?: AbortSignal) => Promise<ExecutorRegistryEntry[]>,
   loadEntry?: (deviceId: string) => Promise<ExecutorRegistryEntry | null>
 ): ExecutorRegistry {
   let entries: ExecutorRegistryEntry[] = []
 
-  const refresh = async () => {
-    entries = await loadEntries()
+  const refresh = async (signal?: AbortSignal) => {
+    entries = await loadEntries(signal)
     return entries
   }
 
@@ -246,8 +249,10 @@ export function createExecutorClientFromApis({
     device,
   })
   const registry = createInMemoryExecutorRegistry(
-    async () => {
-      const devices = await deviceApi.listDevices()
+    async signal => {
+      const devices = signal
+        ? await deviceApi.listDevices({ signal })
+        : await deviceApi.listDevices()
       return devices.map(createRegistryEntry)
     },
     resolveDevice
@@ -260,8 +265,8 @@ export function createExecutorClientFromApis({
 
   const resolve = (deviceId: string) => registry.resolve(deviceId)
   const commands: ExecutorCommandClient = {
-    listDevices: async () => {
-      const entries = await registry.refresh()
+    listDevices: async requestOptions => {
+      const entries = await registry.refresh(requestOptions?.signal)
       return entries.map(entry => entry.device)
     },
     async getHomeDirectory(deviceId) {
