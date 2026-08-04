@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
 from app.models.cloud_project import CloudProject, CloudProjectLocalBinding
-from app.models.delivery import LoopItem, loop_datetime_is_unset
+from app.models.delivery import (
+    LoopItem,
+    adapt_loop_node_values_for_dialect,
+    loop_datetime_is_unset,
+)
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -182,14 +186,17 @@ class CloudProjectService:
                 next_ids = {item.id for item in values.board_config.statuses}
                 removed_ids = previous_ids - next_ids
                 if removed_ids:
+                    item_updates = adapt_loop_node_values_for_dialect(
+                        {"status": "", "completed_at": None},
+                        db.get_bind().dialect.name,
+                    )
                     db.query(LoopItem).filter(
                         LoopItem.cloud_project_id == project.id,
                         LoopItem.status.in_(removed_ids),
                         loop_datetime_is_unset(LoopItem.deleted_at),
                     ).update(
                         {
-                            "status": "",
-                            "completed_at": None,
+                            **item_updates,
                             "version": LoopItem.version + 1,
                         },
                         synchronize_session=False,

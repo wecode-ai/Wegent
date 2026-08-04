@@ -27,6 +27,7 @@ from app.models.delivery import (
     LoopItemCollaborator,
     adapt_loop_node_values_for_dialect,
     loop_datetime_is_unset,
+    loop_datetime_unset_value_for_dialect,
     loop_datetime_value_is_unset,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -612,7 +613,9 @@ class LoopItemService:
         self._require_item_access(db, item, user_id, edit=True)
         if loop_datetime_value_is_unset(item.deleted_at):
             raise HTTPException(status.HTTP_409_CONFLICT, "TODO is not deleted")
-        item.deleted_at = None
+        item.deleted_at = loop_datetime_unset_value_for_dialect(
+            db.get_bind().dialect.name
+        )
         item.version += 1
         db.commit()
         db.refresh(item)

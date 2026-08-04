@@ -238,11 +238,18 @@ class DeliveryAsset(LoopNode):
 
 
 _MYSQL_UNSET_DATETIME = datetime(1970, 1, 1, 0, 0, 1)
-# Nullable constrained columns must remain SQL NULL; sentinels violate constraints.
 _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
+    "cloud_project_id": "",
+    "parent_id": "",
+    "loop_item_id": "",
+    "delivery_id": "",
+    "public_id": "",
+    "project_key": "",
     "name": "",
     "title": "",
+    "storage_prefix": "",
     "sequence_number": 0,
+    "next_item_number": 1,
     "created_by_user_id": 0,
     "updated_by_user_id": 0,
     "assignee_user_id": 0,
@@ -253,11 +260,13 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "priority": "",
     "due_at": _MYSQL_UNSET_DATETIME,
     "current_delivery_id": "",
+    "local_project_id": 0,
     "device_id": "",
     "is_default": False,
     "task_user_id": 0,
     "task_id": "",
     "task_title": "",
+    "backend_task_id": 0,
     "linked_by_user_id": 0,
     "linked_at": _MYSQL_UNSET_DATETIME,
     "unlinked_at": _MYSQL_UNSET_DATETIME,
@@ -304,6 +313,11 @@ def loop_datetime_is_unset(column: object) -> object:
 def loop_datetime_value_is_unset(value: datetime | None) -> bool:
     """Match an unset datetime value in both nullable and sentinel schemas."""
     return value is None or value == _MYSQL_UNSET_DATETIME
+
+
+def loop_datetime_unset_value_for_dialect(dialect_name: str) -> datetime | None:
+    """Return the database representation for an unset loop-node datetime."""
+    return _MYSQL_UNSET_DATETIME if dialect_name == "mysql" else None
 
 
 @event.listens_for(LoopNode, "before_insert", propagate=True)

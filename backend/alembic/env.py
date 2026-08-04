@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Import app configuration and models
 from app.core.config import settings
 from app.db.base import Base
+from app.db.mysql_loop_items_schema import normalize_mysql_loop_items_schema
 from app.db.timezone import MYSQL_SESSION_TIMEZONE_OFFSET
 
 # Import all models to ensure they are registered with SQLAlchemy
@@ -138,6 +139,7 @@ def _initialize_fresh_database(connection) -> None:
     # This is cross-database compatible (works for both MySQL and SQLite)
     logger.info("Creating all tables using SQLAlchemy metadata...")
     Base.metadata.create_all(bind=connection, checkfirst=True)
+    normalize_mysql_loop_items_schema(connection)
     logger.info("All tables created successfully")
 
     # Step 2: Create alembic_version table and stamp to head

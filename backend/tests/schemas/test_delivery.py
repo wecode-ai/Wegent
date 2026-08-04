@@ -6,7 +6,10 @@
 
 from datetime import datetime
 
-from app.models.delivery import adapt_loop_node_values_for_dialect
+from app.models.delivery import (
+    adapt_loop_node_values_for_dialect,
+    loop_datetime_unset_value_for_dialect,
+)
 from app.schemas.delivery import LoopItemResponse
 
 
@@ -42,7 +45,7 @@ def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
     assert response.completed_at is None
 
 
-def test_loop_node_adaptation_preserves_nullable_constrained_columns() -> None:
+def test_loop_node_adaptation_uses_mysql_sentinels() -> None:
     values = {
         "cloud_project_id": None,
         "parent_id": None,
@@ -51,6 +54,7 @@ def test_loop_node_adaptation_preserves_nullable_constrained_columns() -> None:
         "public_id": None,
         "project_key": None,
         "storage_prefix": None,
+        "next_item_number": None,
         "local_project_id": None,
         "backend_task_id": None,
         "due_at": None,
@@ -61,16 +65,24 @@ def test_loop_node_adaptation_preserves_nullable_constrained_columns() -> None:
     sqlite_values = adapt_loop_node_values_for_dialect(values, "sqlite")
 
     assert mysql_values == {
-        "cloud_project_id": None,
-        "parent_id": None,
-        "loop_item_id": None,
-        "delivery_id": None,
-        "public_id": None,
-        "project_key": None,
-        "storage_prefix": None,
-        "local_project_id": None,
-        "backend_task_id": None,
+        "cloud_project_id": "",
+        "parent_id": "",
+        "loop_item_id": "",
+        "delivery_id": "",
+        "public_id": "",
+        "project_key": "",
+        "storage_prefix": "",
+        "next_item_number": 1,
+        "local_project_id": 0,
+        "backend_task_id": 0,
         "due_at": datetime(1970, 1, 1, 0, 0, 1),
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
     assert sqlite_values == values
+
+
+def test_loop_datetime_unset_value_matches_dialect_schema() -> None:
+    assert loop_datetime_unset_value_for_dialect("mysql") == datetime(
+        1970, 1, 1, 0, 0, 1
+    )
+    assert loop_datetime_unset_value_for_dialect("sqlite") is None
