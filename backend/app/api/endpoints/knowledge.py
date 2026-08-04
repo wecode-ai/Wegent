@@ -737,6 +737,27 @@ async def create_document(
 document_router = APIRouter()
 
 
+@document_router.get("/{document_id}", response_model=KnowledgeDocumentResponse)
+@trace_sync("get_document", "knowledge.api")
+def get_document(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Get current document metadata and processing state by ID."""
+    try:
+        return knowledge_orchestrator.get_document(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
 @document_router.put("/{document_id}", response_model=KnowledgeDocumentResponse)
 @trace_sync("update_document", "knowledge.api")
 def update_document(

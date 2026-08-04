@@ -26,6 +26,7 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 // HTTP Client with interceptors
@@ -104,6 +105,7 @@ class APIClient {
 
     const config: RequestInit = {
       ...options,
+      signal: requestOptions.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(token && { Authorization: `Bearer ${token}` }),

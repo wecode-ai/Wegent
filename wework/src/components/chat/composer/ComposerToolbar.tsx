@@ -33,6 +33,9 @@ interface ComposerToolbarProps {
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
@@ -70,6 +73,9 @@ export function ComposerToolbar({
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
   onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
@@ -122,6 +128,9 @@ export function ComposerToolbar({
           onFileSelect={onFileSelect}
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
+          onConfigureSupervisor={onConfigureSupervisor}
+          supervisorEnabled={supervisorEnabled}
+          supervisorPending={supervisorPending}
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         <PluginPickerMenu

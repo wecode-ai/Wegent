@@ -35,9 +35,10 @@ import {
   getExecutorOfflineDeviceId,
   getWorkbenchDeviceUnavailableDisplayName,
 } from '@/lib/workbench-device'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
+import { TaskSupervisorStatusButton } from './TaskSupervisorControl'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
@@ -58,6 +59,8 @@ interface EnvironmentInfoPopoverProps {
   onDeliver?: () => void
   todoLabel?: string
   onManageTodo?: () => void
+  supervisor?: RuntimeSupervisorState | null
+  onConfigureSupervisor?: () => void
 }
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
@@ -90,6 +93,8 @@ export function EnvironmentInfoPopover({
   onDeliver,
   todoLabel,
   onManageTodo,
+  supervisor,
+  onConfigureSupervisor,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
   const [copiedWorkspacePath, setCopiedWorkspacePath] = useState<string | null>(null)
@@ -528,6 +533,17 @@ export function EnvironmentInfoPopover({
                       <span>{todoLabel ? t('delivery.action', '交付') : '交付到任务…'}</span>
                     </button>
                   )}
+                </section>
+              )}
+              {supervisor && onConfigureSupervisor && (
+                <section
+                  data-testid="environment-supervisor-section"
+                  className="border-t border-border pt-3"
+                >
+                  <TaskSupervisorStatusButton
+                    supervisor={supervisor}
+                    onClick={onConfigureSupervisor}
+                  />
                 </section>
               )}
             </div>

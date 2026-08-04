@@ -1249,6 +1249,7 @@ mod tests {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: 0,
             updated_at: 0,

@@ -129,6 +129,14 @@ const GOAL_RESTART_PROMPT =
 const GOAL_RESTART_INITIAL_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_INITIAL_COMPLETE'
 const GOAL_RESTART_RESUME_PROMPT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_RESUME'
 const GOAL_RESTART_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GOAL_RESTART_COMPLETE'
+const SUPERVISOR_PROMPT =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR: complete this task so supervision can inspect it.'
+const SUPERVISOR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_COMPLETE'
+const SUPERVISOR_PRINCIPLES =
+  'Flag material goal drift and provide the smallest directly actionable correction.'
+const SUPERVISOR_CORRECTION =
+  'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION: explicitly confirm the original constraint.'
+const SUPERVISOR_CORRECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SUPERVISOR_CORRECTION_COMPLETE'
 const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   ...Array.from({ length: 24 }, (_, index) =>
@@ -3756,64 +3764,128 @@ async function verifyWorkspaceTabIsolation(control) {
 
   const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
   const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`
-  const firstAgentIframe = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
+  const firstAgentWebview = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
   await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
-  await control.command('waitFor', firstAgentIframe, {
+  await control.command('waitFor', firstAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', firstAgentIframe, {
+    await control.command('getAttribute', firstAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
     firstAgentId,
-    'The first Agent iframe was not bound to its tab identity'
+    'The first Agent webview was not bound to its tab identity'
   )
+  const agentStorageKey = 'wework-e2e-agent-storage'
+  const agentStorageValue = `persisted-${Date.now()}`
+  await control.command('setEmbeddedBrowserLocalStorageItem', 'body', {
+    value: JSON.stringify({
+      key: agentStorageKey,
+      label: `app-wegent-${firstAgentId}`,
+      value: agentStorageValue,
+    }),
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getEmbeddedBrowserLocalStorageItem', 'body', {
+      value: JSON.stringify({
+        key: agentStorageKey,
+        label: `app-wegent-${firstAgentId}`,
+      }),
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }),
+    agentStorageValue,
+    'The first Agent webview did not retain its localStorage write'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 3000))
+  await control.command('click', `[data-testid="workspace-tab-close-${firstAgentId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`workspace-tab-${firstAgentId}`),
+    'Closing the first Agent tab did not remove its webview host'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1500))
 
   await control.command('click', '[data-testid="workspace-tab-add"]')
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withSecondAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
-    'The explicit new-Agent action did not create a second tab'
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 1,
+    'The explicit new-Agent action did not reopen an Agent tab'
   )
-  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent').find(
-    testId => !initialAgentIds.includes(testId)
-  )
+  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent')[0]
   assert.ok(secondAgentTestId, 'The second Agent tab identity was not observable')
   const secondAgentId = secondAgentTestId.slice('workspace-tab-'.length)
   const secondAgentContent = `[data-testid="workspace-tab-content-${secondAgentId}"]`
-  const secondAgentIframe = `${secondAgentContent} [data-testid="app-iframe-wegent"]`
-  await control.command('waitFor', secondAgentIframe, {
+  const secondAgentWebview = `${secondAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('waitFor', secondAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', secondAgentIframe, {
+    await control.command('getAttribute', secondAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
     secondAgentId,
-    'The second Agent tab reused the first iframe identity'
+    'The second Agent tab reused the first webview identity'
+  )
+  assert.equal(
+    await control.command('getEmbeddedBrowserLocalStorageItem', 'body', {
+      value: JSON.stringify({
+        key: agentStorageKey,
+        label: `app-wegent-${secondAgentId}`,
+      }),
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }),
+    agentStorageValue,
+    'Reopening Wegent did not restore its persisted localStorage'
+  )
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-agent"]')
+  const withThirdAgent = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    'The explicit new-Agent action did not create an independent Agent tab'
+  )
+  const thirdAgentTestId = workspaceTabIds(withThirdAgent, 'agent').find(
+    testId => testId !== secondAgentTestId
+  )
+  assert.ok(thirdAgentTestId, 'The third Agent tab identity was not observable')
+  const thirdAgentId = thirdAgentTestId.slice('workspace-tab-'.length)
+  const thirdAgentContent = `[data-testid="workspace-tab-content-${thirdAgentId}"]`
+  const thirdAgentWebview = `${thirdAgentContent} [data-testid="app-iframe-wegent"]`
+  await control.command('waitFor', thirdAgentWebview, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', thirdAgentWebview, {
+      value: 'data-workspace-tab-id',
+    }),
+    thirdAgentId,
+    'The third Agent tab reused the reopened webview identity'
   )
   const agentSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
-    agentSnapshot.testIds.includes(`workspace-tab-content-${firstAgentId}`) &&
-      agentSnapshot.testIds.includes(`workspace-tab-content-${secondAgentId}`),
-    'Switching Agent tabs unmounted one of the iframe instances'
+    agentSnapshot.testIds.includes(`workspace-tab-content-${secondAgentId}`) &&
+      agentSnapshot.testIds.includes(`workspace-tab-content-${thirdAgentId}`),
+    'Switching Agent tabs unmounted one of the webview hosts'
   )
-  await control.command('click', `[data-testid="workspace-tab-select-${firstAgentId}"]`)
-  await control.command('waitFor', firstAgentIframe, {
+  await control.command('click', `[data-testid="workspace-tab-select-${secondAgentId}"]`)
+  await control.command('waitFor', secondAgentWebview, {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   assert.equal(
-    await control.command('getAttribute', secondAgentIframe, {
+    await control.command('getAttribute', thirdAgentWebview, {
       value: 'data-workspace-tab-id',
     }),
-    secondAgentId,
-    'The hidden Agent iframe was recreated or detached after switching tabs'
+    thirdAgentId,
+    'The hidden Agent webview host was recreated or detached after switching tabs'
   )
-  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-03-agent-iframes.png')
+  await captureVerificationScreenshot(control, 'workspace-tabs-isolation-03-agent-webviews.png')
 
   await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
   await control.command('waitFor', `${firstTaskContent} [data-testid="plugins-button"]`, {
@@ -4622,7 +4694,7 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
+async function ensureExperimentalFeaturesEnabled(control) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
     await control.command('click', '[data-testid="settings-button"]')
@@ -4636,7 +4708,11 @@ async function verifyAutomationLifecycle(control, workspacePath) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
   }
+  return initialSnapshot
+}
 
+async function verifyAutomationLifecycle(control, workspacePath) {
+  const initialSnapshot = await ensureExperimentalFeaturesEnabled(control)
   await control.command('click', '[data-testid="automation-button"]')
   await control.command('waitFor', '[data-testid="create-automation-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -6508,6 +6584,7 @@ function assistantMessage(text) {
       role: 'assistant',
       id: 'wework-e2e-message',
       content: [{ type: 'output_text', text }],
+      phase: 'final_answer',
     },
   }
 }
@@ -7032,6 +7109,119 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     settledDebugSnapshot.pane?.status?.isBusy,
     false,
     'The completed Goal kept the composer busy'
+  )
+}
+
+async function verifyTaskSupervisorLifecycle({ composerSelector, control }) {
+  await ensureExperimentalFeaturesEnabled(control)
+  control.setScenario('supervisor')
+  const taskRowsBeforeSupervisor = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('waitFor', '[data-testid="task-supervisor-toggle-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="task-supervisor-toggle-button"]')
+  await control.command('click', '[data-testid="task-supervisor-mode-auto"]')
+  await control.command('fill', '[data-testid="task-supervisor-instructions"]', {
+    value: SUPERVISOR_PRINCIPLES,
+  })
+  await control.command('click', '[data-testid="task-supervisor-save-button"]')
+  await control.command('waitFor', '[data-testid="pending-supervisor-indicator"]', {
+    text: '监督将在任务开始后生效',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'supervisor-pending-context.png')
+  await sendPromptUntilScenarioRequest(control, composerSelector, SUPERVISOR_PROMPT, 'supervisor')
+  control.releaseSupervisorInitialResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pending-supervisor-indicator'),
+    'The pre-task supervisor indicator remained after the task was created'
+  )
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 2),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor evaluator did not inspect the completed task'
+  )
+  await withTimeout(
+    control.awaitScenarioRequestCount('supervisor', 3),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Auto-correction did not send a normal follow-up turn after the task became idle'
+  )
+  await withTimeout(
+    control.awaitSupervisorCorrectionResponseStarted(),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The supervisor correction response did not start'
+  )
+  const supervisorTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeSupervisor,
+    'WEWORK_DESKTOP_E2E_SUPERVISOR'
+  )
+  const supervisorTaskId = supervisorTaskRowTestId.replace('runtime-local-task-row-', '')
+  const supervisorRunningTestId = `runtime-local-task-running-${supervisorTaskId}`
+  await control.command('waitFor', `[data-testid="${supervisorRunningTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const beforeStaleSettlement = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  assert.equal(
+    beforeStaleSettlement.workbench?.currentRuntimeTask?.taskId,
+    supervisorTaskId,
+    'The supervisor correction task was not current before replaying the stale settlement'
+  )
+  await control.command('dispatchRuntimeLifecycleEvent', 'body', {
+    value: JSON.stringify({
+      address: beforeStaleSettlement.workbench.currentRuntimeTask,
+      type: 'turn_settled',
+      turnId: 'stale-supervisor-turn',
+    }),
+  })
+  try {
+    const runningSnapshot = await waitForWorkbenchDebugState(
+      control,
+      snapshot =>
+        snapshot.workbench?.currentRuntimeTask?.taskId === supervisorTaskId &&
+        snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
+        snapshot.pane?.status?.isBusy === true,
+      'The live supervisor correction was not represented as running'
+    )
+    assert.equal(
+      runningSnapshot.pane?.status?.taskExecution?.running,
+      true,
+      'The supervisor correction had a live executor response but task execution was idle'
+    )
+    await captureVerificationScreenshot(control, 'supervisor-01-correction-running.png')
+  } finally {
+    control.releaseSupervisorCorrectionResponse()
+  }
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: SUPERVISOR_CORRECTION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: SUPERVISOR_CORRECTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('task-supervisor-suggestion'),
+    'Auto-correction incorrectly rendered an approval card'
   )
 }
 
@@ -7614,6 +7804,15 @@ class DesktopE2EServer {
     this.goalRestartResumeRelease = new Promise(resolvePromise => {
       this.releaseGoalRestartResume = resolvePromise
     })
+    this.supervisorInitialRelease = new Promise(resolvePromise => {
+      this.releaseSupervisorInitial = resolvePromise
+    })
+    this.supervisorCorrectionStarted = new Promise(resolvePromise => {
+      this.resolveSupervisorCorrectionStarted = resolvePromise
+    })
+    this.supervisorCorrectionRelease = new Promise(resolvePromise => {
+      this.releaseSupervisorCorrection = resolvePromise
+    })
     this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
       this.resolveToolBlockNodeOutputObserved = resolvePromise
     })
@@ -7812,6 +8011,7 @@ class DesktopE2EServer {
         'official_plugin',
         'automation',
         'skill_mention_display',
+        'supervisor',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -7942,6 +8142,18 @@ class DesktopE2EServer {
 
   releaseRunningForkFollowUpResponse() {
     this.releaseRunningForkFollowUp()
+  }
+
+  releaseSupervisorInitialResponse() {
+    this.releaseSupervisorInitial()
+  }
+
+  awaitSupervisorCorrectionResponseStarted() {
+    return this.guard(this.supervisorCorrectionStarted)
+  }
+
+  releaseSupervisorCorrectionResponse() {
+    this.releaseSupervisorCorrection()
   }
 
   releaseGoalIdleInitialResponse() {
@@ -8199,7 +8411,7 @@ class DesktopE2EServer {
       return
     }
 
-    if (request.method === 'GET' && url.pathname === '/') {
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/login/oidc')) {
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -9394,6 +9606,68 @@ class DesktopE2EServer {
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'supervisor') {
+      this.recordScenarioRequest('supervisor', modelRequest)
+      const requestText = JSON.stringify(body)
+      if (requestText.includes('Current visible progress snapshot (JSON):')) {
+        assert.ok(
+          requestText.includes('correction'),
+          'The supervisor evaluator request did not include its structured output schema'
+        )
+        assert.ok(
+          requestText.includes(SUPERVISOR_COMPLETION_TEXT),
+          'The supervisor evaluator did not receive the latest assistant progress'
+        )
+        assert.equal(
+          requestText.includes(SUPERVISOR_PROMPT),
+          false,
+          'The supervisor evaluator received the original user transcript instead of recent AI content'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            JSON.stringify({
+              correction: SUPERVISOR_CORRECTION,
+              rationale: 'The completed reply should restate the original constraint.',
+            })
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (requestText.includes(SUPERVISOR_CORRECTION)) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            responseCreated(responseId),
+            assistantMessage(SUPERVISOR_CORRECTION_COMPLETION_TEXT),
+          ])
+        )
+        this.resolveSupervisorCorrectionStarted()
+        await this.supervisorCorrectionRelease
+        response.end(createSse([responseCompleted(responseId)]))
+        return
+      }
+      assert.ok(requestText.includes(SUPERVISOR_PROMPT), 'The supervisor task prompt was lost')
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([responseCreated(responseId), assistantMessage(SUPERVISOR_COMPLETION_TEXT)])
+      )
+      await this.supervisorInitialRelease
+      response.end(createSse([responseCompleted(responseId)]))
       return
     }
 
@@ -13252,6 +13526,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       if (shouldStopAfterDesktopCheckpoint('goal-lifecycle')) {
         console.log(`Wework desktop goal-lifecycle checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('supervisor-lifecycle')) {
+      phase = 'supervisor-lifecycle'
+      await verifyTaskSupervisorLifecycle({ composerSelector, control })
+      if (shouldStopAfterDesktopCheckpoint('supervisor-lifecycle')) {
+        console.log(`Wework desktop supervisor-lifecycle checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

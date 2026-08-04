@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, combined_codex_developer_instructions,
-        strip_wework_browser_instructions, CodexActiveTurnCallback,
-        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -48,6 +48,7 @@ mod hooks;
 mod notifications;
 mod queries;
 mod sidebar;
+mod supervisor;
 mod system;
 mod tasks;
 mod turns;
@@ -291,6 +292,7 @@ pub struct RuntimeWorkRpcHandler {
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
+    supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -360,6 +362,7 @@ impl RuntimeWorkRpcHandler {
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
+            supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
@@ -387,6 +390,7 @@ impl RuntimeWorkRpcHandler {
             handler.hook_service.set_event_sender(sender);
         }
         handler.start_automation_scheduler();
+        handler.start_supervisor_scheduler();
         handler
     }
 
@@ -418,6 +422,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
+            "runtime.tasks.supervisor.get" => self.get_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.set" => self.set_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.clear" => self.clear_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.resolve" => self.resolve_task_supervisor(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.hooks.list" | "runtime.hooks.reload" => {
