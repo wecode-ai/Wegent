@@ -42,14 +42,34 @@ def test_loop_item_response_normalizes_mysql_sentinel_values() -> None:
     assert response.completed_at is None
 
 
-def test_loop_item_update_adapts_nulls_only_for_mysql() -> None:
-    values = {"parent_id": None, "due_at": None, "completed_at": None}
+def test_loop_node_adaptation_preserves_nullable_constrained_columns() -> None:
+    values = {
+        "cloud_project_id": None,
+        "parent_id": None,
+        "loop_item_id": None,
+        "delivery_id": None,
+        "public_id": None,
+        "project_key": None,
+        "storage_prefix": None,
+        "local_project_id": None,
+        "backend_task_id": None,
+        "due_at": None,
+        "completed_at": None,
+    }
 
     mysql_values = adapt_loop_node_values_for_dialect(values, "mysql")
     sqlite_values = adapt_loop_node_values_for_dialect(values, "sqlite")
 
     assert mysql_values == {
-        "parent_id": "",
+        "cloud_project_id": None,
+        "parent_id": None,
+        "loop_item_id": None,
+        "delivery_id": None,
+        "public_id": None,
+        "project_key": None,
+        "storage_prefix": None,
+        "local_project_id": None,
+        "backend_task_id": None,
         "due_at": datetime(1970, 1, 1, 0, 0, 1),
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }

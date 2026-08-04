@@ -238,16 +238,10 @@ class DeliveryAsset(LoopNode):
 
 
 _MYSQL_UNSET_DATETIME = datetime(1970, 1, 1, 0, 0, 1)
+# Nullable constrained columns must remain SQL NULL; sentinels violate constraints.
 _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
-    "cloud_project_id": "",
-    "parent_id": "",
-    "loop_item_id": "",
-    "delivery_id": "",
-    "public_id": "",
-    "project_key": "",
     "name": "",
     "title": "",
-    "storage_prefix": "",
     "sequence_number": 0,
     "created_by_user_id": 0,
     "updated_by_user_id": 0,
@@ -259,13 +253,11 @@ _MYSQL_NON_NULL_DEFAULTS: dict[str, object] = {
     "priority": "",
     "due_at": _MYSQL_UNSET_DATETIME,
     "current_delivery_id": "",
-    "local_project_id": 0,
     "device_id": "",
     "is_default": False,
     "task_user_id": 0,
     "task_id": "",
     "task_title": "",
-    "backend_task_id": 0,
     "linked_by_user_id": 0,
     "linked_at": _MYSQL_UNSET_DATETIME,
     "unlinked_at": _MYSQL_UNSET_DATETIME,
