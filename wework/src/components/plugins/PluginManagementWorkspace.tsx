@@ -91,6 +91,7 @@ export function PluginManagementWorkspace({
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
   const [pluginShareState, setPluginShareState] = useState<PluginShareState | null>(null)
   const [pluginShareSaving, setPluginShareSaving] = useState(false)
+  const [, setPluginSharePreparing] = useState(false)
   const [pendingUninstall, setPendingUninstall] = useState<{
     id: string | number
     name: string
