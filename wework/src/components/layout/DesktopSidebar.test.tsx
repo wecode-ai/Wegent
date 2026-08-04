@@ -20,7 +20,7 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
-import type { ProjectSpaceBindingApi } from '@/features/todo/projectSpaceLocalBindings'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -3351,8 +3351,7 @@ describe('DesktopSidebar', () => {
     const user = userEvent.setup()
     const projectSpaceApi = {
       listCloudProjects: vi.fn().mockResolvedValue({ items: [] }),
-      listLocalBindings: vi.fn().mockResolvedValue([]),
-    } as unknown as ProjectSpaceBindingApi
+    } as unknown as ProjectSpaceApi
 
     renderSidebar({
       projects: [],
@@ -3386,7 +3385,7 @@ describe('DesktopSidebar', () => {
         chats: [],
         totalTasks: 0,
       },
-      projectSpaceBindingApis: [projectSpaceApi],
+      projectSpaceApis: [projectSpaceApi],
       onUpdateLocalRuntimeProject: vi.fn().mockResolvedValue(undefined),
     })
 

@@ -2,8 +2,6 @@ import { invoke } from '@tauri-apps/api/core'
 import type { HttpClient } from './http'
 import type { RuntimeTaskAddress } from '@/types/api'
 
-export const PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT =
-  'wework:project-space-local-bindings-changed'
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
@@ -175,17 +173,6 @@ export interface ProjectDeliveryFile {
   content_type: string | null
   size_bytes: number
   delivered_at: string
-}
-
-export interface CloudProjectLocalBinding {
-  id: string
-  cloud_project_id: CloudProjectId
-  local_project_id: number
-  user_id: number
-  device_id: string | null
-  is_default: boolean
-  created_at: string
-  updated_at: string
 }
 
 export interface CloudProjectMember {
@@ -475,9 +462,6 @@ export function createDeliveryApi(client: HttpClient) {
     unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, task)
     },
-    listLocalBindings(projectId: CloudProjectIdInput): Promise<CloudProjectLocalBinding[]> {
-      return client.get(`/v1/cloud-projects/${projectId}/local-bindings`)
-    },
     listCloudProjectMembers(projectId: CloudProjectIdInput): Promise<CloudProjectMember[]> {
       return client.get(`/v1/cloud-projects/${projectId}/members`)
     },
@@ -505,28 +489,6 @@ export function createDeliveryApi(client: HttpClient) {
       query: string
     ): Promise<{ users: CloudUserSearchItem[]; total: number }> {
       return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
-    },
-    addLocalBinding(
-      projectId: CloudProjectIdInput,
-      data: {
-        local_project_id: number
-        device_id?: string
-        is_default?: boolean
-      }
-    ): Promise<CloudProjectLocalBinding> {
-      return client.post(`/v1/cloud-projects/${projectId}/local-bindings`, data)
-    },
-    updateLocalBinding(
-      projectId: CloudProjectIdInput,
-      bindingId: string,
-      data: {
-        is_default?: boolean
-      }
-    ): Promise<CloudProjectLocalBinding> {
-      return client.patch(`/v1/cloud-projects/${projectId}/local-bindings/${bindingId}`, data)
-    },
-    deleteLocalBinding(projectId: CloudProjectIdInput, bindingId: string): Promise<void> {
-      return client.delete(`/v1/cloud-projects/${projectId}/local-bindings/${bindingId}`)
     },
     listCloudFiles(projectId: CloudProjectIdInput): Promise<{ items: CloudProjectFile[] }> {
       return client.get(`/v1/cloud-projects/${projectId}/files`)

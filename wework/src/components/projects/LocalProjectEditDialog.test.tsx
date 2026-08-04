@@ -2,8 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import type { ProjectSpaceBindingApi } from '@/features/todo/projectSpaceLocalBindings'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { LocalProjectEditDialog } from './LocalProjectEditDialog'
 
 const pickerMocks = vi.hoisted(() => ({
@@ -67,6 +66,7 @@ describe('LocalProjectEditDialog', () => {
       projectKey: 'multi-root',
       name: 'Platform',
       roots: ['/repo/api', '/repo/docs'],
+      defaultProjectSpace: null,
     })
   })
 
@@ -92,17 +92,7 @@ describe('LocalProjectEditDialog', () => {
   })
 
   test('configures whether new conversations automatically join a project space', async () => {
-    const localProjectId = runtimeProjectUiId(projectWork.project)
-    const binding = {
-      id: 'binding-1',
-      cloud_project_id: 'space-1',
-      local_project_id: localProjectId,
-      device_id: 'local-device',
-      is_default: true,
-      created_at: '2026-08-04T00:00:00Z',
-      updated_at: '2026-08-04T00:00:00Z',
-    }
-    const updateLocalBinding = vi.fn().mockResolvedValue({ ...binding, is_default: false })
+    const onSave = vi.fn().mockResolvedValue(undefined)
     const projectSpaceApi = {
       listCloudProjects: vi.fn().mockResolvedValue({
         items: [
@@ -124,19 +114,22 @@ describe('LocalProjectEditDialog', () => {
           },
         ],
       }),
-      listLocalBindings: vi.fn().mockResolvedValue([binding]),
-      updateLocalBinding,
-      addLocalBinding: vi.fn(),
-    } as unknown as ProjectSpaceBindingApi
+    } as unknown as ProjectSpaceApi
 
     render(
       <LocalProjectEditDialog
         {...folderPickerProps}
         open
-        projectWork={projectWork}
+        projectWork={{
+          ...projectWork,
+          project: {
+            ...projectWork.project,
+            defaultProjectSpace: { projectStore: 'local', projectId: 'space-1' },
+          },
+        }}
         projectSpaceApis={[projectSpaceApi]}
         onClose={vi.fn()}
-        onSave={vi.fn().mockResolvedValue(undefined)}
+        onSave={onSave}
         onDelete={vi.fn()}
       />
     )
@@ -146,8 +139,12 @@ describe('LocalProjectEditDialog', () => {
     await userEvent.selectOptions(select, '')
     await userEvent.click(screen.getByTestId('save-local-project-button'))
 
-    expect(updateLocalBinding).toHaveBeenCalledWith('space-1', 'binding-1', {
-      is_default: false,
+    expect(onSave).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      projectKey: 'multi-root',
+      name: 'Product',
+      roots: ['/repo/web', '/repo/api'],
+      defaultProjectSpace: null,
     })
   })
 })

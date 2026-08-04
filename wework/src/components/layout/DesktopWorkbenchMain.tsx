@@ -17,19 +17,14 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
 import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
-import {
-  PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT,
-  type CloudLoopItem,
-  type CloudProject,
-  type CloudProjectLocalBinding,
-} from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { TodoBindingPicker } from '@/features/todo/TodoBindingPicker'
 import {
-  cacheAutoJoinProjectSpace,
   findProjectSpaceContextForTask,
-  projectSpaceBindingApis,
-  readCachedAutoJoinProjectSpace,
-} from '@/features/todo/projectSpaceLocalBindings'
+  projectSpaceApis,
+  projectSpaceKey,
+  projectSpaceRef,
+} from '@/features/todo/projectSpaceSelection'
 import {
   hydrateLocalWorkItems,
   loadLocalWorkItems,
@@ -64,6 +59,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   defaultAppearance,
   getWorkbenchBackground,
@@ -589,9 +585,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const localProjectId = currentProject?.id
-  const localProjectDeviceId =
-    currentProject?.config?.execution?.deviceId ?? currentProject?.config?.device_id
+  const currentRuntimeProject = state.runtimeWork?.projects.find(
+    projectWork => currentProject && runtimeProjectUiId(projectWork.project) === currentProject.id
+  )?.project
+  const defaultProjectSpace = currentRuntimeProject?.defaultProjectSpace ?? null
   const paneKey = getWorkbenchPaneKey(pane)
   const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
     useState<HTMLDivElement | null>(null)
@@ -605,7 +602,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const sendPaneInput = paneSession.send
-  const todoBindingApis = useMemo(() => projectSpaceBindingApis(services), [services])
+  const todoBindingApis = useMemo(() => projectSpaceApis(services), [services])
   const pendingAutoJoinResolutionRef = useRef<PendingAutoJoinResolution | null>(null)
   const [deliveryItem, setDeliveryItem] = useState<Omit<LocalWorkItem, 'projectId'> | null>(null)
   const [boundCloudProject, setBoundCloudProject] = useState<CloudProject | null>(null)
@@ -624,22 +621,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [pendingTodoItem, setPendingTodoItemState] = useState<CloudLoopItem | null>(() =>
     pendingTodoForTask(currentRuntimeTask)
   )
-  const [pendingCloudProject, setPendingCloudProject] = useState<CloudProject | null>(
-    () =>
-      pendingProjectForTask(currentRuntimeTask) ??
-      (!currentRuntimeTask && localProjectId
-        ? readCachedAutoJoinProjectSpace(localProjectId, localProjectDeviceId)
-        : null)
+  const [pendingCloudProject, setPendingCloudProject] = useState<CloudProject | null>(() =>
+    pendingProjectForTask(currentRuntimeTask)
   )
   const [todoBindingError, setTodoBindingError] = useState<string | null>(null)
   const [cloudProjects, setCloudProjects] = useState<CloudProject[]>([])
-  const [defaultCloudProjectId, setDefaultCloudProjectId] = useState<CloudProject['id'] | null>(
-    null
-  )
+  const [defaultProjectOptionKey, setDefaultProjectOptionKey] = useState<string | null>(null)
   const [dismissedDefaultCloudProjectKey, setDismissedDefaultCloudProjectKey] = useState<
     string | null
   >(null)
-  const [localBindingRevision, setLocalBindingRevision] = useState(0)
   const [cloudActionNotice, setCloudActionNotice] = useState<string | null>(null)
   const [cloudMentionState, setCloudMentionState] = useState<{
     todoId: string
@@ -698,22 +688,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (value?: string, options?: { guideWhenBusy?: boolean; interruptWhenBusy?: boolean }) => {
       const supervisorConfig = currentRuntimeTask ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cachedProject =
-        !currentRuntimeTask &&
-        localProjectId &&
-        dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey
-          ? readCachedAutoJoinProjectSpace(localProjectId, localProjectDeviceId)
-          : null
-      const submissionProject = currentRuntimeTask ? null : (pendingCloudProject ?? cachedProject)
+      const submissionProject = currentRuntimeTask ? null : pendingCloudProject
       const submissionItem =
         submissionProject?.id === pendingCloudProject?.id ? pendingTodoItem : null
       if (!currentRuntimeTask) {
         setPendingCloudContext(submissionProject, submissionItem)
         pendingAutoJoinResolutionRef.current =
           !submissionProject &&
-          Boolean(localProjectId) &&
+          Boolean(defaultProjectSpace) &&
           dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
-          projectSpaceBindingApis(services).length > 0
+          projectSpaceApis(services).length > 0
             ? { target: null, description }
             : null
       }
@@ -748,10 +732,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [
       cloudAdditionalContext,
       currentRuntimeTask,
+      defaultProjectSpace,
       defaultCloudProjectSelectionKey,
       dismissedDefaultCloudProjectKey,
-      localProjectDeviceId,
-      localProjectId,
       paneSession.input,
       pendingCloudProject,
       pendingTodoItem,
@@ -837,7 +820,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         active = false
       }
     }
-    const contextApis = projectSpaceBindingApis(services)
+    const contextApis = projectSpaceApis(services)
     if (contextApis.length > 0) {
       void findProjectSpaceContextForTask(contextApis, currentRuntimeTask)
         .then(context => {
@@ -1026,86 +1009,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : []
 
   useEffect(() => {
-    const refresh = () => {
-      setLocalBindingRevision(revision => revision + 1)
-      if (
-        currentRuntimeTask ||
-        !localProjectId ||
-        dismissedDefaultCloudProjectKey === defaultCloudProjectSelectionKey
-      ) {
-        return
-      }
-      const cachedProject = readCachedAutoJoinProjectSpace(localProjectId, localProjectDeviceId)
-      if (cachedProject) {
-        setPendingCloudContext(cachedProject, null)
-      } else if (pendingCloudProject?.id === defaultCloudProjectId) {
-        setPendingCloudContext(null, null)
-      }
-    }
-    window.addEventListener(PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT, refresh)
-    return () => window.removeEventListener(PROJECT_SPACE_LOCAL_BINDINGS_CHANGED_EVENT, refresh)
-  }, [
-    currentRuntimeTask,
-    defaultCloudProjectId,
-    defaultCloudProjectSelectionKey,
-    dismissedDefaultCloudProjectKey,
-    localProjectDeviceId,
-    localProjectId,
-    pendingCloudProject?.id,
-    setPendingCloudContext,
-  ])
-
-  // A local project association limits the project spaces offered to new tasks.
-  // The default association is a preselection only; the selected task is still
-  // the sole unit that enters the project board.
-  useEffect(() => {
     let active = true
-    const apis = [
-      services?.projectSpaceApis?.local,
-      services?.projectSpaceApis?.cloud,
-      services?.deliveryApi,
-    ].filter(
-      (api, index, candidates): api is NonNullable<typeof api> =>
-        Boolean(api) && candidates.indexOf(api) === index
-    )
+    const apis = projectSpaceApis(services)
     if (!apis.length) {
       queueMicrotask(() => {
         if (active) {
           setCloudProjects([])
-          setDefaultCloudProjectId(null)
+          setDefaultProjectOptionKey(null)
         }
       })
       return () => {
         active = false
       }
     }
-    const deviceId = localProjectDeviceId
-    type AssociatedProject = {
-      project: CloudProject
-      binding: CloudProjectLocalBinding | null
-    }
     void Promise.allSettled(
-      apis.map(async (api): Promise<AssociatedProject[]> => {
+      apis.map(async api => {
         const result = await api.listCloudProjects()
-        if (!localProjectId) {
-          return result.items.map(project => ({ project, binding: null }))
-        }
-        const candidates = await Promise.all(
-          result.items.map(async project => {
-            const bindings = await api.listLocalBindings(project.id)
-            const binding =
-              bindings.find(
-                candidate =>
-                  candidate.local_project_id === localProjectId && candidate.device_id === deviceId
-              ) ??
-              bindings.find(
-                candidate => candidate.local_project_id === localProjectId && !candidate.device_id
-              ) ??
-              null
-            return { project, binding }
-          })
-        )
-        return candidates.filter(candidate => Boolean(candidate.binding))
+        return result.items
       })
     )
       .then(results => {
@@ -1116,17 +1036,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         const uniqueProjects = candidates.filter(
           (candidate, index) =>
             candidates.findIndex(
-              other =>
-                other.project.id === candidate.project.id &&
-                other.project.project_store === candidate.project.project_store
+              other => other.id === candidate.id && other.project_store === candidate.project_store
             ) === index
         )
-        const defaultProject = uniqueProjects.find(candidate => candidate.binding?.is_default)
-        setCloudProjects(uniqueProjects.map(candidate => candidate.project))
-        setDefaultCloudProjectId(defaultProject?.project.id ?? null)
-        if (defaultProject && localProjectId) {
-          cacheAutoJoinProjectSpace(localProjectId, deviceId, defaultProject.project)
-        }
+        const defaultProject = defaultProjectSpace
+          ? uniqueProjects.find(
+              project =>
+                projectSpaceKey(projectSpaceRef(project)) === projectSpaceKey(defaultProjectSpace)
+            )
+          : null
+        setCloudProjects(uniqueProjects)
+        setDefaultProjectOptionKey(
+          defaultProject ? projectSpaceKey(projectSpaceRef(defaultProject)) : null
+        )
         const pendingAutoJoin = pendingAutoJoinResolutionRef.current
         const pendingTargetMatchesCurrentTask =
           pendingAutoJoin?.target &&
@@ -1140,13 +1062,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           (!currentRuntimeTask || pendingTargetMatchesCurrentTask)
         ) {
           pendingTodoBinding = {
-            project: defaultProject.project,
+            project: defaultProject,
             item: null,
             target: pendingAutoJoin?.target ?? null,
             description: pendingAutoJoin?.description ?? '',
           }
           pendingAutoJoinResolutionRef.current = null
-          setPendingCloudProject(defaultProject.project)
+          setPendingCloudProject(defaultProject)
           setPendingTodoItemState(null)
         } else if (!defaultProject && pendingAutoJoin) {
           pendingAutoJoinResolutionRef.current = null
@@ -1155,7 +1077,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       .catch(() => {
         if (active) {
           setCloudProjects([])
-          setDefaultCloudProjectId(null)
+          setDefaultProjectOptionKey(null)
         }
       })
     return () => {
@@ -1163,15 +1085,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [
     currentRuntimeTask,
+    defaultProjectSpace,
     defaultCloudProjectSelectionKey,
     dismissedDefaultCloudProjectKey,
-    localBindingRevision,
-    localProjectDeviceId,
-    localProjectId,
     pendingCloudProject,
-    services?.deliveryApi,
-    services?.projectSpaceApis?.cloud,
-    services?.projectSpaceApis?.local,
+    services,
     setPendingCloudContext,
   ])
   const cloudProjectMentionCandidates = useMemo<ComposerCloudMentionCandidate[]>(
@@ -1184,7 +1102,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           title: project.name,
           description: project.description || project.project_key || undefined,
           statusLabel:
-            project.id === defaultCloudProjectId
+            projectSpaceKey(projectSpaceRef(project)) === defaultProjectOptionKey
               ? t('workbench.project_space_auto_join', '自动加入')
               : undefined,
           metaLabel: t('workbench.mention_cloud_space', '云空间'),
@@ -1203,7 +1121,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           project,
         }
       }),
-    [cloudProjects, defaultCloudProjectId, t]
+    [cloudProjects, defaultProjectOptionKey, t]
   )
   const bindComposerCloudProject = useCallback(
     (project: CloudProject, notice: string) => {

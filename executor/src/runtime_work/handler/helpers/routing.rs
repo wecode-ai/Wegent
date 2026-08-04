@@ -193,6 +193,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_pinned_order: project.pinned_order,
             project_active: project.active,
             project_appearance: project.appearance.clone(),
+            default_project_space: project.default_project_space.clone(),
         })
         .collect()
 }

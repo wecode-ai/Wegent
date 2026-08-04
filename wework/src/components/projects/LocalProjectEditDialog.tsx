@@ -3,17 +3,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import {
-  cacheAutoJoinProjectSpace,
-  loadProjectSpaceBindingOptions,
-  saveAutoJoinProjectSpace,
-  type ProjectSpaceBindingApi,
-  type ProjectSpaceBindingOption,
-} from '@/features/todo/projectSpaceLocalBindings'
+  loadProjectSpaceOptions,
+  projectSpaceKey,
+  projectSpaceRef,
+  type ProjectSpaceApi,
+  type ProjectSpaceOption,
+} from '@/features/todo/projectSpaceSelection'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { DeviceInfo, RuntimeProjectWork } from '@/types/api'
+import type { DeviceInfo, RuntimeProjectSpaceRef, RuntimeProjectWork } from '@/types/api'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 
 interface LocalProjectEditDialogProps {
@@ -23,13 +22,14 @@ interface LocalProjectEditDialogProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  projectSpaceApis?: ProjectSpaceBindingApi[]
+  projectSpaceApis?: ProjectSpaceApi[]
   onClose: () => void
   onSave: (data: {
     deviceId: string
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   onDelete: () => void
 }
@@ -99,32 +99,25 @@ function LocalProjectEditDialogContent({
   const [submitting, setSubmitting] = useState(false)
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [projectSpaceOptions, setProjectSpaceOptions] = useState<ProjectSpaceBindingOption[]>([])
-  const [autoJoinProjectSpaceKey, setAutoJoinProjectSpaceKey] = useState<string | null>(null)
-  const [initialAutoJoinProjectSpaceKey, setInitialAutoJoinProjectSpaceKey] = useState<
-    string | null
-  >(null)
+  const [projectSpaceOptions, setProjectSpaceOptions] = useState<ProjectSpaceOption[]>([])
+  const [autoJoinProjectSpaceKey, setAutoJoinProjectSpaceKey] = useState<string | null>(() => {
+    const ref = projectWork.project.defaultProjectSpace
+    return ref ? projectSpaceKey(ref) : null
+  })
   const [projectSpacesLoading, setProjectSpacesLoading] = useState(projectSpaceApis.length > 0)
   const deviceId =
     projectWork.project.stateDeviceId?.trim() ||
     projectWork.deviceWorkspaces[0]?.deviceId.trim() ||
     ''
-  const localProjectId = runtimeProjectUiId(projectWork.project)
-
   useEscapeKey(onClose, !submitting)
 
   useEffect(() => {
     if (projectSpaceApis.length === 0) return
     let active = true
-    void loadProjectSpaceBindingOptions(projectSpaceApis, localProjectId, deviceId || undefined)
+    void loadProjectSpaceOptions(projectSpaceApis)
       .then(options => {
         if (!active) return
-        const selectedKey = options.find(option => option.binding?.is_default)?.key ?? null
-        const selectedProject = options.find(option => option.key === selectedKey)?.project ?? null
-        cacheAutoJoinProjectSpace(localProjectId, deviceId || undefined, selectedProject)
         setProjectSpaceOptions(options)
-        setAutoJoinProjectSpaceKey(selectedKey)
-        setInitialAutoJoinProjectSpaceKey(selectedKey)
       })
       .catch(loadError => {
         if (!active) return
@@ -136,7 +129,7 @@ function LocalProjectEditDialogContent({
     return () => {
       active = false
     }
-  }, [deviceId, localProjectId, projectSpaceApis])
+  }, [projectSpaceApis])
 
   const addFolders = async () => {
     if (!shouldUseNativeProjectDirectoryPicker()) {
@@ -157,20 +150,24 @@ function LocalProjectEditDialogContent({
     setSubmitting(true)
     setError(null)
     try {
+      const selectedProjectSpace = projectSpaceOptions.find(
+        option => option.key === autoJoinProjectSpaceKey
+      )
+      const existingDefaultProjectSpace = projectWork.project.defaultProjectSpace ?? null
+      const existingDefaultKey = existingDefaultProjectSpace
+        ? projectSpaceKey(existingDefaultProjectSpace)
+        : null
       await onSave({
         deviceId,
         projectKey: projectWork.project.key,
         name: trimmedName,
         roots,
+        defaultProjectSpace: selectedProjectSpace
+          ? projectSpaceRef(selectedProjectSpace.project)
+          : autoJoinProjectSpaceKey === existingDefaultKey
+            ? existingDefaultProjectSpace
+            : null,
       })
-      if (autoJoinProjectSpaceKey !== initialAutoJoinProjectSpaceKey) {
-        await saveAutoJoinProjectSpace(
-          projectSpaceOptions,
-          autoJoinProjectSpaceKey,
-          localProjectId,
-          deviceId || undefined
-        )
-      }
       onClose()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))

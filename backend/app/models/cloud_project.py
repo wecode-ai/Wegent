@@ -6,13 +6,11 @@
 from app.models.delivery import (
     CloudProject,
     CloudProjectFile,
-    CloudProjectLocalBinding,
     LoopItemTaskBinding,
 )
 
 __all__ = [
     "CloudProject",
     "CloudProjectFile",
-    "CloudProjectLocalBinding",
     "LoopItemTaskBinding",
 ]

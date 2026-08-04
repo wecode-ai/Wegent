@@ -7,7 +7,6 @@ import {
   type CloudProject,
   type CloudProjectFile,
   type CloudProjectId,
-  type CloudProjectLocalBinding,
   type CloudProjectMember,
   type Delivery,
   type DeliveryAsset,
@@ -307,21 +306,6 @@ export function createLocalDeliveryApi(
 ): NonNullable<WorkbenchServices['deliveryApi']> {
   const taskProjects = new Map<string, CloudProjectId>()
   const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
-  const bindingStorageKey = 'wework.local-project-space-bindings'
-
-  const readLocalBindings = (): CloudProjectLocalBinding[] => {
-    try {
-      const parsed = JSON.parse(window.localStorage.getItem(bindingStorageKey) ?? '[]')
-      return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
-    }
-  }
-
-  const writeLocalBindings = (bindings: CloudProjectLocalBinding[]) => {
-    window.localStorage.setItem(bindingStorageKey, JSON.stringify(bindings))
-  }
-
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
     for (const record of records) taskProjects.set(record.id, projectId)
   }
@@ -607,40 +591,6 @@ export function createLocalDeliveryApi(
         task_id: task.taskId,
       })
     },
-    async updateLocalBinding(
-      projectId: CloudProjectId,
-      bindingId: string,
-      data: { is_default?: boolean }
-    ) {
-      const bindings = readLocalBindings()
-      const binding = bindings.find(
-        candidate => candidate.id === bindingId && candidate.cloud_project_id === projectId
-      )
-      if (!binding) throw new Error('Local binding not found')
-      if (data.is_default) {
-        for (const candidate of bindings) {
-          if (
-            candidate.id !== binding.id &&
-            candidate.local_project_id === binding.local_project_id &&
-            candidate.device_id === binding.device_id
-          ) {
-            candidate.is_default = false
-          }
-        }
-      }
-      if (data.is_default !== undefined) binding.is_default = data.is_default
-      binding.updated_at = new Date().toISOString()
-      writeLocalBindings(bindings)
-      return binding
-    },
-    async deleteLocalBinding(projectId: CloudProjectId, bindingId: string) {
-      const bindings = readLocalBindings()
-      const nextBindings = bindings.filter(
-        candidate => candidate.id !== bindingId || candidate.cloud_project_id !== projectId
-      )
-      if (nextBindings.length === bindings.length) throw new Error('Local binding not found')
-      writeLocalBindings(nextBindings)
-    },
     async findLoopItemForTask(task: RuntimeTaskAddress) {
       const binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
         device_id: task.deviceId,
@@ -666,58 +616,11 @@ export function createLocalDeliveryApi(
         loop_item: loopItem,
       }
     },
-    async listLocalBindings(projectId: CloudProjectId) {
-      return readLocalBindings().filter(binding => binding.cloud_project_id === projectId)
-    },
     listCloudProjectMembers: async (): Promise<CloudProjectMember[]> => [],
     addCloudProjectMember: async () => unsupported('Project members'),
     updateCloudProjectMember: async () => unsupported('Project members'),
     removeCloudProjectMember: async () => unsupported('Project members'),
     searchCloudProjectUsers: async () => ({ users: [], total: 0 }),
-    async addLocalBinding(
-      projectId: CloudProjectId,
-      data: {
-        local_project_id: number
-        device_id?: string
-        is_default?: boolean
-      }
-    ) {
-      const bindings = readLocalBindings()
-      if (
-        bindings.some(
-          binding =>
-            binding.cloud_project_id === projectId &&
-            binding.local_project_id === data.local_project_id &&
-            binding.device_id === (data.device_id ?? null)
-        )
-      ) {
-        throw new Error('Local project is already linked')
-      }
-      if (data.is_default) {
-        for (const candidate of bindings) {
-          if (
-            candidate.local_project_id === data.local_project_id &&
-            candidate.device_id === (data.device_id ?? null)
-          ) {
-            candidate.is_default = false
-          }
-        }
-      }
-      const now = new Date().toISOString()
-      const binding: CloudProjectLocalBinding = {
-        id: crypto.randomUUID(),
-        cloud_project_id: projectId,
-        local_project_id: data.local_project_id,
-        user_id: 0,
-        device_id: data.device_id ?? null,
-        is_default: data.is_default ?? false,
-        created_at: now,
-        updated_at: now,
-      }
-      bindings.push(binding)
-      writeLocalBindings(bindings)
-      return binding
-    },
     async listCloudFiles(projectId: CloudProjectId) {
       const records = await request<LocalProjectFileRecord[]>('files.list', {
         project_id: projectId,

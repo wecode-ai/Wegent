@@ -222,34 +222,6 @@ class CloudProjectListResponse(BaseModel):
     items: list[CloudProjectResponse]
 
 
-class LocalBindingCreate(BaseModel):
-    local_project_id: int
-    device_id: str | None = Field(default=None, max_length=100)
-    is_default: bool = False
-
-
-class LocalBindingUpdate(BaseModel):
-    is_default: bool | None = None
-
-
-class LocalBindingResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: SnowflakeId
-    cloud_project_id: SnowflakeId
-    local_project_id: int
-    user_id: int
-    device_id: str | None
-    is_default: bool
-    created_at: datetime
-    updated_at: datetime
-
-    @field_validator("device_id", mode="before")
-    @classmethod
-    def normalize_empty_device_id(cls, value: object) -> object:
-        return None if value == "" else value
-
-
 class CloudProjectMemberCreate(BaseModel):
     user_id: int = Field(ge=1)
     role: BaseRole = BaseRole.Developer

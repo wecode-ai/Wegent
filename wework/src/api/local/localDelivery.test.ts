@@ -324,38 +324,6 @@ describe('local delivery API', () => {
     })
   })
 
-  test('stores project-space associations with one default per local project', async () => {
-    window.localStorage.clear()
-    const request = vi.fn()
-    const api = createLocalDeliveryApi(request)
-
-    const first = await api.addLocalBinding('project-1', {
-      local_project_id: 91,
-      is_default: true,
-    })
-    const second = await api.addLocalBinding('project-2', {
-      local_project_id: 91,
-      is_default: true,
-    })
-
-    await expect(api.listLocalBindings('project-1')).resolves.toEqual([
-      expect.objectContaining({ id: first.id, is_default: false }),
-    ])
-    await expect(api.listLocalBindings('project-2')).resolves.toEqual([
-      expect.objectContaining({ id: second.id, is_default: true }),
-    ])
-
-    const updated = await api.updateLocalBinding('project-1', first.id, {
-      is_default: true,
-    })
-    expect(updated.is_default).toBe(true)
-    await expect(api.listLocalBindings('project-2')).resolves.toEqual([
-      expect.objectContaining({ id: second.id, is_default: false }),
-    ])
-    await api.deleteLocalBinding('project-2', second.id)
-    await expect(api.listLocalBindings('project-2')).resolves.toEqual([])
-  })
-
   test('tracks concurrent calls for the same runtime task only once', async () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     const request = vi.fn(async (method: string) => {

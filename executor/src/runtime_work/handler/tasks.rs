@@ -131,6 +131,7 @@ impl RuntimeWorkRpcHandler {
                     project_key,
                     project_name,
                     &request.runtime_workspace_roots,
+                    None,
                 )
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
             }

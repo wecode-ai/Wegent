@@ -357,6 +357,7 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_pinned_order: Option<usize>,
     pub project_active: bool,
     pub project_appearance: Option<Value>,
+    pub default_project_space: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -377,6 +378,7 @@ impl Default for RuntimeWorkspaceLink {
             project_pinned_order: None,
             project_active: false,
             project_appearance: None,
+            default_project_space: None,
         }
     }
 }
@@ -480,6 +482,9 @@ pub(crate) fn workspace_response(
                 workspace_json["projectActive"] = Value::Bool(workspace.project_active);
                 if let Some(appearance) = workspace.project_appearance.clone() {
                     workspace_json["projectAppearance"] = appearance;
+                }
+                if let Some(default_project_space) = workspace.default_project_space.clone() {
+                    workspace_json["defaultProjectSpace"] = default_project_space;
                 }
             }
             if let Some(remote_host_id) = remote_host_id {

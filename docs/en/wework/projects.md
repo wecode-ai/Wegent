@@ -22,7 +22,7 @@ After enabling **Settings → General → Experimental features**, open **Edit p
 
 New conversations started in that local project inherit the selected project space. Before the first message is sent, the composer shows **Add to board · Project space name**. Sending creates a task in the selected local or cloud project space and links the conversation. Repeated synchronization of the same conversation does not create duplicate board tasks.
 
-Linking local projects from the project-space management page only controls where that space is available. Automatic joining remains a per-local-project setting. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
+The default project space belongs to the local project's settings and is stored with that project's device-local state; the project space does not keep a reverse link. Use the composer's **+** menu to select, replace, or remove the project space for an individual conversation before sending.
 
 ## Create a project from the composer
 

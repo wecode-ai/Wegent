@@ -21,6 +21,7 @@ import type {
   GitRepoInfo,
   ProjectWithTasks,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -181,7 +182,13 @@ export function useWorkbenchProjectActions({
   )
 
   const updateLocalRuntimeProject = useCallback(
-    async (data: { deviceId: string; projectKey: string; name: string; roots: string[] }) => {
+    async (data: {
+      deviceId: string
+      projectKey: string
+      name: string
+      roots: string[]
+      defaultProjectSpace: RuntimeProjectSpaceRef | null
+    }) => {
       const response = await executorClient.runtime.upsertLocalRuntimeProject({
         ...data,
         runtime: 'codex',
