@@ -565,6 +565,37 @@ fn vision_sidecar_allows_zero_descriptions_to_disable_calls_fail_closed() {
 }
 
 #[test]
+fn vision_sidecar_rejects_invalid_configuration_and_honors_disable() {
+    assert!(vision_sidecar_upstream(&json!({
+        "visionSidecar": {
+            "requestUrl": "https://vision.example/v1/responses",
+            "modelId": "vision-model",
+            "apiFormat": "openai-embeddings"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {"model_id": "vision-model"}
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "enabled": false,
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model"
+        }
+    }))
+    .expect("disabled sidecar")
+    .is_none());
+}
+
+#[test]
 fn explicit_upstream_uses_configured_max_output_tokens() {
     let upstream = explicit_codex_upstream(
         &json!({

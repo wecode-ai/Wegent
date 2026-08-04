@@ -492,6 +492,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     input.visionModelConfigId === undefined
       ? previous?.visionModelConfigId
       : input.visionModelConfigId?.trim() || undefined
+  const enabled = input.enabled ?? previous?.enabled ?? true
   if (visionModelConfigId === id) {
     throw new Error('Vision proxy model must be different from the primary model')
   }
@@ -500,6 +501,9 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     !existing.some(config => config.id === visionModelConfigId && config.enabled)
   ) {
     throw new Error('Vision proxy model is missing or disabled')
+  }
+  if (!enabled && existing.some(config => config.id !== id && config.visionModelConfigId === id)) {
+    throw new Error('Vision proxy model is still referenced by another model')
   }
   const next: LocalModelConfig = {
     id,
@@ -529,7 +533,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     ...(pendingRuntimeInstanceId
       ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
       : {}),
-    enabled: input.enabled ?? previous?.enabled ?? true,
+    enabled,
     updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)

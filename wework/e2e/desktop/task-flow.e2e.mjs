@@ -1575,7 +1575,7 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     })
     await selectE2EModel(control, VISION_SIDECAR_MAIN_OPTION_ID, VISION_SIDECAR_MAIN_LABEL)
     await control.command('dropFile', composerSelector, {
-      filename: `vision-sidecar-${attempt + 1}.png`,
+      filename: 'vision-sidecar.png',
       mimeType: 'image/png',
       value: IMAGE_ARTIFACT_BASE64,
     })

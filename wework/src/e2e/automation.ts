@@ -286,6 +286,7 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
             toolProfile: 'custom' as const,
             requestPath: '/v1/responses',
           },
+          // The vision proxy must be saved before the primary model that references it.
           {
             id: 'desktop-e2e-vision',
             providerProfileId: 'kimi' as const,
@@ -294,6 +295,7 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
             apiFormat: 'openai-chat-completions' as const,
             toolProfile: 'function' as const,
             requestPath: '/v1/chat/completions',
+            catalogReady: true,
           },
           {
             id: 'desktop-e2e-vision-main',
@@ -304,18 +306,16 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
             toolProfile: 'custom' as const,
             requestPath: '/v1/responses',
             visionModelConfigId: 'desktop-e2e-vision',
+            catalogReady: true,
           },
         ]
       : []
   for (const model of localModels) {
     saveLocalModelConfig({
+      catalogReady: localModelsCatalogReady,
       ...model,
       baseUrl: modelServerUrl,
       apiKey: 'wework-e2e-test-key',
-      catalogReady:
-        model.id === 'desktop-e2e-vision' || model.id === 'desktop-e2e-vision-main'
-          ? true
-          : localModelsCatalogReady,
       enabled: true,
     })
   }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -13,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 
-use super::{proxy_client, VisionSidecarUpstream};
+use super::{proxy_client_without_redirects, VisionSidecarUpstream};
 use crate::logging::log_executor_event;
 use crate::server::HttpError;
 
@@ -249,7 +250,8 @@ pub(super) async fn replace_images_with_descriptions(
 fn request_context(request: &Value) -> String {
     let mut parts = Vec::new();
     collect_text(request.get("input"), &mut parts);
-    truncate_chars(&parts.join("\n"), CONTEXT_MAX_CHARS)
+    let context = strip_generated_attachment_markup(&parts.join("\n"));
+    truncate_chars_from_end(&context, CONTEXT_MAX_CHARS)
 }
 
 fn collect_text(value: Option<&Value>, parts: &mut Vec<String>) {
@@ -288,16 +290,18 @@ fn collect_image_jobs(value: &Value, context: &str, jobs: &mut Vec<ImageJob>) {
         }
         Value::Object(object) => {
             if object.get("type").and_then(Value::as_str) == Some("input_image") {
-                if let Some(image_url) = object.get("image_url").and_then(Value::as_str) {
-                    jobs.push(ImageJob {
-                        image_url: image_url.to_owned(),
-                        detail: object
-                            .get("detail")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                        context: context.to_owned(),
-                    });
-                }
+                jobs.push(ImageJob {
+                    image_url: object
+                        .get("image_url")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    detail: object
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    context: context.to_owned(),
+                });
                 return;
             }
             for key in ["input", "content", "output"] {
@@ -366,11 +370,13 @@ fn sha256_hex(value: &[u8]) -> String {
 
 async fn describe_image(sidecar: &VisionSidecarUpstream, job: &ImageJob) -> Result<String, String> {
     validate_image_url(&job.image_url)?;
-    let _permit = vision_concurrency_limiter()
-        .acquire()
+    validate_vision_request_url(&sidecar.request_url)?;
+    let _permit = tokio::time::timeout(sidecar.timeout, vision_concurrency_limiter().acquire())
         .await
+        .map_err(|_| "vision model queue wait timed out".to_owned())?
         .expect("vision concurrency limiter should remain open");
-    let client = proxy_client(sidecar.proxy_url.as_deref()).map_err(|error| error.detail)?;
+    let client = proxy_client_without_redirects(sidecar.proxy_url.as_deref())
+        .map_err(|error| error.detail)?;
     let body = vision_request_body(sidecar, job);
     let mut request = client
         .post(&sidecar.request_url)
@@ -558,6 +564,25 @@ fn validate_image_url(image_url: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_vision_request_url(request_url: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(request_url)
+        .map_err(|_| "vision model endpoint is not a valid URL".to_owned())?;
+    if url.scheme() == "https" {
+        return Ok(());
+    }
+    let is_loopback = url.host_str().is_some_and(|host| {
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    });
+    if url.scheme() == "http" && is_loopback {
+        return Ok(());
+    }
+    Err("vision model endpoint must use HTTPS unless it is loopback".to_owned())
+}
+
 fn parse_data_url(image_url: &str) -> Option<(&str, &str)> {
     let rest = image_url.strip_prefix("data:")?;
     let (metadata, data) = rest.split_once(',')?;
@@ -570,6 +595,50 @@ fn truncate_chars(value: &str, limit: usize) -> String {
         return value.to_owned();
     }
     value.chars().take(limit).collect()
+}
+
+fn truncate_chars_from_end(value: &str, limit: usize) -> String {
+    let character_count = value.chars().count();
+    if character_count <= limit {
+        return value.to_owned();
+    }
+    value
+        .chars()
+        .skip(character_count.saturating_sub(limit))
+        .collect()
+}
+
+fn strip_generated_attachment_markup(value: &str) -> String {
+    let mut inside_image = false;
+    let mut inside_file_references = false;
+    value
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed == "# Files mentioned by the user:" {
+                inside_file_references = true;
+                return false;
+            }
+            if inside_file_references {
+                if trimmed == "## My request for Codex:" {
+                    inside_file_references = false;
+                }
+                return false;
+            }
+            if inside_image {
+                if trimmed.contains("</image>") {
+                    inside_image = false;
+                }
+                return false;
+            }
+            if trimmed.starts_with("<image ") {
+                inside_image = !trimmed.contains("</image>");
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -669,6 +738,61 @@ mod tests {
     }
 
     #[test]
+    fn validates_secure_or_loopback_vision_endpoints() {
+        assert!(validate_vision_request_url("https://vision.example/v1/responses").is_ok());
+        assert!(validate_vision_request_url("http://localhost:8080/v1/responses").is_ok());
+        assert!(validate_vision_request_url("http://127.0.0.1:8080/v1/responses").is_ok());
+        assert!(validate_vision_request_url("http://[::1]:8080/v1/responses").is_ok());
+        assert!(validate_vision_request_url("http://vision.example/v1/responses").is_err());
+        assert!(validate_vision_request_url("file:///tmp/vision").is_err());
+    }
+
+    #[test]
+    fn request_context_keeps_text_nearest_the_current_image() {
+        let oldest = format!("oldest-marker-{}", "x".repeat(CONTEXT_MAX_CHARS));
+        let latest = "latest image request";
+        let request = json!({
+            "input": [{
+                "type": "message",
+                "content": [
+                    {"type": "input_text", "text": oldest},
+                    {"type": "input_text", "text": latest},
+                    {"type": "input_image", "image_url": "data:image/png;base64,YQ=="}
+                ]
+            }]
+        });
+
+        let context = request_context(&request);
+
+        assert_eq!(context.chars().count(), CONTEXT_MAX_CHARS);
+        assert!(!context.contains("oldest-marker"));
+        assert!(context.ends_with(latest));
+    }
+
+    #[test]
+    fn request_context_ignores_generated_image_reference_paths() {
+        let request_with_path = |path: &str| {
+            json!({
+                "input": [{
+                    "type": "message",
+                    "content": [{
+                        "type": "input_text",
+                        "text": format!(
+                            "# Files mentioned by the user:\n\n## vision-sidecar.png: {path}\n\n## My request for Codex:\nDescribe this image.\n\n<image name=[Image #1] path=\"{path}\">\n</image>"
+                        )
+                    }]
+                }]
+            })
+        };
+
+        let first = request_context(&request_with_path("/tmp/100/vision-sidecar.png"));
+        let second = request_context(&request_with_path("/tmp/200/vision-sidecar.png"));
+
+        assert_eq!(first, "Describe this image.\n");
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn extracts_descriptions_from_each_protocol() {
         assert_eq!(
             extract_description(
@@ -765,6 +889,114 @@ mod tests {
             sidecar_request.pointer("/input/0/content/1/type"),
             Some(&Value::String("input_image".to_owned()))
         );
+    }
+
+    #[tokio::test]
+    async fn keeps_file_id_and_image_url_descriptions_positionally_aligned() {
+        use axum::{routing::post, Json, Router};
+        use tokio::net::TcpListener;
+
+        async fn describe() -> Json<Value> {
+            Json(json!({"output_text": "The valid second image."}))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("sidecar listener");
+        let address = listener.local_addr().expect("sidecar address");
+        tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/responses", post(describe)))
+                .await
+                .expect("sidecar server should run");
+        });
+        let sidecar = test_sidecar(format!("http://{address}/responses"));
+        let body = serde_json::to_vec(&json!({
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "file_id": "file-not-supported"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,c2Vjb25k"}
+                ]
+            }]
+        }))
+        .expect("request body");
+
+        let rewritten = replace_images_with_descriptions(Some(&sidecar), &body)
+            .await
+            .expect("vision rewrite");
+        let rewritten: Value = serde_json::from_slice(&rewritten).expect("rewritten request");
+        let first = rewritten
+            .pointer("/input/0/content/0/text")
+            .and_then(Value::as_str)
+            .expect("first replacement");
+        let second = rewritten
+            .pointer("/input/0/content/1/text")
+            .and_then(Value::as_str)
+            .expect("second replacement");
+
+        assert!(first.contains("unsupported image URL scheme"));
+        assert!(second.contains("The valid second image."));
+    }
+
+    #[tokio::test]
+    async fn does_not_follow_vision_endpoint_redirects() {
+        use axum::{extract::State, response::Redirect, routing::post, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::net::TcpListener;
+
+        async fn redirect(State(target): State<String>) -> Redirect {
+            Redirect::temporary(&target)
+        }
+
+        async fn redirected_target(State(calls): State<Arc<AtomicUsize>>) {
+            calls.fetch_add(1, Ordering::SeqCst);
+        }
+
+        let redirected_calls = Arc::new(AtomicUsize::new(0));
+        let target_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("redirect target listener");
+        let target_address = target_listener
+            .local_addr()
+            .expect("redirect target address");
+        let target_app = Router::new()
+            .route("/captured", post(redirected_target))
+            .with_state(redirected_calls.clone());
+        tokio::spawn(async move {
+            axum::serve(target_listener, target_app)
+                .await
+                .expect("redirect target should run");
+        });
+
+        let redirect_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("redirect listener");
+        let redirect_address = redirect_listener.local_addr().expect("redirect address");
+        let redirect_app = Router::new()
+            .route("/responses", post(redirect))
+            .with_state(format!("http://{target_address}/captured"));
+        tokio::spawn(async move {
+            axum::serve(redirect_listener, redirect_app)
+                .await
+                .expect("redirect server should run");
+        });
+
+        let sidecar = test_sidecar(format!("http://{redirect_address}/responses"));
+        let job = ImageJob {
+            image_url: "data:image/png;base64,YQ==".to_owned(),
+            detail: None,
+            context: "describe".to_owned(),
+        };
+        let error = describe_image(&sidecar, &job)
+            .await
+            .expect_err("redirect must fail closed");
+
+        assert_eq!(error, "vision model returned HTTP 307");
+        assert_eq!(redirected_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

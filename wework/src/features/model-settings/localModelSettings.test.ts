@@ -152,6 +152,30 @@ describe('localModelSettings', () => {
     ).toThrow('missing or disabled')
   })
 
+  test('rejects disabling a vision proxy that is still referenced', () => {
+    saveLocalModelConfig({
+      id: 'vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+    })
+    saveLocalModelConfig({
+      id: 'primary',
+      modelId: 'primary-model',
+      baseUrl: 'https://models.example/v1',
+      visionModelConfigId: 'vision',
+    })
+
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'vision',
+        modelId: 'vision-model',
+        baseUrl: 'https://vision.example/v1',
+        enabled: false,
+      })
+    ).toThrow('still referenced')
+    expect(listLocalModelConfigs().find(config => config.id === 'vision')?.enabled).toBe(true)
+  })
+
   test('preserves persisted API keys in local storage', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',

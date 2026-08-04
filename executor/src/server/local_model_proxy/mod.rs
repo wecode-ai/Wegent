@@ -1149,19 +1149,36 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(reqwest::Client::new());
-    };
-    reqwest::Client::builder()
-        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("Invalid local model proxy URL: {error}"),
-        })?)
+    proxy_client_builder(proxy_url)?
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Failed to configure local model proxy client: {error}"),
         })
+}
+
+fn proxy_client_without_redirects(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
+    proxy_client_builder(proxy_url)?
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to configure local model proxy client: {error}"),
+        })
+}
+
+fn proxy_client_builder(proxy_url: Option<&str>) -> Result<reqwest::ClientBuilder, HttpError> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(reqwest::Client::builder());
+    };
+    Ok(
+        reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy_url).map_err(|error| {
+            HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Invalid local model proxy URL: {error}"),
+            }
+        })?),
+    )
 }
 
 async fn send_upstream_request_with_rate_limit_retry(
