@@ -1972,8 +1972,12 @@ function AssistantMessage({
   const [finalProcessingCompletedAt] = useState(() => Date.now())
   const isProcessingOnlyBeforeGuidance =
     Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
+  const hasPlanResponse = displayBlocks.some(
+    block => block.type === 'plan' && Boolean(block.content.trim())
+  )
   const usesFinalProcessingShell =
     hasBlocks &&
+    !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
     (isProcessingOnlyBeforeGuidance ||
