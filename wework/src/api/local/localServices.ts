@@ -917,10 +917,11 @@ function localRuntimeModelConfig(
 
   const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
   const codexProviderName = modelOptions?.codexProviderName || modelOptions?.codex_provider_name
+  const codexProviderType = modelOptions?.codexProviderType || modelOptions?.codex_provider_type
   return {
     model: 'openai',
     model_id: builtInCodexModelId(modelName),
-    wework_model_kind: codexProviderId ? 'codex-provider' : 'codex-official',
+    wework_model_kind: codexProviderType === 'provider' ? 'codex-provider' : 'codex-official',
     api_format: RESPONSES_API_FORMAT,
     protocol: OPENAI_RESPONSES_PROTOCOL,
     ...(codexProviderId ? { model_provider: codexProviderId } : {}),
