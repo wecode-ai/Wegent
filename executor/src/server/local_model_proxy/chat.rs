@@ -128,7 +128,7 @@ fn responses_to_chat_with_namespace_mode(
     body: &Value,
     model_hint: Option<&str>,
     preserve_namespace: bool,
-    enable_kimi_compat: bool,
+    enable_kimi_k3_compat: bool,
 ) -> Result<(Value, ToolContext), String> {
     let mut result = Map::new();
     copy_field(body, &mut result, "model", "model");
@@ -144,8 +144,8 @@ fn responses_to_chat_with_namespace_mode(
     if let Some(input) = body.get("input") {
         append_input(input, &context, &mut messages)?;
     }
-    let kimi_compat = enable_kimi_compat && request_uses_kimi(body, model_hint);
-    if kimi_compat {
+    let kimi_k3_compat = enable_kimi_k3_compat && request_uses_kimi_k3(body, model_hint);
+    if kimi_k3_compat {
         backfill_kimi_tool_call_reasoning(&mut messages);
     }
     result.insert(
@@ -174,7 +174,7 @@ fn responses_to_chat_with_namespace_mode(
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         result.insert("stream_options".to_owned(), json!({"include_usage": true}));
     }
-    apply_reasoning_options(body, &mut result, kimi_compat);
+    apply_reasoning_options(body, &mut result, kimi_k3_compat);
 
     let tools = chat_tools(body, &context);
     if !tools.is_empty() {
@@ -283,8 +283,8 @@ fn tool_name_counts(tools: &[Value]) -> BTreeMap<String, usize> {
     counts
 }
 
-fn apply_reasoning_options(body: &Value, result: &mut Map<String, Value>, kimi_compat: bool) {
-    if kimi_compat {
+fn apply_reasoning_options(body: &Value, result: &mut Map<String, Value>, kimi_k3_compat: bool) {
+    if kimi_k3_compat {
         let Some(reasoning_enabled) = reasoning_requested(body) else {
             return;
         };
@@ -311,17 +311,16 @@ fn reasoning_requested(body: &Value) -> Option<bool> {
     body.get("reasoning").map(|reasoning| !reasoning.is_null())
 }
 
-fn is_kimi_model(model: &str) -> bool {
-    let normalized = model.trim().to_ascii_lowercase();
-    normalized.contains("kimi") || normalized.contains("moonshot")
+fn is_kimi_k3_model(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().contains("kimi-k3")
 }
 
-fn request_uses_kimi(body: &Value, model_hint: Option<&str>) -> bool {
-    model_hint.is_some_and(is_kimi_model)
+fn request_uses_kimi_k3(body: &Value, model_hint: Option<&str>) -> bool {
+    model_hint.is_some_and(is_kimi_k3_model)
         || body
             .get("model")
             .and_then(Value::as_str)
-            .is_some_and(is_kimi_model)
+            .is_some_and(is_kimi_k3_model)
 }
 
 fn flattened_namespace_tool_name(namespace: &str, name: &str) -> String {
@@ -2272,6 +2271,14 @@ mod tests {
 
         assert_eq!(converted["thinking"], json!({"type": "enabled"}));
         assert!(converted.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn matches_only_model_names_containing_kimi_k3() {
+        assert!(is_kimi_k3_model("moonshot-kimi-k3"));
+        assert!(is_kimi_k3_model("vendor/MOONSHOT-KIMI-K3-turbo"));
+        assert!(!is_kimi_k3_model("moonshot-v1-128k"));
+        assert!(!is_kimi_k3_model("moonshotai/kimi-k2.5"));
     }
 
     #[test]

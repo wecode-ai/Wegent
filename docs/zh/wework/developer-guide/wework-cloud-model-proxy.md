@@ -36,7 +36,7 @@ provider `base_url` 可以是服务根地址、带版本前缀的 API base，或
 
 #### Kimi K3 Chat Completions 兼容
 
-云端 Kimi K3 Model CRD 配置为 OpenAI Chat Completions 后，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi 进行以下兼容处理：
+云端 Model CRD 配置为 OpenAI Chat Completions，且 provider 模型名称包含不区分大小写的 `kimi-k3`（例如 `moonshot-kimi-k3`）时，Wework 会自动选择上下文窗口为 1,048,576 tokens 的 `wework-kimi-k3` Codex 模型目录。Codex 内部仍使用 Responses 协议，executor 在边界将请求转换为 Chat Completions，并为 Kimi K3 进行以下兼容处理：
 
 - 使用 Kimi 支持的 `thinking` 字段，而不是通用的 `reasoning_effort`。
 - 在多轮消息和工具调用中保留 `reasoning_content`。

@@ -354,7 +354,6 @@ describe('runtimeModelSelection', () => {
   test('selects the Kimi K3 Codex catalog for a cloud chat-completions model', () => {
     const cloudModel: UnifiedModel = {
       name: 'commercial-kimi',
-      modelId: 'moonshot-kimi-k3',
       type: 'user',
       namespace: 'default',
       resourceUserId: 42,
@@ -362,6 +361,8 @@ describe('runtimeModelSelection', () => {
       config: {
         protocol: 'openai',
         apiFormat: 'chat/completions',
+        base_url: 'https://copilot.weibo.com/v1',
+        model_id: 'moonshot-kimi-k3',
       },
     }
 
@@ -374,6 +375,33 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
         weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
+      },
+    })
+  })
+
+  test('does not select the Kimi K3 catalog for other Moonshot models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://copilot.weibo.com/v1',
+        model_id: 'moonshotai/kimi-k2.5',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
       },
     })
   })
