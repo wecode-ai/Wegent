@@ -351,6 +351,86 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('selects the Kimi K3 Codex catalog for a cloud chat-completions model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshot-kimi-k3',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
+      },
+    })
+  })
+
+  test.each(['codex_catalog_model_id', 'codexCatalogModelId'] as const)(
+    'preserves the explicit Codex catalog from %s for a Kimi K3 model',
+    catalogConfigKey => {
+      const cloudModel: UnifiedModel = {
+        name: 'commercial-kimi',
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'cloud',
+        config: {
+          protocol: 'openai',
+          apiFormat: 'chat/completions',
+          model_id: 'moonshot-kimi-k3',
+          [catalogConfigKey]: 'operator-selected-catalog',
+        },
+      }
+
+      expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+        expect.objectContaining({
+          weworkCloudModelCodexCatalogModelId: 'operator-selected-catalog',
+        })
+      )
+    }
+  )
+
+  test('does not select the Kimi K3 catalog for other Moonshot models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshotai/kimi-k2.5',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
   test('passes upstream api format for Anthropic Messages cloud model', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',

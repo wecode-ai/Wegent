@@ -106,10 +106,33 @@ impl ToolContext {
     }
 }
 
+#[cfg(test)]
 pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), String> {
+    responses_to_chat_with_model_hint(body, None)
+}
+
+pub(super) fn responses_to_chat_with_model_hint(
+    body: &Value,
+    model_hint: Option<&str>,
+) -> Result<(Value, ToolContext), String> {
+    responses_to_chat_with_namespace_mode(body, model_hint, true, true)
+}
+
+pub(super) fn responses_to_chat_for_anthropic(
+    body: &Value,
+) -> Result<(Value, ToolContext), String> {
+    responses_to_chat_with_namespace_mode(body, None, false, false)
+}
+
+fn responses_to_chat_with_namespace_mode(
+    body: &Value,
+    model_hint: Option<&str>,
+    preserve_namespace: bool,
+    enable_kimi_k3_compat: bool,
+) -> Result<(Value, ToolContext), String> {
     let mut result = Map::new();
     copy_field(body, &mut result, "model", "model");
-    let context = build_tool_context(body);
+    let context = build_tool_context(body, preserve_namespace);
     let mut messages = Vec::new();
 
     if let Some(instructions) = body.get("instructions") {
@@ -120,6 +143,10 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
     }
     if let Some(input) = body.get("input") {
         append_input(input, &context, &mut messages)?;
+    }
+    let kimi_k3_compat = enable_kimi_k3_compat && request_uses_kimi_k3(body, model_hint);
+    if kimi_k3_compat {
+        backfill_kimi_tool_call_reasoning(&mut messages);
     }
     result.insert(
         "messages".to_owned(),
@@ -147,9 +174,7 @@ pub(super) fn responses_to_chat(body: &Value) -> Result<(Value, ToolContext), St
     if body.get("stream").and_then(Value::as_bool) == Some(true) {
         result.insert("stream_options".to_owned(), json!({"include_usage": true}));
     }
-    if let Some(effort) = body.pointer("/reasoning/effort") {
-        result.insert("reasoning_effort".to_owned(), effort.clone());
-    }
+    apply_reasoning_options(body, &mut result, kimi_k3_compat);
 
     let tools = chat_tools(body, &context);
     if !tools.is_empty() {
@@ -169,29 +194,13 @@ fn copy_field(body: &Value, result: &mut Map<String, Value>, source: &str, targe
     }
 }
 
-fn build_tool_context(body: &Value) -> ToolContext {
+fn build_tool_context(body: &Value, preserve_namespace: bool) -> ToolContext {
     let tools = body
         .get("tools")
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let mut name_counts = BTreeMap::<String, usize>::new();
-    for tool in tools {
-        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
-            for inner_tool in tool
-                .get("tools")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(name) = inner_tool.get("name").and_then(Value::as_str) {
-                    *name_counts.entry(name.to_owned()).or_default() += 1;
-                }
-            }
-        } else if let Some(name) = tool.get("name").and_then(Value::as_str) {
-            *name_counts.entry(name.to_owned()).or_default() += 1;
-        }
-    }
+    let name_counts = tool_name_counts(tools);
 
     let mut context = ToolContext::default();
     for tool in tools {
@@ -208,10 +217,12 @@ fn build_tool_context(body: &Value) -> ToolContext {
                 let Some(name) = inner_tool.get("name").and_then(Value::as_str) else {
                     continue;
                 };
-                let preferred_wire_name = if name_counts.get(name) == Some(&1) {
-                    bounded_wire_name(name)
-                } else {
+                let preferred_wire_name = if preserve_namespace
+                    || name_counts.get(name).is_some_and(|count| *count > 1)
+                {
                     flattened_namespace_tool_name(namespace, name)
+                } else {
+                    bounded_wire_name(name)
                 };
                 let wire_name = unique_wire_name(&context, preferred_wire_name);
                 context.insert_tool(
@@ -233,7 +244,7 @@ fn build_tool_context(body: &Value) -> ToolContext {
         } else {
             ToolKind::Function
         };
-        let preferred_wire_name = if name_counts.get(name) == Some(&1) {
+        let preferred_wire_name = if preserve_namespace || name_counts.get(name) == Some(&1) {
             bounded_wire_name(name)
         } else {
             bounded_wire_name(&format!("functions__{name}"))
@@ -249,6 +260,67 @@ fn build_tool_context(body: &Value) -> ToolContext {
         );
     }
     context
+}
+
+fn tool_name_counts(tools: &[Value]) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for tool in tools {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+            for nested_tool in tool
+                .get("tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(name) = nested_tool.get("name").and_then(Value::as_str) {
+                    *counts.entry(name.to_owned()).or_default() += 1;
+                }
+            }
+        } else if let Some(name) = tool.get("name").and_then(Value::as_str) {
+            *counts.entry(name.to_owned()).or_default() += 1;
+        }
+    }
+    counts
+}
+
+fn apply_reasoning_options(body: &Value, result: &mut Map<String, Value>, kimi_k3_compat: bool) {
+    if kimi_k3_compat {
+        let Some(reasoning_enabled) = reasoning_requested(body) else {
+            return;
+        };
+        result.insert(
+            "thinking".to_owned(),
+            json!({
+                "type": if reasoning_enabled { "enabled" } else { "disabled" }
+            }),
+        );
+        return;
+    }
+    if let Some(effort) = body.pointer("/reasoning/effort") {
+        result.insert("reasoning_effort".to_owned(), effort.clone());
+    }
+}
+
+fn reasoning_requested(body: &Value) -> Option<bool> {
+    if let Some(effort) = body.pointer("/reasoning/effort").and_then(Value::as_str) {
+        return Some(!matches!(
+            effort.trim().to_ascii_lowercase().as_str(),
+            "none" | "off" | "disabled"
+        ));
+    }
+    body.get("reasoning").map(|reasoning| !reasoning.is_null())
+}
+
+fn is_kimi_k3_model(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().contains("kimi-k3")
+}
+
+fn request_uses_kimi_k3(body: &Value, model_hint: Option<&str>) -> bool {
+    model_hint.is_some_and(is_kimi_k3_model)
+        || body
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(is_kimi_k3_model)
 }
 
 fn flattened_namespace_tool_name(namespace: &str, name: &str) -> String {
@@ -360,18 +432,33 @@ fn chat_tool(tool: &Value, namespace: Option<&str>, context: &ToolContext) -> Op
             }
         }));
     }
-    Some(json!({
-        "type": "function",
-        "function": {
-            "name": wire_name,
-            "description": tool.get("description").cloned().unwrap_or(Value::Null),
-            "parameters": tool.get("parameters").cloned().unwrap_or_else(|| json!({
-                "type": "object",
-                "properties": {}
-            })),
-            "strict": tool.get("strict").cloned().unwrap_or(Value::Bool(false))
-        }
-    }))
+    let mut function = Map::new();
+    function.insert("name".to_owned(), Value::String(wire_name.to_owned()));
+    if let Some(description) = tool.get("description") {
+        function.insert("description".to_owned(), description.clone());
+    }
+    function.insert(
+        "parameters".to_owned(),
+        normalize_function_parameters(tool.get("parameters")),
+    );
+    if let Some(strict) = tool.get("strict") {
+        function.insert("strict".to_owned(), strict.clone());
+    }
+    Some(json!({"type": "function", "function": function}))
+}
+
+fn normalize_function_parameters(parameters: Option<&Value>) -> Value {
+    let mut normalized = match parameters {
+        Some(Value::Object(parameters)) => Value::Object(parameters.clone()),
+        _ => json!({"type": "object", "properties": {}}),
+    };
+    let object = normalized
+        .as_object_mut()
+        .expect("normalized function parameters must be an object");
+    if object.get("type").and_then(Value::as_str) != Some("object") {
+        object.insert("type".to_owned(), Value::String("object".to_owned()));
+    }
+    normalized
 }
 
 fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
@@ -432,7 +519,7 @@ fn responses_tool_choice(choice: &Value) -> Option<Value> {
 /// way back through [`responses_sse_to_responses`].
 pub(super) fn responses_to_responses(body: &Value) -> Result<(Value, ToolContext), String> {
     let mut result = body.clone();
-    let context = build_tool_context(&result);
+    let context = build_tool_context(&result, false);
 
     if let Some(tools) = result.get("tools").and_then(Value::as_array) {
         if !tools.is_empty() {
@@ -542,6 +629,7 @@ fn append_input(
     let mut pending_calls = Vec::new();
     let mut pending_reasoning = String::new();
     let mut call_names = BTreeMap::new();
+    let mut last_assistant_index = None;
 
     for item in items {
         match item.get("type").and_then(Value::as_str) {
@@ -577,7 +665,11 @@ fn append_input(
                 }));
             }
             Some("function_call_output") | Some("custom_tool_call_output") => {
-                flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
+                if let Some(index) =
+                    flush_calls(messages, &mut pending_calls, &mut pending_reasoning)
+                {
+                    last_assistant_index = Some(index);
+                }
                 let call_id = item
                     .get("call_id")
                     .and_then(Value::as_str)
@@ -591,15 +683,34 @@ fn append_input(
                 messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
             }
             _ => {
-                flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
+                if let Some(index) =
+                    flush_calls(messages, &mut pending_calls, &mut pending_reasoning)
+                {
+                    last_assistant_index = Some(index);
+                }
                 if item.is_string() {
+                    attach_pending_reasoning_to_previous_assistant(
+                        messages,
+                        last_assistant_index,
+                        &mut pending_reasoning,
+                    );
                     messages.push(json!({"role": "user", "content": item}));
+                    last_assistant_index = None;
                 } else if item.get("role").is_some() || item.get("content").is_some() {
                     let role = match item.get("role").and_then(Value::as_str) {
                         Some("developer") | Some("system") => "system",
                         Some("assistant") => "assistant",
                         _ => "user",
                     };
+                    if role == "assistant" {
+                        append_text(&mut pending_reasoning, &message_reasoning_text(item));
+                    } else {
+                        attach_pending_reasoning_to_previous_assistant(
+                            messages,
+                            last_assistant_index,
+                            &mut pending_reasoning,
+                        );
+                    }
                     let mut message = json!({
                         "role": role,
                         "content": chat_content(item.get("content").unwrap_or(&Value::Null))
@@ -608,12 +719,20 @@ fn append_input(
                         message["reasoning_content"] =
                             Value::String(std::mem::take(&mut pending_reasoning));
                     }
+                    last_assistant_index = (role == "assistant").then_some(messages.len());
                     messages.push(message);
                 }
             }
         }
     }
-    flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
+    if let Some(index) = flush_calls(messages, &mut pending_calls, &mut pending_reasoning) {
+        last_assistant_index = Some(index);
+    }
+    attach_pending_reasoning_to_previous_assistant(
+        messages,
+        last_assistant_index,
+        &mut pending_reasoning,
+    );
     Ok(())
 }
 
@@ -645,9 +764,13 @@ pub(super) fn friendly_apply_patch_output(output: &str) -> String {
     )
 }
 
-fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>, reasoning: &mut String) {
+fn flush_calls(
+    messages: &mut Vec<Value>,
+    calls: &mut Vec<Value>,
+    reasoning: &mut String,
+) -> Option<usize> {
     if calls.is_empty() {
-        return;
+        return None;
     }
     let calls = std::mem::take(calls);
     if let Some(last) = messages
@@ -660,7 +783,7 @@ fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>, reasoning: &mu
             last["tool_calls"] = Value::Array(calls);
         }
         merge_reasoning_content(last, reasoning);
-        return;
+        return Some(messages.len() - 1);
     }
     let mut message = json!({
         "role": "assistant",
@@ -668,7 +791,9 @@ fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>, reasoning: &mu
         "tool_calls": calls
     });
     merge_reasoning_content(&mut message, reasoning);
+    let index = messages.len();
     messages.push(message);
+    Some(index)
 }
 
 fn merge_reasoning_content(message: &mut Value, reasoning: &mut String) {
@@ -682,6 +807,40 @@ fn merge_reasoning_content(message: &mut Value, reasoning: &mut String) {
         .to_owned();
     append_text(&mut combined, &std::mem::take(reasoning));
     message["reasoning_content"] = Value::String(combined);
+}
+
+fn attach_pending_reasoning_to_previous_assistant(
+    messages: &mut [Value],
+    last_assistant_index: Option<usize>,
+    reasoning: &mut String,
+) {
+    if reasoning.trim().is_empty() {
+        return;
+    }
+    let Some(message) = last_assistant_index.and_then(|index| messages.get_mut(index)) else {
+        reasoning.clear();
+        return;
+    };
+    merge_reasoning_content(message, reasoning);
+}
+
+fn backfill_kimi_tool_call_reasoning(messages: &mut [Value]) {
+    for message in messages {
+        let has_tool_calls = message
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .is_some_and(|calls| !calls.is_empty());
+        if message.get("role").and_then(Value::as_str) != Some("assistant") || !has_tool_calls {
+            continue;
+        }
+        let has_reasoning = message
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .is_some_and(|reasoning| !reasoning.trim().is_empty());
+        if !has_reasoning {
+            message["reasoning_content"] = Value::String("tool call".to_owned());
+        }
+    }
 }
 
 fn chat_content(content: &Value) -> Value {
@@ -741,6 +900,19 @@ fn reasoning_text(item: &Value) -> String {
         .or_else(|| item.get("content"))
         .map(text_value)
         .unwrap_or_default()
+}
+
+fn message_reasoning_text(item: &Value) -> String {
+    [
+        "reasoning_content",
+        "reasoning",
+        "reasoning_text",
+        "reasoning_details",
+    ]
+    .iter()
+    .find_map(|field| item.get(*field))
+    .map(text_value)
+    .unwrap_or_default()
 }
 
 fn text_value(value: &Value) -> String {
@@ -2067,23 +2239,152 @@ mod tests {
         assert_eq!(converted["tools"].as_array().unwrap().len(), 1);
         assert_eq!(
             converted["tools"][0]["function"]["name"],
-            "browser_snapshot"
+            "wework_browser__browser_snapshot"
         );
         assert_eq!(
             converted["messages"][0]["tool_calls"][0]["function"]["name"],
-            "browser_snapshot"
+            "wework_browser__browser_snapshot"
         );
         assert_eq!(
             converted["tool_choice"]["function"]["name"],
-            "browser_snapshot"
+            "wework_browser__browser_snapshot"
         );
         assert_eq!(
-            context.identity("browser_snapshot"),
+            context.identity("wework_browser__browser_snapshot"),
             Some(&ToolIdentity {
                 name: "browser_snapshot".to_owned(),
                 namespace: Some("wework_browser".to_owned()),
                 kind: ToolKind::Function,
             })
+        );
+    }
+
+    #[test]
+    fn maps_kimi_reasoning_to_thinking_toggle() {
+        let input = json!({
+            "model": "moonshot-kimi-k3",
+            "reasoning": {"effort": "low"},
+            "input": "hello"
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(converted["thinking"], json!({"type": "enabled"}));
+        assert!(converted.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn matches_only_model_names_containing_kimi_k3() {
+        assert!(is_kimi_k3_model("moonshot-kimi-k3"));
+        assert!(is_kimi_k3_model("vendor/MOONSHOT-KIMI-K3-turbo"));
+        assert!(!is_kimi_k3_model("moonshot-v1-128k"));
+        assert!(!is_kimi_k3_model("moonshotai/kimi-k2.5"));
+    }
+
+    #[test]
+    fn preserves_reasoning_effort_for_non_kimi_chat_models() {
+        let input = json!({
+            "model": "gpt-compatible-model",
+            "reasoning": {"effort": "none"},
+            "input": "hello"
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(converted["reasoning_effort"], "none");
+        assert!(converted.get("thinking").is_none());
+    }
+
+    #[test]
+    fn keeps_kimi_reasoning_on_each_assistant_turn() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "first thought"}]},
+                {"type": "message", "role": "assistant", "content": "First answer."},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "second thought"}]},
+                {"type": "message", "role": "assistant", "content": "Second answer."},
+                {"type": "message", "role": "user", "content": "Continue"}
+            ]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(messages[0]["reasoning_content"], "first thought");
+        assert_eq!(messages[1]["reasoning_content"], "second thought");
+        assert!(messages[2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn appends_trailing_kimi_reasoning_before_user_boundary() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "reasoning_content": "Embedded thought.",
+                    "content": "Done."
+                },
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Trailing thought."}]},
+                {"type": "message", "role": "user", "content": "Continue"}
+            ]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert_eq!(
+            messages[0]["reasoning_content"],
+            "Embedded thought.\n\nTrailing thought."
+        );
+        assert!(messages[1].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn does_not_move_reasoning_across_a_user_boundary() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [
+                {"type": "message", "role": "assistant", "content": "Done."},
+                {"type": "message", "role": "user", "content": "Continue"},
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "New thought."}]},
+                {"type": "message", "role": "user", "content": "Changed direction"}
+            ]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let messages = converted["messages"].as_array().expect("messages");
+
+        assert!(messages[0].get("reasoning_content").is_none());
+        assert!(messages[1].get("reasoning_content").is_none());
+        assert!(messages[2].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn backfills_kimi_tool_call_reasoning_and_normalizes_parameters() {
+        let input = json!({
+            "model": "kimi-k3",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "read_file",
+                "arguments": "{}"
+            }],
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "parameters": {"type": null, "properties": {}}
+            }]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+
+        assert_eq!(converted["messages"][0]["reasoning_content"], "tool call");
+        assert_eq!(
+            converted["tools"][0]["function"]["parameters"]["type"],
+            "object"
         );
     }
 
@@ -2132,6 +2433,39 @@ mod tests {
                 .identity("mail__search")
                 .and_then(|tool| tool.namespace.as_deref()),
             Some("mail")
+        );
+    }
+
+    #[test]
+    fn keeps_legacy_anthropic_names_for_colliding_tools() {
+        let input = json!({
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "calendar",
+                    "tools": [{"type": "function", "name": "search"}]
+                },
+                {
+                    "type": "namespace",
+                    "name": "mail",
+                    "tools": [{"type": "function", "name": "search"}]
+                },
+                {"type": "function", "name": "search"}
+            ]
+        });
+
+        let (converted, _) =
+            responses_to_chat_for_anthropic(&input).expect("request should convert");
+        let names = converted["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|tool| tool.pointer("/function/name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec!["calendar__search", "mail__search", "functions__search"]
         );
     }
 
@@ -2327,7 +2661,7 @@ mod tests {
         let context = responses_to_chat(&input).expect("context should build").1;
         let output = convert_stream(
             concat!(
-                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"browser_snapshot\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"wework_browser__browser_snapshot\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
                 "data: [DONE]\n\n"
             ),
             context,
