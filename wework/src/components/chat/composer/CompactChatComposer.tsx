@@ -146,6 +146,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     const imageInputRef = useRef<HTMLInputElement>(null)
     const cameraInputRef = useRef<HTMLInputElement>(null)
     const composerRef = useRef<ComposerTextareaHandle>(null)
+    const fullscreenComposerRef = useRef<ComposerTextareaHandle>(null)
     const textareaRef = useAutoResizeTextarea(value, 128)
     const fullscreenInputRef = useRef<HTMLElement>(null)
     const [contextSheetOpen, setContextSheetOpen] = useState(false)
@@ -156,12 +157,22 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
     useImperativeHandle(
       ref,
       () => ({
-        getValue: () => composerRef.current?.getValue() ?? value,
-        setValue: (nextValue, selectionOffset) =>
-          composerRef.current?.setValue(nextValue, selectionOffset),
+        getValue: () => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          return activeHandle?.getValue() ?? value
+        },
+        setValue: (nextValue, selectionOffset) => {
+          const activeHandle = fullscreenInputOpen
+            ? fullscreenComposerRef.current
+            : composerRef.current
+          activeHandle?.setValue(nextValue, selectionOffset)
+        },
       }),
-      [value]
+      [fullscreenInputOpen, value]
     )
+    const getLiveValue = () => composerRef.current?.getValue() ?? value
     const modelChangePending = Boolean(
       activeModel &&
       (!selectedModel ||
@@ -193,7 +204,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       const text = attachment.text_content
       if (!text) return
 
-      const nextValue = value ? `${value}\n${text}` : text
+      const currentValue = getLiveValue()
+      const nextValue = currentValue ? `${currentValue}\n${text}` : text
       handleComposerChange(nextValue)
       onRemoveAttachment(attachment.id)
       window.requestAnimationFrame(() => textareaRef.current?.focus())
@@ -203,7 +215,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       onCancelGoalDraft?.()
       if (phrase.mode === 'plan') onSetPlanMode?.()
       if (phrase.mode === 'goal') onSetGoal?.()
-      const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+      const currentValue = getLiveValue()
+      const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
       handleComposerChange(phraseValue)
       if (phrase.attachmentPaths?.length && onFileSelect) {
         void resolveStoredWorkspacePaths(
@@ -531,7 +544,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                 <Minimize2 className="h-5 w-5" />
               </button>
               <ComposerTextarea
-                ref={composerRef}
+                ref={fullscreenComposerRef}
                 testId="fullscreen-message-input"
                 textareaRef={fullscreenInputRef}
                 value={value}

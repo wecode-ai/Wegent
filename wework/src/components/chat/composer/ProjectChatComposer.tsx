@@ -182,6 +182,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       }),
       [value]
     )
+    const getLiveValue = () => composerRef.current?.getValue() ?? value
     const workspaceMenuProjects = useMemo(
       () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
       [projectWork.projects, projectWork.runtimeWork]
@@ -218,19 +219,21 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       setIsDraggingFiles(false)
       if (disabled) return
 
+      const currentValue = getLiveValue()
       void resolveDataTransferWorkspacePaths(
         event.dataTransfer,
         'drop',
         workspaceTarget?.workspaceSource
       ).then(transfer =>
-        applyWorkspacePathTransfer(value, transfer, handleComposerChange, onFileSelect)
+        applyWorkspacePathTransfer(currentValue, transfer, handleComposerChange, onFileSelect)
       )
     }
     const handleShowTextAttachment = (attachment: Attachment) => {
       const text = attachment.text_content
       if (!text) return
 
-      const nextValue = value ? `${value}\n${text}` : text
+      const currentValue = getLiveValue()
+      const nextValue = currentValue ? `${currentValue}\n${text}` : text
       handleComposerChange(nextValue)
       onRemoveAttachment(attachment.id)
       window.requestAnimationFrame(() => textareaRef.current?.focus())
@@ -240,7 +243,8 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       onCancelGoalDraft?.()
       if (phrase.mode === 'plan') onSetPlanMode?.()
       if (phrase.mode === 'goal') onSetGoal?.()
-      const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
+      const currentValue = getLiveValue()
+      const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
       handleComposerChange(phraseValue)
       if (phrase.attachmentPaths?.length) {
         void resolveStoredWorkspacePaths(
@@ -307,16 +311,17 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           onDrop={handleDrop}
           onSubmit={event => {
             event.preventDefault()
+            const submittedValue = composerRef.current?.getValue() ?? value
             debugComposerEvent('project-form-submit', {
               canSend,
               propValue: textMetrics(value),
-              submittedValue: textMetrics(value),
+              submittedValue: textMetrics(submittedValue),
               attachmentsCount: attachments.length,
               codeCommentsCount: codeComments.length,
               disabled,
               isStreaming,
             })
-            if (canSend) onSubmit(composerRef.current?.getValue() ?? value)
+            if (canSend) onSubmit(submittedValue)
           }}
         >
           <AttachmentBadges
