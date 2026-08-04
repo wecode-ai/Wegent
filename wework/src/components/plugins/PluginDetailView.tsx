@@ -343,7 +343,7 @@ function componentIcon(type: string) {
 function detailRows(
   plugin: InstalledPlugin,
   isExternalSource: boolean,
-  t: (key: string, defaultValue?: string) => string
+  t: (key: string, defaultValue: string) => string
 ): Array<{
   label: string
   value: string

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
 import {
   isLocalBrowserConnector,
   localConnectorAuthCancel,
@@ -9,11 +10,7 @@ import {
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
 
-export type LocalConnectorAuthTranslate = (
-  key: string,
-  defaultValueOrOptions?: string | Record<string, unknown>,
-  options?: Record<string, unknown>
-) => string
+export type LocalConnectorAuthTranslate = TFunction
 
 function startErrorMessage(startError: unknown, fallback: string): string {
   if (startError instanceof Error) return startError.message
