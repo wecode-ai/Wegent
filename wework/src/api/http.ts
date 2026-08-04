@@ -4,6 +4,7 @@ import { redirectToLogin } from '@/features/auth/redirect'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const SLOW_HTTP_REQUEST_MS = 5000
+let requestSequence = 0
 
 // In a packaged Tauri app the WebView calls the API cross-origin, which
 // triggers CORS preflight. Routing through the Tauri (Rust) HTTP client
@@ -17,22 +18,47 @@ function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
 }
 
-function logSlowHttpRequest(
-  method: string,
-  baseUrl: string,
-  endpoint: string,
-  elapsedMs: number,
-  status?: number
-): void {
-  if (elapsedMs <= SLOW_HTTP_REQUEST_MS) return
-  console.warn(`[Wework] HTTP ${method} ${endpoint} completed slowly in ${elapsedMs}ms.`, {
-    method,
-    baseUrl,
-    endpoint,
-    elapsedMs,
-    status,
-    transport: shouldUseTauriFetch() ? 'tauri-http-ipc' : 'fetch',
-  })
+function createRequestId(): string {
+  requestSequence += 1
+  return `wework-${Date.now().toString(36)}-${requestSequence.toString(36)}`
+}
+
+function transportName(): 'tauri-http-ipc' | 'fetch' {
+  return shouldUseTauriFetch() ? 'tauri-http-ipc' : 'fetch'
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      ...(error.cause ? { cause: String(error.cause) } : {}),
+    }
+  }
+  return { message: String(error) }
+}
+
+interface HttpRequestLogContext {
+  requestId: string
+  method: string
+  baseUrl: string
+  endpoint: string
+  startedAt: number
+}
+
+function requestLogFields(
+  context: HttpRequestLogContext,
+  fields: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    requestId: context.requestId,
+    method: context.method,
+    baseUrl: context.baseUrl,
+    endpoint: context.endpoint,
+    elapsedMs: Math.round(nowMs() - context.startedAt),
+    transport: transportName(),
+    ...fields,
+  }
 }
 
 function requestUrl(baseUrl: string, endpoint: string): string {
@@ -136,6 +162,20 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()
+    const requestId = createRequestId()
+    const logContext = {
+      requestId,
+      method,
+      baseUrl: options.baseUrl,
+      endpoint,
+      startedAt,
+    }
+    const slowTimer = window.setTimeout(() => {
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} is still pending after ${SLOW_HTTP_REQUEST_MS}ms.`,
+        requestLogFields(logContext, { phase: 'waiting_for_response' })
+      )
+    }, SLOW_HTTP_REQUEST_MS)
     let response: Response
     try {
       response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
@@ -143,23 +183,47 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         headers: {
           ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(shouldUseTauriFetch() ? { 'X-Request-ID': requestId } : {}),
           ...init.headers,
         },
       })
     } catch (error) {
-      logSlowHttpRequest(method, options.baseUrl, endpoint, Math.round(nowMs() - startedAt))
+      window.clearTimeout(slowTimer)
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} failed.`,
+        requestLogFields(logContext, {
+          phase: 'transport',
+          error: errorDetails(error),
+        })
+      )
       throw error
     }
-    logSlowHttpRequest(
-      method,
-      options.baseUrl,
-      endpoint,
-      Math.round(nowMs() - startedAt),
-      response.status
-    )
+    window.clearTimeout(slowTimer)
+    const elapsedMs = Math.round(nowMs() - startedAt)
+    const backendRequestId = response.headers?.get?.('X-Request-ID') || null
+    if (elapsedMs >= SLOW_HTTP_REQUEST_MS) {
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} completed slowly in ${elapsedMs}ms.`,
+        requestLogFields(logContext, {
+          phase: 'response_received',
+          status: response.status,
+          backendRequestId,
+          serverTiming: response.headers?.get?.('Server-Timing') || null,
+        })
+      )
+    }
 
     if (!response.ok) {
       const error = await parseError(response)
+      console.warn(
+        `[Wework] HTTP ${method} ${endpoint} returned ${response.status}.`,
+        requestLogFields(logContext, {
+          phase: 'http_error',
+          status: response.status,
+          backendRequestId,
+          error: errorDetails(error),
+        })
+      )
       const redirectOnUnauthorized =
         requestOptions.redirectOnUnauthorized ?? options.redirectOnUnauthorized ?? true
       if (response.status === 401 && redirectOnUnauthorized) {

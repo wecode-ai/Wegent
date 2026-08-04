@@ -2798,6 +2798,67 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('device-status')).toHaveTextContent('online')
   })
 
+  test('keeps the last confirmed online state when an offline event refresh fails', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockRejectedValue(new Error('network unavailable'))
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceOffline?.({ device_id: 'device-1' })
+    })
+
+    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+  })
+
+  test('applies an offline state after device discovery confirms it', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceOffline?.({ device_id: 'device-1' })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
+  })
+
   test('ensures the chat socket is connected while mounted', async () => {
     const socketClient = {
       ensureConnected: vi.fn().mockResolvedValue(undefined),

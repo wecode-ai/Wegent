@@ -51,7 +51,10 @@ interface UseWorkbenchDataRefreshOptions {
   services: WorkbenchServices
 }
 
-const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 8000
+// Cloud synchronization is detached from the local workbench bootstrap. Give
+// authenticated intranet requests enough time to complete without turning a
+// slow successful response into a false unavailable state.
+const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 30_000
 
 function createCloudRuntimeStateWithCache(runtimeWork: RuntimeWorkListResponse): CloudRuntimeState {
   if (runtimeWork.projects.length === 0 && runtimeWork.chats.length === 0) {

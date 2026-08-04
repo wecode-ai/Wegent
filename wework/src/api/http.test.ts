@@ -148,6 +148,71 @@ describe('createHttpClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  test('logs a correlated diagnostic when a request remains pending', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let resolveResponse: ((response: Response) => void) | undefined
+    fetchMock.mockReturnValueOnce(
+      new Promise<Response>(resolve => {
+        resolveResponse = resolve
+      })
+    )
+
+    try {
+      const client = createHttpClient({ baseUrl: 'https://cloud.example.com/api' })
+      const request = client.get('/devices')
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(warn).toHaveBeenCalledWith(
+        '[Wework] HTTP GET /devices is still pending after 5000ms.',
+        expect.objectContaining({
+          requestId: expect.stringMatching(/^wework-/),
+          phase: 'waiting_for_response',
+          endpoint: '/devices',
+          transport: 'fetch',
+        })
+      )
+
+      resolveResponse?.({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'X-Request-ID': 'backend-request-1' }),
+        json: async () => ({ items: [] }),
+      } as Response)
+      await request
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('completed slowly'),
+        expect.objectContaining({
+          backendRequestId: 'backend-request-1',
+          phase: 'response_received',
+          status: 200,
+        })
+      )
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  test('logs transport error details without logging the authorization token', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    fetchMock.mockRejectedValueOnce(new TypeError('Load failed'))
+    const client = createHttpClient({
+      baseUrl: 'https://cloud.example.com/api',
+      getToken: () => 'secret-cloud-token',
+    })
+
+    await expect(client.get('/devices')).rejects.toThrow('Load failed')
+
+    const serializedCalls = JSON.stringify(warn.mock.calls)
+    expect(serializedCalls).toContain('Load failed')
+    expect(serializedCalls).toContain('"phase":"transport"')
+    expect(serializedCalls).not.toContain('secret-cloud-token')
+    warn.mockRestore()
+  })
+
   test('throws ApiError with parsed detail message', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: false,

@@ -950,7 +950,11 @@ export async function timedWorkbenchBootstrapRequest<T>(
     return { status: 'fulfilled', value }
   } catch (reason) {
     const elapsedMs = Math.round(nowMs() - startedAt)
-    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, reason)
+    const error =
+      reason instanceof Error
+        ? { name: reason.name, message: reason.message }
+        : { message: String(reason) }
+    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, error)
     return { status: 'rejected', reason }
   }
 }
