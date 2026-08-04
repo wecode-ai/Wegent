@@ -6369,7 +6369,15 @@ function latestModelInputText(body) {
 }
 
 function responseCreated(id) {
-  return { type: 'response.created', response: { id } }
+  return {
+    type: 'response.created',
+    response: {
+      id,
+      object: 'response',
+      status: 'in_progress',
+      output: [],
+    },
+  }
 }
 
 function responseCompleted(id, output) {
