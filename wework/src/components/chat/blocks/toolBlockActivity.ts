@@ -710,9 +710,16 @@ export function getInnerShellCommand(command?: string): string {
 }
 
 export function stripShellPrefix(command: string): string {
-  // Skip common leading wrappers like "cd <path> && " so the real
+  // Skip common leading wrappers like `cd <path> && ` so the real
   // executable (rg, Select-String, Get-Content, etc.) can be identified.
-  return command.replace(/^\s*cd\s+\S+\s*(?:&&|;|\r?\n)\s*/, '')
+  // Handles quoted paths and chains of `cd` prefixes.
+  let result = command
+  while (true) {
+    const next = result.replace(/^\s*cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;|\r?\n)\s*/, '')
+    if (next === result) break
+    result = next
+  }
+  return result
 }
 
 const SHELL_EXECUTABLE_RE =

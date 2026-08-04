@@ -25,6 +25,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   ...props
 }: BufferedChatInputProps) {
   const scopeKey = props.projectChat?.scopeKey
+  const onChangeRef = useRef(onChange)
+  const onSubmitRef = useRef(onSubmit)
+  const valueRef = useRef(value)
+  onChangeRef.current = onChange
+  onSubmitRef.current = onSubmit
+  valueRef.current = value
+
   const [draftState, setDraftState] = useState(() => ({
     scopeKey,
     sourceValue: value,
@@ -47,9 +54,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushDraft = useCallback(
     (nextDraft: string) => {
       cancelPendingFlush()
-      onChange(nextDraft)
+      onChangeRef.current(nextDraft)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush]
   )
 
   const scheduleDraftFlush = useCallback(
@@ -57,32 +64,33 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       cancelPendingFlush()
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
-        onChange(nextDraft)
+        onChangeRef.current(nextDraft)
       }, DRAFT_FLUSH_DELAY_MS)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush]
   )
 
   // Sync external value changes into composer and local state.
   useEffect(() => {
+    cancelPendingFlush()
     const shouldSetComposer = value !== draftRef.current
     draftRef.current = value
     setDraftState({ scopeKey, sourceValue: value, draft: value })
     if (shouldSetComposer) {
       composerRef.current?.setValue(value, value.length)
     }
-  }, [scopeKey, value])
+  }, [cancelPendingFlush, scopeKey, value])
 
-  // Flush pending draft when value changes or on unmount.
+  // Flush pending draft when the scope changes or on unmount.
   useEffect(() => {
+    const scopeOnChange = onChangeRef.current
     return () => {
-      const pendingDraft = draftRef.current
-      if (pendingDraft !== value) {
+      if (flushTimeoutRef.current !== null) {
         cancelPendingFlush()
-        onChange(pendingDraft)
+        scopeOnChange(draftRef.current)
       }
     }
-  }, [cancelPendingFlush, onChange, value])
+  }, [cancelPendingFlush, scopeKey])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
@@ -90,17 +98,18 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
-    setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
+    setDraftState({ scopeKey, sourceValue: valueRef.current, draft: nextDraft })
     composerRef.current?.setValue(nextDraft, nextDraft.length)
     scheduleDraftFlush(nextDraft)
-  }, [insertion, scheduleDraftFlush, scopeKey, value])
+  }, [insertion, scheduleDraftFlush, scopeKey])
 
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
+      setDraftState({ scopeKey, sourceValue: valueRef.current, draft: nextDraft })
       scheduleDraftFlush(nextDraft)
     },
-    [scheduleDraftFlush]
+    [scheduleDraftFlush, scopeKey]
   )
 
   const handleBlur = useCallback(() => {
@@ -115,19 +124,19 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draftRef.current
       if (options === undefined) {
-        void onSubmit(submittedDraft)
+        void onSubmitRef.current(submittedDraft)
       } else {
-        void onSubmit(submittedDraft, options)
+        void onSubmitRef.current(submittedDraft, options)
       }
       if (submittedDraft.trim()) {
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         composerRef.current?.setValue('', 0)
-        onChange('')
+        onChangeRef.current('')
       }
     },
-    [cancelPendingFlush, onChange, onSubmit, scopeKey]
+    [cancelPendingFlush, scopeKey]
   )
 
   return (

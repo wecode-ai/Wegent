@@ -177,7 +177,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
 
     useEffect(() => {
       // Sync local hasText with external value changes (e.g. clear after submit).
-       
+
       setHasText(value.trim().length > 0)
     }, [value])
 
@@ -438,7 +438,10 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                           : t('workbench.interrupt_and_send', '打断并立即发送'),
                       icon: Zap,
                       testId: 'interrupt-and-send-option',
-                      onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
+                      onSelect: () =>
+                        onSubmit(composerRef.current?.getValue() ?? value, {
+                          interruptWhenBusy: true,
+                        }),
                       shortcut: 'Command+Shift+Enter',
                     },
                   ]}
