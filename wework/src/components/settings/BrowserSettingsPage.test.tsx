@@ -22,6 +22,7 @@ const preferences: AppPreferences = vi.hoisted(() => ({
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  trayWegentUsageEnabled: true,
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,

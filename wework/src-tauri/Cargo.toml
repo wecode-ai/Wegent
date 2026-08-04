@@ -56,8 +56,8 @@ core-foundation = "0.10.1"
 core-graphics = "0.25.0"
 block2 = "0.6.2"
 objc2 = "0.6.3"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSAttributedString", "NSBitmapImageRep", "NSColor", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSStringDrawing", "NSView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSAttributedString", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
