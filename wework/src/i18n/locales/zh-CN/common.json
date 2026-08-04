@@ -714,6 +714,7 @@
     "browser_download_resume": "继续下载",
     "browser_download_delete": "删除下载",
     "browser_download_reveal": "在 Finder 中显示",
+    "browser_local_file_open": "打开",
     "browser_local_file_notice": "此文件无法预览",
     "browser_settings_title": "浏览器",
     "browser_settings_subtitle": "管理 Wework 内置浏览器、链接打开方式和下载行为",

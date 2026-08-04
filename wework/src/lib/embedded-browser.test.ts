@@ -135,8 +135,13 @@ describe('embedded-browser', () => {
       label: 'workspace-browser',
       url: 'file:///Users/me/workspace/report.html',
     })
+    expect(requestEmbeddedBrowserOpen('/Users/me/workspace/report.html')).toBe(true)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      url: 'file:///Users/me/workspace/report.html',
+    })
     expect(requestEmbeddedBrowserOpen('ftp://localhost/resource')).toBe(false)
-    expect(handler).toHaveBeenCalledTimes(3)
+    expect(handler).toHaveBeenCalledTimes(4)
 
     const release = await unlisten
     release?.()

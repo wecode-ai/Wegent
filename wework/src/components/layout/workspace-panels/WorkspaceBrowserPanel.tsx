@@ -52,7 +52,7 @@ import {
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
-import { revealLocalFile } from '@/lib/local-terminal'
+import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import {
@@ -2047,6 +2047,20 @@ export function WorkspaceBrowserPanel({
           <span className="min-w-0 flex-1 truncate" title={localFilePreviewUrl}>
             {t('workbench.browser_local_file_notice')}
           </span>
+          <button
+            type="button"
+            data-testid="workspace-browser-local-file-open-button"
+            className="inline-flex h-7 shrink-0 items-center rounded-md border border-border bg-background px-2 text-xs font-medium text-text-primary hover:bg-muted"
+            onClick={() => {
+              const path = fileUrlToPath(localFilePreviewUrl)
+              if (!path) return
+              void openLocalFile(path).catch(error => {
+                console.error('Failed to open local file:', error)
+              })
+            }}
+          >
+            {t('workbench.browser_local_file_open')}
+          </button>
           <button
             type="button"
             data-testid="workspace-browser-local-file-reveal-button"

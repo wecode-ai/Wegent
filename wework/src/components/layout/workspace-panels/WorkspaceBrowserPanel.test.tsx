@@ -54,6 +54,7 @@ vi.mock('@/lib/external-links', () => ({
 }))
 
 const localTerminalMocks = vi.hoisted(() => ({
+  openLocalFile: vi.fn(),
   revealLocalFile: vi.fn(),
 }))
 
@@ -90,6 +91,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
+    localTerminalMocks.openLocalFile.mockResolvedValue(undefined)
     localTerminalMocks.revealLocalFile.mockResolvedValue(undefined)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
@@ -151,6 +153,35 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('opens local filesystem paths from the address bar as file URLs', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Local report',
+      url: 'file:///Users/me/test%20file.html',
+    })
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: '/Users/me/test file.html' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await screen.findByTestId('workspace-browser-native-view')
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'file:///Users/me/test%20file.html',
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        'workspace-browser'
+      )
+    })
+  })
+
   test('warns when the native browser accepts an invalid TLS certificate', async () => {
     let handleInvalidCertificate!: (certificate: {
       nativeLabel: string
@@ -187,7 +218,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('shows a notice when a local file cannot be previewed and reveals it in the folder', async () => {
+  test('shows a notice when a local file cannot be previewed and opens or reveals it', async () => {
     let handleLocalFilePreview!: (event: {
       label: string
       nativeLabel: string
@@ -215,6 +246,11 @@ describe('WorkspaceBrowserPanel', () => {
 
     const notice = screen.getByTestId('workspace-browser-local-file-notice')
     expect(notice).toHaveTextContent('此文件无法预览')
+
+    fireEvent.click(within(notice).getByTestId('workspace-browser-local-file-open-button'))
+    await waitFor(() =>
+      expect(localTerminalMocks.openLocalFile).toHaveBeenCalledWith('/Users/me/archive.zip')
+    )
 
     fireEvent.click(within(notice).getByTestId('workspace-browser-local-file-reveal-button'))
     await waitFor(() =>
