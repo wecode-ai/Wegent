@@ -42,7 +42,6 @@ from app.services.chat.external_knowledge_refs import (
 from app.services.chat.knowledge_binding_resolver import KnowledgeBindingResolver
 from app.services.group_permission import check_group_permission
 from app.services.kind_reference import resolve_kind_reference
-from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.rag.sources import ExternalRefValidationError, validate_external_refs
 from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_resolution import build_skill_ref_meta
@@ -869,18 +868,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Get related Ghost, Shell, Model (use bot.user_id for component queries)
         ghost, shell, model = self._get_bot_components(db, bot, bot.user_id)
         return self._convert_to_bot_dict(bot, ghost, shell, model)
-
-    @staticmethod
-    def _can_access_bot(db: Session, *, bot: Kind, user_id: int) -> bool:
-        """Apply the existing owner/public/group access model before loading Bot data."""
-        if bot.user_id in {user_id, 0}:
-            return True
-        if bot.namespace == "default":
-            return False
-        from app.schemas.namespace import GroupRole
-        from app.services.group_permission import check_group_permission
-
-        return check_group_permission(db, user_id, bot.namespace, GroupRole.Reporter)
 
     def get_bot_detail(
         self, db: Session, *, bot_id: int, user_id: int

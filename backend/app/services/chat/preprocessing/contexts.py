@@ -627,7 +627,7 @@ def link_contexts_to_subtask(
         table_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
-    ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id, db=db)
+    ) = _prepare_contexts_for_creation(message_contexts, subtask_id, user_id, db=db)
 
     try:
         (
