@@ -1264,7 +1264,7 @@ export function KnowledgeSourcePicker({
           activeNode={activeDingTalkSpace}
           onRetry={dingtalkTrees.fetchWikispace}
           onOpen={setActiveDingTalkSpace}
-          onToggle={toggleDingTalkNode}
+          onToggle={node => toggleDingTalkNode(node, node)}
         />
       )
     }
@@ -1521,8 +1521,8 @@ export function KnowledgeSourcePicker({
           query={searchValue}
           selectedIds={selectedDingTalkIds}
           onRetry={dingtalkTrees.fetchWikispace}
-          onToggle={toggleDingTalkNode}
-          onToggleAll={toggleDingTalkNodeList}
+          onToggle={node => toggleDingTalkNode(node, activeDingTalkSpace)}
+          onToggleAll={nodes => toggleDingTalkNodeList(nodes, activeDingTalkSpace)}
         />
       )
     }

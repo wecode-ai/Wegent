@@ -11,7 +11,7 @@ const t = (key: string, params?: Record<string, unknown>) =>
     : `${key}:${String(params?.count ?? '')}`
 
 describe('groupInputContexts', () => {
-  it('groups DingTalk selections by document source', () => {
+  it('groups DingTalk knowledge selections by workspace identity', () => {
     const contexts: ContextItem[] = [
       {
         id: 'docs:doc-1',
@@ -48,6 +48,19 @@ describe('groupInputContexts', () => {
         node_type: 'doc',
         dingtalk_node_id: 'doc-3',
         source: 'wikispace',
+        workspace_id: 'space-1',
+        workspace_name: '产品知识库',
+      },
+      {
+        id: 'wikispace:doc-4',
+        name: 'Doc 4',
+        type: 'dingtalk_doc',
+        doc_url: 'https://example.com/doc-4',
+        node_type: 'doc',
+        dingtalk_node_id: 'doc-4',
+        source: 'wikispace',
+        workspace_id: 'space-2',
+        workspace_name: '研发知识库',
       },
     ]
 
@@ -59,9 +72,15 @@ describe('groupInputContexts', () => {
         displaySubtitle: 'knowledge:picker.scopeMixedCompact:1:2',
       }),
       expect.objectContaining({
-        key: 'dingtalk:wikispace',
+        key: 'dingtalk:wikispace:space-1',
         contextIds: ['wikispace:doc-3'],
-        displayName: 'chat:dingtalkDocs.wikispaceTab:',
+        displayName: '产品知识库',
+        displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
+      }),
+      expect.objectContaining({
+        key: 'dingtalk:wikispace:space-2',
+        contextIds: ['wikispace:doc-4'],
+        displayName: '研发知识库',
         displaySubtitle: 'knowledge:picker.scopeDocumentsCompact:1',
       }),
     ])

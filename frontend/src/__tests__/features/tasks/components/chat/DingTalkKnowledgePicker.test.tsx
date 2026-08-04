@@ -9,6 +9,7 @@ import {
   DingTalkDocumentColumn,
   DingTalkWikispaceRows,
 } from '@/features/tasks/components/chat/DingTalkKnowledgePicker'
+import { buildDingTalkDocContext } from '@/features/tasks/components/chat/DingTalkDocContextSelector'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -148,5 +149,58 @@ describe('DingTalkDocumentColumn', () => {
 
     const row = screen.getByTestId('knowledge-picker-dingtalk-space-space-1')
     expect(row.querySelector('.lucide-chevron-right')).not.toBeInTheDocument()
+  })
+})
+
+describe('buildDingTalkDocContext', () => {
+  it('preserves the owning knowledge base identity for a child document', () => {
+    const workspace: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'space-1',
+      workspace_id: 'space-1',
+      name: '产品知识库',
+      node_type: 'folder',
+      source: 'wikispace',
+    }
+    const document: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'doc-1',
+      workspace_id: 'space-1',
+      name: '产品说明',
+      source: 'wikispace',
+    }
+
+    expect(buildDingTalkDocContext(document, workspace)).toEqual(
+      expect.objectContaining({
+        name: '产品说明',
+        workspace_id: 'space-1',
+        workspace_name: '产品知识库',
+      })
+    )
+  })
+
+  it('treats empty workspace identity fields as invalid values', () => {
+    const workspace: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'space-1',
+      workspace_id: '',
+      name: '',
+      node_type: 'folder',
+      source: 'wikispace',
+    }
+    const document: DingtalkDocNode = {
+      ...nodes[0],
+      dingtalk_node_id: 'doc-1',
+      workspace_id: 'space-1',
+      name: '产品说明',
+      source: 'wikispace',
+    }
+
+    expect(buildDingTalkDocContext(document, workspace)).toEqual(
+      expect.objectContaining({
+        workspace_id: 'space-1',
+        workspace_name: undefined,
+      })
+    )
   })
 })

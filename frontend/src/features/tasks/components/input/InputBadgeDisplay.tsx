@@ -21,6 +21,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { parseHostname } from '@/lib/url-utils'
 import { getExternalKnowledgeScopeKey } from '@/features/knowledge/externalKnowledgeSelection'
 import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
+import { groupDingTalkContexts } from '@/features/knowledge/dingTalkContextGrouping'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import type { ContextItem, DingTalkDocContext } from '@/types/context'
 
@@ -50,17 +51,22 @@ type Translate = (key: string, params?: Record<string, unknown>) => string
 export function groupInputContexts(contexts: ContextItem[], t: Translate): InputContextGroup[] {
   const groups: InputContextGroup[] = []
   const groupIndexes = new Map<string, number>()
+  const dingtalkGroups = groupDingTalkContexts(
+    contexts.filter((context): context is DingTalkDocContext => context.type === 'dingtalk_doc'),
+    t
+  )
+  const dingtalkGroupByContextId = new Map(
+    dingtalkGroups.flatMap(group => group.contexts.map(context => [context.id, group] as const))
+  )
 
   contexts.forEach(context => {
     let key = `context:${context.type}:${context.id}`
     let displayName: string | undefined
 
     if (context.type === 'dingtalk_doc') {
-      key = `dingtalk:${context.source}`
-      displayName =
-        context.source === 'wikispace'
-          ? t('chat:dingtalkDocs.wikispaceTab')
-          : t('chat:dingtalkDocs.myDocsTab')
+      const dingtalkGroup = dingtalkGroupByContextId.get(context.id)
+      key = dingtalkGroup?.key ?? key
+      displayName = dingtalkGroup?.displayName
     } else if (
       context.type === 'external_knowledge' &&
       context.ref.target_type === 'document' &&
