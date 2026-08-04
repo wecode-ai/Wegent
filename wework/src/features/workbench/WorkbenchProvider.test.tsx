@@ -1365,6 +1365,9 @@ function ArchiveRemoteRuntimeTaskProbe() {
       >
         archive remote task
       </button>
+      <button type="button" onClick={() => void workbench.refreshWorkLists()}>
+        refresh work lists
+      </button>
     </div>
   )
 }
@@ -6476,7 +6479,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 
-  test('does not restore an archived remote task from the previous cloud snapshot', async () => {
+  test('archives a remote task locally without triggering a cloud sync', async () => {
     const remoteRuntimeWork: RuntimeWorkListResponse = {
       projects: [
         {
@@ -6540,9 +6543,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('archive remote task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    expect(cloudListRuntimeWork).toHaveBeenCalledTimes(1)
 
+    await userEvent.click(screen.getByText('refresh work lists'))
+    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
     postArchiveCloudWork.resolve({ projects: [], chats: [], totalTasks: 0 })
     await waitFor(() =>
       expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')

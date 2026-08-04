@@ -623,64 +623,72 @@ export function useWorkbenchDataRefresh({
     user,
   ])
 
-  const refreshWorkLists = useCallback(async () => {
-    const [devicesResult, runtimeWorkResult] = await Promise.all([
-      executorClient.commands.listDevices().catch(error => {
-        const cachedDevices = readCachedDeviceList()
-        if (cachedDevices.length === 0) throw error
-        return cachedDevices
-      }),
-      executorClient.runtime.listRuntimeWork().catch(() => undefined),
-    ])
-    const devices = resolveDeviceListWithCache(devicesResult)
-    const visibleDevices = resolveDeviceListWithCache(
-      selectVisibleDevices(devices, cloudRuntimeStateRef.current)
-    )
-    const filteredRuntimeWorkResult = runtimeWorkResult
-      ? filterRemovedRuntimeProjects(runtimeWorkResult)
-      : undefined
-    if (filteredRuntimeWorkResult) {
-      localRuntimeWorkRef.current = filteredRuntimeWorkResult
-    }
-    const localRuntimeWork = filteredRuntimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
-    if (filteredRuntimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
-      releaseConfirmedArchivedRuntimeTasks(filteredRuntimeWorkResult)
-    }
-    const runtimeWork = filteredRuntimeWorkResult
-      ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
-      : hasCloudBackgroundApi
-        ? localRuntimeWork
-        : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
-    debugRuntimeSidebarState('refresh-resolved', {
-      source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
-      executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
-      visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
-    })
-    dispatch({
-      type: 'lists_refreshed',
-      projects: state.projects,
-      devices: visibleDevices,
-      runtimeWork,
-      standaloneDeviceId: getPreferredStandaloneDeviceId(visibleDevices, state.standaloneDeviceId),
-    })
-    void refreshCloudBackgroundData(devices, localRuntimeWork, {
-      projects: state.projects,
-      standaloneDeviceId: state.standaloneDeviceId,
-      trigger: 'manual-refresh',
-    }).catch(() => undefined)
-  }, [
-    dispatch,
-    executorClient,
-    filterRemovedRuntimeProjects,
-    refreshCloudBackgroundData,
-    hasCloudBackgroundApi,
-    releaseConfirmedArchivedRuntimeTasks,
-    selectVisibleRuntimeWork,
-    services.cloudBackgroundApi,
-    state.projects,
-    state.runtimeWork,
-    state.standaloneDeviceId,
-  ])
+  const refreshWorkLists = useCallback(
+    async (options?: { syncCloud?: boolean }) => {
+      const [devicesResult, runtimeWorkResult] = await Promise.all([
+        executorClient.commands.listDevices().catch(error => {
+          const cachedDevices = readCachedDeviceList()
+          if (cachedDevices.length === 0) throw error
+          return cachedDevices
+        }),
+        executorClient.runtime.listRuntimeWork().catch(() => undefined),
+      ])
+      const devices = resolveDeviceListWithCache(devicesResult)
+      const visibleDevices = resolveDeviceListWithCache(
+        selectVisibleDevices(devices, cloudRuntimeStateRef.current)
+      )
+      const filteredRuntimeWorkResult = runtimeWorkResult
+        ? filterRemovedRuntimeProjects(runtimeWorkResult)
+        : undefined
+      if (filteredRuntimeWorkResult) {
+        localRuntimeWorkRef.current = filteredRuntimeWorkResult
+      }
+      const localRuntimeWork = filteredRuntimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+      if (filteredRuntimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
+        releaseConfirmedArchivedRuntimeTasks(filteredRuntimeWorkResult)
+      }
+      const runtimeWork = filteredRuntimeWorkResult
+        ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
+        : hasCloudBackgroundApi
+          ? localRuntimeWork
+          : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
+      debugRuntimeSidebarState('refresh-resolved', {
+        source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
+        executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
+        visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+      })
+      dispatch({
+        type: 'lists_refreshed',
+        projects: state.projects,
+        devices: visibleDevices,
+        runtimeWork,
+        standaloneDeviceId: getPreferredStandaloneDeviceId(
+          visibleDevices,
+          state.standaloneDeviceId
+        ),
+      })
+      if (options?.syncCloud !== false) {
+        void refreshCloudBackgroundData(devices, localRuntimeWork, {
+          projects: state.projects,
+          standaloneDeviceId: state.standaloneDeviceId,
+          trigger: 'manual-refresh',
+        }).catch(() => undefined)
+      }
+    },
+    [
+      dispatch,
+      executorClient,
+      filterRemovedRuntimeProjects,
+      refreshCloudBackgroundData,
+      hasCloudBackgroundApi,
+      releaseConfirmedArchivedRuntimeTasks,
+      selectVisibleRuntimeWork,
+      services.cloudBackgroundApi,
+      state.projects,
+      state.runtimeWork,
+      state.standaloneDeviceId,
+    ]
+  )
 
   const loadDevicesForRefresh = useCallback(
     async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {
