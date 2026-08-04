@@ -172,4 +172,18 @@ describe('resourceLibraryApi', () => {
       '/resource-library/users/me/installs?resource_type=skill&page=1&limit=20'
     )
   })
+
+  it('loads installs for multiple groups with one request', async () => {
+    mockedApiClient.get.mockResolvedValue({ items: [], total: 0 })
+
+    await resourceLibraryApi.listGroupInstallsBatch(['engineering', 'product/platform'], {
+      resourceType: 'skill',
+      page: 1,
+      limit: 100,
+    })
+
+    expect(mockedApiClient.get).toHaveBeenCalledWith(
+      '/resource-library/groups/installs?resource_type=skill&page=1&limit=100&group_names=engineering%2Cproduct%2Fplatform'
+    )
+  })
 })

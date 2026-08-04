@@ -726,8 +726,10 @@ export interface QuickLaunchFunction {
   title: string
   description?: string | null
   icon?: string | null
+  cover?: string | null
   team_id: number
   name: string
+  recommended_mode?: 'chat' | 'code' | 'both'
   enabled: boolean
   order: number
   input_presets: QuickLaunchInputPreset[]

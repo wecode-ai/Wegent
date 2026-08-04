@@ -128,6 +128,8 @@ jest.mock('@/apis/resourceLibrary', () => ({
     bindAgent: jest.fn(),
     createListing: jest.fn(),
     getAgentBindings: jest.fn(),
+    getMarketplaceTags: jest.fn(),
+    getPublication: jest.fn(),
     syncAgentBindings: jest.fn(),
     updatePublication: jest.fn(),
   },
@@ -267,6 +269,8 @@ const mockedArchiveListing = resourceLibraryApi.archiveListing as jest.Mock
 const mockedBindAgent = resourceLibraryApi.bindAgent as jest.Mock
 const mockedCreateListing = resourceLibraryApi.createListing as jest.Mock
 const mockedGetAgentBindings = resourceLibraryApi.getAgentBindings as jest.Mock
+const mockedGetMarketplaceTags = resourceLibraryApi.getMarketplaceTags as jest.Mock
+const mockedGetPublication = resourceLibraryApi.getPublication as jest.Mock
 const mockedSyncAgentBindings = resourceLibraryApi.syncAgentBindings as jest.Mock
 
 function makeBot(overrides: Partial<Bot> = {}): Bot {
@@ -350,6 +354,21 @@ describe('Simple TeamEditDialog', () => {
     })
     mockedArchiveListing.mockResolvedValue({ id: 1 })
     mockedCreateListing.mockResolvedValue({ id: 1 })
+    mockedGetMarketplaceTags.mockResolvedValue({
+      version: 1,
+      items: [
+        {
+          id: 'technical_development',
+          zh_name: '技术开发',
+          en_name: 'Technical Development',
+          sort: 20,
+          enabled: true,
+        },
+      ],
+    })
+    mockedGetPublication.mockResolvedValue({
+      tags: ['technical_development'],
+    })
   })
 
   it('defaults new agents to simple mode with chat bind mode selected', async () => {

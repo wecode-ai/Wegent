@@ -19,6 +19,13 @@ interface CapabilityListingResponse {
   }>
 }
 
+interface MarketplaceTagsResponse {
+  items: Array<{
+    id: string
+    enabled: boolean
+  }>
+}
+
 async function clickListingAction(page: Page, listingId: number) {
   await page.getByTestId(`resource-listing-card-${listingId}`).hover()
   await page.getByTestId(`install-resource-${listingId}-button`).click()
@@ -58,6 +65,44 @@ test.describe('Capability Center', () => {
     await page.getByTestId('new-capability-button').click()
     await page.getByTestId('new-capability-type-skill').click()
     await expect(page.getByTestId('skill-upload-dialog')).toBeVisible()
+  })
+
+  test('filters discovery by a configured marketplace tag and restores it from the URL', async ({
+    page,
+  }) => {
+    const tagsResponsePromise = page.waitForResponse(
+      response =>
+        response.url().endsWith('/api/resource-library/tags') &&
+        response.request().method() === 'GET'
+    )
+    await page.goto('/resource-library?type=skill')
+    const tags = (await (await tagsResponsePromise).json()) as MarketplaceTagsResponse
+    const tag = tags.items.find(item => item.enabled)
+    expect(tag, 'At least one enabled marketplace tag must exist').toBeTruthy()
+
+    const filteredListingsPromise = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return (
+        url.pathname.endsWith('/api/resource-library/listings') &&
+        url.searchParams.get('resource_type') === 'skill' &&
+        url.searchParams.get('tags') === tag!.id &&
+        response.request().method() === 'GET'
+      )
+    })
+    await page.getByTestId(`marketplace-tag-filter-${tag!.id}`).click()
+
+    expect((await filteredListingsPromise).ok()).toBe(true)
+    await expect(page).toHaveURL(url => url.searchParams.get('tag') === tag!.id)
+    await expect(page.getByTestId(`marketplace-tag-filter-${tag!.id}`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await page.reload()
+    await expect(page.getByTestId(`marketplace-tag-filter-${tag!.id}`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('uses a system agent directly without creating a personal install', async ({ page }) => {
