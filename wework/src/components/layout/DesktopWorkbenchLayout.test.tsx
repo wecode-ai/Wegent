@@ -4883,7 +4883,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'side chat')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
@@ -4928,7 +4928,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
@@ -4982,7 +4982,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
-    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
     const sideChatInput = within(sideChat).getByTestId('chat-message-input')
     await userEvent.type(sideChatInput, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
