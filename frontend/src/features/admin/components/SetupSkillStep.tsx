@@ -57,6 +57,7 @@ import {
   GitSkillInfo,
   GitImportResponse,
 } from '@/apis/skills'
+import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -80,6 +81,7 @@ const SetupSkillStep: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
 
   // Git import states
   const [gitUrl, setGitUrl] = useState('')
@@ -182,6 +184,7 @@ const SetupSkillStep: React.FC = () => {
     setSelectedFile(null)
     setUploadProgress(0)
     setError(null)
+    setMarketplaceTags([])
   }
 
   const handleUploadSubmit = async () => {
@@ -194,13 +197,17 @@ const SetupSkillStep: React.FC = () => {
       setError('Please enter a skill name')
       return
     }
+    if (marketplaceTags.length === 0) {
+      setError(t('resource-library:marketplace_tags.required'))
+      return
+    }
 
     setUploading(true)
     setError(null)
     setUploadProgress(0)
 
     try {
-      await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+      await uploadPublicSkill(selectedFile, skillName.trim(), marketplaceTags, setUploadProgress)
       toast({ title: t('setup_wizard.skill_step.skill_uploaded') })
       setIsUploadDialogOpen(false)
       resetUploadForm()
@@ -591,6 +598,15 @@ const SetupSkillStep: React.FC = () => {
                       </div>
                     )}
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>{t('resource-library:marketplace_tags.field_label')}</Label>
+                  <MarketplaceTagSelector
+                    value={marketplaceTags}
+                    onChange={setMarketplaceTags}
+                    disabled={uploading}
+                  />
                 </div>
 
                 {/* Upload Progress */}
