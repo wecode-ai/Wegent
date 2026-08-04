@@ -160,6 +160,57 @@ class TestDockerExecutor:
         assert "TASK_API_DOMAIN=http://backend:8000" in cmd
         assert "WEGENT_BACKEND_URL=http://backend:8000" not in cmd
 
+    @patch.dict(
+        os.environ,
+        {
+            "GIT_TOKEN_AES_KEY": "12345678901234567890123456789012",
+            "GIT_TOKEN_AES_IV": "1234567890123456",
+        },
+        clear=False,
+    )
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_passes_git_token_keys(
+        self, mock_callback, mock_find_port, executor, sample_task
+    ):
+        """The backend hands over the git token as stored, which is encrypted.
+
+        Without these keys the executor finds a credential it cannot read, drops it,
+        and git falls back to prompting for a username -- surfacing as "could not
+        read Username for ..." with nothing pointing at the missing key.
+        """
+        mock_find_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, "test-executor", "test/executor:latest"
+        )
+
+        assert "GIT_TOKEN_AES_KEY=12345678901234567890123456789012" in cmd
+        assert "GIT_TOKEN_AES_IV=1234567890123456" in cmd
+
+    @patch.dict(
+        os.environ, {"GIT_TOKEN_AES_KEY": "", "GIT_TOKEN_AES_IV": ""}, clear=False
+    )
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_omits_empty_git_token_keys(
+        self, mock_callback, mock_find_port, executor, sample_task
+    ):
+        """An empty key would have the executor decrypt with a default, producing a
+        wrong token that fails as an authentication error rather than as the
+        configuration error it is."""
+        mock_find_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, "test-executor", "test/executor:latest"
+        )
+
+        assert not [arg for arg in cmd if arg.startswith("GIT_TOKEN_AES_")]
+
     @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
     def test_prepare_docker_command_sandbox_env_vars(
