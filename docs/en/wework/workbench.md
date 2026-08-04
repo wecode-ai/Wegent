@@ -12,6 +12,10 @@ The first main window starts with three default tabs: Task, Project spaces, and 
 
 When many tabs are open, the tab list scrolls horizontally while the **+** and the rightmost feedback button remain visible. A tab can also be moved to a separate window from its context menu. After the move succeeds, the source window removes the tab and the destination window contains only the moved tab and its state; it does not create the three default tabs again. If destination-window creation fails, the source tab remains unchanged.
 
+## Move between project-space tasks and runtime tasks
+
+When a runtime task is linked to a specific project-space task, select the task name in the runtime task's Environment information to open the matching project-space tab and task details. The task details' **Local execution** section lists the linked Wework runtime tasks; select a record to return to its runtime task tab. Both directions reuse existing tabs and preserve a restorable project-space or runtime-task route.
+
 ## Start a new task
 
 The new-task page uses compact suggestion buttons to help choose a task direction. Selecting a direction reveals more specific prompts. Selecting a prompt writes it into the composer, where it can still be edited before sending.
