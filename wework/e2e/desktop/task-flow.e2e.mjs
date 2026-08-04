@@ -9957,12 +9957,7 @@ class DesktopE2EServer {
         await this.sideChatQueueRelease
         if (response.destroyed || response.writableEnded) return
         const initialAssistantMessage = assistantMessage(SIDE_CHAT_QUEUE_INITIAL_COMPLETION)
-        response.end(
-          createSse([
-            initialAssistantMessage,
-            responseCompleted(responseId, [initialAssistantMessage.item]),
-          ])
-        )
+        response.end(createSse([initialAssistantMessage, responseCompleted(responseId)]))
         return
       }
       assert.ok(
