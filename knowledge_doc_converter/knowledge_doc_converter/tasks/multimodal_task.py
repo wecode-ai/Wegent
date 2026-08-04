@@ -57,7 +57,10 @@ from knowledge_doc_converter.core.multimodal_metrics import (
 )
 from knowledge_doc_converter.services.callback_client import callback_client
 from knowledge_doc_converter.services.content_fetcher import content_fetcher
-from knowledge_doc_converter.services.error_mapper import map_conversion_failure
+from knowledge_doc_converter.services.error_mapper import (
+    map_conversion_failure,
+    map_multimodal_failure,
+)
 from knowledge_doc_converter.services.errors import (
     PermanentError,
     TransientError,
@@ -528,6 +531,9 @@ def convert_multimodal_task(
                 document_id,
                 index_generation,
                 f"transient_exhausted:{exc.error_class}",
+                error_class=exc.error_class,
+                retryable=True,
+                model=cfg.get("model_id"),
             )
             _record_failure(ext, media_type)
             logger.error(
@@ -567,6 +573,9 @@ def convert_multimodal_task(
             document_id,
             index_generation,
             f"{getattr(exc, 'error_class', 'permanent')}:{exc}",
+            error_class=getattr(exc, "error_class", "permanent"),
+            retryable=False,
+            model=cfg.get("model_id"),
         )
         _record_failure(ext, media_type)
         logger.error(
@@ -720,11 +729,27 @@ def _spill_bytes_to_tempfile(data: bytes, doc_id: int, ext: str) -> str:
 
 
 def _safe_notify_failed(
-    path: str, document_id: int, generation: int, error_message: str
+    path: str,
+    document_id: int,
+    generation: int,
+    error_message: str,
+    *,
+    error_class: Optional[str] = None,
+    retryable: Optional[bool] = None,
+    model: Optional[str] = None,
 ) -> None:
     """Notify backend of failure; never raise (we're already handling an error)."""
     try:
-        failure = map_conversion_failure(error_message, provider="gemini")
+        failure = (
+            map_multimodal_failure(
+                error_class,
+                retryable=bool(retryable),
+                provider="gemini",
+                model=model,
+            )
+            if error_class is not None
+            else map_conversion_failure(error_message, provider="gemini", model=model)
+        )
         callback_client.notify_failed(
             path=path,
             document_id=document_id,

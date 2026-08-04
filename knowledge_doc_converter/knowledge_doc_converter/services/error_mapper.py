@@ -23,6 +23,67 @@ class ConversionFailure:
     model: Optional[str] = None
 
 
+_MULTIMODAL_FAILURES = {
+    "gemini_auth": (
+        "model_permission_denied",
+        "The selected model is not available to the current account. "
+        "Check its permissions or select another model.",
+    ),
+    "gemini_quota": (
+        "model_quota_exhausted",
+        "The selected model quota has been exhausted. "
+        "Switch models or contact an administrator.",
+    ),
+    "gemini_empty_response": (
+        "multimodal_empty_response",
+        "The multimodal model returned no usable content. "
+        "Check the document or select another model.",
+    ),
+    "no_model_configured": (
+        "multimodal_model_unavailable",
+        "The multimodal model is not configured or available. "
+        "Check the knowledge base model settings.",
+    ),
+    "model_config_resolve_rejected": (
+        "multimodal_model_unavailable",
+        "The multimodal model is not configured or available. "
+        "Check the knowledge base model settings.",
+    ),
+    "video_too_large": (
+        "multimodal_file_too_large",
+        "The media file is too large for multimodal processing.",
+    ),
+    "image_too_large": (
+        "multimodal_file_too_large",
+        "The media file is too large for multimodal processing.",
+    ),
+    "staging_file_too_large": (
+        "multimodal_file_too_large",
+        "The media file is too large for multimodal processing.",
+    ),
+    "video_staging_not_configured": (
+        "conversion_configuration_error",
+        "The document conversion service is not configured correctly. "
+        "Contact an administrator.",
+    ),
+    "staging_auth_error": (
+        "conversion_configuration_error",
+        "The document conversion service is not configured correctly. "
+        "Contact an administrator.",
+    ),
+    "staging_invalid_descriptor": (
+        "conversion_configuration_error",
+        "The document conversion service is not configured correctly. "
+        "Contact an administrator.",
+    ),
+    "staging_invalid_response": (
+        "conversion_configuration_error",
+        "The document conversion service is not configured correctly. "
+        "Contact an administrator.",
+    ),
+}
+
+
 def map_conversion_failure(
     error_message: str, *, provider: Optional[str] = None, model: Optional[str] = None
 ) -> ConversionFailure:
@@ -65,7 +126,10 @@ def map_conversion_failure(
             provider=provider,
             model=model,
         )
-    if "readerror" in normalized or "connecterror" in normalized:
+    if any(
+        error_name in normalized
+        for error_name in ("readerror", "connecterror", "remoteprotocolerror")
+    ):
         return ConversionFailure(
             code="conversion_service_unavailable",
             user_message=(
@@ -80,6 +144,52 @@ def map_conversion_failure(
         code="conversion_failed",
         user_message="Document conversion failed. Please retry.",
         retryable=True,
+        provider=provider,
+        model=model,
+    )
+
+
+def map_multimodal_failure(
+    error_class: str,
+    *,
+    retryable: bool,
+    provider: str = "gemini",
+    model: Optional[str] = None,
+) -> ConversionFailure:
+    """Map an already-classified multimodal failure to the public contract."""
+    mapped = _MULTIMODAL_FAILURES.get(error_class)
+    if mapped:
+        code, user_message = mapped
+        return ConversionFailure(
+            code=code,
+            user_message=user_message,
+            retryable=False,
+            provider=provider,
+            model=model,
+        )
+    if "timeout" in error_class or "deadline" in error_class:
+        return ConversionFailure(
+            code="conversion_timeout",
+            user_message="Document conversion timed out. Please retry.",
+            retryable=retryable,
+            provider=provider,
+            model=model,
+        )
+    if retryable:
+        return ConversionFailure(
+            code="conversion_service_unavailable",
+            user_message=(
+                "The document conversion service could not be reached. "
+                "Please retry later."
+            ),
+            retryable=True,
+            provider=provider,
+            model=model,
+        )
+    return ConversionFailure(
+        code="conversion_failed",
+        user_message="Document conversion failed. Check the configuration or document.",
+        retryable=False,
         provider=provider,
         model=model,
     )

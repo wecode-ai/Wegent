@@ -802,6 +802,19 @@ class KnowledgeOrchestrator:
             items=items,
         )
 
+    def get_document(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+    ) -> KnowledgeDocumentResponse:
+        """Return one accessible document with its current processing state."""
+        document = self._get_document_with_access_or_raise(db, user, document_id)
+        response = KnowledgeDocumentResponse.model_validate(document)
+        creator = db.query(User.user_name).filter(User.id == document.user_id).first()
+        response.created_by = creator[0] if creator else None
+        return response
+
     def _get_document_with_access_or_raise(
         self,
         db: Session,

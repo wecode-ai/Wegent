@@ -51,6 +51,7 @@ import {
 import { Pagination } from '@/components/ui/pagination'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
+import { useOffPageDocumentPolling } from '../hooks/useOffPageDocumentPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
 import type {
   KnowledgeBase,
@@ -481,6 +482,11 @@ export function DocumentList({
   useDocumentIndexPolling(documents, () => {
     if (isMountedRef.current) refresh()
   })
+  useOffPageDocumentPolling({
+    document: viewingDoc,
+    visibleDocuments: documents,
+    onUpdate: setViewingDoc,
+  })
 
   // Check if summary generation failed
   const summaryError = knowledgeBase.summary?.error
@@ -503,33 +509,6 @@ export function DocumentList({
   useEffect(() => {
     setInitialDocPathHandled(false)
   }, [initialDocPath, initialDocumentId, knowledgeBase.id])
-
-  // A deep-linked document can be selected from another page in a paginated
-  // list. Refresh that snapshot by ID so the detail dialog does not show stale
-  // processing state while the current page is being viewed.
-  useEffect(() => {
-    const viewingDocId = viewingDoc?.id
-    const viewingDocName = viewingDoc?.name
-    if (
-      !viewingDocId ||
-      !viewingDocName ||
-      documents.some(document => document.id === viewingDocId)
-    ) {
-      return
-    }
-
-    const controller = new AbortController()
-    void findDocumentForDeepLink(
-      knowledgeBase.id,
-      viewingDocName,
-      viewingDocId,
-      controller.signal
-    ).then(found => {
-      if (!controller.signal.aborted && found) setViewingDoc(found)
-    })
-
-    return () => controller.abort()
-  }, [documents, knowledgeBase.id, viewingDoc?.id, viewingDoc?.name])
 
   useEffect(() => {
     if (
