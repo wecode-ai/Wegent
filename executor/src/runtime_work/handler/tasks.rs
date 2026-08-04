@@ -91,10 +91,6 @@ impl RuntimeWorkRpcHandler {
             title,
         );
         link.thread_id = Some(thread_id);
-        link.running = false;
-        link.status = "active".to_owned();
-        link.thread_status = "idle".to_owned();
-        link.turn_status = Some("completed".to_owned());
         link.parent = Some(
             json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
         );
@@ -551,6 +547,7 @@ impl RuntimeWorkRpcHandler {
                 );
                 self.record_active_codex_turn(
                     &local_task_id,
+                    active_turn.execution_id,
                     active_turn.thread_id.clone(),
                     actual_turn_id.clone(),
                 );
@@ -571,6 +568,7 @@ impl RuntimeWorkRpcHandler {
             Ok(turn_id) => {
                 self.record_active_codex_turn(
                     &local_task_id,
+                    active_turn.execution_id,
                     active_turn.thread_id.clone(),
                     turn_id.clone(),
                 );
@@ -674,7 +672,8 @@ impl RuntimeWorkRpcHandler {
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
+            .and_then(|requests| requests.get(local_task_id).cloned())
+            .map(|request| request.sender);
         let Some(sender) = sender else {
             return Ok(json!({
                 "success": false,
@@ -708,10 +707,6 @@ impl RuntimeWorkRpcHandler {
         let link = self
             .store
             .update_task(&local_task_id, |link| {
-                link.status = "cancelled".to_owned();
-                link.running = false;
-                link.thread_status = "idle".to_owned();
-                link.turn_status = Some("interrupted".to_owned());
                 link.updated_at = now_ms();
                 link.completed_at = Some(link.updated_at);
             })
@@ -744,7 +739,8 @@ impl RuntimeWorkRpcHandler {
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
+            .and_then(|requests| requests.get(local_task_id).cloned())
+            .map(|request| request.sender);
         if let Some(sender) = sender {
             let _ = sender.try_send(empty_request_user_input_response());
         }
@@ -769,10 +765,6 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             link.workspace_path = workspace_path.to_owned();
-            link.status = "running".to_owned();
-            link.running = true;
-            link.thread_status = "active".to_owned();
-            link.turn_status = Some("inProgress".to_owned());
             link.ephemeral = link.ephemeral || request.ephemeral;
             if request.runtime_project_key.is_some() {
                 link.runtime_project_key = request.runtime_project_key.clone();
