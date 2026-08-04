@@ -461,6 +461,7 @@ const startDeviceTerminalSessionMock = vi.fn()
 const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const createTemporaryRuntimeTaskMock = vi.fn()
+const sendRuntimePaneMessageMock = vi.fn().mockResolvedValue(true)
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
 
 function createDefaultImNotificationSettings() {
@@ -637,6 +638,8 @@ describe('DesktopWorkbenchLayout', () => {
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    sendRuntimePaneMessageMock.mockReset()
+    sendRuntimePaneMessageMock.mockResolvedValue(true)
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
   })
 
@@ -1129,7 +1132,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onCheckoutEnvironmentBranch ?? baseProps.onCheckoutEnvironmentBranch,
       createEnvironmentBranch:
         props.onCreateEnvironmentBranch ?? baseProps.onCreateEnvironmentBranch,
-      sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
+      sendRuntimePaneMessage: sendRuntimePaneMessageMock,
       cancelRuntimePaneTask: props.onCancelRuntimePaneTask ?? vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
       createTemporaryRuntimeTask: createTemporaryRuntimeTaskMock,
@@ -4908,6 +4911,107 @@ describe('DesktopWorkbenchLayout', () => {
       createResult.resolve(optimisticAddress)
       await createResult.promise
     })
+  })
+
+  test('temporary chat queues a follow-up while its current response is running', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+    expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantSettled?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantSettled?.())
+
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'queued follow-up'
+    )
+  })
+
+  test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-stale-busy',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    const retryResult = createDeferred<boolean>()
+    let sendAttempt = 0
+    sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
+      sendAttempt += 1
+      if (sendAttempt === 1) {
+        options?.onError?.('runtime task is already running')
+        return false
+      }
+      return retryResult.promise
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await userEvent.type(sideChatInput, 'follow-up during stale state')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(2))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'follow-up during stale state'
+    )
+    expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
+
+    await act(async () => {
+      retryResult.resolve(true)
+      await retryResult.promise
+    })
+    await waitFor(() =>
+      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    )
+    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
+      'follow-up during stale state'
+    )
   })
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
