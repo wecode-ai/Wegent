@@ -488,7 +488,7 @@ export function DocumentDetailDialog({
               isEditing && !isFullscreen && 'flex flex-col'
             )}
           >
-            {!isOrganization && !isEditing && !isFullscreen && detail?.summary && (
+            {!isEditing && !isFullscreen && detail?.summary && (
               <DocumentSummarySection
                 summary={detail.summary}
                 onRefresh={handleRefresh}
