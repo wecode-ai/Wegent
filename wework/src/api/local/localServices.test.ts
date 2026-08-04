@@ -605,6 +605,7 @@ describe('createLocalAppServices', () => {
         model_config: expect.objectContaining({
           model: 'openai',
           model_id: 'gpt-5',
+          wework_model_kind: 'codex-official',
           api_format: 'responses',
           protocol: 'openai-responses',
           runtime_config: {
@@ -1719,6 +1720,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
@@ -1732,6 +1734,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
 
@@ -1744,6 +1747,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'Doubao-Seed-2.0-pro-260215',
+        wework_model_kind: 'codex-provider',
         api_format: 'responses',
         protocol: 'openai-responses',
         model_provider: 'wecode-openai',
@@ -1759,6 +1763,41 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'gpt-5.5',
+      modelOptions: {
+        codexProviderId: 'openai',
+        codexProviderName: 'OpenAI',
+        codexProviderType: 'official',
+      },
+    })
+
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(sendPayload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'gpt-5.5',
+        wework_model_kind: 'codex-official',
+        model_provider: 'openai',
+        provider_name: 'OpenAI',
+      })
     )
   })
 

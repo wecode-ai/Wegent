@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useCallback, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import { Skill } from '@/types/api'
 import {
   uploadSkill,
@@ -64,6 +64,7 @@ import {
   CapabilityScopeSelector,
   type CapabilityPublishTarget,
 } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
 import { toast } from 'sonner'
 
 interface SkillUploadModalProps {
@@ -75,7 +76,11 @@ interface SkillUploadModalProps {
   createTarget?: ResourceCreateTarget
   writableGroups?: Group[]
   publishAfterCreate?: boolean
-  onCreateOptionsChange?: (target: ResourceCreateTarget, publishAfterCreate: boolean) => void
+  onCreateOptionsChange?: (
+    target: ResourceCreateTarget,
+    publishAfterCreate: boolean,
+    marketplaceTags: string[]
+  ) => void
 }
 
 // Helper to get skill name from either type
@@ -111,6 +116,7 @@ export default function SkillUploadModal({
 }: SkillUploadModalProps) {
   const { t } = useTranslation('common')
   const [activeTab, setActiveTab] = useState<'upload' | 'git'>('upload')
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
 
   // Upload tab state
   const [skillName, setSkillName] = useState(getSkillName(skill))
@@ -137,11 +143,12 @@ export default function SkillUploadModal({
   const [showResult, setShowResult] = useState(false)
 
   const isEditMode = !!skill
-  const publishTarget: CapabilityPublishTarget = publishAfterCreate
-    ? 'marketplace'
-    : createTarget.scope === 'group'
-      ? 'team'
-      : 'personal'
+  const publishTarget: CapabilityPublishTarget =
+    isPublic || publishAfterCreate
+      ? 'marketplace'
+      : createTarget.scope === 'group'
+        ? 'team'
+        : 'personal'
   const targetGroupNames =
     publishTarget === 'team'
       ? Array.from(
@@ -150,6 +157,10 @@ export default function SkillUploadModal({
           )
         )
       : []
+
+  useEffect(() => {
+    if (!open) setMarketplaceTags([])
+  }, [open])
 
   const addSavedSkillsToGroups = async (skillIds: number[]): Promise<void> => {
     if (targetGroupNames.length === 0 || skillIds.length === 0) return
@@ -176,11 +187,17 @@ export default function SkillUploadModal({
           groupName: nextGroupNames[0],
           groupNames: nextGroupNames,
         },
-        false
+        false,
+        marketplaceTags
       )
       return
     }
-    onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace')
+    onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace', marketplaceTags)
+  }
+
+  const handleMarketplaceTagsChange = (tags: string[]) => {
+    setMarketplaceTags(tags)
+    onCreateOptionsChange?.({ scope: 'personal' }, publishTarget === 'marketplace', tags)
   }
 
   // ============================================================================
@@ -269,6 +286,10 @@ export default function SkillUploadModal({
       setError(t('resource-library:states.select_groups'))
       return
     }
+    if (!isEditMode && publishTarget === 'marketplace' && marketplaceTags.length === 0) {
+      setError(t('resource-library:marketplace_tags.required'))
+      return
+    }
 
     // Check if skill with same name already exists (only for create mode)
     if (!isEditMode && !isPublic) {
@@ -312,7 +333,12 @@ export default function SkillUploadModal({
         savedSkillId = getSkillId(saved)
       } else {
         if (isPublic) {
-          const saved = await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+          const saved = await uploadPublicSkill(
+            selectedFile,
+            skillName.trim(),
+            marketplaceTags,
+            setUploadProgress
+          )
           savedSkillId = getSkillId(saved)
         } else {
           const saved = await uploadSkill(
@@ -418,6 +444,14 @@ export default function SkillUploadModal({
       setGitError(t('resource-library:states.select_groups'))
       return
     }
+    if (publishTarget === 'marketplace' && marketplaceTags.length === 0) {
+      setGitError(t('resource-library:marketplace_tags.required'))
+      return
+    }
+    if (publishTarget === 'marketplace' && selectedSkillPaths.size !== 1) {
+      setGitError(t('resource-library:marketplace_tags.single_skill_required'))
+      return
+    }
 
     setImporting(true)
     setGitError(null)
@@ -427,7 +461,7 @@ export default function SkillUploadModal({
       const request = {
         repo_url: gitUrl.trim(),
         skill_paths: Array.from(selectedSkillPaths),
-        ...(isPublic ? {} : { namespace }),
+        ...(isPublic ? { marketplace_tags: marketplaceTags } : { namespace }),
       }
 
       const result = await importFn(request)
@@ -463,7 +497,7 @@ export default function SkillUploadModal({
         repo_url: gitUrl.trim(),
         skill_paths: Array.from(selectedSkillPaths),
         overwrite_names: Array.from(selectedOverwrites),
-        ...(isPublic ? {} : { namespace }),
+        ...(isPublic ? { marketplace_tags: marketplaceTags } : { namespace }),
       }
 
       const result = await importFn(request)
@@ -499,7 +533,7 @@ export default function SkillUploadModal({
     setShowResult(false)
     setImportResult(null)
     if (importResult && importResult.total_success > 0) {
-      onClose(true)
+      onClose(true, importResult.success[0]?.id)
     }
   }
 
@@ -588,14 +622,22 @@ export default function SkillUploadModal({
                   handleSubmit={handleSubmit}
                   handleClose={handleClose}
                   publishScope={
-                    <CapabilityScopeSelector
-                      value={publishTarget}
-                      groups={writableGroups}
-                      groupName={createTarget.groupName}
-                      groupNames={targetGroupNames}
-                      onChange={handlePublishTargetChange}
-                      multipleGroups
-                    />
+                    <div className="space-y-4">
+                      <CapabilityScopeSelector
+                        value={publishTarget}
+                        groups={writableGroups}
+                        groupName={createTarget.groupName}
+                        groupNames={targetGroupNames}
+                        onChange={handlePublishTargetChange}
+                        multipleGroups
+                      />
+                      {publishTarget === 'marketplace' && (
+                        <MarketplaceTagSelector
+                          value={marketplaceTags}
+                          onChange={handleMarketplaceTagsChange}
+                        />
+                      )}
+                    </div>
                   }
                   t={t}
                 />
@@ -619,14 +661,22 @@ export default function SkillUploadModal({
                     handleImportSkills={handleImportSkills}
                     handleClose={handleClose}
                     publishScope={
-                      <CapabilityScopeSelector
-                        value={publishTarget}
-                        groups={writableGroups}
-                        groupName={createTarget.groupName}
-                        groupNames={targetGroupNames}
-                        onChange={handlePublishTargetChange}
-                        multipleGroups
-                      />
+                      <div className="space-y-4">
+                        <CapabilityScopeSelector
+                          value={publishTarget}
+                          groups={writableGroups}
+                          groupName={createTarget.groupName}
+                          groupNames={targetGroupNames}
+                          onChange={handlePublishTargetChange}
+                          multipleGroups
+                        />
+                        {publishTarget === 'marketplace' && (
+                          <MarketplaceTagSelector
+                            value={marketplaceTags}
+                            onChange={handleMarketplaceTagsChange}
+                          />
+                        )}
+                      </div>
                     }
                     t={t}
                   />

@@ -445,7 +445,7 @@ flowchart LR
 
 开发模式通过 `wegent-executor-dev` 监控源码并重启实际 executor。该守护进程必须同时监控启动它的 Wework 父进程：Unix 上一旦父 PID 变化，就停止当前 executor 并退出，不能在 Wework 已退出后被系统接管并继续重启 executor。
 
-`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
+`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_SOCKET_URL` 覆盖 `connection.socket_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。Socket 地址为空时默认复用 Backend 地址；地址分离时，HTTP API 使用 Backend 地址，executor 的 Socket.IO transport 使用独立 Socket 地址。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
 
 ### 云设备启动身份变量
 

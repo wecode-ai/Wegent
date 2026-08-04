@@ -40,6 +40,7 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
                 {
                     "id": "create_ppt",
                     "title": "创建 PPT",
+                    "cover": "/marketplace-covers/create-ppt.webp",
                     "team_id": 101,
                     "input_presets": [
                         {
@@ -87,11 +88,11 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
         return {
             "id": team_id,
             "metadata": {"name": f"team-{team_id}", "displayName": f"Team {team_id}"},
+            "recommended_mode": "chat",
             "spec": {
                 "description": f"Description {team_id}",
                 "icon": "sparkles",
                 "quick_phrases": [f"agent phrase {team_id}"],
-                "recommended_mode": "chat",
             },
             "agent_type": "claude",
         }
@@ -109,7 +110,11 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     assert response.system_functions[0].id == "create_ppt"
     assert [function.id for function in response.system_functions] == ["create_ppt"]
     assert response.system_functions[0].team_id == 101
+    assert response.system_functions[0].cover == "/marketplace-covers/create-ppt.webp"
     assert response.system_functions[0].name == "team-101"
+    assert response.system_functions[0].description == "Description 101"
+    assert response.system_functions[0].icon == "sparkles"
+    assert response.system_functions[0].recommended_mode == "chat"
     assert response.system_functions[0].input_presets[0].id == "roadmap"
     assert (
         response.system_functions[0].input_presets[0].prompt

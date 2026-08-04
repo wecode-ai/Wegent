@@ -21,8 +21,41 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.db.session import SessionLocal
+from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
+from app.services.knowledge.processing_errors import (
+    build_processing_error,
+    map_indexing_exception,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _build_stale_processing_error(
+    index_status: object, *, generation: int
+) -> DocumentProcessingError:
+    """Expose a stable timeout code while keeping stale reasons internal."""
+    from app.models.knowledge import DocumentIndexStatus
+
+    conversion_stage = index_status in {
+        DocumentIndexStatus.PENDING_CONVERSION,
+        DocumentIndexStatus.CONVERTING,
+    }
+    return build_processing_error(
+        stage=(
+            DocumentProcessingStage.CONVERSION
+            if conversion_stage
+            else DocumentProcessingStage.INDEXING
+        ),
+        code="conversion_timeout" if conversion_stage else "indexing_timeout",
+        message=(
+            "Document conversion timed out. Please retry."
+            if conversion_stage
+            else "Document indexing timed out. Please retry."
+        ),
+        retryable=True,
+        generation=generation,
+    )
+
 
 KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS = settings.KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS
 KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS = (
@@ -173,6 +206,16 @@ def index_document_task(
                     db=state_db,
                     document_id=document_id,
                     generation=index_generation,
+                    error=build_processing_error(
+                        stage=DocumentProcessingStage.INDEXING,
+                        code="index_lock_timeout",
+                        message=(
+                            "The document indexing task waited too long. "
+                            "Please retry."
+                        ),
+                        retryable=True,
+                        generation=index_generation,
+                    ),
                 )
             return {
                 "status": "skipped",
@@ -224,6 +267,13 @@ def index_document_task(
                         db=finalize_db,
                         document_id=document_id,
                         generation=index_generation,
+                        error=build_processing_error(
+                            stage=DocumentProcessingStage.INDEXING,
+                            code="indexing_failed",
+                            message="Document indexing failed. Please retry.",
+                            retryable=True,
+                            generation=index_generation,
+                        ),
                     )
 
                 if not finalized:
@@ -306,6 +356,10 @@ def index_document_task(
                     db=finalize_db,
                     document_id=document_id,
                     generation=index_generation,
+                    error=map_indexing_exception(
+                        exc,
+                        generation=index_generation,
+                    ),
                 )
 
             if not finalized:
@@ -525,6 +579,10 @@ def scan_stale_index_tasks():
                     db=db,
                     document_id=doc_id,
                     generation=generation,
+                    error=_build_stale_processing_error(
+                        index_status,
+                        generation=generation,
+                    ),
                 )
                 if finalized:
                     marked_count += 1

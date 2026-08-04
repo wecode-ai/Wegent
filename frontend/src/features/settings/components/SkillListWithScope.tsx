@@ -104,6 +104,7 @@ import { ResourceManagementLayout } from './resource-management/ResourceManageme
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { SkillShareScopeDialog } from '@/features/resource-library/components/SkillShareScopeDialog'
 import { PublishedResourceIndicator } from '@/features/resource-library/components/PublishedResourceIndicator'
+import { ResourceIcon } from '@/features/resource-library/components/ResourceIcon'
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -734,7 +735,7 @@ export function SkillListWithScope({
             display_name: skill.spec.displayName || skill.metadata.name,
             description: skill.spec.description || null,
             icon: null,
-            tags: skill.spec.tags || [],
+            tags: pendingCreateRequestRef.current.marketplaceTags || [],
             version: skill.spec.version || '1.0.0',
             manifest_options: {},
           })
@@ -755,13 +756,18 @@ export function SkillListWithScope({
     if (!saved && hadPendingCreateRequest) onCreateRequestClose?.()
   }
 
-  const handleCreateOptionsChange = (target: ResourceCreateTarget, publishAfterCreate: boolean) => {
+  const handleCreateOptionsChange = (
+    target: ResourceCreateTarget,
+    publishAfterCreate: boolean,
+    marketplaceTags: string[]
+  ) => {
     setCreateTarget(target)
     if (pendingCreateRequestRef.current) {
       pendingCreateRequestRef.current = {
         ...pendingCreateRequestRef.current,
         target,
         publishAfterCreate,
+        marketplaceTags,
       }
     }
   }
@@ -946,9 +952,12 @@ export function SkillListWithScope({
                         {compact ? (
                           <>
                             <div className="flex min-w-0 items-start gap-3">
-                              <ResourceCardIcon compact>
-                                <Sparkles className="h-5 w-5 text-primary" aria-hidden />
-                              </ResourceCardIcon>
+                              <ResourceIcon
+                                resourceType="skill"
+                                name={skill.displayName || skill.name}
+                                marketplaceTags={skill.marketplaceTags}
+                                size="md"
+                              />
                               <div className="min-w-0 flex-1">
                                 <h3
                                   className="truncate font-semibold text-text-primary"

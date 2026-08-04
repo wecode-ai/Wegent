@@ -19,8 +19,12 @@ from fastapi import HTTPException
 
 from app.api.endpoints.internal.conversion_callback import (
     conversion_completed_callback,
+    conversion_status_callback,
 )
-from app.schemas.conversion_callback import ConversionCompletedRequest
+from app.schemas.conversion_callback import (
+    ConversionCompletedRequest,
+    ConversionStatusRequest,
+)
 
 
 def _make_request(
@@ -63,6 +67,36 @@ def _query_count(value: int) -> MagicMock:
     q = MagicMock()
     q.filter.return_value.count.return_value = value
     return q
+
+
+@pytest.mark.unit
+def test_conversion_failed_callback_forwards_structured_error() -> None:
+    doc = SimpleNamespace(id=1)
+    db = _build_db_chain(_query_first(doc))
+    request = ConversionStatusRequest(
+        action="conversion_failed",
+        document_id=1,
+        generation=5,
+        error_message="private provider detail",
+        error_code="model_quota_exhausted",
+        user_message="The selected model quota has been exhausted.",
+        retryable=False,
+        provider="gemini",
+        model="gemini-3.5-flash",
+    )
+
+    with patch(
+        "app.api.endpoints.internal.conversion_callback.mark_document_index_failed",
+        return_value=True,
+    ) as mark_failed:
+        response = conversion_status_callback(request=request, db=db)
+
+    assert response.ok is True
+    error = mark_failed.call_args.kwargs["error"]
+    assert error.code == "model_quota_exhausted"
+    assert error.retryable is False
+    assert error.provider == "gemini"
+    assert error.model == "gemini-3.5-flash"
 
 
 @pytest.mark.unit

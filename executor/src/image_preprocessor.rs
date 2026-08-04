@@ -22,6 +22,29 @@ pub fn prepare_image_bytes_for_model(
     mime_type: &str,
     max_long_edge: Option<u32>,
 ) -> PreparedModelImage {
+    let max_long_edge = max_long_edge.unwrap_or(MAX_MODEL_IMAGE_LONG_EDGE);
+    prepare_image_bytes_for_model_with_limits(
+        image_data,
+        mime_type,
+        Some(max_long_edge),
+        max_long_edge,
+    )
+}
+
+pub fn prepare_image_bytes_for_model_with_short_edge_limit(
+    image_data: &[u8],
+    mime_type: &str,
+    max_short_edge: u32,
+) -> PreparedModelImage {
+    prepare_image_bytes_for_model_with_limits(image_data, mime_type, None, max_short_edge)
+}
+
+fn prepare_image_bytes_for_model_with_limits(
+    image_data: &[u8],
+    mime_type: &str,
+    max_long_edge: Option<u32>,
+    max_short_edge: u32,
+) -> PreparedModelImage {
     if image_data.is_empty() {
         return unchanged(image_data, mime_type);
     }
@@ -35,8 +58,8 @@ pub fn prepare_image_bytes_for_model(
         return unchanged(image_data, &input_mime);
     };
     let original_size = image.dimensions();
-    let max_long_edge = max_long_edge.unwrap_or(MAX_MODEL_IMAGE_LONG_EDGE);
-    let needs_resize = original_size.0.max(original_size.1) > max_long_edge;
+    let needs_resize = original_size.0.min(original_size.1) > max_short_edge
+        || max_long_edge.is_some_and(|limit| original_size.0.max(original_size.1) > limit);
     let output_mime = output_mime(&input_mime, output_format);
     let needs_convert = output_mime != input_mime;
 
@@ -51,7 +74,12 @@ pub fn prepare_image_bytes_for_model(
     }
 
     if needs_resize {
-        image = image.thumbnail(max_long_edge, max_long_edge);
+        let bounds = if original_size.0 >= original_size.1 {
+            (max_long_edge.unwrap_or(original_size.0), max_short_edge)
+        } else {
+            (max_short_edge, max_long_edge.unwrap_or(original_size.1))
+        };
+        image = image.thumbnail(bounds.0, bounds.1);
     }
 
     let final_format = if input_mime == "image/gif" && needs_resize {

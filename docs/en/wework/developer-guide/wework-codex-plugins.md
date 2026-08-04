@@ -55,6 +55,10 @@ The interaction style uses the same `config.toml` as its single source of truth.
 
 Wework requests the model catalog from the Codex app-server's `model/list` method through the local executor, then uses the returned provider and model array order unchanged in the model picker. The frontend does not reorder official or default models or custom providers, and does not add models that Codex did not return. The request uses `includeHidden: false`, so models Codex marks as hidden are not displayed.
 
+### Image Attachment Preprocessing
+
+Wework includes the current model category in local runtime requests. Official Codex models receive the original image. Codex providers, local model interfaces, and cloud models are treated as non-official models; before sending an image, the executor creates a temporary model-input file and proportionally reduces the image's short edge to at most `720px`. The long edge is not capped, so panoramic and long screenshots preserve their full aspect ratio instead of being forced into a fixed `1280×720` box. Images whose short edge is already at most `720px` remain unchanged. The original attachment, transcript, and preview URL are never rewritten. Temporary model-input files exist only for the current turn and are removed after it finishes.
+
 ## Chat Runtime
 
 When a user selects a skill, app, or plugin in the composer, the editor inserts an indivisible inline mention. The cursor can only stop before or after the mention; copy and submit serialize it as Codex app-server-compatible Markdown:

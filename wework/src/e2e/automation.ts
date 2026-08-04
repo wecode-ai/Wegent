@@ -26,6 +26,7 @@ import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -93,6 +94,39 @@ function normalizeAppPath(path: string): string {
 function dispatchNavigationEvents() {
   window.dispatchEvent(new PopStateEvent('popstate'))
   window.dispatchEvent(new CustomEvent('wework:e2e:navigation'))
+}
+
+function embeddedBrowserStorageInput(command: DesktopControlCommand) {
+  const input = JSON.parse(command.value ?? '{}') as {
+    key?: string
+    label?: string
+    value?: string
+  }
+  if (!input.label?.trim() || !input.key) {
+    throw new Error(`${command.action} requires label and key`)
+  }
+  return {
+    key: input.key,
+    label: input.label.trim(),
+    value: input.value ?? '',
+  }
+}
+
+async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserJson<string>(
+    `(localStorage.setItem(${JSON.stringify(input.key)}, ${JSON.stringify(input.value)}), ` +
+      `localStorage.getItem(${JSON.stringify(input.key)}))`,
+    input.label
+  )
+}
+
+async function getEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
+  const input = embeddedBrowserStorageInput(command)
+  return evalEmbeddedBrowserJson<string | null>(
+    `localStorage.getItem(${JSON.stringify(input.key)})`,
+    input.label
+  )
 }
 
 function hasTestId(testId: string): boolean {
@@ -770,6 +804,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
+    case 'setEmbeddedBrowserLocalStorageItem':
+      return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
+    case 'getEmbeddedBrowserLocalStorageItem':
+      return (await getEmbeddedBrowserLocalStorageItem(command)) ?? ''
     case 'setLocalProxyUrl': {
       const proxyUrl = command.value?.trim() ?? ''
       const config = saveLocalProxyUrl(proxyUrl)
@@ -1072,6 +1110,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(getWorkbenchDebugSnapshot())
     case 'getLocalExecutorStatus':
       return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.status))
+    case 'getLocalExecutorLog':
+      return JSON.stringify(await invoke(LOCAL_EXECUTOR_COMMANDS.readLog))
     case 'hover':
       return hoverDesktopControlElement(command.selector)
     case 'pointerLeave':

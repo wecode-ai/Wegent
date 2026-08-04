@@ -68,6 +68,34 @@ class DocumentIndexStatus(str, Enum):
     FAILED = "failed"
 
 
+class DocumentProcessingStage(str, Enum):
+    """Stage in which document processing failed."""
+
+    DISPATCH = "dispatch"
+    CONVERSION = "conversion"
+    INDEXING = "indexing"
+    SYSTEM = "system"
+
+
+class DocumentProcessingError(BaseModel):
+    """Safe error details for the current document processing generation.
+
+    ``code`` is the stable semantic identifier and the authoritative key for
+    client localization. ``message`` is a safe, non-localized fallback for
+    older clients, unknown codes, and API consumers without an i18n catalog.
+    """
+
+    stage: DocumentProcessingStage
+    code: str = Field(min_length=1, max_length=64)
+    message: str = Field(min_length=1, max_length=1000)
+    retryable: bool = False
+    generation: int = Field(ge=0)
+    occurred_at: datetime
+    provider: Optional[str] = Field(default=None, max_length=64)
+    model: Optional[str] = Field(default=None, max_length=128)
+    request_id: Optional[str] = Field(default=None, max_length=128)
+
+
 class ResourceScope(str, Enum):
     """Resource scope for filtering."""
 
@@ -465,6 +493,7 @@ class KnowledgeDocumentResponse(BaseModel):
     is_active: bool
     index_status: DocumentIndexStatus
     index_generation: int
+    processing_error: Optional[DocumentProcessingError] = None
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
@@ -501,6 +530,38 @@ class KnowledgeDocumentResponse(BaseModel):
         if v is None:
             return v
         return normalize_splitter_config(v)
+
+    @model_validator(mode="after")
+    def derive_processing_error(self):
+        """Expose a validated error without leaking its storage location."""
+        source_config = dict(self.source_config or {})
+        raw_error = source_config.pop("processing_error", None)
+        self.source_config = source_config
+        if self.index_status != DocumentIndexStatus.FAILED:
+            self.processing_error = None
+            return self
+        if not isinstance(raw_error, dict):
+            if (
+                self.processing_error is not None
+                and self.processing_error.generation == self.index_generation
+            ):
+                return self
+            self.processing_error = None
+            return self
+        try:
+            error = DocumentProcessingError.model_validate(raw_error)
+        except ValueError:
+            logger.warning(
+                "Invalid processing error payload document_id=%s generation=%s",
+                self.id,
+                self.index_generation,
+            )
+            self.processing_error = None
+            return self
+        self.processing_error = (
+            error if error.generation == self.index_generation else None
+        )
+        return self
 
     class Config:
         from_attributes = True

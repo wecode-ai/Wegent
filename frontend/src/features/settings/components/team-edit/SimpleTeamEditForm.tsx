@@ -51,7 +51,7 @@ interface SimpleTeamEditFormProps {
   bindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
-  setIcon: (value: string) => void
+  setIcon: (value: string | null) => void
   requiresWorkspace: boolean | null
   setRequiresWorkspace: (value: boolean | null) => void
   executorMode: SimpleExecutorMode

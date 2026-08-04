@@ -306,6 +306,10 @@ export function LocalRuntimeInitializer({
   }))
 
   useEffect(() => {
+    initialCloudConnectionRef.current = initialCloudConnection
+  }, [initialCloudConnection])
+
+  useEffect(() => {
     if (!enabled) {
       return undefined
     }

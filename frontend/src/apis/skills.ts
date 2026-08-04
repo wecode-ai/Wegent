@@ -317,6 +317,7 @@ export interface UnifiedSkill {
   version?: string
   author?: string
   tags?: string[]
+  marketplaceTags?: string[]
   /** List of shell types this skill is compatible with (e.g., 'ClaudeCode', 'Agno', 'Dify', 'Chat') */
   bindShells?: string[]
   /** Whether this skill is visible in user-facing skill lists */
@@ -591,6 +592,7 @@ export async function invokeSkill(skillName: string): Promise<{ prompt: string }
 export async function uploadPublicSkill(
   file: File,
   name: string,
+  marketplaceTags: string[],
   onProgress?: (progress: number) => void
 ): Promise<UnifiedSkill> {
   const token = getToken()
@@ -599,6 +601,7 @@ export async function uploadPublicSkill(
   const formData = new FormData()
   formData.append('file', file)
   formData.append('name', name)
+  formData.append('marketplace_tags', JSON.stringify(marketplaceTags))
 
   const url = `${getApiUrl()}/v1/kinds/skills/public/upload`
 
@@ -998,6 +1001,7 @@ export interface GitImportRequest {
   skill_paths: string[]
   namespace?: string
   overwrite_names?: string[]
+  marketplace_tags?: string[]
 }
 
 /**

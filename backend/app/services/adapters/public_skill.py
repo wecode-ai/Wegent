@@ -24,6 +24,10 @@ class PublicSkillAdapter:
         spec = {}
         if isinstance(kind.json, dict):
             spec = kind.json.get("spec", {})
+        capability = spec.get("capability", {})
+        marketplace_tags = (
+            capability.get("tags", []) if isinstance(capability, dict) else []
+        )
 
         return {
             "id": kind.id,
@@ -35,6 +39,7 @@ class PublicSkillAdapter:
             "version": spec.get("version"),
             "author": spec.get("author"),
             "tags": spec.get("tags"),
+            "marketplaceTags": marketplace_tags,
             "bindShells": spec.get("bindShells"),
             "visible": spec.get("visible", True),
             "is_active": kind.is_active,

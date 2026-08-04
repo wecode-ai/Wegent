@@ -43,6 +43,7 @@ import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
+import { getProcessingErrorMessage } from '../utils/processing-error'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
   KnowledgeResourceNode,
@@ -672,6 +673,31 @@ export function KnowledgeDocumentTreeGrid({
                     ? t('document.document.indexStatus.converting')
                     : t('document.document.indexStatus.indexing')}
               </Badge>
+            )
+          }
+          if (document.index_status === 'failed') {
+            const errorMessage =
+              document.processing_error !== null && document.processing_error !== undefined
+                ? getProcessingErrorMessage(document.processing_error, t)
+                : t('document.document.indexStatus.failedHint')
+            return (
+              <TooltipProvider>
+                <Tooltip delayDuration={100}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className="cursor-help"
+                      data-testid={`document-processing-error-${document.id}`}
+                    >
+                      <Badge variant="error" size="sm" className="whitespace-nowrap">
+                        {t('document.document.indexStatus.failed')}
+                      </Badge>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-sm">
+                    <p className="text-xs">{errorMessage}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )
           }
           if (document.is_active) {

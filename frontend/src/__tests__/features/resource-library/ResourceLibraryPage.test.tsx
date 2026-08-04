@@ -220,15 +220,16 @@ describe('ResourceLibraryPage', () => {
       '检索器',
     ])
     expect(screen.queryByRole('tab', { name: '连接器' })).not.toBeInTheDocument()
-    expect(screen.getByTestId('resource-library-source-select')).toHaveTextContent('全部')
+    expect(screen.getByTestId('resource-library-source-select')).toHaveTextContent('我创建的')
     expect(screen.getByTestId('resource-library-source-select')).toHaveClass('sm:hidden')
     expect(screen.getByTestId('resource-library-source-segments')).toBeInTheDocument()
     expect(screen.getByTestId('resource-library-source-all-button')).toHaveAttribute(
       'aria-pressed',
-      'true'
+      'false'
     )
-    expect(screen.getByTestId('resource-library-source-personal-button')).toHaveTextContent(
-      '我创建的'
+    expect(screen.getByTestId('resource-library-source-personal-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
     )
     expect(screen.getByTestId('resource-library-source-group-button')).toHaveTextContent('团队共享')
     expect(screen.getByTestId('resource-library-source-installed-button')).toHaveTextContent(
@@ -246,7 +247,10 @@ describe('ResourceLibraryPage', () => {
     expect(screen.getByTestId('resource-library-source-select')).not.toHaveClass('lg:h-10')
     expect(screen.getByTestId('resource-library-header-search-input')).toHaveClass('h-11')
     expect(screen.getByTestId('resource-library-header-search-input')).not.toHaveClass('lg:h-10')
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'personal'
+    )
   })
 
   it.each([
@@ -290,11 +294,17 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=model&source=installed')
     render(<ResourceLibraryPage />)
 
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'personal'
+    )
     await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=model&source=all', {
-        scroll: false,
-      })
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=model&source=personal',
+        {
+          scroll: false,
+        }
+      )
     )
   })
 
@@ -336,11 +346,17 @@ describe('ResourceLibraryPage', () => {
     mockSearchParams = new URLSearchParams('tab=mine&type=agent&source=system')
     render(<ResourceLibraryPage />)
 
-    expect(screen.getByTestId('my-resource-management')).toHaveAttribute('data-fixed-source', 'all')
+    expect(screen.getByTestId('my-resource-management')).toHaveAttribute(
+      'data-fixed-source',
+      'personal'
+    )
     await waitFor(() =>
-      expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=all', {
-        scroll: false,
-      })
+      expect(mockReplace).toHaveBeenCalledWith(
+        '/resource-library?tab=mine&type=agent&source=personal',
+        {
+          scroll: false,
+        }
+      )
     )
   })
 

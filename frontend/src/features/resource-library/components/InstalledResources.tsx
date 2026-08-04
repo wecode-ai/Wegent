@@ -169,19 +169,13 @@ export function InstalledResources({
       const [items, bindings] = await Promise.all([
         isGroupMode
           ? selectedGroupNamespaces.length > 0
-            ? (
-                await Promise.all(
-                  selectedGroupNamespaces.map(namespace =>
-                    loadAllInstallPages(page =>
-                      resourceLibraryApi.listGroupInstalls(namespace, {
-                        resourceType,
-                        page,
-                        limit: INSTALLS_PAGE_LIMIT,
-                      })
-                    )
-                  )
-                )
-              ).flat()
+            ? loadAllInstallPages(page =>
+                resourceLibraryApi.listGroupInstallsBatch(selectedGroupNamespaces, {
+                  resourceType,
+                  page,
+                  limit: INSTALLS_PAGE_LIMIT,
+                })
+              )
             : []
           : loadAllInstallPages(page =>
               resourceLibraryApi.listMyInstalls({

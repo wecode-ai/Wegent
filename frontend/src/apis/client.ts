@@ -30,6 +30,7 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 // HTTP Client with interceptors
@@ -115,11 +116,13 @@ class APIClient {
   ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
 
     const config: RequestInit = {
       ...options,
+      signal: requestOptions.signal,
       headers: {
-        'Content-Type': 'application/json',
+        ...(!isFormData && { 'Content-Type': 'application/json' }),
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
       },
@@ -191,6 +194,13 @@ class APIClient {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,
+    })
+  }
+
+  async postForm<T>(endpoint: string, data: FormData): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'POST',
+      body: data,
     })
   }
 
