@@ -148,6 +148,17 @@ const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
 const CHECKPOINT_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK: create a completed task for downstream checkpoints.'
 const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMPLETE'
+const FILE_PANEL_ANCHOR_PROMPT =
+  'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR: create a long response with a file link in the middle.'
+const FILE_PANEL_ANCHOR_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_MARKER'
+const FILE_PANEL_ANCHOR_RESPONSE = [
+  'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_RESPONSE',
+  ...Array.from({ length: 30 }, (_, index) =>
+    index === 14
+      ? `${FILE_PANEL_ANCHOR_MARKER}: inspect [README.md](README.md:1) without moving this paragraph.`
+      : `File panel anchor paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable anchor content '.repeat(8)}`
+  ),
+].join('\n\n')
 const TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION'
 const TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_TURN_NAVIGATION_COMPLETE'
 const TURN_NAVIGATION_REGRESSION_TURN_COUNT = 30
@@ -7612,6 +7623,7 @@ class DesktopE2EServer {
         'anthropic_empty_response',
         'reconnect',
         'checkpoint_task',
+        'file_panel_anchor',
         'fresh_chat',
         'attachment_only',
         'pasted_zip_attachment',
@@ -9173,6 +9185,22 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'file_panel_anchor') {
+      this.recordScenarioRequest('file_panel_anchor', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(FILE_PANEL_ANCHOR_PROMPT),
+        'The file panel anchor prompt was lost'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          FILE_PANEL_ANCHOR_RESPONSE.replace('README.md:1', `${this.workspacePath}/README.md:1`)
+        ),
         responseCompleted(responseId),
       ])
       return
@@ -13285,6 +13313,103 @@ last_updated = "2026-07-30T00:00:00Z"`
         composerSelector,
         UNSENT_FIRST_TASK_DRAFT,
         'The first task lost its unsent composer draft after switching tasks'
+      )
+
+      phase = 'file-panel-scroll-anchor'
+      control.setScenario('file_panel_anchor')
+      await sendPrompt(control, composerSelector, FILE_PANEL_ANCHOR_PROMPT)
+      const filePanelAnchorScopeSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`
+      const filePanelAnchorSelector = '[data-e2e-anchor-id="file-panel-anchor"]'
+      const conversationScrollerSelector = '[data-testid="desktop-workbench-content"]'
+      await control.command('waitFor', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        value: 'file-panel-anchor',
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('scrollIntoViewAsUser', filePanelAnchorSelector, { value: 'start' })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+      const { element: filePanelAnchorBeforeOpen, scroller: filePanelScrollerBeforeOpen } =
+        await waitForElementInsideScroller(
+          control,
+          filePanelAnchorSelector,
+          conversationScrollerSelector,
+          'The linked file paragraph before opening the file panel'
+        )
+      assert.ok(
+        distanceFromBottom(filePanelScrollerBeforeOpen) > 100,
+        'The linked file paragraph did not move the conversation away from the bottom'
+      )
+      await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
+
+      await control.command(
+        'click',
+        `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
+      )
+      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('finishAnimations', 'body')
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+      const filePanelScrollerAfterOpen = await getSingleElementMetrics(
+        control,
+        conversationScrollerSelector,
+        'The conversation after opening a linked file'
+      )
+      const filePanelAnchorAfterOpen = await getSingleElementMetrics(
+        control,
+        filePanelAnchorSelector,
+        'The linked file paragraph after opening the file panel'
+      )
+      assert.ok(
+        filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
+        `Opening the file panel did not resize the conversation from ${filePanelScrollerBeforeOpen.width}px; after=${filePanelScrollerAfterOpen.width}px`
+      )
+      assert.ok(
+        Math.abs(filePanelAnchorAfterOpen.top - filePanelAnchorBeforeOpen.top) <= 8,
+        `Opening the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterOpen.top}px`
+      )
+      assert.ok(
+        filePanelAnchorAfterOpen.top >= filePanelScrollerAfterOpen.top - 2 &&
+          filePanelAnchorAfterOpen.bottom <= filePanelScrollerAfterOpen.bottom + 2,
+        `The linked file paragraph left the conversation viewport after opening the file panel: ${JSON.stringify(
+          {
+            anchor: filePanelAnchorAfterOpen,
+            scroller: filePanelScrollerAfterOpen,
+          }
+        )}`
+      )
+      await captureVerificationScreenshot(control, 'file-panel-anchor-02-after-open.png')
+      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('right-workspace-file-tab'),
+        'The file panel remained open after the anchor regression check',
+        DEFAULT_STEP_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+      await control.command('finishAnimations', 'body')
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+      const filePanelScrollerAfterClose = await getSingleElementMetrics(
+        control,
+        conversationScrollerSelector,
+        'The conversation after closing a linked file'
+      )
+      const filePanelAnchorAfterClose = await getSingleElementMetrics(
+        control,
+        filePanelAnchorSelector,
+        'The linked file paragraph after closing the file panel'
+      )
+      assert.ok(
+        Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
+        `Closing the file panel did not restore the conversation width from ${filePanelScrollerAfterOpen.width}px; after=${filePanelScrollerAfterClose.width}px`
+      )
+      assert.ok(
+        Math.abs(filePanelAnchorAfterClose.top - filePanelAnchorBeforeOpen.top) <= 8,
+        `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
 
       phase = 'workspace-resources-across-conversation-switch'
