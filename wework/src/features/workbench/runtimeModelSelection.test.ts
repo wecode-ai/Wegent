@@ -361,7 +361,7 @@ describe('runtimeModelSelection', () => {
       config: {
         protocol: 'openai',
         apiFormat: 'chat/completions',
-        base_url: 'https://copilot.weibo.com/v1',
+        base_url: 'https://api.moonshot.cn/v1',
         model_id: 'moonshot-kimi-k3',
       },
     }
@@ -389,7 +389,7 @@ describe('runtimeModelSelection', () => {
       config: {
         protocol: 'openai',
         apiFormat: 'chat/completions',
-        base_url: 'https://copilot.weibo.com/v1',
+        base_url: 'https://api.moonshot.cn/v1',
         model_id: 'moonshotai/kimi-k2.5',
       },
     }
