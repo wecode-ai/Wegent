@@ -99,6 +99,13 @@ export function getExternalKnowledgeSource(
   return externalKnowledgeSources.get(providerId)
 }
 
+export function getExternalKnowledgeSourceLabel(
+  providerId: string,
+  source: ExternalKnowledgeSource | undefined = getExternalKnowledgeSource(providerId)
+): string {
+  return source?.shortLabel ?? source?.label ?? providerId
+}
+
 export function listExternalKnowledgeSources(): ExternalKnowledgeSource[] {
   return snapshot
 }

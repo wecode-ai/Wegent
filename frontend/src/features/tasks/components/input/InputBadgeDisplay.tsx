@@ -19,20 +19,93 @@ import {
 import { getToken } from '@/apis/user'
 import { useTranslation } from '@/hooks/useTranslation'
 import { parseHostname } from '@/lib/url-utils'
+import { getExternalKnowledgeScopeKey } from '@/features/knowledge/externalKnowledgeSelection'
+import { formatCompactKnowledgeScope } from '@/features/knowledge/knowledgeContextPresentation'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, DingTalkDocContext } from '@/types/context'
 
 interface InputBadgeDisplayProps {
   /** Selected knowledge base contexts */
   contexts: ContextItem[]
   /** Current attachments state */
   attachmentState: MultiAttachmentUploadState
-  /** Callback to remove a context */
-  onRemoveContext: (contextId: number | string) => void
+  /** Callback to atomically remove one aggregated context group */
+  onRemoveContexts: (contextIds: (number | string)[]) => void
   /** Callback to remove an attachment */
   onRemoveAttachment: (attachmentId: number) => void
   /** Whether the component is disabled */
   disabled?: boolean
+}
+
+interface InputContextGroup {
+  key: string
+  context: ContextItem
+  contextIds: (number | string)[]
+  displayName?: string
+  displaySubtitle?: string
+}
+
+type Translate = (key: string, params?: Record<string, unknown>) => string
+
+export function groupInputContexts(contexts: ContextItem[], t: Translate): InputContextGroup[] {
+  const groups: InputContextGroup[] = []
+  const groupIndexes = new Map<string, number>()
+
+  contexts.forEach(context => {
+    let key = `context:${context.type}:${context.id}`
+    let displayName: string | undefined
+
+    if (context.type === 'dingtalk_doc') {
+      key = `dingtalk:${context.source}`
+      displayName =
+        context.source === 'wikispace'
+          ? t('chat:dingtalkDocs.wikispaceTab')
+          : t('chat:dingtalkDocs.myDocsTab')
+    } else if (
+      context.type === 'external_knowledge' &&
+      context.ref.target_type === 'document' &&
+      context.ref.id
+    ) {
+      key = `external:${getExternalKnowledgeScopeKey(context.ref)}`
+      displayName = context.ref.name ?? context.name
+    }
+
+    const existingIndex = groupIndexes.get(key)
+    if (existingIndex === undefined) {
+      groupIndexes.set(key, groups.length)
+      groups.push({ key, context, contextIds: [context.id], displayName })
+      return
+    }
+
+    groups[existingIndex].contextIds.push(context.id)
+  })
+
+  return groups.map(group => {
+    if (group.context.type === 'dingtalk_doc') {
+      const selected = contexts.filter(
+        (context): context is DingTalkDocContext =>
+          context.type === 'dingtalk_doc' && group.contextIds.includes(context.id)
+      )
+      const folderCount = selected.filter(context => context.node_type === 'folder').length
+      const documentCount = selected.length - folderCount
+      return {
+        ...group,
+        displaySubtitle: formatCompactKnowledgeScope(folderCount, documentCount, t),
+      }
+    }
+    if (
+      group.context.type === 'external_knowledge' &&
+      group.context.ref.target_type === 'document'
+    ) {
+      return {
+        ...group,
+        displaySubtitle: t('knowledge:picker.scopeDocumentsCompact', {
+          count: group.contextIds.length,
+        }),
+      }
+    }
+    return group
+  })
 }
 
 /**
@@ -371,7 +444,7 @@ function AttachmentPreviewInline({
 export default function InputBadgeDisplay({
   contexts,
   attachmentState,
-  onRemoveContext,
+  onRemoveContexts,
   onRemoveAttachment,
   disabled = false,
 }: InputBadgeDisplayProps) {
@@ -380,6 +453,7 @@ export default function InputBadgeDisplay({
   const hasAttachments = attachmentState.attachments.length > 0
   const isUploading = attachmentState.uploadingFiles.size > 0
   const hasErrors = attachmentState.errors.size > 0
+  const contextGroups = groupInputContexts(contexts, t)
 
   // Only render if there are items to display
   if (!hasContexts && !hasAttachments && !isUploading && !hasErrors) {
@@ -404,11 +478,13 @@ export default function InputBadgeDisplay({
       {(hasContexts || hasAttachments) && (
         <div className="flex items-center gap-2 overflow-x-auto max-w-full badge-scroll">
           {/* Knowledge base badges */}
-          {contexts.map(context => (
-            <div key={`context-${context.type}-${context.id}`} className="flex-shrink-0">
+          {contextGroups.map(group => (
+            <div key={group.key} className="flex-shrink-0">
               <ContextBadge
-                context={context}
-                onRemove={() => onRemoveContext(context.id)}
+                context={group.context}
+                displayName={group.displayName}
+                displaySubtitle={group.displaySubtitle}
+                onRemove={() => onRemoveContexts(group.contextIds)}
                 disableUrlClick={true}
               />
             </div>
