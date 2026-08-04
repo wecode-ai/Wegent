@@ -10,8 +10,8 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
-import type { TeamDisplayConfig } from '@wegent/chat-core'
 import type { MarketplaceTagsResponse, MarketplaceTagsUpdate } from '@/types/marketplace'
+import type { TeamDisplayConfig } from '@wegent/chat-core'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
