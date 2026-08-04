@@ -37,6 +37,7 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
+          !shouldIgnoreStaleSnapshot &&
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
           (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))

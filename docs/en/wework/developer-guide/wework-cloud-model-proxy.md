@@ -36,7 +36,7 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 #### Kimi K3 Chat Completions Compatibility
 
-When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:
+When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:
 
 - It sends Kimi's supported `thinking` field instead of the generic `reasoning_effort` field.
 - It preserves `reasoning_content` across multi-turn messages and tool calls.

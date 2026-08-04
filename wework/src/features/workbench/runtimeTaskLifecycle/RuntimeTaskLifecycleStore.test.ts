@@ -210,6 +210,7 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.turnStarted(address, 'correction-turn')
     store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
 
     const runningSnapshot = store.getTask(address)
     expect(runningSnapshot?.execution.phase).toBe('running')
@@ -218,6 +219,7 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.turnSettled(address, 'correction-turn')
     expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
   test('keeps task execution running across an active Goal turn gap', () => {
