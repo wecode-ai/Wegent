@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
-const TERMINAL_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-card"]`
 const EMBEDDED_TERMINAL_SELECTOR = '[data-testid="embedded-local-terminal"]'
 const BOTTOM_TERMINAL_TAB_SELECTOR = '[data-testid="bottom-workspace-terminal-tab"]'
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
+  await control.command('waitFor', '[data-testid="project-work-button"]', { timeoutMs })
   await control.command('click', '[data-testid="project-work-button"]')
   await control.command('click', '[data-testid="add-local-project-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
@@ -48,19 +48,32 @@ export function createDesktopScenario({
         await createLocalProject(control, workspacePath, uiTimeoutMs)
       }
 
-      await control.command('waitFor', TERMINAL_CARD_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await capture(control, 'local-terminal-00-card-visible.png')
-      await control.command('click', TERMINAL_CARD_SELECTOR)
-
+      await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
       await control.command('waitFor', EMBEDDED_TERMINAL_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', BOTTOM_TERMINAL_TAB_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await capture(control, 'local-terminal-01-session-started.png')
+      await capture(control, 'local-terminal-00-session-started.png')
 
       const snapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         snapshot.testIds.includes('embedded-local-terminal'),
         'The embedded local terminal element was not rendered'
       )
+
+      await control.command('click', '[data-testid="close-bottom-workspace-panel-button"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="bottom-workspace-panel"][aria-hidden="true"]',
+        {
+          stableMs: 300,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+      await control.command('waitFor', EMBEDDED_TERMINAL_SELECTOR, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await capture(control, 'local-terminal-01-session-restored.png')
     },
 
     diagnostics() {
