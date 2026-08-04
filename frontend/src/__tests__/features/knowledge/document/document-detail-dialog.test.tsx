@@ -290,6 +290,33 @@ describe('DocumentDetailDialog original file preview', () => {
     )
   })
 
+  it('shows derived summaries while protecting organization document content', async () => {
+    const user = userEvent.setup()
+    mockDocumentSummary = {
+      status: 'completed',
+      short_summary: 'Organization document summary',
+    }
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+        isOrganization={true}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-document-summary-toggle')).toBeInTheDocument()
+    expect(screen.getByText('document.document.detail.statusValues.completed')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+
+    expect(screen.getByText('Organization document summary')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.detail.copy')).not.toBeInTheDocument()
+  })
+
   it('hides the source preview tab for non-file documents', () => {
     render(
       <DocumentDetailDialog
