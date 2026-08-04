@@ -6,6 +6,7 @@
 Repository provider interface, defining methods related to code repositories
 """
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -68,6 +69,28 @@ class RepositoryProvider(ABC):
 
     def _is_token_encrypted(self, token: str) -> bool:
         return is_token_encrypted(token)
+
+    def _log_domain_failure(
+        self, action: str, git_domain: str, error: Exception
+    ) -> None:
+        """Report a domain that dropped out of an aggregated result.
+
+        Providers gather repositories across every domain a user configured and skip
+        the ones that fail, so a rejected credential otherwise reaches the caller as
+        a short list rather than as an error. The status is worth separating out:
+        401 means the token was refused, which is a different problem for the user
+        than the host being unreachable.
+        """
+        response = getattr(error, "response", None)
+        status = getattr(response, "status_code", None)
+        logging.getLogger(type(self).__module__).warning(
+            "Could not %s from %s domain %s (status=%s): %s",
+            action,
+            getattr(self, "type", "git"),
+            git_domain or "unknown",
+            status if status is not None else "none",
+            error,
+        )
 
     @abstractmethod
     def validate_token(self, token: str) -> Dict[str, Any]:
