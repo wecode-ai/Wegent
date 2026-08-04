@@ -270,6 +270,7 @@ function WorkspaceTabSurface({
           {renderedIframe ? (
             <div className={cn('h-full', !iframe && 'hidden')} aria-hidden={!iframe}>
               <AppIframe
+                active={active && Boolean(iframe)}
                 src={renderedIframe.src}
                 title={renderedIframe.title}
                 workspaceTabId={tab.id}
