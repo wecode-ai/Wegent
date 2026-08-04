@@ -266,7 +266,13 @@ fn strip_transient_task_state(index: &mut Value) {
         task.remove("status");
         task.remove("running");
         task.remove("thread_status");
-        task.remove("turn_status");
+        if !task
+            .get("turn_status")
+            .and_then(Value::as_str)
+            .is_some_and(is_terminal_turn_status)
+        {
+            task.remove("turn_status");
+        }
         task.insert("archived".to_owned(), Value::Bool(archived));
     }
 }
@@ -281,22 +287,50 @@ fn restore_persisted_task_metadata(index: &mut Value) {
         let Some(task) = task.as_object_mut() else {
             continue;
         };
+        let legacy_status = task
+            .remove("status")
+            .and_then(|value| value.as_str().map(str::to_owned));
         let archived = task
             .remove("archived")
             .and_then(|value| value.as_bool())
             .unwrap_or_else(|| {
-                task.get("status")
-                    .and_then(Value::as_str)
+                legacy_status
+                    .as_deref()
                     .is_some_and(|status| status.eq_ignore_ascii_case("archived"))
             });
+        let restored_status = legacy_status
+            .filter(|status| {
+                matches!(
+                    status.trim().to_ascii_lowercase().as_str(),
+                    "done" | "cancelled" | "canceled" | "failed"
+                )
+            })
+            .unwrap_or_else(|| "active".to_owned());
         task.insert(
             "status".to_owned(),
-            Value::String(if archived { "archived" } else { "active" }.to_owned()),
+            Value::String(if archived {
+                "archived".to_owned()
+            } else {
+                restored_status
+            }),
         );
         task.remove("running");
         task.remove("thread_status");
-        task.remove("turn_status");
+        if !task
+            .get("turn_status")
+            .and_then(Value::as_str)
+            .is_some_and(is_terminal_turn_status)
+        {
+            task.remove("turn_status");
+        }
     }
+}
+
+fn is_terminal_turn_status(status: &str) -> bool {
+    matches!(
+        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+        "completed" | "done" | "failed" | "error" | "interrupted" | "cancelled" | "canceled"
+    )
 }
 
 fn index_file_signature(index_path: &Path) -> Option<IndexFileSignature> {
@@ -521,6 +555,47 @@ mod tests {
         assert!(!restored.running);
         assert_eq!(restored.thread_status, "notLoaded");
         assert_eq!(restored.turn_status, None);
+    }
+
+    #[test]
+    fn terminal_turn_status_persists_without_live_execution_state() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let index_path = directory.path().join("index.json");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let mut completed = RuntimeTaskLink::new_imported(
+            "completed-task".to_owned(),
+            "/tmp/completed".to_owned(),
+            "Completed task".to_owned(),
+            "codex".to_owned(),
+            serde_json::json!({}),
+            serde_json::json!({}),
+        );
+        completed.status = "done".to_owned();
+        completed.turn_status = Some("completed".to_owned());
+
+        store.upsert_task(completed);
+
+        let persisted: Value =
+            serde_json::from_slice(&fs::read(&index_path).expect("index should be readable"))
+                .expect("index should contain JSON");
+        let task = persisted["tasks"]["completed-task"]
+            .as_object()
+            .expect("completed task should be persisted");
+        assert!(!task.contains_key("status"));
+        assert!(!task.contains_key("running"));
+        assert!(!task.contains_key("thread_status"));
+        assert_eq!(
+            task.get("turn_status"),
+            Some(&Value::String("completed".to_owned()))
+        );
+
+        let restored = RuntimeWorkStore::new(index_path)
+            .get_task("completed-task")
+            .expect("completed task should be restored");
+        assert!(!restored.running);
+        assert_eq!(restored.status, "active");
+        assert_eq!(restored.thread_status, "notLoaded");
+        assert_eq!(restored.turn_status.as_deref(), Some("completed"));
     }
 
     #[test]
