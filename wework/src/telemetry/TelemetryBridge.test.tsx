@@ -27,6 +27,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 
 vi.mock('./client', () => ({
   installTelemetry: mocks.installTelemetry,
+  isTelemetryEnabled: () => mocks.preferences.preferences.telemetryEnabled,
   setTelemetryEnabled: mocks.setTelemetryEnabled,
   track: mocks.track,
 }))

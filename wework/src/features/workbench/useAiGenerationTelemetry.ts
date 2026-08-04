@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from './runtimeConversationCache'
 import type { RuntimeContextUsage, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
@@ -75,6 +75,13 @@ export function useAiGenerationTelemetry({
   contextUsageByRuntimeTask,
 }: UseAiGenerationTelemetryInput) {
   const pendingRef = useRef(new Map<string, PendingGeneration>())
+  const resolveModelRef = useRef(resolveModel)
+  const contextUsageRef = useRef(contextUsageByRuntimeTask)
+
+  useEffect(() => {
+    resolveModelRef.current = resolveModel
+    contextUsageRef.current = contextUsageByRuntimeTask
+  }, [resolveModel, contextUsageByRuntimeTask])
 
   const onAssistantStart = useCallback((address: RuntimeTaskAddress) => {
     pendingRef.current.set(runtimeConversationKey(address), {
@@ -91,8 +98,8 @@ export function useAiGenerationTelemetry({
       pendingRef.current.delete(key)
 
       const latencyMs = Math.max(0, Date.now() - pending.startedAt)
-      const model = resolveModel(address)
-      const usage = contextUsageByRuntimeTask[key]
+      const model = resolveModelRef.current(address)
+      const usage = contextUsageRef.current[key]
 
       const cost = model ? estimateGenerationCost(model, usage?.last) : undefined
 
@@ -112,7 +119,7 @@ export function useAiGenerationTelemetry({
         result,
       })
     },
-    [resolveModel, contextUsageByRuntimeTask]
+    []
   )
 
   return useMemo(
