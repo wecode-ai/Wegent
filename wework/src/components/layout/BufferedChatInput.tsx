@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
+import {
+  ChatInput,
+  type ChatInputHandle,
+  type ChatInputProps,
+  type ChatSubmitOptions,
+} from '@/components/chat/ChatInput'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -30,6 +35,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const draftRef = useRef(draft)
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
+  const composerRef = useRef<ChatInputHandle>(null)
 
   const cancelPendingFlush = useCallback(() => {
     if (flushTimeoutRef.current !== null) {
@@ -38,13 +44,12 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     }
   }, [])
 
-  const syncDraftToState = useCallback(
+  const flushDraft = useCallback(
     (nextDraft: string) => {
       cancelPendingFlush()
-      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
       onChange(nextDraft)
     },
-    [cancelPendingFlush, onChange, scopeKey, value]
+    [cancelPendingFlush, onChange]
   )
 
   const scheduleDraftFlush = useCallback(
@@ -58,8 +63,18 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     [cancelPendingFlush, onChange]
   )
 
+  // Sync external value changes into composer and local state.
   useEffect(() => {
+    const shouldSetComposer = value !== draftRef.current
     draftRef.current = value
+    setDraftState({ scopeKey, sourceValue: value, draft: value })
+    if (shouldSetComposer) {
+      composerRef.current?.setValue(value, value.length)
+    }
+  }, [scopeKey, value])
+
+  // Flush pending draft when value changes or on unmount.
+  useEffect(() => {
     return () => {
       const pendingDraft = draftRef.current
       if (pendingDraft !== value) {
@@ -72,39 +87,29 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
     appliedInsertionIdRef.current = insertion.id
-    const currentDraft =
-      draftState.scopeKey === scopeKey && draftState.sourceValue === value
-        ? draftState.draft
-        : value
+    const currentDraft = draftRef.current
     const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
     draftRef.current = nextDraft
-    syncDraftToState(nextDraft)
-  }, [
-    draftState.scopeKey,
-    draftState.sourceValue,
-    draftState.draft,
-    insertion,
-    scopeKey,
-    syncDraftToState,
-    value,
-  ])
+    setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
+    composerRef.current?.setValue(nextDraft, nextDraft.length)
+    scheduleDraftFlush(nextDraft)
+  }, [insertion, scheduleDraftFlush, scopeKey, value])
 
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
-      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
       scheduleDraftFlush(nextDraft)
     },
-    [scheduleDraftFlush, scopeKey, value]
+    [scheduleDraftFlush]
   )
 
   const handleBlur = useCallback(() => {
-    window.requestAnimationFrame(() => syncDraftToState(draftRef.current))
-  }, [syncDraftToState])
+    window.requestAnimationFrame(() => flushDraft(draftRef.current))
+  }, [flushDraft])
 
   const handleCompositionEnd = useCallback(() => {
-    window.requestAnimationFrame(() => syncDraftToState(draftRef.current))
-  }, [syncDraftToState])
+    window.requestAnimationFrame(() => flushDraft(draftRef.current))
+  }, [flushDraft])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
@@ -118,6 +123,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         draftRef.current = ''
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
+        composerRef.current?.setValue('', 0)
         onChange('')
       }
     },
@@ -127,6 +133,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   return (
     <ChatInput
       {...props}
+      ref={composerRef}
       value={draft}
       onChange={setDraft}
       onBlur={handleBlur}
