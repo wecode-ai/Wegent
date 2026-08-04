@@ -16,6 +16,7 @@ import {
   getCommandExecutable,
   getInnerShellCommand,
   isWebSearchToolName,
+  splitShellWords,
 } from './toolBlockActivity'
 import {
   getFileInputPath,
@@ -1003,17 +1004,58 @@ function getCommandToolLabel(
   return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  '-C',
+  '-c',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--exec-path',
+])
+const GIT_GLOBAL_OPTIONS_WITH_EQUALS = [
+  '--git-dir=',
+  '--work-tree=',
+  '--namespace=',
+  '--exec-path=',
+  '-c=',
+]
+const GIT_GLOBAL_FLAG_OPTIONS = new Set([
+  '-p',
+  '--paginate',
+  '--no-pager',
+  '-P',
+  '--no-replace-objects',
+  '--no-optional-locks',
+])
+
 function getGitCommandLabel(
   command: string | undefined,
   genericLabels: GenericToolLabels
 ): string | undefined {
   if (!command) return undefined
-  const words = command.trim().split(/\s+/)
-  const subcommand = words[1]
+  const words = splitShellWords(command)
+  let index = 1
+  while (index < words.length) {
+    const word = words[index]
+    if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(word)) {
+      index += 2
+      continue
+    }
+    if (GIT_GLOBAL_OPTIONS_WITH_EQUALS.some(prefix => word.startsWith(prefix))) {
+      index += 1
+      continue
+    }
+    if (GIT_GLOBAL_FLAG_OPTIONS.has(word)) {
+      index += 1
+      continue
+    }
+    break
+  }
+  const subcommand = words[index]
   if (!subcommand) return undefined
   if (subcommand === 'status') return genericLabels.gitStatus
   // Keep other git commands compact but readable.
-  const tail = words.slice(2).join(' ')
+  const tail = words.slice(index + 1).join(' ')
   return tail ? `git ${subcommand} ${truncate(tail, 32)}` : `git ${subcommand}`
 }
 

@@ -217,18 +217,12 @@ describe('toolBlockActivity', () => {
     ).toBe('Select-String -Path src\\* -Recurse -Pattern foo')
   })
 
-  test('preserves macOS zsh -lc unwrapping', () => {
-    expect(
-      getToolActivityFilePaths(
-        tool('pwsh-cat', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "cat src/app.ts"')
-      )
-    ).toEqual(['src/app.ts'])
+  test('unwraps absolute POSIX shell paths for -c wrappers', () => {
+    expect(getToolActivityFilePaths(tool('zsh-cat', '/bin/zsh -c "cat src/app.ts"'))).toEqual([
+      'src/app.ts',
+    ])
 
-    expect(
-      getToolActivityKind(
-        tool('pwsh-rg', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe -c "rg pattern src"')
-      )
-    ).toBe('search')
+    expect(getToolActivityKind(tool('bash-rg', '/bin/bash -c "rg pattern src"'))).toBe('search')
   })
 
   test('extracts read file paths from shell read commands', () => {

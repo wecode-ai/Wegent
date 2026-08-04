@@ -36,6 +36,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
+  const committedValueRef = useRef(value)
+  const pendingChangeRef = useRef(onChange)
 
   const cancelPendingFlush = useCallback(() => {
     if (flushTimeoutRef.current !== null) {
@@ -47,6 +49,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushDraft = useCallback(
     (nextDraft: string) => {
       cancelPendingFlush()
+      pendingChangeRef.current = onChange
       onChange(nextDraft)
     },
     [cancelPendingFlush, onChange]
@@ -55,6 +58,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const scheduleDraftFlush = useCallback(
     (nextDraft: string) => {
       cancelPendingFlush()
+      pendingChangeRef.current = onChange
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
         onChange(nextDraft)
@@ -67,22 +71,23 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   useEffect(() => {
     const shouldSetComposer = value !== draftRef.current
     draftRef.current = value
+    committedValueRef.current = value
     setDraftState({ scopeKey, sourceValue: value, draft: value })
     if (shouldSetComposer) {
       composerRef.current?.setValue(value, value.length)
     }
   }, [scopeKey, value])
 
-  // Flush pending draft when value changes or on unmount.
+  // Flush a pending draft whenever it would be discarded (scope switch or unmount).
   useEffect(() => {
     return () => {
       const pendingDraft = draftRef.current
-      if (pendingDraft !== value) {
+      if (pendingDraft !== committedValueRef.current) {
         cancelPendingFlush()
-        onChange(pendingDraft)
+        pendingChangeRef.current(pendingDraft)
       }
     }
-  }, [cancelPendingFlush, onChange, value])
+  }, [cancelPendingFlush, scopeKey])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return

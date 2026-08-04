@@ -75,6 +75,32 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('debounces onChange during the 300ms window', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'draft')
+    // onChange must not fire synchronously with typing; it is deferred by the debounce.
+    expect(onChange).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith('draft')
+    })
+  })
+
+  test('flushes the draft on composition end', async () => {
+    const onChange = vi.fn()
+    render(<BufferedChatInput value="" onChange={onChange} onSubmit={vi.fn()} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    fireEvent.compositionEnd(input)
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenLastCalledWith('draft')
+    })
+  })
+
   test('restores a buffered draft after switching chat scopes', async () => {
     const drafts = new Map<string, string>()
     const onBlankChange = vi.fn((value: string) => drafts.set('blank', value))

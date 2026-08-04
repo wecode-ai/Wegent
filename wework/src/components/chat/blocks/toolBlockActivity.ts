@@ -725,7 +725,7 @@ export function stripShellPrefix(command: string): string {
 }
 
 const SHELL_EXECUTABLE_RE =
-  /^(?:"(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*\\)?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+/i
+  /^(?:"(?:.*[\\/])?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?"|(?:.*[\\/])?(?:pwsh|powershell|bash|zsh|sh)(?:\.exe)?)\s+/i
 const SHELL_FLAG_RE = /(?:-lc|(?:-|\/)(?:[cC]ommand|[cC]))\s+/i
 
 export function unwrapShellCommand(command: string): string {
