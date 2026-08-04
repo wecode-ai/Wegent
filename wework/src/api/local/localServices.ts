@@ -25,6 +25,7 @@ import type {
   RuntimeModelPrepareRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeLocalProjectUpsertResponse,
+  RuntimeProjectSpaceRef,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -1841,6 +1842,15 @@ function adaptRuntimeWorkListResponse(
     const projectSource =
       stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
     const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
+    const rawDefaultProjectSpace = recordValue(
+      workspace.defaultProjectSpace ?? workspace.default_project_space
+    )
+    const defaultProjectStore = stringValue(rawDefaultProjectSpace.projectStore)
+    const defaultProjectId = stringValue(rawDefaultProjectSpace.projectId)
+    const defaultProjectSpace: RuntimeProjectSpaceRef | null =
+      (defaultProjectStore === 'local' || defaultProjectStore === 'backend') && defaultProjectId
+        ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
+        : null
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
@@ -1863,6 +1873,7 @@ function adaptRuntimeWorkListResponse(
         appearance: (workspace.projectAppearance ?? workspace.project_appearance ?? null) as
           | RuntimeWorkListResponse['projects'][number]['project']['appearance']
           | null,
+        ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,

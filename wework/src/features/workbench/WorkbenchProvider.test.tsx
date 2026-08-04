@@ -9097,6 +9097,89 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('syncs board completion from the in-memory terminal event while task status stays active', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.onChatStart) streamHandlers = handlers
+      return vi.fn()
+    })
+    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'active',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+      projectSpaceApis: {
+        local: { updateTaskTrackingStatus },
+      } as unknown as WorkbenchServices['projectSpaceApis'],
+    })
+
+    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'running'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
+      )
+    )
+  })
+
   test('sends queued runtime messages when the task becomes idle', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {

@@ -27,6 +27,7 @@ import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeCo
 import { LOCAL_EXECUTOR_COMMANDS } from '@/tauri/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
 import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
+import { selectDesktopControlOption } from './desktop-control-select'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1140,6 +1141,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         )
       }
       return element.textContent?.trim() ?? ''
+    }
+    case 'select': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!(element instanceof HTMLSelectElement)) {
+        throw new Error(`Selector "${command.selector}" is not a select element`)
+      }
+      return selectDesktopControlOption(element, command.value ?? '', command.by)
     }
     case 'submit': {
       const element = findDesktopControlElements(command.selector)[0]
