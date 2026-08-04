@@ -41,6 +41,22 @@ interface DesktopControlResult {
   error?: string
 }
 
+interface ScrollStabilitySamplePoint {
+  anchorTop: number
+  scrollTop: number
+  time: number
+}
+
+interface ScrollStabilitySample {
+  done: boolean
+  frames: ScrollStabilitySamplePoint[]
+  missingFrames: number
+  scrollEvents: ScrollStabilitySamplePoint[]
+  stop: () => void
+}
+
+let activeScrollStabilitySample: ScrollStabilitySample | null = null
+
 export interface WeworkAutomationBridge {
   version: 1
   isEnabled: true
@@ -874,6 +890,95 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return String(findDesktopControlElements(command.selector).length)
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'startScrollStabilitySampling': {
+      const options = JSON.parse(command.value ?? '{}') as {
+        anchorText?: string
+        durationMs?: number
+        scrollerSelector?: string
+      }
+      const durationMs = options.durationMs ?? 1_000
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('sampleScrollStability requires a finite positive durationMs')
+      }
+      const scrollerSelector = options.scrollerSelector?.trim()
+      if (!scrollerSelector) {
+        throw new Error('sampleScrollStability requires scrollerSelector')
+      }
+      const scroller = findDesktopControlElements(scrollerSelector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${scrollerSelector}"`)
+      activeScrollStabilitySample?.stop()
+      const startedAt = performance.now()
+      let sampleTimer = 0
+      let mutationObserver: MutationObserver | null = null
+      const sample: ScrollStabilitySample = {
+        done: false,
+        frames: [],
+        missingFrames: 0,
+        scrollEvents: [],
+        stop: () => {},
+      }
+      const capture = (time: number) => {
+        const anchors = findDesktopControlElements(command.selector)
+        const anchor = options.anchorText
+          ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
+          : anchors[0]
+        if (!anchor) return null
+        return {
+          anchorTop: anchor.getBoundingClientRect().top,
+          scrollTop: scroller.scrollTop,
+          time: time - startedAt,
+        }
+      }
+      const handleScroll = () => {
+        const point = capture(performance.now())
+        if (point) sample.scrollEvents.push(point)
+      }
+      const finish = () => {
+        if (sample.done) return
+        sample.done = true
+        scroller.removeEventListener('scroll', handleScroll)
+        mutationObserver?.disconnect()
+      }
+      sample.stop = () => {
+        window.clearInterval(sampleTimer)
+        finish()
+      }
+      scroller.addEventListener('scroll', handleScroll)
+      mutationObserver = new MutationObserver(() => {
+        const point = capture(performance.now())
+        if (point) sample.frames.push(point)
+        else sample.missingFrames += 1
+      })
+      mutationObserver.observe(scroller, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      })
+      const captureFrame = () => {
+        const time = performance.now()
+        const point = capture(time)
+        if (point) sample.frames.push(point)
+        else sample.missingFrames += 1
+        if (time - startedAt >= durationMs) {
+          window.clearInterval(sampleTimer)
+          finish()
+        }
+      }
+      captureFrame()
+      sampleTimer = window.setInterval(captureFrame, 16)
+      activeScrollStabilitySample = sample
+      return ''
+    }
+    case 'getScrollStabilitySample': {
+      const sample = activeScrollStabilitySample
+      if (!sample) throw new Error('Scroll stability sampling has not started')
+      return JSON.stringify({
+        done: sample.done,
+        frames: sample.frames,
+        missingFrames: sample.missingFrames,
+        scrollEvents: sample.scrollEvents,
+      })
+    }
     case 'getAttribute': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.text
@@ -966,6 +1071,26 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       element.scrollTop = element.scrollHeight
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
+    }
+    case 'scrollFromBottomAsUser': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const distance = Number(command.value)
+      if (!Number.isFinite(distance) || distance < 0) {
+        throw new Error('scrollFromBottomAsUser requires a non-negative distance')
+      }
+
+      scroller.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: -Math.max(120, distance),
+        })
+      )
+      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      return String(scroller.scrollTop)
     }
     case 'scrollToRatioAsUser': {
       const scroller = findDesktopControlElements(command.selector)[0]
