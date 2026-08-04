@@ -483,5 +483,5 @@ export interface CommonTelemetryProperties {
 
 export interface QueuedAnalyticsEvent<EventName extends AnalyticsEventName = AnalyticsEventName> {
   name: EventName
-  properties: AnalyticsEventMap[EventName]
+  properties: CommonTelemetryProperties & AnalyticsEventMap[EventName]
 }

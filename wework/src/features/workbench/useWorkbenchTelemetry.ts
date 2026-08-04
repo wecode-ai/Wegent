@@ -13,7 +13,7 @@ interface WorkbenchTelemetryInput {
 interface ObservedTask {
   firstResponseRecorded: boolean
   running: boolean
-  startedAt: number
+  startedAt: number | null
   turnActive: boolean
 }
 
@@ -42,8 +42,7 @@ function failureReason(task: RuntimeTaskSummary | null): TelemetryFailureReason 
 
 function projectSource(project: ProjectWithTasks): 'local' | 'cloud' | 'unknown' {
   const source = project.config?.workspace?.source
-  if (source === 'local_path') return 'local'
-  if (source === 'git') return 'cloud'
+  if (source === 'local_path' || source === 'git') return 'local'
   return 'unknown'
 }
 
@@ -62,18 +61,18 @@ export function useWorkbenchTelemetry({
   }, [currentProject])
 
   useEffect(() => {
-    const now = Date.now()
     lifecycle.tasks.forEach((snapshot, key) => {
       const previous = tasksRef.current.get(key)
       const target = executionTarget(snapshot.address.deviceId, devices)
       const current: ObservedTask = previous ?? {
         firstResponseRecorded: false,
         running: false,
-        startedAt: now,
+        startedAt: null,
         turnActive: false,
       }
 
       if (!current.running && snapshot.derived.isRunning) {
+        const now = Date.now()
         current.startedAt = now
         track('task_started', { execution_target: target })
         track('$ai_trace', {
@@ -85,15 +84,17 @@ export function useWorkbenchTelemetry({
       if (current.turnActive && !snapshot.derived.isTurnActive && !current.firstResponseRecorded) {
         current.firstResponseRecorded = true
         track('first_response_completed', {
-          duration_ms: Math.max(0, now - current.startedAt),
+          duration_ms: Math.max(0, Date.now() - (current.startedAt ?? Date.now())),
           execution_target: target,
           result: taskResult(snapshot.task),
         })
       }
       if (current.running && !snapshot.derived.isRunning) {
+        const now = Date.now()
         const result = taskResult(snapshot.task)
+        const durationMs = current.startedAt != null ? Math.max(0, now - current.startedAt) : 0
         track('task_completed', {
-          duration_ms: Math.max(0, now - current.startedAt),
+          duration_ms: durationMs,
           execution_target: target,
           result,
           ...(result === 'failure' && { failure_reason: failureReason(snapshot.task) }),
@@ -102,7 +103,7 @@ export function useWorkbenchTelemetry({
           $ai_trace_id: snapshot.address.taskId,
           $ai_trace_phase: 'end',
           execution_target: target,
-          duration_ms: Math.max(0, now - current.startedAt),
+          duration_ms: durationMs,
           result,
           ...(result === 'failure' && { failure_reason: failureReason(snapshot.task) }),
         })

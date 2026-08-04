@@ -376,8 +376,8 @@ describe('telemetry client', () => {
     expect(sanitized?.tags).toEqual({
       installation_id: 'anonymous-installation',
     })
-    expect(sanitized?.exception?.values?.[0]?.type).toBe('Error')
-    expect(sanitized?.exception?.values?.[0]?.value).toBe('Wework error')
+    expect(sanitized?.exception?.values?.[0]?.type).toBe('TypeError')
+    expect(sanitized?.exception?.values?.[0]?.value).toBe('Failed to open <redacted>')
     const privateFrame = sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]
     expect(privateFrame).toMatchObject({
       filename: '<redacted>',
@@ -565,7 +565,7 @@ describe('telemetry client', () => {
       description: 'GET /workspace/private-project',
     })
 
-    expect(sanitized?.transaction).toBe('Wework transaction')
+    expect(sanitized?.transaction).toBe('<redacted>')
     expect(sanitized?.request).toBeUndefined()
     expect(sanitized?.user).toBeUndefined()
     expect(sanitized?.contexts).toEqual({
@@ -582,9 +582,9 @@ describe('telemetry client', () => {
       installation_id: 'anonymous-installation',
     })
     expect(sanitized?.spans?.[0]?.data).toEqual({})
-    expect(sanitized?.spans?.[0]?.description).toBeUndefined()
+    expect(sanitized?.spans?.[0]?.description).toBe('<redacted>')
     expect(sanitizedSpan?.data).toEqual({})
-    expect(sanitizedSpan?.description).toBeUndefined()
+    expect(sanitizedSpan?.description).toBe('<redacted>')
     expect(JSON.stringify({ sanitized, sanitizedSpan })).not.toMatch(
       /private|prompt|token|workspace\?/
     )

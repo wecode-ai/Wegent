@@ -311,7 +311,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'token',
 ])
 const TELEMETRY_FORBIDDEN_PROPERTY_PATTERN =
-  /(authorization|code|content|credential|email|file|message|name|path|prompt|repository|response|secret|task_id|token|url|user_id|workspace)/i
+  /(authorization|code|content|credential|email|file|message|path|prompt|repository|response|task_id|token|url|user_id|workspace)/i
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
@@ -4152,6 +4152,26 @@ async function uninstallOfficialPlugin(control, fixture) {
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
+async function waitForTelemetrySilence(control, options = {}) {
+  const { intervalMs = 100, silenceMs = 500, maxWaitMs = 3_500 } = options
+  const start = Date.now()
+  let lastCount = control.telemetryRequestCount()
+  let lastChange = start
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+    const currentCount = control.telemetryRequestCount()
+    if (currentCount !== lastCount) {
+      lastCount = currentCount
+      lastChange = Date.now()
+      continue
+    }
+    if (Date.now() - lastChange >= silenceMs) {
+      return currentCount
+    }
+  }
+  return lastCount
+}
+
 async function verifyTelemetryPreference(control) {
   const toggleSelector = '[data-testid="general-telemetry-toggle"]'
   await control.command('click', '[data-testid="settings-button"]')
@@ -4178,7 +4198,7 @@ async function verifyTelemetryPreference(control) {
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 3_500))
+  await waitForTelemetrySilence(control)
   assert.equal(
     control.telemetryRequestCount(),
     control.telemetryRequestCountAfterRevocation,

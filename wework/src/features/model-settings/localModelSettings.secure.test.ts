@@ -31,7 +31,7 @@ describe('localModelSettings secure credentials', () => {
       baseUrl: 'https://models.example/v1',
       apiKey: 'restart-secret',
     })
-    await firstSession.flushLocalModelSecretWrites()
+    await firstSession.flushLocalModelConfigWrites()
 
     expect(runtimeMocks.invoke).toHaveBeenCalledWith('update_local_model_api_key', {
       configId: 'restart-model',

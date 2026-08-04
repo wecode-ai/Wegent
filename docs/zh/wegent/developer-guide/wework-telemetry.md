@@ -16,9 +16,9 @@ Wework 首次启动时会明确询问用户是否允许共享匿名使用情况�
 
 产品分析事件不得包含聊天、提示词、模型回复、代码、文件名、文件路径、仓库名、终端内容、凭据或认证信息。业务代码只能调用 `src/telemetry/client.ts`，不得直接调用 PostHog 或 Sentry SDK。新增事件必须先加入 `AnalyticsEventMap` 和运行时属性白名单。
 
-PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Tauri 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、异常原文、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query 与 fragment 会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
+PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Tauri 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、源码片段、本机文件路径和局部变量，并对异常消息里的路径、邮箱和类 token 字符串进行脱敏。异常类型和受信任的 Wework 栈位置会被保留。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
 
-Wework 不向 PostHog 或 Sentry 发送账户用户 ID。两个 SDK 仅使用独立的随机安装标识和会话标识；用户关闭遥测时会旋转这些标识，避免重新开启后继续关联关闭前的数据。
+Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。
 
 ## 事件目录
 
@@ -66,7 +66,7 @@ Wework 针对 agent 任务 trace、LLM generation 和用户反馈上报 PostHog 
 | `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`、`staging` 或 `production`   |
 | `VITE_WEWORK_RELEASE_CHANNEL`           | 发布渠道                                   |
 
-Tauri 原生端读取 `WEWORK_SENTRY_DSN` 和 `WEWORK_TELEMETRY_ENVIRONMENT`。DSN 既可以在构建时嵌入，也可以在运行时提供。
+WebView 层在构建时读取 `VITE_WEWORK_SENTRY_DSN`，原生 Tauri 层在运行时读取 `WEWORK_SENTRY_DSN`（或在构建时嵌入）。两者应指向同一个 Sentry 项目；部署和本地开发配置时请保持这两个变量一致。原生 Tauri 层还读取 `WEWORK_TELEMETRY_ENVIRONMENT`。
 
 ## 纵深防御部署设置
 

@@ -16,9 +16,9 @@ On first launch, Wework explicitly asks whether the user allows anonymous usage 
 
 Product analytics events must never contain chats, prompts, model responses, code, file names, file paths, repository names, terminal content, credentials, or authentication data. Product code may only call `src/telemetry/client.ts`; it must not call the PostHog or Sentry SDK directly. New events must be added to both `AnalyticsEventMap` and the runtime property allowlist.
 
-Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Tauri Sentry events remove requests, users, breadcrumbs, extra context, original exception text, source excerpts, local file paths, and local variables. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries and fragments are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
+Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Tauri Sentry events remove requests, users, breadcrumbs, extra context, source excerpts, local file paths, and local variables, and redact paths, emails, and token-like strings from exception messages. Exception types and trusted Wework stack locations are preserved. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries, fragments, and credentials are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
 
-Wework does not send account user IDs to PostHog or Sentry. Both SDKs use separate random installation and session identifiers; disabling telemetry rotates those identifiers so data collected after re-enabling cannot be linked to data from before revocation.
+Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag stored in localStorage and a per-session `telemetry_session_id`; PostHog uses the SDK-generated `distinct_id` and `$session_id`. These identifiers are anonymous, independent of the authenticated account, and rotated when telemetry is disabled so data collected after re-enabling cannot be linked to data from before revocation.
 
 ## Event Catalog
 
@@ -66,7 +66,7 @@ Frontend build variables:
 | `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`, `staging`, or `production`                   |
 | `VITE_WEWORK_RELEASE_CHANNEL`           | Release channel                                             |
 
-The native Tauri layer reads `WEWORK_SENTRY_DSN` and `WEWORK_TELEMETRY_ENVIRONMENT`. The DSN may be embedded at build time or supplied at runtime.
+The WebView layer reads `VITE_WEWORK_SENTRY_DSN` at build time, while the native Tauri layer reads `WEWORK_SENTRY_DSN` at runtime (or embeds it at build time). Both should point to the same Sentry project; keep the two variables in sync in deployment and local development configuration. The native Tauri layer also reads `WEWORK_TELEMETRY_ENVIRONMENT`.
 
 ## Defense-in-depth deployment settings
 

@@ -68,20 +68,20 @@ function sanitizePostHogCapture(capture: CaptureResult | null): CaptureResult | 
     return null
   }
   const eventName = capture.event as AnalyticsEventName
-  const allowedKeys = new Set<string>([
+  const allowedPropertyKeys = new Set<string>([
     ...COMMON_EVENT_PROPERTY_KEYS,
     ...POSTHOG_TRANSPORT_PROPERTY_KEYS,
     ...ANALYTICS_EVENT_PROPERTY_KEYS[eventName],
   ])
-  return {
-    ...capture,
+  const sanitized: CaptureResult = {
+    event: capture.event,
     properties: Object.fromEntries(
-      Object.entries(capture.properties).filter(([key]) => allowedKeys.has(key))
+      Object.entries(capture.properties).filter(([key]) => allowedPropertyKeys.has(key))
     ),
-    $set: undefined,
-    $set_once: undefined,
-    $unset: undefined,
+    timestamp: capture.timestamp,
+    uuid: capture.uuid,
   }
+  return sanitized
 }
 
 async function initPostHog(): Promise<void> {
@@ -157,11 +157,8 @@ function sanitizeSentryResourceUrl(value: string | undefined): string | undefine
     if (isRelativeAppPath) {
       return value.startsWith('/') ? url.pathname : url.pathname.slice(1)
     }
-    url.username = ''
-    url.password = ''
-    url.search = ''
-    url.hash = ''
-    return url.toString()
+    // Reconstruct the URL without credentials, query, or fragment.
+    return new URL(`${url.protocol}//${url.host}${url.pathname}`).toString()
   } catch {
     return undefined
   }
@@ -203,9 +200,25 @@ function sanitizeSentryDebugMeta(debugMeta: SentryEvent['debug_meta']): SentryEv
   return images?.length ? { images } : undefined
 }
 
+const SENSITIVE_PATH_PATTERN =
+  /([A-Za-z]:)?([/\\])(Users|home|tmp|var|private|root|opt|usr|local|Downloads|Documents|Desktop|Library)([/\\][^\s"'<>,]*)?/gi
+const SENSITIVE_EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
+const SENSITIVE_TOKEN_PATTERN =
+  /\b(token|bearer|api[_-]?key|secret|password)\s*[:=]\s*["']?[^\s"'<>,]+["']?/gi
+
+function redactSensitiveString(value: string | undefined): string | undefined {
+  if (!value) return value
+  return value
+    .replace(SENSITIVE_PATH_PATTERN, '<redacted>')
+    .replace(SENSITIVE_EMAIL_PATTERN, '<redacted>')
+    .replace(SENSITIVE_TOKEN_PATTERN, '$1=<redacted>')
+}
+
 function sanitizeSentrySpan(span: SentrySpan): SentrySpan {
+  const description = sanitizeSentryResourceUrl(span.description) ?? '<redacted>'
   return {
     data: {},
+    description,
     op: span.op,
     origin: span.origin,
     parent_span_id: span.parent_span_id,
@@ -237,8 +250,8 @@ function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
                   frames: value.stacktrace.frames?.map(sanitizeSentryFrame),
                 }
               : undefined,
-            type: 'Error',
-            value: 'Wework error',
+            type: value.type,
+            value: redactSensitiveString(value.value) ?? 'Wework error',
           })),
         }
       : undefined,
@@ -249,6 +262,15 @@ function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
     timestamp: event.timestamp,
     type: undefined,
   }
+}
+
+function sanitizeSentryTransactionName(name: string | undefined): string | undefined {
+  if (!name) return undefined
+  const asUrl = sanitizeSentryResourceUrl(name)
+  if (asUrl) return asUrl
+  // Keep generic, non-path operation names (e.g. http.request, ui.load).
+  if (/^[a-z][a-z0-9_.]*$/i.test(name)) return name
+  return undefined
 }
 
 function sanitizeSentryTransaction(event: SentryTransaction): SentryTransaction {
@@ -274,7 +296,7 @@ function sanitizeSentryTransaction(event: SentryTransaction): SentryTransaction 
     start_timestamp: event.start_timestamp,
     tags: sanitizeSentryTags(event.tags),
     timestamp: event.timestamp,
-    transaction: 'Wework transaction',
+    transaction: sanitizeSentryTransactionName(event.transaction) ?? '<redacted>',
     type: 'transaction',
   }
 }
@@ -333,19 +355,20 @@ export function track<EventName extends AnalyticsEventName>(
 ): void {
   if (!enabled) return
   const valueConstraints = ANALYTICS_EVENT_VALUE_CONSTRAINTS[name]
-  const allowedProperties = Object.fromEntries(
-    ANALYTICS_EVENT_PROPERTY_KEYS[name].flatMap(key => {
+  const allowedProperties = ANALYTICS_EVENT_PROPERTY_KEYS[name].reduce(
+    (acc, key) => {
       const value = properties[key]
-      if (value === undefined) return []
+      if (value === undefined) return acc
       const allowedValues = valueConstraints?.[key]
-      if (allowedValues && !allowedValues.includes(value as never)) return []
-      return [[key, value]]
-    })
+      if (allowedValues && !allowedValues.includes(value as never)) return acc
+      return { ...acc, [key]: value }
+    },
+    {} as AnalyticsEventMap[EventName]
   )
-  const event = {
+  const event: QueuedAnalyticsEvent<EventName> = {
     name,
     properties: { ...getCommonTelemetryProperties(), ...allowedProperties },
-  } as unknown as QueuedAnalyticsEvent
+  }
   if (posthog) {
     posthog.capture(event.name, event.properties)
     return
@@ -373,7 +396,10 @@ export async function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
     return
   }
   queuedEvents = []
-  if (initializing) await initializing
+  if (initializing) {
+    await initializing
+    initializing = null
+  }
   posthog?.reset(true)
   posthog?.opt_out_capturing()
   sentry?.setUser(null)

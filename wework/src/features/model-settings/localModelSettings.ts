@@ -80,12 +80,12 @@ export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completi
 export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
 
 const localModelApiKeys = new Map<string, string>()
-let localModelSecretWriteQueue: Promise<void> = Promise.resolve()
+let localModelConfigWriteQueue: Promise<void> = Promise.resolve()
 let localModelApiKeyHydration: Promise<void> | null = null
 
 function scheduleLocalModelApiKeyWrite(configId: string, apiKey?: string): void {
   if (!isTauriRuntime()) return
-  localModelSecretWriteQueue = localModelSecretWriteQueue
+  localModelConfigWriteQueue = localModelConfigWriteQueue
     .catch(() => undefined)
     .then(() =>
       invoke('update_local_model_api_key', {
@@ -93,13 +93,13 @@ function scheduleLocalModelApiKeyWrite(configId: string, apiKey?: string): void 
         apiKey: apiKey || null,
       })
     )
-  void localModelSecretWriteQueue.catch(error => {
+  void localModelConfigWriteQueue.catch(error => {
     console.error('Failed to persist local model credentials', error)
   })
 }
 
-export function flushLocalModelSecretWrites(): Promise<void> {
-  return localModelSecretWriteQueue
+export function flushLocalModelConfigWrites(): Promise<void> {
+  return localModelConfigWriteQueue
 }
 
 export async function hydrateLocalModelApiKeys(): Promise<void> {
@@ -133,7 +133,7 @@ export async function hydrateLocalModelApiKeys(): Promise<void> {
       LOCAL_MODEL_SETTINGS_STORAGE_KEY,
       JSON.stringify(configs.map(persistableLocalModelConfig))
     )
-    await flushLocalModelSecretWrites()
+    await flushLocalModelConfigWrites()
   }
   dispatchChanged(readStoredConfigs())
 }

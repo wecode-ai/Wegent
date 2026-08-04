@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { installTelemetry, isTelemetryEnabled, setTelemetryEnabled, track } from './client'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -24,6 +24,7 @@ export function TelemetryBridge() {
   const consentAsked = appPreferences?.preferences.telemetryConsentAsked
   const telemetryEnabled = appPreferences?.preferences.telemetryEnabled
   const effectiveTelemetryEnabled = consentAsked === true && telemetryEnabled === true
+  const surface = useMemo(() => appSurface(), [])
 
   useEffect(() => {
     if (!appPreferences?.loaded || !consentAsked || initializedRef.current) {
@@ -33,16 +34,20 @@ export function TelemetryBridge() {
     void installTelemetry(effectiveTelemetryEnabled).then(() => {
       if (!isTelemetryEnabled() || startedRef.current) return
       startedRef.current = true
-      track('app_started', { surface: appSurface() })
+      track('app_started', { surface })
     })
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled])
+  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, surface])
 
   useEffect(() => {
     if (!appPreferences?.loaded || !consentAsked) return
-    void setTelemetryEnabled(effectiveTelemetryEnabled)
-  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled])
+    void setTelemetryEnabled(effectiveTelemetryEnabled).then(() => {
+      if (!effectiveTelemetryEnabled || startedRef.current) return
+      startedRef.current = true
+      track('app_started', { surface })
+    })
+  }, [appPreferences?.loaded, consentAsked, effectiveTelemetryEnabled, surface])
 
-  if (!appPreferences?.loaded || consentAsked || appSurface() !== 'main') {
+  if (!appPreferences?.loaded || consentAsked || surface !== 'main') {
     return null
   }
 
