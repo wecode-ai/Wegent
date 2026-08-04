@@ -40,6 +40,7 @@ export interface LocalExecutorLog {
   currentDir: string
   executorHome: string
   backendUrl: string | null
+  socketUrl: string | null
   hasBackendAuthToken: boolean
   pendingRequestCount: number
   status: LocalExecutorStatus
@@ -52,6 +53,7 @@ export interface LocalExecutorEvent {
 
 export interface LocalExecutorBackendConnection {
   backendUrl: string
+  socketBaseUrl: string
   authToken: string
 }
 
@@ -229,6 +231,7 @@ export function connectLocalExecutorToBackend(
 ): Promise<LocalExecutorStatus> {
   return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.connectBackend, {
     backendUrl: connection.backendUrl,
+    socketUrl: connection.socketBaseUrl,
     authToken: connection.authToken,
   })
 }

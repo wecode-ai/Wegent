@@ -7422,6 +7422,7 @@ class RealCloudEnvironment {
     this.redisPort = await reservePort()
     this.backendPort = await reservePort()
     this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.socketUrl = `http://localhost:${this.backendPort}`
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -7443,6 +7444,7 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
     }
@@ -7492,6 +7494,7 @@ class RealCloudEnvironment {
       WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
       EXECUTOR_MODE: 'local',
       WEGENT_BACKEND_URL: this.backendUrl,
+      WEGENT_SOCKET_URL: this.socketUrl,
       WEGENT_AUTH_TOKEN: this.authToken,
       DEVICE_ID: CLOUD_DEVICE_ID,
       DEVICE_NAME: 'Wework E2E Cloud Device',
@@ -7673,6 +7676,37 @@ class RealCloudEnvironment {
     await stopProcess(this.backend)
     await stopProcess(this.redis)
   }
+}
+
+async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) {
+  assert.notEqual(
+    cloudEnvironment.socketUrl,
+    cloudEnvironment.backendUrl,
+    'Cloud E2E must use distinct backend and socket URLs'
+  )
+  const startedAt = Date.now()
+  let executorLog = null
+  while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+    executorLog = JSON.parse(await control.command('getLocalExecutorLog', 'body'))
+    if (
+      executorLog.backendUrl === cloudEnvironment.backendUrl &&
+      executorLog.socketUrl === cloudEnvironment.socketUrl
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  assert.deepEqual(
+    {
+      backendUrl: executorLog?.backendUrl ?? null,
+      socketUrl: executorLog?.socketUrl ?? null,
+    },
+    {
+      backendUrl: cloudEnvironment.backendUrl,
+      socketUrl: cloudEnvironment.socketUrl,
+    },
+    'Local executor did not apply the server-downlinked socket URL'
+  )
 }
 
 class DesktopE2EServer {
@@ -12220,6 +12254,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (CLOUD_ONLY) {
+      phase = 'server-downlinked-socket-url'
+      await verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment)
       phase = 'local-connected-model-protocol-matrix'
       await verifyConnectedModelsOnLocalExecution({
         control,

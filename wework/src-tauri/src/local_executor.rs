@@ -181,6 +181,7 @@ struct LocalExecutorInner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalExecutorBackendConnection {
     backend_url: String,
+    socket_url: String,
     auth_token: String,
 }
 
@@ -477,6 +478,7 @@ pub struct LocalExecutorLog {
     current_dir: String,
     executor_home: String,
     backend_url: Option<String>,
+    socket_url: Option<String>,
     has_backend_auth_token: bool,
     pending_request_count: usize,
     status: LocalExecutorStatus,
@@ -921,6 +923,10 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         (
             "WEGENT_BACKEND_URL".to_string(),
             connection.backend_url.clone(),
+        ),
+        (
+            "WEGENT_SOCKET_URL".to_string(),
+            connection.socket_url.clone(),
         ),
         (
             "WEGENT_AUTH_TOKEN".to_string(),
@@ -2305,7 +2311,14 @@ pub async fn local_executor_read_log(
         .map(|path| path.display().to_string())
         .unwrap_or_else(|error| format!("unavailable: {error}"));
     let executor_home = path_or_error(local_executor_home_path());
-    let (status, backend_url, has_backend_auth_token, pending_request_count, transport_connected) = {
+    let (
+        status,
+        backend_url,
+        socket_url,
+        has_backend_auth_token,
+        pending_request_count,
+        transport_connected,
+    ) = {
         let inner = state
             .inner
             .lock()
@@ -2314,6 +2327,10 @@ pub async fn local_executor_read_log(
             .backend_connection
             .as_ref()
             .map(|connection| connection.backend_url.clone());
+        let socket_url = inner
+            .backend_connection
+            .as_ref()
+            .map(|connection| connection.socket_url.clone());
         let has_backend_auth_token = inner
             .backend_connection
             .as_ref()
@@ -2322,6 +2339,7 @@ pub async fn local_executor_read_log(
         (
             status_from_inner(&inner),
             backend_url,
+            socket_url,
             has_backend_auth_token,
             inner.pending.len(),
             inner.child.is_some() && inner.running && inner.ready,
@@ -2342,6 +2360,7 @@ pub async fn local_executor_read_log(
         current_dir,
         executor_home,
         backend_url,
+        socket_url,
         has_backend_auth_token,
         pending_request_count,
         status,
@@ -3400,13 +3419,15 @@ pub async fn local_executor_connect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
     backend_url: String,
+    socket_url: String,
     auth_token: String,
 ) -> Result<LocalExecutorStatus, String> {
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
+    let socket_url = normalize_command_arg(socket_url, "socket_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
     let _guard = state.backend_connection_lock.lock().await;
     log::info!(
-        "Local executor backend connection update requested: connected=true, backend_url={backend_url}"
+        "Local executor backend connection update requested: connected=true, backend_url={backend_url}, socket_url={socket_url}"
     );
     send_executor_request(
         app.clone(),
@@ -3415,6 +3436,7 @@ pub async fn local_executor_connect_backend(
             method: "executor.backend.configure".to_string(),
             params: json!({
                 "backend_url": backend_url.clone(),
+                "socket_url": socket_url.clone(),
                 "auth_token": auth_token.clone(),
             }),
         },
@@ -3429,6 +3451,7 @@ pub async fn local_executor_connect_backend(
             &mut inner,
             Some(LocalExecutorBackendConnection {
                 backend_url,
+                socket_url,
                 auth_token,
             }),
         )
@@ -4425,6 +4448,7 @@ command = "example"
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
                 backend_url: "https://cloud.example.com".to_string(),
+                socket_url: "wss://socket.example.com".to_string(),
                 auth_token: "wg-token".to_string(),
             }),
             device_id: Some("local-device-abc".to_string()),
@@ -4444,6 +4468,10 @@ command = "example"
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")
+        );
+        assert_eq!(
+            envs.get("WEGENT_SOCKET_URL").map(String::as_str),
+            Some("wss://socket.example.com")
         );
         assert_eq!(
             envs.get("WEGENT_AUTH_TOKEN").map(String::as_str),
@@ -4509,6 +4537,7 @@ command = "example"
             Some("")
         );
         assert!(!envs.contains_key("WEGENT_BACKEND_URL"));
+        assert!(!envs.contains_key("WEGENT_SOCKET_URL"));
         assert!(!envs.contains_key("WEGENT_AUTH_TOKEN"));
     }
 
@@ -4516,6 +4545,7 @@ command = "example"
     fn replacing_backend_connection_is_idempotent() {
         let connection = LocalExecutorBackendConnection {
             backend_url: "https://cloud.example.com".to_string(),
+            socket_url: "wss://socket.example.com".to_string(),
             auth_token: "wg-token".to_string(),
         };
         let mut inner = LocalExecutorInner::default();

@@ -30,6 +30,7 @@ type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection
 export function LocalExecutorCloudBridge({
   apiBaseUrl,
   backendUrl: configuredBackendUrl,
+  socketBaseUrl,
   isConnected,
   token,
 }: LocalExecutorCloudBridgeProps) {
@@ -45,14 +46,15 @@ export function LocalExecutorCloudBridge({
   useEffect(() => {
     const backendUrl = isConnected ? configuredBackendUrl : null
     const authToken = isConnected ? token : null
-    const connected = Boolean(backendUrl && authToken)
-    const target = connected ? `${backendUrl}\n${authToken}` : 'disconnected'
+    const connected = Boolean(backendUrl && socketBaseUrl && authToken)
+    const target = connected ? `${backendUrl}\n${socketBaseUrl}\n${authToken}` : 'disconnected'
     if (lastTargetRef.current === target) return
 
     lastTargetRef.current = target
     void applyLocalExecutorCloudConnection({
       apiBaseUrl,
       backendUrl: configuredBackendUrl,
+      socketBaseUrl,
       isConnected,
       token,
     }).catch(error => {
@@ -62,7 +64,7 @@ export function LocalExecutorCloudBridge({
       }
       console.error('[CloudConnection] Failed to disconnect runtime task service from cloud', error)
     })
-  }, [apiBaseUrl, configuredBackendUrl, isConnected, token])
+  }, [apiBaseUrl, configuredBackendUrl, isConnected, socketBaseUrl, token])
 
   useEffect(() => {
     if (!isCloudConnectionUiAvailable()) return
