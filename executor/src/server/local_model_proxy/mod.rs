@@ -13,6 +13,7 @@ mod anthropic;
 mod chat;
 mod fork;
 mod history;
+mod vision;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -82,8 +83,21 @@ pub(crate) struct LocalModelProxyUpstream {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct VisionSidecarUpstream {
+    pub request_url: String,
+    pub api_format: String,
+    pub api_key: String,
+    pub default_headers: Vec<(String, String)>,
+    pub proxy_url: Option<String>,
+    pub model_id: String,
+    pub max_descriptions_per_turn: usize,
+    pub timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
 struct RegisteredUpstream {
     upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
     history: std::sync::Arc<history::CodexToolHistory>,
     thread_ids: HashSet<String>,
     last_routed_model: Option<String>,
@@ -107,7 +121,16 @@ struct LocalModelProxyRegistry {
 
 const REGISTRY_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
+#[cfg(test)]
 pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+    register_with_vision_sidecar(route_scope, upstream, None)
+}
+
+pub(crate) fn register_with_vision_sidecar(
+    route_scope: &str,
+    upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> String {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -149,6 +172,7 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
         token.clone(),
         RegisteredUpstream {
             upstream,
+            vision_sidecar,
             history,
             thread_ids,
             last_routed_model,
@@ -329,7 +353,7 @@ async fn handle_for_token(
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
-    let (upstream, history, model_routing) = {
+    let (upstream, vision_sidecar, history, model_routing) = {
         let mut registry = registry()
             .lock()
             .expect("local model proxy registry should not be poisoned");
@@ -343,6 +367,7 @@ async fn handle_for_token(
         registered.last_used = Instant::now();
         (
             registered.upstream.clone(),
+            registered.vision_sidecar.clone(),
             registered.history.clone(),
             model_routing,
         )
@@ -358,6 +383,8 @@ async fn handle_for_token(
     };
     let request_body =
         prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
+    let request_body =
+        vision::replace_images_with_descriptions(vision_sidecar.as_ref(), &request_body).await?;
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.convert_custom_tools,

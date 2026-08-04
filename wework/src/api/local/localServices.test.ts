@@ -1700,6 +1700,71 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('routes DeepSeek images through a configured vision proxy model', async () => {
+    const visionCatalog = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision',
+      toolProfile: 'custom',
+    })
+    visionCatalog.input_modalities = ['text', 'image']
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      apiFormat: 'openai-responses',
+      requestPath: '/responses',
+      apiKey: 'vision-key',
+      catalogEntry: visionCatalog,
+    })
+    saveLocalModelConfig({
+      id: 'deepseek-vision',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek V4 Flash',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai-responses',
+      requestPath: '/responses',
+      apiKey: 'deepseek-key',
+      codexCatalogModelId: 'wework-deepseek-v4-flash',
+      visionModelConfigId: 'vision',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-deepseek-vision',
+      runtime: 'codex',
+      message: 'inspect the screenshot',
+      title: 'DeepSeek Vision',
+      modelId: 'local-model:deepseek-vision',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        codex_catalog_model_id: 'wework-deepseek-v4-flash-vision',
+        vision_sidecar: {
+          enabled: true,
+          request_url: 'https://vision.example/v1/responses',
+          api_format: 'openai-responses',
+          api_key: 'vision-key',
+          model_id: 'vision-model',
+          max_descriptions_per_turn: 8,
+          timeout_ms: 45_000,
+        },
+      })
+    )
+  })
+
   test('uses selected Codex provider for local runtime execution requests', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

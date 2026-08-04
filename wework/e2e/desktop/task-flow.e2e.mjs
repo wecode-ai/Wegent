@@ -203,6 +203,14 @@ const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
 const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verification image.'
 const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
+const VISION_SIDECAR_PROMPT =
+  'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
+const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
+const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
+const VISION_SIDECAR_MAIN_OPTION_ID = 'local-model:desktop-e2e-vision-main'
+const VISION_SIDECAR_MAIN_LABEL = 'Desktop E2E Vision Main'
+const VISION_SIDECAR_MAIN_MODEL_ID = 'deepseek-v4-flash'
+const VISION_SIDECAR_MODEL_ID = 'kimi-k3'
 const IMAGE_ARTIFACT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
@@ -1550,6 +1558,51 @@ async function verifyStandaloneViewImageTask({ composerSelector, control, projec
     }
   )
   await verifyViewImageProcessingBlock(control)
+}
+
+async function verifyVisionSidecar({ composerSelector, control, projectRowSelector }) {
+  control.setScenario('vision_sidecar')
+  control.visionSidecarRequests = []
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await control.command(
+      'clickWhenEnabled',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control, VISION_SIDECAR_MAIN_OPTION_ID, VISION_SIDECAR_MAIN_LABEL)
+    await control.command('dropFile', composerSelector, {
+      filename: `vision-sidecar-${attempt + 1}.png`,
+      mimeType: 'image/png',
+      value: IMAGE_ARTIFACT_BASE64,
+    })
+    await control.command('waitFor', '[data-testid="attachment-badge"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(
+      control,
+      attempt === 0
+        ? 'vision-sidecar-01-request-ready.png'
+        : 'vision-sidecar-03-cache-request-ready.png'
+    )
+    await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: VISION_SIDECAR_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(
+      control,
+      attempt === 0 ? 'vision-sidecar-02-response.png' : 'vision-sidecar-04-cache-hit-response.png'
+    )
+  }
+
+  const visionRequests = control.visionSidecarRequests.filter(request => request.kind === 'vision')
+  const mainRequests = control.visionSidecarRequests.filter(request => request.kind === 'main')
+  assert.equal(visionRequests.length, 1, 'The repeated image description was not cached')
+  assert.equal(mainRequests.length, 2, 'Both image turns did not reach the primary model')
 }
 
 async function startPausedQueueCase({ composerSelector, control, initialPrompt, queuedPrompts }) {
@@ -7630,6 +7683,7 @@ class DesktopE2EServer {
     this.localProtocolStates = new Map(
       LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
     )
+    this.visionSidecarRequests = []
   }
 
   async start() {
@@ -7801,6 +7855,7 @@ class DesktopE2EServer {
         'cloud_follow_up',
         'model_protocol_matrix',
         'provider_switch_retry',
+        'vision_sidecar',
         'view_image',
         'tool_block_order',
         'official_plugin',
@@ -8459,6 +8514,58 @@ class DesktopE2EServer {
     if (this.scenario === 'provider_switch_retry') {
       this.handleProviderSwitchRetryResponse(response, protocol, body, modelRequest)
       return
+    }
+
+    if (this.scenario === 'vision_sidecar') {
+      const serialized = JSON.stringify(body)
+      if (body.model === VISION_SIDECAR_MODEL_ID) {
+        assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
+        assert.equal(body.stream, false, 'The vision sidecar request must not stream')
+        assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
+        this.visionSidecarRequests.push({ kind: 'vision', body })
+        json(response, 200, {
+          id: 'desktop-e2e-vision-description',
+          object: 'chat.completion',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: VISION_SIDECAR_DESCRIPTION },
+              finish_reason: 'stop',
+            },
+          ],
+        })
+        return
+      }
+      if (body.model === VISION_SIDECAR_MAIN_MODEL_ID) {
+        assert.equal(protocol, 'responses', 'The vision primary model used the wrong protocol')
+        if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
+          const responseId = `vision-sidecar-empty-${this.modelRequests.length}`
+          this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+          return
+        }
+        assert.ok(
+          serialized.includes(VISION_SIDECAR_PROMPT),
+          'The vision primary model did not receive the user prompt'
+        )
+        assert.ok(
+          serialized.includes(VISION_SIDECAR_DESCRIPTION),
+          'The vision primary model did not receive the generated description'
+        )
+        assert.equal(
+          serialized.includes('input_image'),
+          false,
+          'The original image leaked to the text-only primary model'
+        )
+        this.visionSidecarRequests.push({ kind: 'main', body })
+        const responseId = `vision-sidecar-main-${this.modelRequests.length}`
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(VISION_SIDECAR_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      throw new Error(`Unexpected vision sidecar model request: ${body.model}`)
     }
 
     const localModel = localProtocolCase(body.model)
@@ -13313,6 +13420,8 @@ last_updated = "2026-07-30T00:00:00Z"`
         }
         phase = 'provider-switch-retry'
         await verifyCrossProviderSwitchRetry(control, composerSelector)
+        phase = 'vision-sidecar'
+        await verifyVisionSidecar({ composerSelector, control, projectRowSelector })
         await writeFile(
           join(resultDir, 'model-switch-protocol-verification.json'),
           `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
