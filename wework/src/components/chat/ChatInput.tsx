@@ -24,6 +24,7 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { CloudProject } from '@/api/deliveries'
 import type { ComposerCloudMentionCandidate } from './composer/composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composer/composerTextareaTypes'
 import {
   buildConversationMentionCandidates,
   type ConversationMentionCandidate,
@@ -134,11 +135,15 @@ export interface ChatInputProps {
   cloudMentionCandidates?: ComposerCloudMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
   toolbarLeadingContext?: ReactNode
+  composerMode?: 'default' | 'message-only'
+  composerInputTestId?: string
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
@@ -256,11 +261,15 @@ export function ChatInput({
   cloudMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
+  externalMentionCandidates,
+  onSelectExternalMention,
   onSelectCloudProject,
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
   toolbarLeadingContext,
+  composerMode = 'default',
+  composerInputTestId,
   onCompactContext,
   goal,
   goalContinuing = false,
@@ -409,6 +418,8 @@ export function ChatInput({
     conversationMentionCandidates,
     cloudProjectCandidates,
     cloudSpaceEnabled,
+    externalMentionCandidates,
+    onSelectExternalMention,
     onSelectCloudProject,
   }
   const errorBanner = error ? (
@@ -534,6 +545,8 @@ export function ChatInput({
           onPause={onPause}
           showWorkspaceMenu={showWorkspaceMenu}
           toolbarLeadingContext={toolbarLeadingContext}
+          mode={composerMode}
+          inputTestId={composerInputTestId}
         />
         {queueResumeDialog}
         {modelSwitchWarningDialog}

@@ -98,7 +98,12 @@ describe('ProjectGroupChatView', () => {
     )
 
     const composer = await screen.findByTestId('cloud-project-group-chat-composer')
-    await userEvent.type(composer, '@Code')
+    await userEvent.type(composer, '@')
+    expect(screen.getAllByRole('listbox')).toHaveLength(1)
+    expect(screen.getByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    expect(screen.getByTestId('mention-files-action')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-chat-mention-agent-12')).toBeInTheDocument()
+    await userEvent.type(composer, 'Code')
     await userEvent.click(screen.getByTestId('cloud-project-chat-mention-agent-12'))
     await userEvent.type(composer, 'inspect this')
     await userEvent.click(screen.getByTestId('cloud-project-group-chat-send'))

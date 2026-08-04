@@ -29,6 +29,7 @@ import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
+import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 
 interface ProjectChatComposerProps {
@@ -63,6 +64,8 @@ interface ProjectChatComposerProps {
   conversationMentionCandidates?: ComposerConversationMentionCandidate[]
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
+  externalMentionCandidates?: ComposerExternalMentionCandidate[]
+  onSelectExternalMention?: (candidate: ComposerExternalMentionCandidate) => void
   onSelectCloudProject?: (project: CloudProject) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
@@ -84,6 +87,8 @@ interface ProjectChatComposerProps {
   onPause?: () => void
   showWorkspaceMenu?: boolean
   toolbarLeadingContext?: ReactNode
+  mode?: 'default' | 'message-only'
+  inputTestId?: string
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -122,6 +127,8 @@ export function ProjectChatComposer({
   conversationMentionCandidates,
   cloudProjectCandidates,
   cloudSpaceEnabled,
+  externalMentionCandidates,
+  onSelectExternalMention,
   onSelectCloudProject,
   planModeActive = false,
   onSetPlanMode,
@@ -143,6 +150,8 @@ export function ProjectChatComposer({
   onPause,
   showWorkspaceMenu,
   toolbarLeadingContext,
+  mode = 'default',
+  inputTestId,
 }: ProjectChatComposerProps) {
   const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
@@ -204,7 +213,7 @@ export function ProjectChatComposer({
       data-testid="project-chat-composer"
       className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
     >
-      {showProjectWorkBar && (
+      {mode === 'default' && showProjectWorkBar && (
         <ProjectWorkBar
           projects={projectWork.projects}
           devices={projectWork.devices}
@@ -240,7 +249,8 @@ export function ProjectChatComposer({
       <form
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
+          'relative z-10 flex w-full flex-col rounded-[26px] border bg-background px-4 transition-colors',
+          mode === 'message-only' ? 'min-h-14 py-2' : 'min-h-[76px] pb-1.5 pt-2',
           isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
         )}
         onDragEnter={handleDragOver}
@@ -297,13 +307,14 @@ export function ProjectChatComposer({
         ) : null}
         <ComposerTextarea
           textareaRef={textareaRef}
+          testId={inputTestId}
           value={value}
           onChange={onChange}
           onSubmit={onSubmit}
           canSend={canSend}
           disabled={disabled}
           placeholder={placeholder}
-          rows={2}
+          rows={mode === 'message-only' ? 1 : 2}
           onPasteFiles={onFileSelect}
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
@@ -312,8 +323,13 @@ export function ProjectChatComposer({
           conversationMentionCandidates={conversationMentionCandidates}
           cloudProjectCandidates={cloudProjectCandidates}
           cloudSpaceEnabled={cloudSpaceEnabled}
+          externalMentionCandidates={externalMentionCandidates}
+          onSelectExternalMention={onSelectExternalMention}
           onSelectCloudProject={onSelectCloudProject}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+          className={cn(
+            'max-h-[112px] w-full resize-none overflow-y-auto bg-transparent px-0 text-chat text-text-primary outline-none placeholder:text-text-muted/55',
+            mode === 'message-only' ? 'min-h-10 py-2 pr-10' : 'min-h-[48px] pb-0 pt-1'
+          )}
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}
@@ -327,56 +343,80 @@ export function ProjectChatComposer({
           onBlockedModelSelect={onBlockedModelSelect}
           isModelSelectionReady={isModelSelectionReady}
         />
-        <ComposerToolbar
-          canSend={canSend}
-          disabled={disabled}
-          models={models}
-          selectedModel={selectedModel}
-          activeModel={activeModel}
-          selectedModelOptions={selectedModelOptions}
-          modelSelectorOpenSignal={modelSelectorOpenSignal}
-          onModelSelectorOpenChange={onModelSelectorOpenChange}
-          isModelSelectionReady={isModelSelectionReady}
-          onSelectModel={onSelectModel}
-          onSelectModelAndOptions={onSelectModelAndOptions}
-          onSelectModelOption={onSelectModelOption}
-          onBlockedModelSelect={onBlockedModelSelect}
-          contextUsage={contextUsage}
-          onFileSelect={onFileSelect}
-          planModeActive={planModeActive}
-          onSetPlanMode={onSetPlanMode}
-          onClearPlanMode={onClearPlanMode}
-          onSetGoal={onSetGoal}
-          onConfigureSupervisor={onConfigureSupervisor}
-          supervisorEnabled={supervisorEnabled}
-          supervisorPending={supervisorPending}
-          onCompactContext={onCompactContext}
-          goalDraftActive={goalDraftActive}
-          onCancelGoalDraft={onCancelGoalDraft}
-          isStreaming={isStreaming}
-          onPause={onPause}
-          showWorkspaceMenu={showWorkspaceMenu}
-          projectWorkMenuContext={
-            showWorkspaceMenu
-              ? {
-                  branchName: projectWork.worktreeBranch ?? projectWork.branchName,
-                  currentProjectId: projectWork.currentProjectId,
-                  executionMode: projectWork.executionMode,
-                  executionModeLocked: projectWork.executionModeLocked,
-                  isGitProject: projectWork.isGitProject,
-                  projectName: projectWork.currentProject?.name,
-                  projects: workspaceMenuProjects,
-                  onCheckoutBranch: projectWork.onCheckoutBranch,
-                  onExecutionModeChange: projectWork.onExecutionModeChange,
-                  onListBranches: projectWork.onListBranches,
-                  onSelectProject: projectWork.onSelectProject,
-                }
-              : undefined
-          }
-          onQuickPhraseSelect={handleQuickPhraseSelect}
-          onSubmit={options => onSubmit(value, options)}
-          leadingContext={toolbarLeadingContext}
-        />
+        {mode === 'default' ? (
+          <ComposerToolbar
+            canSend={canSend}
+            disabled={disabled}
+            models={models}
+            selectedModel={selectedModel}
+            activeModel={activeModel}
+            selectedModelOptions={selectedModelOptions}
+            modelSelectorOpenSignal={modelSelectorOpenSignal}
+            onModelSelectorOpenChange={onModelSelectorOpenChange}
+            isModelSelectionReady={isModelSelectionReady}
+            onSelectModel={onSelectModel}
+            onSelectModelAndOptions={onSelectModelAndOptions}
+            onSelectModelOption={onSelectModelOption}
+            onBlockedModelSelect={onBlockedModelSelect}
+            contextUsage={contextUsage}
+            onFileSelect={onFileSelect}
+            planModeActive={planModeActive}
+            onSetPlanMode={onSetPlanMode}
+            onClearPlanMode={onClearPlanMode}
+            onSetGoal={onSetGoal}
+            onConfigureSupervisor={onConfigureSupervisor}
+            supervisorEnabled={supervisorEnabled}
+            supervisorPending={supervisorPending}
+            onCompactContext={onCompactContext}
+            goalDraftActive={goalDraftActive}
+            onCancelGoalDraft={onCancelGoalDraft}
+            isStreaming={isStreaming}
+            onPause={onPause}
+            showWorkspaceMenu={showWorkspaceMenu}
+            projectWorkMenuContext={
+              showWorkspaceMenu
+                ? {
+                    branchName: projectWork.worktreeBranch ?? projectWork.branchName,
+                    currentProjectId: projectWork.currentProjectId,
+                    executionMode: projectWork.executionMode,
+                    executionModeLocked: projectWork.executionModeLocked,
+                    isGitProject: projectWork.isGitProject,
+                    projectName: projectWork.currentProject?.name,
+                    projects: workspaceMenuProjects,
+                    onCheckoutBranch: projectWork.onCheckoutBranch,
+                    onExecutionModeChange: projectWork.onExecutionModeChange,
+                    onListBranches: projectWork.onListBranches,
+                    onSelectProject: projectWork.onSelectProject,
+                  }
+                : undefined
+            }
+            onQuickPhraseSelect={handleQuickPhraseSelect}
+            onSubmit={options => onSubmit(value, options)}
+            leadingContext={toolbarLeadingContext}
+          />
+        ) : (
+          <button
+            type="submit"
+            data-testid="cloud-project-group-chat-send"
+            disabled={!canSend}
+            className="absolute bottom-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-text-primary text-background transition-opacity disabled:opacity-30"
+            aria-label={t('workbench.project_chat_send')}
+          >
+            <svg
+              aria-hidden="true"
+              className="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="m5 12 7-7 7 7" />
+              <path d="M12 19V5" />
+            </svg>
+          </button>
+        )}
       </form>
     </div>
   )

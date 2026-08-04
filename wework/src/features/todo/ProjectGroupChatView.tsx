@@ -1,4 +1,4 @@
-import { Bot, Check, CornerDownRight, Hash, LoaderCircle, Plus, Send, Users, X } from 'lucide-react'
+import { Bot, Check, CornerDownRight, Hash, LoaderCircle, Plus, Users, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject, CloudProjectMember } from '@/api/deliveries'
@@ -6,6 +6,12 @@ import type { ProjectChatMention } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { ChatInput } from '@/components/chat/ChatInput'
+import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import {
+  DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
+  DESKTOP_MESSAGE_LIST_CLASS,
+} from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
 
@@ -99,24 +105,26 @@ export function ProjectGroupChatView({
     () => (task ? messages.filter(message => message.taskId === task.id) : messages),
     [messages, task]
   )
-  const mentionQuery = mentionQueryFromDraft(draft)
   const mentionCandidates = useMemo(() => {
-    const query = mentionQuery?.toLocaleLowerCase() ?? ''
     return [
       ...agents
         .filter(agent => agent.status === 'active')
         .map(agent => ({
           type: 'agent' as const,
           id: agent.id,
-          label: agent.name,
+          title: agent.name,
+          metaLabel: t('workbench.project_chat_agent_label'),
+          testId: `cloud-project-chat-mention-agent-${agent.id}`,
         })),
       ...members.map(member => ({
         type: 'user' as const,
         id: String(member.user_id),
-        label: member.user_name,
+        title: member.user_name,
+        metaLabel: t('workbench.project_chat_member_label'),
+        testId: `cloud-project-chat-mention-user-${member.user_id}`,
       })),
-    ].filter(candidate => candidate.label.toLocaleLowerCase().includes(query))
-  }, [agents, members, mentionQuery])
+    ]
+  }, [agents, members, t])
 
   async function sendMessage() {
     const text = draft.trim()
@@ -302,7 +310,7 @@ export function ProjectGroupChatView({
             </p>
           </div>
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <div className={cn(DESKTOP_MESSAGE_LIST_CLASS, 'flex flex-col gap-4 pb-4 pt-5')}>
             {threadMessages.map(message => (
               <ChatMessage
                 key={message.messageId}
@@ -319,90 +327,38 @@ export function ProjectGroupChatView({
         )}
       </div>
 
-      <footer className="shrink-0 border-t border-border px-5 py-3">
-        {error || !client ? (
-          <p className="mb-2 text-xs text-destructive">
-            {error ?? t('workbench.project_chat_cloud_required')}
-          </p>
-        ) : null}
-        <div className="relative mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-border bg-background p-2 shadow-sm focus-within:border-focus">
-          {mentionQuery !== null ? (
-            <div
-              data-testid="cloud-project-chat-mention-menu"
-              className="absolute bottom-full left-0 z-20 mb-2 w-72 rounded-xl border border-border bg-background p-1.5 shadow-lg"
-            >
-              {mentionCandidates.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-text-muted">
-                  {t('workbench.project_chat_no_mention_matches')}
-                </p>
-              ) : (
-                mentionCandidates.slice(0, 8).map(candidate => (
-                  <button
-                    key={`${candidate.type}:${candidate.id}`}
-                    type="button"
-                    data-testid={`cloud-project-chat-mention-${candidate.type}-${candidate.id}`}
-                    onClick={() => {
-                      setDraft(insertMention(draft, candidate.label))
-                      setMentions(current => [
-                        ...current.filter(
-                          mention => mention.type !== candidate.type || mention.id !== candidate.id
-                        ),
-                        candidate,
-                      ])
-                    }}
-                    className="flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left hover:bg-muted"
-                  >
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-text-secondary">
-                      {candidate.type === 'agent' ? (
-                        <Bot className="h-3.5 w-3.5 text-violet-600" />
-                      ) : (
-                        candidate.label.slice(0, 1).toUpperCase()
-                      )}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">{candidate.label}</span>
-                    <span className="text-xs text-text-muted">
-                      {candidate.type === 'agent'
-                        ? t('workbench.project_chat_agent_label')
-                        : t('workbench.project_chat_member_label')}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
-          <textarea
-            data-testid="cloud-project-group-chat-composer"
+      <footer className="shrink-0 bg-gradient-to-t from-background via-background to-transparent px-5 pb-3 pt-6">
+        <div className={cn(DESKTOP_CHAT_CONTENT_WIDTH_CLASS, 'relative')}>
+          <ChatInput
             value={draft}
             disabled={!client}
-            onChange={event => setDraft(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                void sendMessage()
-              }
-            }}
-            rows={1}
+            onChange={setDraft}
+            onSubmit={() => sendMessage()}
+            submitDisabled={!draft.trim() || sending}
+            error={error ?? (!client ? t('workbench.project_chat_cloud_required') : null)}
             placeholder={
               task
                 ? t('workbench.project_chat_task_placeholder')
                 : t('workbench.project_chat_placeholder')
             }
-            className="max-h-32 min-h-9 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed"
+            variant="desktop"
+            showProjectWorkBar={false}
+            composerMode="message-only"
+            composerInputTestId="cloud-project-group-chat-composer"
+            externalMentionCandidates={mentionCandidates}
+            onSelectExternalMention={candidate => {
+              setMentions(current => [
+                ...current.filter(
+                  mention => mention.type !== candidate.type || mention.id !== candidate.id
+                ),
+                {
+                  type: candidate.type,
+                  id: candidate.id,
+                  label: candidate.title,
+                },
+              ])
+            }}
           />
-          <button
-            type="button"
-            data-testid="cloud-project-group-chat-send"
-            disabled={!client || !draft.trim() || sending}
-            onClick={() => void sendMessage()}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-text-primary text-background disabled:opacity-30"
-            aria-label={t('workbench.project_chat_send')}
-          >
-            {sending ? (
-              <LoaderCircle className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
         </div>
       </footer>
     </section>
@@ -429,18 +385,6 @@ function formatProjectChatHistory(
   ].join('\n')
 }
 
-function mentionQueryFromDraft(draft: string): string | null {
-  const match = draft.match(/(?:^|\s)@([^\s@]*)$/u)
-  return match ? match[1] : null
-}
-
-function insertMention(draft: string, label: string): string {
-  return draft.replace(/(?:^|\s)@([^\s@]*)$/u, match => {
-    const prefix = match.startsWith(' ') ? ' ' : ''
-    return `${prefix}@${label} `
-  })
-}
-
 function ChatMessage({
   message,
   mine,
@@ -465,17 +409,19 @@ function ChatMessage({
     <article
       data-testid={`cloud-project-chat-message-${message.messageId}`}
       data-side={mine ? 'right' : 'left'}
-      className={cn('flex gap-2.5', mine && 'flex-row-reverse')}
+      className={cn('flex gap-2.5', mine && 'justify-end')}
     >
-      <span
-        className={cn(
-          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-          isAgent ? 'bg-violet-500/10 text-violet-600' : 'bg-muted text-text-secondary'
-        )}
-      >
-        {isAgent ? <Bot className="h-4 w-4" /> : message.sender.name.slice(0, 1).toUpperCase()}
-      </span>
-      <span className={cn('min-w-0 max-w-[78%]', mine && 'items-end')}>
+      {!mine ? (
+        <span
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+            isAgent ? 'bg-violet-500/10 text-violet-600' : 'bg-muted text-text-secondary'
+          )}
+        >
+          {isAgent ? <Bot className="h-4 w-4" /> : message.sender.name.slice(0, 1).toUpperCase()}
+        </span>
+      ) : null}
+      <span className={cn('flex min-w-0 max-w-[80%] flex-col', mine && 'items-end')}>
         <span
           className={cn(
             'mb-1 flex items-center gap-2 text-xs text-text-muted',
@@ -490,17 +436,23 @@ function ChatMessage({
             </span>
           ) : null}
         </span>
-        <span
-          className={cn(
-            'block whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-sm leading-6',
-            mine ? 'bg-text-primary text-background' : 'bg-muted text-text-primary'
-          )}
-        >
-          {text ||
-            (message.type === 'agent_status'
-              ? t('workbench.project_chat_processing_ellipsis')
-              : '')}
-        </span>
+        {mine ? (
+          <span className="block whitespace-pre-wrap break-words rounded-2xl bg-muted px-4 py-1.5 text-base leading-5 text-text-primary">
+            {text}
+          </span>
+        ) : text ? (
+          <div className="min-w-0 max-w-full text-chat text-text-primary">
+            {isAgent ? (
+              <AssistantMarkdown content={text} isStreaming={message.status === 'streaming'} />
+            ) : (
+              <span className="whitespace-pre-wrap break-words">{text}</span>
+            )}
+          </div>
+        ) : message.type === 'agent_status' ? (
+          <span className="text-sm text-text-muted">
+            {t('workbench.project_chat_processing_ellipsis')}
+          </span>
+        ) : null}
         {isAgent && message.status === 'completed' ? (
           <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
             <Check className="h-3 w-3" /> {t('workbench.project_chat_completed')}

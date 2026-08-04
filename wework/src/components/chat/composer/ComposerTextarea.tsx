@@ -75,6 +75,8 @@ export function ComposerTextarea({
   conversationMentionCandidates = [],
   cloudProjectCandidates = [],
   cloudSpaceEnabled = false,
+  externalMentionCandidates = [],
+  onSelectExternalMention,
   onSelectCloudProject,
   onListLocalSkills,
   onListLocalApps,
@@ -303,6 +305,16 @@ export function ComposerTextarea({
     (activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention') &&
     (activeMenu.kind === 'mention' || Boolean(onListLocalSkills) || Boolean(onListLocalApps))
   const showSlashMenu = activeMenu?.kind === 'slash'
+  const filteredExternalMentionCandidates = useMemo(() => {
+    if (activeMenu?.kind !== 'mention') return []
+    const query = activeMenu.trigger.query.trim().toLocaleLowerCase()
+    if (!query) return externalMentionCandidates
+    return externalMentionCandidates.filter(candidate =>
+      [candidate.title, ...(candidate.searchAliases ?? [])].some(value =>
+        value.toLocaleLowerCase().includes(query)
+      )
+    )
+  }, [activeMenu, externalMentionCandidates])
   const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
     if (!showSkillMenu) return []
     if (activeMenu?.kind === 'skill') {
@@ -322,6 +334,9 @@ export function ComposerTextarea({
       }
       return [
         { kind: 'files-action' },
+        ...filteredExternalMentionCandidates.map(
+          candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+        ),
         ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
         ...(!planModeActive && onSetPlanMode
           ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
@@ -344,6 +359,9 @@ export function ComposerTextarea({
       ]
     }
     return [
+      ...filteredExternalMentionCandidates.map(
+        candidate => ({ kind: 'external', candidate }) as MentionMenuRow
+      ),
       ...filteredMentionCandidates.map(
         candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
       ),
@@ -356,6 +374,7 @@ export function ComposerTextarea({
     cloudProjectsOpen,
     cloudSpaceEnabled,
     filteredCloudProjectCandidates,
+    filteredExternalMentionCandidates,
     filteredMentionCandidates,
     filteredSkillCandidates,
     onSetGoal,
@@ -680,6 +699,20 @@ export function ComposerTextarea({
         }
         return selected
       }
+      if (row.kind === 'external') {
+        const snapshot = editor.getSnapshot()
+        const replacement = replaceComposerMentionTrigger(
+          snapshot.value,
+          `@${row.candidate.title}`,
+          trigger.start,
+          snapshot.selectionEnd
+        )
+        commitEditorValue(replacement.value, replacement.cursor)
+        closeAutocompleteMenu()
+        onSelectExternalMention?.(row.candidate)
+        editor.focus()
+        return true
+      }
       if (row.kind === 'cloud-projects-action') {
         setCloudProjectsOpen(true)
         setSelectedIndex(0)
@@ -743,6 +776,7 @@ export function ComposerTextarea({
       commitEditorValue,
       insertPathReferences,
       onSelectCloudProject,
+      onSelectExternalMention,
       onSetGoal,
       onSetPlanMode,
       selectMentionCandidate,
