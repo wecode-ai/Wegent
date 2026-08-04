@@ -351,6 +351,33 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('selects the Kimi K3 Codex catalog for a cloud chat-completions model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      modelId: 'moonshot-kimi-k3',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
+      },
+    })
+  })
+
   test('passes upstream api format for Anthropic Messages cloud model', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',

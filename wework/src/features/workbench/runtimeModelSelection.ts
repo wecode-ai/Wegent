@@ -16,6 +16,9 @@ export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUser
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
 export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = 'weworkCloudModelMaxOutputTokens'
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
+export const CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCodexCatalogModelId'
+
+const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -45,6 +48,24 @@ function modelKind(model: UnifiedModel): string {
     getStringConfigValue(model.config, 'weworkModelKind') ||
     getStringConfigValue(model.config?.ui as Record<string, unknown> | null, 'family')
   )
+}
+
+function cloudCodexCatalogModelId(model: UnifiedModel): string {
+  const configured =
+    getRawStringConfigValue(model.config, 'codex_catalog_model_id') ||
+    getRawStringConfigValue(model.config, 'codexCatalogModelId')
+  if (configured) return configured
+
+  const candidates = [
+    model.name,
+    model.modelId,
+    getRawStringConfigValue(model.config, 'model_id'),
+    getRawStringConfigValue(model.config, 'modelId'),
+    getRawStringConfigValue(model.config, 'model'),
+  ]
+  return candidates.some(value => value?.trim().toLowerCase().includes('kimi-k3'))
+    ? KIMI_K3_CODEX_CATALOG_MODEL_ID
+    : ''
 }
 
 export function isOfficialCodexModel(model: UnifiedModel): boolean {
@@ -148,6 +169,10 @@ export function selectedModelExecutionFields(
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
+    }
+    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel)
+    if (codexCatalogModelId) {
+      modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }
 
     const contextWindow =
