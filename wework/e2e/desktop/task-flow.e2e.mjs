@@ -6441,13 +6441,16 @@ function customToolCall(callId, name, input) {
   }
 }
 
+let assistantMessageSequence = 0
+
 function assistantMessage(text) {
+  const messageId = `wework-e2e-message-${assistantMessageSequence++}`
   return {
     type: 'response.output_item.done',
     item: {
       type: 'message',
       role: 'assistant',
-      id: 'wework-e2e-message',
+      id: messageId,
       content: [{ type: 'output_text', text }],
       phase: 'final_answer',
     },
