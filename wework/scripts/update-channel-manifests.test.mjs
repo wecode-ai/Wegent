@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   generateChannelManifests,
+  generatePlatformChannelManifest,
   isNewerWeworkVersion,
   parseWeworkVersion,
 } from './update-channel-manifests.mjs'
@@ -84,5 +85,39 @@ describe('Wework update channel manifests', () => {
         channel: 'stable',
       })
     ).rejects.toThrow("Missing platform 'windows-x86_64'")
+  })
+
+  test('creates one MinIO channel manifest without requiring other platforms', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'wework-update-channel-'))
+    temporaryDirectories.push(directory)
+    const sourcePath = resolve(directory, 'latest.json')
+    const source = {
+      version: '1.2.4-beta.1',
+      notes: 'Beta release',
+      pub_date: '2026-08-04T00:00:00Z',
+      platforms: {
+        'darwin-aarch64': { signature: 'mac-arm', url: 'https://example.com/mac-arm' },
+      },
+    }
+    await writeFile(sourcePath, JSON.stringify(source), 'utf8')
+
+    await generatePlatformChannelManifest({
+      sourcePath,
+      outputDirectory: directory,
+      channel: 'beta',
+      platform: 'darwin-aarch64',
+    })
+
+    const manifest = JSON.parse(
+      await readFile(resolve(directory, 'beta-darwin-aarch64.json'), 'utf8')
+    )
+    expect(manifest).toEqual({
+      version: source.version,
+      notes: source.notes,
+      pub_date: source.pub_date,
+      platforms: {
+        'beta-darwin': source.platforms['darwin-aarch64'],
+      },
+    })
   })
 })

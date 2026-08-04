@@ -48,6 +48,7 @@ else
 fi
 
 VERSION=""
+CHANNEL="stable"
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
@@ -64,10 +65,13 @@ usage() {
 Usage: bash wework/scripts/build-minio-mac-release.sh --version <version> [options]
 
 Build a Developer ID signed and notarized Wework macOS release whose updater
-reads latest.json and release artifacts directly from MinIO.
+reads channel manifests and release artifacts directly from MinIO. Stable
+releases also maintain latest.json for older clients.
 
 Options:
   --version <version>       Release version, for example 0.1.12. Required.
+  --channel <stable|beta>   Update channel. Default: stable.
+  --beta                    Shorthand for --channel beta.
   --notes <text>            Release notes. Default: "Wework <version>".
   --endpoint <url>          S3 API endpoint. Defaults to ATTACHMENT_S3_ENDPOINT.
   --bucket <name>           S3 bucket. Defaults to ATTACHMENT_S3_BUCKET.
@@ -92,6 +96,7 @@ Environment:
 
 Examples:
   bash wework/scripts/build-minio-mac-release.sh --version 0.1.12
+  bash wework/scripts/build-minio-mac-release.sh --version 0.1.13-beta.1 --channel beta
   bash wework/scripts/build-minio-mac-release.sh --version 0.1.12 \
     --brand-config wework/branding/weibo.json
   bash wework/scripts/build-minio-mac-release.sh --version 0.1.12 --upload
@@ -184,6 +189,7 @@ upload_artifacts() {
   WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
   UPDATER_PLATFORMS="$(updater_platforms_for_target)" \
   RELEASE_VERSION="$VERSION" \
+  RELEASE_CHANNEL="$CHANNEL" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
   uv run --project "$PROJECT_DIR/backend" \
     python "$SCRIPT_DIR/upload-mac-release-to-s3.py"
@@ -195,6 +201,7 @@ verify_uploaded_artifacts() {
   local dmg_filename
   local dmg_path
   local latest_dmg_url
+  local platform
 
   archive_path="$(find "$OUTPUT_DIR" -maxdepth 1 -type f \
     -name "WeWork_${VERSION}_*.app.tar.gz" -print | sort | tail -1)"
@@ -212,14 +219,40 @@ verify_uploaded_artifacts() {
   fi
   dmg_filename="$(basename "$dmg_path")"
   latest_dmg_url="$UPDATE_BASE_URL/WeWork_latest_${dmg_filename#WeWork_${VERSION}_}"
-  if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/latest.json" || \
-    ! curl -fsSI -o /dev/null "$archive_url" || \
-    ! curl -fsSI -o /dev/null "$latest_dmg_url"; then
+  if ! curl -fsSI -o /dev/null "$archive_url"; then
     echo "MinIO upload succeeded, but updater files are not publicly readable." >&2
     echo "Allow unauthenticated GET access to: $UPDATE_BASE_URL" >&2
     exit 1
   fi
-  echo "Latest DMG: $latest_dmg_url"
+  for platform in $(updater_platforms_for_target | tr ',' ' '); do
+    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$CHANNEL-$platform.json"; then
+      echo "Channel manifest is not publicly readable: $CHANNEL-$platform.json" >&2
+      exit 1
+    fi
+  done
+  if [ "$CHANNEL" = "stable" ]; then
+    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/latest.json" || \
+      ! curl -fsSI -o /dev/null "$latest_dmg_url"; then
+      echo "Stable compatibility files are not publicly readable." >&2
+      exit 1
+    fi
+    echo "Latest DMG: $latest_dmg_url"
+  fi
+}
+
+generate_channel_manifests() {
+  local platform
+  local publish_channel
+
+  for platform in $(updater_platforms_for_target | tr ',' ' '); do
+    node "$SCRIPT_DIR/update-channel-manifests.mjs" \
+      generate-platform "$OUTPUT_DIR/latest.json" "$OUTPUT_DIR" "$CHANNEL" "$platform"
+    if [ "$CHANNEL" = "stable" ]; then
+      publish_channel="beta"
+      node "$SCRIPT_DIR/update-channel-manifests.mjs" \
+        generate-platform "$OUTPUT_DIR/latest.json" "$OUTPUT_DIR" "$publish_channel" "$platform"
+    fi
+  done
 }
 
 promote_release_artifacts() {
@@ -261,6 +294,18 @@ while [ "$#" -gt 0 ]; do
     --version)
       VERSION="$2"
       shift 2
+      ;;
+    --channel)
+      CHANNEL="$2"
+      shift 2
+      ;;
+    beta|--beta)
+      CHANNEL="beta"
+      shift
+      ;;
+    stable|--stable)
+      CHANNEL="stable"
+      shift
       ;;
     --notes)
       RELEASE_NOTES="$2"
@@ -320,8 +365,16 @@ if [ -z "$VERSION" ]; then
   usage >&2
   exit 1
 fi
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "--version must use MAJOR.MINOR.PATCH format. Got: $VERSION" >&2
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
+  echo "--version must use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N format. Got: $VERSION" >&2
+  exit 1
+fi
+if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
+  echo "--channel must be 'stable' or 'beta'. Got: $CHANNEL" >&2
+  exit 1
+fi
+if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
+  echo "A Beta version must be published with --channel beta. Got: $VERSION" >&2
   exit 1
 fi
 if [ -n "$BRAND_CONFIG" ]; then
@@ -373,6 +426,7 @@ trap cleanup_build_output EXIT
 
 echo "Building Wework macOS MinIO release"
 echo "  VERSION=$VERSION"
+echo "  CHANNEL=$CHANNEL"
 echo "  MACOS_BUILD_TARGET=$MACOS_BUILD_TARGET"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
@@ -388,6 +442,7 @@ RELEASE_ARGS=(
   --version "$VERSION"
   --notes "$RELEASE_NOTES"
   --local-base-url "$UPDATE_BASE_URL"
+  --updater-endpoint "$UPDATE_BASE_URL/{{target}}-{{arch}}.json"
   --local-dist-dir "$BUILD_OUTPUT_DIR"
   --macos-build-target "$MACOS_BUILD_TARGET"
 )
@@ -402,11 +457,12 @@ if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
 fi
 
 promote_release_artifacts "$BUILD_OUTPUT_DIR"
+generate_channel_manifests
 
 if [ "$UPLOAD" = "true" ]; then
   upload_artifacts
   verify_uploaded_artifacts
-  echo "Uploaded updater manifest: $UPDATE_BASE_URL/latest.json"
+  echo "Uploaded $CHANNEL updater manifest to: $UPDATE_BASE_URL"
 else
   echo "Artifacts are ready in: $OUTPUT_DIR"
 fi
