@@ -32,6 +32,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -251,6 +252,7 @@ export interface WorkbenchContextValue {
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
