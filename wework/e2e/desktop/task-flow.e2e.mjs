@@ -238,8 +238,8 @@ const CLOUD_MODEL_CASES = MODEL_PROTOCOLS.map(protocol => ({
   source: 'cloud',
   protocol,
   optionId: `desktop-e2e-cloud-${protocol}`,
-  label: `desktop-e2e-cloud-${protocol}`,
-  modelId: `desktop-e2e-cloud-${protocol}-upstream`,
+  label: protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}`,
+  modelId: protocol === 'chat' ? 'moonshot-kimi-k3' : `desktop-e2e-cloud-${protocol}-upstream`,
 }))
 const MODEL_PROTOCOL_MATRIX_CASES = [
   ...LOCAL_MODEL_CASES.map(model => ({ ...model, source: 'local' })),
@@ -9899,6 +9899,18 @@ class DesktopE2EServer {
         true,
         `${matrixCaseId(model)} did not request streaming usage`
       )
+      if (model.source === 'cloud' && model.modelId === 'moonshot-kimi-k3') {
+        assert.deepEqual(
+          body.thinking,
+          { type: 'enabled' },
+          `${matrixCaseId(model)} did not enable Kimi thinking`
+        )
+        assert.equal(
+          body.reasoning_effort,
+          undefined,
+          `${matrixCaseId(model)} forwarded an unsupported Kimi reasoning_effort`
+        )
+      }
       return
     }
     assert.equal(headers['x-api-key'], MODEL_API_KEY, `${matrixCaseId(model)} lost x-api-key`)
@@ -9952,6 +9964,12 @@ class DesktopE2EServer {
         assistant,
         `${matrixCaseId(model)} split assistant text and tool_calls into different messages`
       )
+      if (model.source === 'cloud' && model.modelId === 'moonshot-kimi-k3') {
+        assert.ok(
+          assistant.reasoning_content?.trim(),
+          `${matrixCaseId(model)} lost Kimi tool-call reasoning history`
+        )
+      }
       const call = assistant.tool_calls.find(
         candidate => candidate?.function?.name === 'apply_patch'
       )

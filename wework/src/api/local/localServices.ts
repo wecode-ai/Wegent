@@ -131,6 +131,7 @@ import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION,
   CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
@@ -880,13 +881,15 @@ function localRuntimeModelConfig(
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
+    const codexCatalogModelId =
+      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
       model: 'openai',
       model_id: modelName,
       wework_model_kind: 'cloud',
-      codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
+      codex_catalog_model_id: codexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
       tool_profile: 'custom',

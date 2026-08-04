@@ -219,6 +219,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.derived.isThinking).toBe(false)
   })
 
+  test('keeps an identified live turn when the task list still reports prior completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    store.turnStarted(address, 'correction-turn')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    const runningSnapshot = store.getTask(address)
+    expect(runningSnapshot?.execution.phase).toBe('running')
+    expect(runningSnapshot?.turn.phase).toBe('streaming')
+    expect(runningSnapshot?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.turnSettled(address, 'correction-turn')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
+  })
+
   test('keeps task execution running across an active Goal turn gap', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(
