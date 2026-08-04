@@ -148,25 +148,28 @@ No local code repository is required - the image contains all default resources 
 
 ### Optional built-in plugins
 
-To include the external `wegent-sites` plugin in a Backend image, stage it into
-`init_data/plugins`:
+To include the external `wegent-sites` and `wegent-mini-program` plugins in a
+Backend image, stage the available plugins into `init_data/plugins`:
 
 ```bash
 pnpm prepare:builtin-plugins
 ```
 
 The repository's `build_image.sh` and `build_image_mac.sh` commands run this
-step automatically when the source repository is available. A missing default
-source is skipped because Sites is optional. Run the command explicitly before
-direct Docker Compose or Dockerfile builds when Sites should be included.
+step automatically when the source repositories are available. Missing default
+sources are skipped because both plugins are optional. Run the command
+explicitly before direct Docker Compose or Dockerfile builds when either plugin
+should be included.
 
-The command reads the external Sites project at
-`../wegent-skills/wb-plugins/sites` by default and resolves its `plugin`
-subdirectory automatically. Override the source when the repositories use a
+The command reads the external projects at
+`../wegent-skills/wb-plugins/sites` and
+`../wegent-skills/wb-plugins/mini-program` by default and resolves a `plugin`
+subdirectory automatically. Override either source when the repositories use a
 different layout:
 
 ```bash
 WEGENT_SITES_PLUGIN_SOURCE=/absolute/path/to/sites \
+WEGENT_MINI_PROGRAM_PLUGIN_SOURCE=/absolute/path/to/mini-program \
   pnpm prepare:builtin-plugins
 ```
 
@@ -174,13 +177,13 @@ Backend startup publishes staged plugins to the Wegent cloud marketplace. The
 plugin source remains external and the generated staging directory is not
 committed.
 
-Official image workflows download a ZIP from
-`WEGENT_SITES_PLUGIN_ARCHIVE_URL`, verify it against the pinned
-`WEGENT_SITES_PLUGIN_ARCHIVE_SHA256`, and then run the same staging command.
-Configure the URL as a repository variable or secret, the checksum as a
-repository variable, and optional HTTP authorization as the
-`WEGENT_SITES_PLUGIN_ARCHIVE_AUTHORIZATION` secret. When the URL is not
-configured, image workflows skip Sites staging. When it is configured, download
+Official image workflows download configured ZIPs from
+`WEGENT_SITES_PLUGIN_ARCHIVE_URL` and
+`WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL`, verify them against the corresponding
+`*_SHA256` values, and then run the same staging command. Configure each URL as
+a repository variable or secret, each checksum as a repository variable, and
+optional HTTP authorization as the corresponding `*_AUTHORIZATION` secret. A
+plugin is skipped when its URL is not configured. When configured, download
 failures, checksum mismatches, or a missing plugin manifest fail the Backend
 image build.
 

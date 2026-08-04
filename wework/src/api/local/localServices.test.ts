@@ -1897,6 +1897,7 @@ describe('createLocalAppServices', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })
 
@@ -1905,6 +1906,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'shared-model',
+        codex_catalog_model_id: 'wework-kimi-k3',
         api_format: 'responses',
         upstream_api_format: 'openai-chat-completions',
         tool_profile: 'custom',

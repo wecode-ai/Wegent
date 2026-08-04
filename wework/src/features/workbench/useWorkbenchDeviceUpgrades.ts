@@ -132,21 +132,15 @@ export function useWorkbenchDeviceUpgrades({
       }
       refreshDevicesAfterEvent()
     }
-    const handleDeviceOffline = (payload: unknown) => {
-      const deviceId = getDeviceEventId(payload)
-      if (deviceId) {
-        dispatch({
-          type: 'device_status_changed',
-          deviceId,
-          status: 'offline',
-        })
-      }
+    const handleDeviceOffline = () => {
+      // A relay disconnect event can race with the executor reconnecting. Keep the
+      // last confirmed state until device discovery verifies that it is still offline.
       refreshDevicesAfterEvent()
     }
     const handleDeviceStatus = (payload: unknown) => {
       const deviceId = getDeviceEventId(payload)
       const status = isRecord(payload) ? payload.status : undefined
-      if (deviceId && isDeviceStatus(status)) {
+      if (deviceId && isDeviceStatus(status) && status !== 'offline') {
         dispatch({
           type: 'device_status_changed',
           deviceId,

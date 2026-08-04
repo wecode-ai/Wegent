@@ -18,7 +18,7 @@ use super::{
 };
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
-    let (chat_body, context) = chat::responses_to_chat(body)?;
+    let (chat_body, context) = chat::responses_to_chat_for_anthropic(body)?;
     let mut result = Map::new();
     if let Some(model) = chat_body.get("model") {
         result.insert("model".to_owned(), model.clone());
@@ -681,7 +681,7 @@ mod tests {
         );
         let output = anthropic_sse_to_responses(source, {
             let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
-            chat::responses_to_chat(&input)
+            chat::responses_to_chat_for_anthropic(&input)
                 .expect("context should build")
                 .1
         })
@@ -815,7 +815,7 @@ mod tests {
                 }]
             }]
         });
-        let context = chat::responses_to_chat(&input)
+        let context = chat::responses_to_chat_for_anthropic(&input)
             .expect("context should build")
             .1;
         let output = anthropic_sse_to_responses(source, context)
@@ -852,7 +852,9 @@ mod tests {
         );
         let output = anthropic_sse_to_responses(source, {
             let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
-            chat::responses_to_chat(&input).expect("context").1
+            chat::responses_to_chat_for_anthropic(&input)
+                .expect("context")
+                .1
         })
         .collect::<Vec<_>>()
         .await

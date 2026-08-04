@@ -41,6 +41,7 @@ interface UserViewportAnchor {
   messageId: string
   anchorIndex: number
   offsetFromScrollerTop: number
+  textOffset: number | null
 }
 
 interface ScrollableMessageAreaProps {
@@ -828,8 +829,12 @@ function ScrollableMessagePaneContent({
 
     const anchorElement = findUserViewportAnchor(content, anchor)
     if (!anchorElement) return
-    const offsetFromScrollerTop =
-      anchorElement.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    const anchorRect =
+      anchor.textOffset === null
+        ? anchorElement.getBoundingClientRect()
+        : (getTextOffsetRect(anchorElement, anchor.textOffset) ??
+          anchorElement.getBoundingClientRect())
+    const offsetFromScrollerTop = anchorRect.top - scroller.getBoundingClientRect().top
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
     if (Math.abs(offsetDelta) < 0.5) return
     scroller.scrollTop += offsetDelta
@@ -907,7 +912,8 @@ function ScrollableMessagePaneContent({
 
   const markUserScrollIntent = useCallback(() => {
     userScrollIntentRef.current = true
-  }, [])
+    captureUserViewportAnchor()
+  }, [captureUserViewportAnchor])
 
   const handleScroll = useCallback(() => {
     if (autoScrollSuspended || isTurnNavigationAutoScrollSuspended()) {
@@ -1172,11 +1178,14 @@ function createUserViewportAnchor(
   const anchors = Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))
   const anchorIndex = anchors.indexOf(visibleAnchor)
   if (anchorIndex < 0) return null
+  const textPosition = getViewportTextPosition(visibleAnchor, scrollerRect)
 
   return {
     messageId,
     anchorIndex,
-    offsetFromScrollerTop: visibleAnchor.getBoundingClientRect().top - scrollerRect.top,
+    offsetFromScrollerTop:
+      (textPosition?.rect.top ?? visibleAnchor.getBoundingClientRect().top) - scrollerRect.top,
+    textOffset: textPosition?.offset ?? null,
   }
 }
 
@@ -1192,6 +1201,75 @@ function findUserViewportAnchor(
     Array.from(message.querySelectorAll<HTMLElement>(SCROLL_ANCHOR_SELECTOR))[anchor.anchorIndex] ??
     null
   )
+}
+
+function getViewportTextPosition(
+  element: HTMLElement,
+  scrollerRect: DOMRect
+): { offset: number; rect: DOMRect } | null {
+  const elementRect = element.getBoundingClientRect()
+  const y = Math.max(elementRect.top + 1, scrollerRect.top + 1)
+  const left = Math.max(elementRect.left + 1, scrollerRect.left + 1)
+  const right = Math.min(elementRect.right - 1, scrollerRect.right - 1)
+  if (right < left) return null
+
+  const documentWithCaretRange = document as Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+  }
+  const xCandidates = [left, (left + right) / 2, right]
+  for (const x of xCandidates) {
+    const range = documentWithCaretRange.caretRangeFromPoint?.(x, y)
+    if (!range || !element.contains(range.startContainer)) continue
+    const offset = getTextOffset(element, range.startContainer, range.startOffset)
+    if (offset === null) continue
+    const rect = getTextOffsetRect(element, offset, y)
+    if (rect) return { offset, rect }
+  }
+  return null
+}
+
+function getTextOffset(root: HTMLElement, target: Node, targetOffset: number): number | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let offset = 0
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node === target) {
+      return offset + Math.min(targetOffset, node.textContent?.length ?? 0)
+    }
+    offset += node.textContent?.length ?? 0
+  }
+  return null
+}
+
+function getTextOffsetRect(
+  root: HTMLElement,
+  textOffset: number,
+  targetY?: number
+): DOMRect | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let remainingOffset = textOffset
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const textLength = node.textContent?.length ?? 0
+    if (remainingOffset > textLength) {
+      remainingOffset -= textLength
+      continue
+    }
+    if (textLength === 0) continue
+
+    const startOffset = Math.min(remainingOffset, textLength - 1)
+    const range = document.createRange()
+    range.setStart(node, startOffset)
+    range.setEnd(node, startOffset + 1)
+    const rects = Array.from(range.getClientRects())
+    if (rects.length === 0) return null
+    if (targetY === undefined) return rects[0] ?? null
+    return (
+      rects.find(rect => rect.top <= targetY && rect.bottom >= targetY) ??
+      rects.reduce((closest, rect) =>
+        Math.abs(rect.top - targetY) < Math.abs(closest.top - targetY) ? rect : closest
+      )
+    )
+  }
+  return null
 }
 
 function createScrollSnapshot(

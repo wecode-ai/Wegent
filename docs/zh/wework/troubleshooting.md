@@ -56,6 +56,15 @@ localStorage.setItem("wework:debug-runtime", "1");
 
 点击侧边栏的云端状态重新授权。确认 Backend 地址来自团队管理员，并且浏览器能够访问登录页面。
 
+如果网络正常但云端状态偶尔显示不可用，先查看 Wework 前端日志中的以下记录：
+
+- `[Wework] HTTP ... is still pending after 5000ms.`：请求超过 5 秒仍未收到响应，说明问题发生在等待响应阶段。
+- `[Wework] HTTP ... completed slowly ...`：请求最终返回，记录总耗时、HTTP 状态码和传输方式。
+- `[Wework] HTTP ... failed.`：请求没有收到 HTTP 响应，查看 `phase: "transport"` 下的错误。
+- `[Wework] HTTP ... returned ...`：服务端已返回 HTTP 错误，查看 `phase: "http_error"` 下的状态码和错误信息。
+
+每条请求都有 `requestId`。在桌面客户端中，该值会通过 `X-Request-ID` 传给 Backend；只有慢响应或 HTTP 错误诊断事件包含后端返回的请求 ID 时，日志才会记录 `backendRequestId`。用这两个 ID 可以把客户端日志与 Backend 日志关联起来。日志不会记录 Authorization、token 或请求正文。
+
 ## 获取帮助
 
 在发生问题的任务右上角（或新对话状态的工具栏）点击 **反馈问题**。先填写问题描述（必填），可以在输入框中直接粘贴截图或文件，也可以点击 **添加附件** 通过文件选择器上传。确认问题描述后点击 **预览问题**，检查将要提交或导出的内容。

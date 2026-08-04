@@ -54,3 +54,19 @@ def test_loop_item_update_adapts_nulls_only_for_mysql() -> None:
         "completed_at": datetime(1970, 1, 1, 0, 0, 1),
     }
     assert sqlite_values == values
+
+
+def test_loop_item_update_preserves_nullable_mysql_columns() -> None:
+    values = {"parent_id": None, "due_at": None, "completed_at": None}
+
+    adapted = adapt_loop_node_values_for_dialect(
+        values,
+        "mysql",
+        frozenset({"completed_at"}),
+    )
+
+    assert adapted == {
+        "parent_id": None,
+        "due_at": None,
+        "completed_at": datetime(1970, 1, 1, 0, 0, 1),
+    }

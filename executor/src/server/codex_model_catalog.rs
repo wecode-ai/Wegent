@@ -265,8 +265,8 @@ fn kimi_k3_model_entry() -> Value {
         {"effort": "high", "description": "Greater reasoning depth for complex work"},
         {"effort": "max", "description": "Maximum reasoning for long-horizon tasks"}
     ]);
-    entry["context_window"] = Value::Number(262_144.into());
-    entry["max_context_window"] = Value::Number(262_144.into());
+    entry["context_window"] = Value::Number(1_048_576.into());
+    entry["max_context_window"] = Value::Number(1_048_576.into());
     entry["truncation_policy"] = json!({"mode": "tokens", "limit": 10_000});
     entry
 }
@@ -579,7 +579,7 @@ mod tests {
             .as_str()
             .is_some_and(|instructions| instructions.len() > 10_000
                 && !instructions.contains("based on GPT-5")));
-        assert_eq!(models[0]["context_window"], 262_144);
+        assert_eq!(models[0]["context_window"], 1_048_576);
         assert_eq!(models[0]["default_reasoning_level"], "low");
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
         assert_eq!(models[1]["slug"], KIMI_K27_MODEL);

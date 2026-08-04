@@ -19,6 +19,8 @@ from app.models.skill_binary import SkillBinary
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
 from app.schemas.installed_plugin import BuiltinPluginInstallRequest
 from app.services.builtin_plugin_registry import (
+    BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
+    BUILTIN_PLUGIN_NAMES,
     BUILTIN_PLUGIN_OWNER_ID,
     BUILTIN_SITES_PLUGIN_NAME,
     BuiltinPluginDefinition,
@@ -220,15 +222,27 @@ def test_publish_and_install_marketplace_plugin(test_db, test_user):
     assert relisted.items[0].installed is True
 
 
-def test_user_cannot_publish_builtin_plugin_to_marketplace(test_db, test_user):
+def test_application_plugins_are_registered_as_builtins():
+    assert BUILTIN_PLUGIN_NAMES == (
+        BUILTIN_SITES_PLUGIN_NAME,
+        BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
+    )
+
+
+@pytest.mark.parametrize("plugin_name", BUILTIN_PLUGIN_NAMES)
+def test_user_cannot_publish_builtin_plugin_to_marketplace(
+    test_db,
+    test_user,
+    plugin_name,
+):
     service = InstalledPluginService()
 
     with pytest.raises(HTTPException) as exc_info:
         service.publish_marketplace_plugin(
             db=test_db,
             user_id=test_user.id,
-            package_bytes=_create_plugin_zip(name=BUILTIN_SITES_PLUGIN_NAME),
-            filename=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
+            package_bytes=_create_plugin_zip(name=plugin_name),
+            filename=f"{plugin_name}.zip",
             visibility="public",
             featured=True,
         )
@@ -246,14 +260,15 @@ def test_user_cannot_publish_builtin_plugin_to_marketplace(test_db, test_user):
     )
 
 
-def test_system_builtin_publication_forces_public_featured(test_db):
+@pytest.mark.parametrize("plugin_name", BUILTIN_PLUGIN_NAMES)
+def test_system_builtin_publication_forces_public_featured(test_db, plugin_name):
     service = InstalledPluginService()
 
     item = service.publish_marketplace_plugin(
         db=test_db,
         user_id=BUILTIN_PLUGIN_OWNER_ID,
-        package_bytes=_create_plugin_zip(name=BUILTIN_SITES_PLUGIN_NAME),
-        filename=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
+        package_bytes=_create_plugin_zip(name=plugin_name),
+        filename=f"{plugin_name}.zip",
         visibility="personal",
         featured=False,
     )
@@ -493,16 +508,18 @@ def test_install_builtin_plugin_rejects_missing_system_item(test_db, test_user):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("plugin_name", BUILTIN_PLUGIN_NAMES)
 async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     test_db,
     test_user,
     monkeypatch,
+    plugin_name,
 ):
     InstalledPluginService().publish_marketplace_plugin(
         db=test_db,
         user_id=BUILTIN_PLUGIN_OWNER_ID,
-        package_bytes=_create_plugin_zip(name=BUILTIN_SITES_PLUGIN_NAME),
-        filename=f"{BUILTIN_SITES_PLUGIN_NAME}.zip",
+        package_bytes=_create_plugin_zip(name=plugin_name),
+        filename=f"{plugin_name}.zip",
         visibility="public",
         featured=True,
     )
@@ -516,7 +533,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
             plugins=[
                 {
                     "id": installed_plugin_id,
-                    "name": BUILTIN_SITES_PLUGIN_NAME,
+                    "name": plugin_name,
                     "status": "synced",
                 }
             ],
@@ -536,7 +553,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     )
 
     response = await ensure_builtin_plugin_installed(
-        BUILTIN_SITES_PLUGIN_NAME,
+        plugin_name,
         BuiltinPluginInstallRequest(device_id="device-1"),
         db=test_db,
         current_user=test_user,
@@ -545,7 +562,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     assert len(requested_syncs) == 1
     assert requested_syncs[0][0] == "device-1"
     assert requested_syncs[0][1] > 0
-    assert response.plugin.spec.source.pluginKey == BUILTIN_SITES_PLUGIN_NAME
+    assert response.plugin.spec.source.pluginKey == plugin_name
     assert response.sync is not None
     assert response.sync.success is True
     assert response.sync.mode == "merge"

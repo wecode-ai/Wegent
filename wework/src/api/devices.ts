@@ -22,7 +22,7 @@ import type {
   UpgradeDeviceResponse,
 } from '@/types/devices'
 import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
-import type { HttpClient } from './http'
+import type { HttpClient, HttpRequestOptions } from './http'
 
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 
@@ -284,8 +284,12 @@ function splitAbsoluteWorkspaceFilePath(filePath: string): {
 }
 
 export function createDeviceApi(client: HttpClient) {
-  async function fetchDevices(): Promise<DeviceInfo[]> {
-    const response = await client.get<DeviceListResponse>('/devices')
+  async function fetchDevices(
+    requestOptions?: Pick<HttpRequestOptions, 'signal'>
+  ): Promise<DeviceInfo[]> {
+    const response = requestOptions
+      ? await client.get<DeviceListResponse>('/devices', requestOptions)
+      : await client.get<DeviceListResponse>('/devices')
     return filterClaudeCodeDevices(response.items)
   }
 

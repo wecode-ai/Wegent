@@ -343,6 +343,7 @@ async fn handle_for_token(
         &upstream.api_format,
         upstream.convert_custom_tools,
         upstream.max_output_tokens,
+        upstream.routing_model_id.as_deref(),
         &request_body,
         history.as_ref(),
     )
@@ -846,6 +847,7 @@ async fn prepare_request_with_history(
     api_format: &str,
     convert_custom_tools: bool,
     max_output_tokens: Option<u64>,
+    model_hint: Option<&str>,
     body: &[u8],
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -871,7 +873,13 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, convert_custom_tools, max_output_tokens, &body);
+        return prepare_request_with_model_hint(
+            api_format,
+            convert_custom_tools,
+            max_output_tokens,
+            model_hint,
+            &body,
+        );
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -891,19 +899,38 @@ async fn prepare_request_with_history(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize enriched Codex request: {error}"),
     })?;
-    prepare_request(
+    prepare_request_with_model_hint(
         api_format,
         convert_custom_tools,
         max_output_tokens,
+        model_hint,
         &enriched,
     )
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(test)]
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
     max_output_tokens: Option<u64>,
+    body: &[u8],
+) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
+    prepare_request_with_model_hint(
+        api_format,
+        convert_custom_tools,
+        max_output_tokens,
+        None,
+        body,
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn prepare_request_with_model_hint(
+    api_format: &str,
+    convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
+    model_hint: Option<&str>,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
@@ -936,8 +963,10 @@ fn prepare_request(
         return Ok((body, conversion, expanded_browser_tools));
     }
     let (converted, context) = match api_format {
-        "openai-chat-completions" => chat::responses_to_chat(&responses_body)
-            .map(|(body, context)| (body, Conversion::Chat(context))),
+        "openai-chat-completions" => {
+            chat::responses_to_chat_with_model_hint(&responses_body, model_hint)
+                .map(|(body, context)| (body, Conversion::Chat(context)))
+        }
         "anthropic-messages" => anthropic::responses_to_anthropic(&responses_body)
             .map(|(body, context)| (body, Conversion::Anthropic(context))),
         _ => return Ok((body.to_vec(), None, HashSet::new())),
@@ -1911,6 +1940,31 @@ mod tests {
         assert_valid_api_id(call_id);
         assert_ne!(call_id, "functions.exec_command:0");
         assert_eq!(output["tool_call_id"], call["id"]);
+        assert!(matches!(conversion, Some(Conversion::Chat(_))));
+    }
+
+    #[test]
+    fn chat_conversion_uses_the_routing_model_for_kimi_compatibility() {
+        let body = serde_json::to_vec(&json!({
+            "model": "cloud-model-resource-name",
+            "reasoning": {"effort": "low"},
+            "input": "hello"
+        }))
+        .expect("request body");
+
+        let (prepared, conversion, _) = prepare_request_with_model_hint(
+            "openai-chat-completions",
+            false,
+            None,
+            Some("wework-kimi-k3"),
+            &body,
+        )
+        .expect("chat request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["model"], "cloud-model-resource-name");
+        assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
+        assert!(prepared.get("reasoning_effort").is_none());
         assert!(matches!(conversion, Some(Conversion::Chat(_))));
     }
 

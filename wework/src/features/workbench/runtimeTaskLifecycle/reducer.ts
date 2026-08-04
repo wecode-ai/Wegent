@@ -8,11 +8,12 @@ export function reduceRuntimeTaskLifecycle(
     case 'executor_snapshot_received': {
       const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
       const expectedRunning = state.expectedExecutorRunning
+      const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        !isTerminalTaskStatus(event.task.status)
+        (!isTerminalTaskStatus(event.task.status) || hasIdentifiedActiveTurn)
       const executionPhase =
         snapshotRunning === null
           ? state.executionPhase
@@ -36,6 +37,7 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
+          !shouldIgnoreStaleSnapshot &&
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
           (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))

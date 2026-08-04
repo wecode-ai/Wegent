@@ -74,7 +74,7 @@ import type {
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
-import type { HttpClient } from './http'
+import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
 
 export function createRuntimeWorkApi(client: HttpClient) {
@@ -83,8 +83,12 @@ export function createRuntimeWorkApi(client: HttpClient) {
       void data
       return Promise.resolve(true)
     },
-    listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      return client.get('/runtime-work')
+    listRuntimeWork(
+      requestOptions?: Pick<HttpRequestOptions, 'signal'>
+    ): Promise<RuntimeWorkListResponse> {
+      return requestOptions
+        ? client.get('/runtime-work', requestOptions)
+        : client.get('/runtime-work')
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')

@@ -177,6 +177,27 @@ describe('timedWorkbenchBootstrapRequest', () => {
       vi.useRealTimers()
     }
   })
+
+  test('preserves plain-object rejection name and message in diagnostics', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reason = { name: 'CloudApiError', message: 'cloud unavailable' }
+
+    try {
+      const result = await timedWorkbenchBootstrapRequest(
+        'cloudDevices',
+        Promise.reject(reason),
+        1000
+      )
+
+      expect(result).toMatchObject({ status: 'rejected', reason })
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[Wework\] Workbench bootstrap cloudDevices failed after \d+ms\.$/),
+        reason
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
