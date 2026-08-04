@@ -19,8 +19,8 @@ def _resolve_user_by_employee_id(db, employee_id: str) -> Optional[User]:
     return db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
 
 
-def erp_auth_handler(token: str, request) -> Optional[Any]:
-    """Resolve the external MCP user from the internal gateway user header."""
+def _resolve_by_employee_id(request) -> Optional[Any]:
+    """Resolve the external MCP user from the internal gateway employee header."""
     employee_id = (request.headers.get("X-User-Name") or "").strip()
     if not employee_id:
         return None
@@ -33,3 +33,18 @@ def erp_auth_handler(token: str, request) -> Optional[Any]:
             id=user.id,
             user_name=user.user_name,
         )
+
+
+def erp_auth_handler(token: str, request) -> Optional[Any]:
+    """Authenticate the external MCP user by internal employee id or user token.
+
+    Accepts either credential: the internal gateway ``X-User-Name`` employee id
+    is tried first, then falls back to the open-source personal API key handler
+    so that external user tokens keep working. Returns None when neither
+    credential resolves to an active user.
+    """
+    user = _resolve_by_employee_id(request)
+    if user is not None:
+        return user
+
+    return mcp_server_module._default_external_auth_handler(token, request)
