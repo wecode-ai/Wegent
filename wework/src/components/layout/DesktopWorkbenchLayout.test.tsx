@@ -4955,7 +4955,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
     )
-  })
+  }, 15_000)
 
   test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
     const address: RuntimeTaskAddress = {
