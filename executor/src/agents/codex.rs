@@ -2373,6 +2373,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 &request.task_id,
                 upstream,
                 model.clone(),
+                request_model_switched(request),
             );
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
@@ -2391,6 +2392,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             &request.task_id,
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
             model.clone(),
+            request_model_switched(request),
         );
     } else {
         launch_config.model_provider = Some(inference_model_provider(&request.model_config));
@@ -2433,9 +2435,13 @@ fn configure_codex_router(
     task_id: &str,
     mut upstream: LocalModelProxyUpstream,
     routing_model_id: Option<String>,
+    model_switched: bool,
 ) {
     upstream.routing_model_id = routing_model_id;
     let local_token = local_model_proxy::register(task_id, upstream);
+    if model_switched {
+        local_model_proxy::mark_model_switch(&local_token);
+    }
     let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     let provider = codex_model_catalog::PROVIDER_ID;
@@ -2452,6 +2458,14 @@ fn configure_codex_router(
         ),
         format!("model_providers.{provider}.wire_api=\"responses\""),
     ]);
+}
+
+fn request_model_switched(request: &ExecutionRequest) -> bool {
+    request
+        .extra
+        .get("wework_model_switched")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn explicit_codex_upstream(

@@ -106,7 +106,7 @@ import {
   readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
-import { defaultNewChatModelSelection, disableCrossProviderModels } from './runtimeModelSelection'
+import { defaultNewChatModelSelection } from './runtimeModelSelection'
 import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
@@ -468,14 +468,7 @@ export function WorkbenchProvider({
         : null,
     [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
   )
-  const conversationModels = useMemo(
-    () =>
-      disableCrossProviderModels(
-        modelSelection.models,
-        state.currentRuntimeTask ? activeModel : null
-      ),
-    [activeModel, modelSelection.models, state.currentRuntimeTask]
-  )
+  const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,

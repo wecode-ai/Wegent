@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::queries::reconcile_persisted_codex_turn_status;
+use super::tasks::runtime_model_selection_changed;
 use super::*;
 
 #[tokio::test]
@@ -1232,6 +1233,51 @@ fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
             "options": {"reasoningEffort": "medium"}
         })
     );
+}
+
+#[test]
+fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle["modelSelection"] = json!({
+        "modelName": "gpt-5.6-sol",
+        "modelType": "runtime",
+        "options": {"reasoningEffort": "high"}
+    });
+
+    assert!(!runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "public",
+                "options": {}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "kimi-k3",
+                "modelType": "runtime",
+                "options": {}
+            }
+        })
+    ));
 }
 
 #[test]

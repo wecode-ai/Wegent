@@ -292,21 +292,17 @@ const LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT = 'WEWORK_MODEL_SWITCH_PROTOCOL_EXEC_C
 const PROVIDER_SWITCH_LUNA_OPTION_ID = 'local-model:desktop-e2e-luna-overseas'
 const PROVIDER_SWITCH_LUNA_LABEL = 'GPT 5.6 Luna (海外)'
 const PROVIDER_SWITCH_LUNA_MODEL_ID = 'gpt-5.6-luna'
-const PROVIDER_SWITCH_SOL_OPTION_ID = 'gpt-5.6-sol'
-const PROVIDER_SWITCH_SOL_LABEL = 'GPT 5.6 Sol'
-// Official Codex option used to verify the provider boundary restriction. The
-// local E2E Codex catalog is classified as third-party (custom provider), so
+// The local E2E Codex catalog is classified as third-party (custom provider), so
 // the official option is served from the cloud model catalog with a model id
-// that does not collide with the local Codex catalog (otherwise the catalog
-// merge drops it as a duplicate runtime Codex model).
+// that does not collide with the local Codex catalog.
 const PROVIDER_SWITCH_OFFICIAL_OPTION_ID = 'codex-gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_ID = 'gpt-5.5'
 const PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL = 'GPT 5.5'
 const PROVIDER_SWITCH_PROMPT =
-  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with Sol.'
+  'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH: fail on Luna, then retry this turn with official GPT.'
 const PROVIDER_SWITCH_FAILURE = 'WEWORK_DESKTOP_E2E_LUNA_INTENTIONAL_FAILURE'
-const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_SOL_COMPLETE'
+const PROVIDER_SWITCH_COMPLETION = 'WEWORK_DESKTOP_E2E_PROVIDER_SWITCH_GPT_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_PUBLIC_MODEL_NAME = 'desktop-e2e-public-model'
 const CLOUD_PUBLIC_MODEL_LABEL = 'Desktop E2E Public Model'
@@ -4968,7 +4964,7 @@ async function selectE2EModel(
   )
 }
 
-async function verifyProviderBoundaryRestriction(control, composerSelector) {
+async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
@@ -4994,53 +4990,36 @@ async function verifyProviderBoundaryRestriction(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-selector-menu"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}`)
-  const targetModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_SOL_OPTION_ID}"]`
-  await control.command('waitFor', targetModelSelector, {
-    text: PROVIDER_SWITCH_SOL_LABEL,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const targetModelText = await control.command('getText', targetModelSelector)
-  assert.ok(
-    targetModelText.includes(PROVIDER_SWITCH_SOL_LABEL),
-    'The target model option did not display the expected model label'
-  )
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const officialModelText = await control.command('getText', officialModelSelector)
-  assert.ok(
-    officialModelText.includes(PROVIDER_SWITCH_OFFICIAL_LABEL),
-    'The target model option did not display the expected model label'
-  )
-  assert.doesNotMatch(
-    officialModelText,
-    /官方 Codex|Official Codex/,
-    'The target model option displayed the provider restriction inline'
-  )
-  await assert.rejects(
-    control.command('click', officialModelSelector),
-    /disabled/,
-    'The official Codex option remained selectable in a third-party conversation'
-  )
+  await control.command('click', officialModelSelector)
+  const selectionSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (selectionSnapshot.testIds.includes('model-switch-warning-dialog')) {
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="model-switch-warning-confirm-button"]',
+      {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      }
+    )
+  }
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_COMPLETION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
-    1,
-    'Selecting the disabled official Codex option unexpectedly sent another request'
+    2,
+    'The cross-provider retry did not make one Luna request and one official GPT request'
   )
-  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  assert.ok(
-    snapshot.testIds.includes('model-selector-menu'),
-    'The model selector closed after clicking a disabled cross-provider option'
-  )
-  assert.ok(
-    !snapshot.testIds.includes('model-switch-warning-dialog'),
-    'A provider-switch confirmation appeared for a blocked cross-provider option'
-  )
-  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    text: PROVIDER_SWITCH_OFFICIAL_LABEL,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -9749,10 +9728,10 @@ class DesktopE2EServer {
     if (promptRequestCount === 2) {
       assert.equal(
         body.model,
-        PROVIDER_SWITCH_SOL_OPTION_ID,
-        `The provider-switch retry was still routed to ${String(body.model)}`
+        PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
+        `The provider-switch retry was routed to ${String(body.model)} instead of official GPT`
       )
-      const responseId = 'provider-switch-sol-complete'
+      const responseId = 'provider-switch-gpt-complete'
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PROVIDER_SWITCH_COMPLETION),
@@ -13211,7 +13190,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           }
         }
         phase = 'provider-switch-retry'
-        await verifyProviderBoundaryRestriction(control, composerSelector)
+        await verifyCrossProviderSwitchRetry(control, composerSelector)
         await writeFile(
           join(resultDir, 'model-switch-protocol-verification.json'),
           `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
