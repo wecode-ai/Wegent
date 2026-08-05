@@ -1678,6 +1678,15 @@ describe('PluginsWorkspace', () => {
     await waitFor(() => expect(promptCard).toHaveFocus())
   })
 
+  test('opens cloud marketplace plugin detail from a plugin route', async () => {
+    render(
+      <PluginsWorkspace pluginReference={{ pluginName: 'documents', marketplaceName: 'wegent' }} />
+    )
+
+    expect(await screen.findByTestId('plugin-detail-back-button')).toBeInTheDocument()
+    expect(screen.getByText('Create and edit documents')).toBeInTheDocument()
+  })
+
   test('keeps the resolved marketplace logo on installed plugin details', async () => {
     const marketplaceLogo = 'data:image/svg+xml;base64,PHN2Zy8+'
     Object.defineProperty(window, '__TAURI_INTERNALS__', {

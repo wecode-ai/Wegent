@@ -17,6 +17,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getRuntimeConfig } from '@/config/runtime'
+import { parsePluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 const PluginsWorkspace = lazy(() =>
@@ -81,7 +82,7 @@ function PluginsWorkspaceRouteFallback({
   )
 }
 
-export function PluginsPage() {
+export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
@@ -283,6 +284,7 @@ export function PluginsPage() {
           }
         >
           <PluginsWorkspace
+            pluginReference={parsePluginDetailRoute(routeSearch)}
             cloudMarketplaceAvailable={true}
             cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
             cloudToken={cloudConnection.token}

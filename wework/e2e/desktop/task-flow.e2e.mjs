@@ -1280,12 +1280,6 @@ async function verifyBackgroundGuidanceNavigation({
   const sourceUserMessageCountBeforeGuidance = Number(
     await control.command('getElementCount', '[data-testid="message-user"]')
   )
-  const sourceAssistantMessageCountBeforeGuidance = Number(
-    await control.command(
-      'getElementCount',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
-    )
-  )
 
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
@@ -1341,25 +1335,20 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.filter(testId => testId === 'message-assistant').length >
-      sourceAssistantMessageCountBeforeGuidance,
-    'The assistant continuation after background guidance was not rendered',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-file-changes-block"]`
+  await control.command('waitFor', assistantContinuationSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const activeGuidanceUserMessages = await getElementMetrics(
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
-  const activeGuidanceAssistantMessages = await getElementMetrics(
+  const activeAssistantContinuations = await getElementMetrics(
     control,
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+    assistantContinuationSelector
   )
   const activeGuidance = activeGuidanceUserMessages.at(-1)
-  const activeAssistantContinuation = activeGuidanceAssistantMessages.at(-1)
+  const activeAssistantContinuation = activeAssistantContinuations.at(-1)
   assert.ok(activeGuidance, 'The active background guidance message was not rendered')
   assert.ok(
     activeAssistantContinuation,

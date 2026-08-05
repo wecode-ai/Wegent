@@ -170,10 +170,14 @@ function workspaceTabIframe(
   return src ? { src, title: app.label } : null
 }
 
-function workspaceTabAuxiliaryPage(path: string, experimentalFeaturesEnabled: boolean) {
+function workspaceTabAuxiliaryPage(
+  path: string,
+  search: string,
+  experimentalFeaturesEnabled: boolean
+) {
   if (path === '/plugins/manage') return <PluginManagementPage />
   if (path === '/plugins/create') return <PluginCreatePage />
-  if (path === '/plugins') return <PluginsPage />
+  if (path === '/plugins') return <PluginsPage routeSearch={search} />
   if (path === '/cloud-work') return <CloudWorkPage />
   if (path === '/sites') return <SitesPage />
   if (path === '/automations' && experimentalFeaturesEnabled) return <AutomationsPage />
@@ -201,8 +205,9 @@ function WorkspaceTabSurface({
   user,
 }: WorkspaceTabSurfaceProps) {
   const tabPath = workspaceTabPath(tab)
+  const tabSearch = new URL(tab.contentRoute, window.location.origin).search
   const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, experimentalFeaturesEnabled)
+  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch, experimentalFeaturesEnabled)
   const auxiliaryActive = Boolean(auxiliaryPage)
   const nativeWorkbenchActive = !iframe && !auxiliaryActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({

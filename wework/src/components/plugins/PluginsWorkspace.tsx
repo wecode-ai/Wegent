@@ -36,6 +36,7 @@ import {
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
 import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import { isWegentCloudMarketplace, type PluginReference } from '@/features/plugins/pluginNavigation'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import type {
@@ -908,6 +909,7 @@ interface PluginsWorkspaceProps {
   cloudToken?: string | null
   projectName?: string | null
   hasConversationContext?: boolean
+  pluginReference?: PluginReference | null
 }
 
 export function PluginsWorkspace({
@@ -918,6 +920,7 @@ export function PluginsWorkspace({
   cloudToken,
   projectName,
   hasConversationContext = false,
+  pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
@@ -2177,6 +2180,37 @@ export function PluginsWorkspace({
     [pluginMarketplaceState.items, selectedMarketplacePluginId]
   )
 
+  const requestedPluginName = pluginReference?.pluginName ?? null
+  const requestedMarketplaceName = pluginReference?.marketplaceName ?? null
+  useEffect(() => {
+    if (!requestedPluginName || !requestedMarketplaceName || pluginMarketplaceState.isLoading) {
+      return
+    }
+
+    const normalizedMarketplaceName = requestedMarketplaceName.toLowerCase()
+    const requestedPlugin = pluginMarketplaceState.items.find(item => {
+      if (item.name !== requestedPluginName) return false
+      const marketplaceId = marketplaceItemMarketplaceId(item)?.toLowerCase()
+      if (!marketplaceId) return isWegentCloudMarketplace(requestedMarketplaceName)
+      return (
+        marketplaceId === normalizedMarketplaceName ||
+        (isWegentCloudMarketplace(marketplaceId) &&
+          isWegentCloudMarketplace(requestedMarketplaceName))
+      )
+    })
+    if (!requestedPlugin) return
+
+    setSelectedPluginId(null)
+    setSelectedMarketplacePluginId(current =>
+      current === requestedPlugin.id ? current : requestedPlugin.id
+    )
+  }, [
+    pluginMarketplaceState.isLoading,
+    pluginMarketplaceState.items,
+    requestedMarketplaceName,
+    requestedPluginName,
+  ])
+
   useEffect(() => {
     const detailPlugin = selectedPlugin
       ? selectedPlugin
@@ -2636,7 +2670,10 @@ export function PluginsWorkspace({
               : undefined
           }
           showUninstall={showDetailActionMenu}
-          onBack={() => setSelectedMarketplacePluginId(null)}
+          onBack={() => {
+            setSelectedMarketplacePluginId(null)
+            if (requestedPluginName && requestedMarketplaceName) navigateTo('/plugins')
+          }}
           onToggle={() => {
             if (canUpdate) {
               installMarketplacePlugin(selectedMarketplacePlugin)
