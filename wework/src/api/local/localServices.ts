@@ -113,7 +113,6 @@ import {
 import {
   buildLocalModelRequestUrl,
   DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
-  DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -121,6 +120,7 @@ import {
   markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
+  VISION_SIDECAR_CATALOG_MODEL_ID,
 } from '@/features/model-settings/localModelSettings'
 import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -138,6 +138,7 @@ import {
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
   CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
+  CLOUD_MODEL_VISION_SIDECAR_OPTION,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -831,6 +832,61 @@ function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unkn
   }
 }
 
+function cloudVisionSidecarConfig(
+  runtime: string,
+  modelOptions: Record<string, string> | undefined,
+  cloudModelGateway: CloudModelGateway
+): Record<string, unknown> | null {
+  const raw = modelOptions?.[CLOUD_MODEL_VISION_SIDECAR_OPTION]
+  if (!raw) return null
+
+  let sidecar: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Cloud vision sidecar reference is invalid')
+    }
+    sidecar = parsed as Record<string, unknown>
+  } catch (error) {
+    throw new Error('Cloud vision sidecar reference is invalid', { cause: error })
+  }
+
+  const modelName = stringValue(sidecar.modelName)
+  const modelType = stringValue(sidecar.modelType)
+  const namespace = stringValue(sidecar.namespace)
+  const resourceUserId = sidecar.resourceUserId
+  const apiFormat = stringValue(sidecar.apiFormat)
+  if (
+    !modelName ||
+    !isCloudModelType(modelType) ||
+    !namespace ||
+    typeof resourceUserId !== 'number' ||
+    !Number.isInteger(resourceUserId) ||
+    resourceUserId < 0 ||
+    !apiFormat ||
+    !['openai-responses', 'openai-chat-completions', 'anthropic-messages'].includes(apiFormat)
+  ) {
+    throw new Error('Cloud vision sidecar reference is incomplete')
+  }
+
+  return {
+    enabled: true,
+    request_url: `${cloudModelGateway.baseUrl.replace(/\/+$/, '')}/responses`,
+    api_format: apiFormat,
+    api_key: cloudModelGateway.apiKey,
+    model_id: modelName,
+    default_headers: {
+      'X-Wegent-Model-Type': modelType,
+      'X-Wegent-Model-Namespace': namespace,
+      'X-Wegent-Model-User-Id': String(resourceUserId),
+      'X-Wegent-Upstream-Header-wecode-executor': wecodeExecutorForRuntime(runtime),
+      'X-Wegent-Upstream-Header-wecode-source': 'wegent-local',
+    },
+    max_descriptions_per_turn: 8,
+    timeout_ms: 45_000,
+  }
+}
+
 function wecodeExecutorForRuntime(runtime: string): string {
   const normalized = runtime
     .trim()
@@ -860,10 +916,9 @@ function localRuntimeModelConfig(
       localModel.apiFormat
     )
     const visionSidecar = localVisionSidecarConfig(localModel)
-    const codexCatalogModelId =
-      visionSidecar && localModel.providerProfileId === 'deepseek'
-        ? DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID
-        : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
+    const codexCatalogModelId = visionSidecar
+      ? VISION_SIDECAR_CATALOG_MODEL_ID
+      : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: localModel.modelId,
@@ -915,10 +970,12 @@ function localRuntimeModelConfig(
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
     const maxOutputTokens = Number(modelOptions?.[CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION])
-    const codexCatalogModelId =
-      modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     const upstreamApiFormat =
       modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
+    const visionSidecar = cloudVisionSidecarConfig(runtime, modelOptions, cloudModelGateway)
+    const codexCatalogModelId = visionSidecar
+      ? VISION_SIDECAR_CATALOG_MODEL_ID
+      : modelOptions?.[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: modelName,
@@ -943,6 +1000,7 @@ function localRuntimeModelConfig(
       ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
         ? { max_output_tokens: maxOutputTokens }
         : {}),
+      ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {

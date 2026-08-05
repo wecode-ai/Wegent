@@ -299,9 +299,8 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
           },
           {
             id: 'desktop-e2e-vision-main',
-            providerProfileId: 'deepseek' as const,
             displayName: 'Desktop E2E Vision Main',
-            modelId: 'deepseek-v4-flash',
+            modelId: 'desktop-e2e-local-vision-main-upstream',
             apiFormat: 'openai-responses' as const,
             toolProfile: 'custom' as const,
             requestPath: '/v1/responses',
