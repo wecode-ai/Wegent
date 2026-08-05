@@ -766,20 +766,18 @@ export function useWorkbenchDataRefresh({
   )
 
   const refreshDevices = useCallback(
-    async (options?: { useCacheFallback?: boolean; syncCloud?: boolean }) => {
+    async (options?: { useCacheFallback?: boolean }) => {
       const devices = await loadDevicesForRefresh(options)
       dispatch({
         type: 'devices_refreshed',
         devices,
         standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
       })
-      if (options?.syncCloud !== false) {
-        void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
-          projects: state.projects,
-          standaloneDeviceId: state.standaloneDeviceId,
-          trigger: 'manual-refresh',
-        }).catch(() => undefined)
-      }
+      void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
+        projects: state.projects,
+        standaloneDeviceId: state.standaloneDeviceId,
+        trigger: 'manual-refresh',
+      }).catch(() => undefined)
     },
     [
       dispatch,
