@@ -4957,6 +4957,50 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 15_000)
 
+  test('editing a temporary chat queued message replaces draft attachments', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-queued-attachments',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      options?.onRuntimeTaskOptimisticOpen?.(address)
+      return address
+    })
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
+
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['queued attachment'], 'queued-attachment.txt', { type: 'text/plain' })
+    )
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toBeInTheDocument()
+
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['draft attachment'], 'draft-attachment.txt', { type: 'text/plain' })
+    )
+    expect(await within(sideChat).findByTitle('draft attachment')).toBeInTheDocument()
+
+    await userEvent.click(within(sideChat).getByTestId(/queue-more-button-/))
+    await userEvent.click(await screen.findByTestId(/queue-edit-button-/))
+
+    expect(sideChatInput).toHaveValue('queued follow-up')
+    expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
+    expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
+    expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
+  }, 15_000)
+
   test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',

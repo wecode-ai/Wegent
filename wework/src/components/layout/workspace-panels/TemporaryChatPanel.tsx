@@ -472,6 +472,7 @@ export function TemporaryChatPanel({
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
       setInput(queuedMessage.content)
+      sideChatProjectChat.resetAttachments()
       queuedMessage.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
