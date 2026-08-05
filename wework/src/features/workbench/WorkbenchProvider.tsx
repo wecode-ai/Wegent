@@ -253,6 +253,7 @@ export function WorkbenchProvider({
   >(new Map())
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localAppsInflightRef = useRef<Promise<LocalDeviceApp[]> | null>(null)
+  const localAppsLoadGenerationRef = useRef(0)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
@@ -1616,6 +1617,7 @@ export function WorkbenchProvider({
       return localAppsInflightRef.current
     }
 
+    const loadGeneration = localAppsLoadGenerationRef.current
     const loadPromise = (async () => {
       let apps: LocalDeviceApp[] = []
       let installedPlugins: InstalledPlugin[] = []
@@ -1680,6 +1682,10 @@ export function WorkbenchProvider({
         enrichComposerApps(apps, installedPlugins),
         installedPlugins
       )
+      // Ignore completions from loads that started before a skills-changed invalidation.
+      if (loadGeneration !== localAppsLoadGenerationRef.current) {
+        return apps
+      }
       localAppsCacheRef.current = {
         expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
         apps,
@@ -1711,12 +1717,14 @@ export function WorkbenchProvider({
     localSkillsCacheRef.current.clear()
     localAppsCacheRef.current = null
     localAppsInflightRef.current = null
+    localAppsLoadGenerationRef.current += 1
     void listLocalApps()
 
     const clearLocalSkillCache = () => {
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
       localAppsInflightRef.current = null
+      localAppsLoadGenerationRef.current += 1
       clearComposerAppsSnapshot()
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)

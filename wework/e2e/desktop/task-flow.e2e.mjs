@@ -4848,10 +4848,21 @@ async function verifyMarketplacePluginLifecycle({
 
   await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
   await control.command('click', '[data-testid="composer-plugin-picker-button"]')
-  const composerPluginSelector = `[data-testid="composer-plugin-picker-item-plugin:${PLUGIN_NAME}"]`
-  await control.command('waitFor', composerPluginSelector, {
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  const composerPluginSelector = `[data-testid="composer-plugin-picker-item-plugin:${PLUGIN_NAME}"]`
+  // Search so the plugin is not missed when the menu truncates to the first page.
+  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+    value: PLUGIN_NAME,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
+    'The installed plugin did not appear in the composer plugin picker',
+    DEFAULT_STEP_TIMEOUT_MS,
+    '[data-testid="composer-plugin-picker"]'
+  )
   await control.command('click', composerPluginSelector)
   await waitForSnapshot(
     control,
