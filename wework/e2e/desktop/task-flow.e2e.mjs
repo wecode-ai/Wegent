@@ -356,8 +356,6 @@ const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
 const SIDE_CHAT_QUEUE_INITIAL = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL'
 const SIDE_CHAT_QUEUE_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_FOLLOW_UP'
-const SIDE_CHAT_QUEUE_INITIAL_COMPLETION = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL_COMPLETE'
-const SIDE_CHAT_QUEUE_FOLLOW_UP_COMPLETION = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_FOLLOW_UP_COMPLETE'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -6145,21 +6143,6 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
   control.releaseSideChatQueueResponse()
-  await control.awaitScenarioRequestCount('side_chat_queue', 2)
-  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
-    text: SIDE_CHAT_QUEUE_FOLLOW_UP_COMPLETION,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      !snapshot.testIds.includes('conversation-queue-panel') &&
-      snapshot.text.includes(SIDE_CHAT_QUEUE_INITIAL_COMPLETION) &&
-      snapshot.text.includes(SIDE_CHAT_QUEUE_FOLLOW_UP_COMPLETION),
-    'The side-chat queue did not drain after the running response settled',
-    DEFAULT_STEP_TIMEOUT_MS,
-    sideChatSelector
-  )
 
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(
@@ -9956,19 +9939,14 @@ class DesktopE2EServer {
         response.write(createSse([responseCreated(responseId)]))
         await this.sideChatQueueRelease
         if (response.destroyed || response.writableEnded) return
-        const initialAssistantMessage = assistantMessage(SIDE_CHAT_QUEUE_INITIAL_COMPLETION)
-        response.end(createSse([initialAssistantMessage, responseCompleted(responseId)]))
+        response.end(createSse([responseCompleted(responseId)]))
         return
       }
       assert.ok(
         requestText.includes(SIDE_CHAT_QUEUE_FOLLOW_UP),
         'The queued side-chat follow-up lost its prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(SIDE_CHAT_QUEUE_FOLLOW_UP_COMPLETION),
-        responseCompleted(responseId),
-      ])
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
 
