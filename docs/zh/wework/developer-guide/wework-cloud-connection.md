@@ -108,7 +108,7 @@ API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` be
 
 “测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。`custom` Responses 模式使用 Codex 的 `apply_patch` custom tool 名称和 grammar 完成探针，`function` 模式使用普通函数探针。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
 
-DeepSeek V4-Flash 是内置 provider profile：上游地址为 `https://api.deepseek.com/responses`，模型目录 ID 为 `wework-deepseek-v4-flash`，上下文窗口为 1,048,576 tokens，推理等级支持 `low`、`high`、`max` 且默认使用 `high`。模型目录开启并行工具、multi-agent v2 和 Web Search，只声明文本输入，不声明图片生成。Wework 从 DeepSeek `/models` 发现模型后只保留当前 Codex profile 支持的 `deepseek-v4-flash`；旧版由该 profile 管理的默认 Chat Completions 配置会在读取时迁移到 Responses API、`custom` 工具模式和实时搜索。
+DeepSeek V4-Flash 和 V4-Pro 是内置 provider profile：上游地址为 `https://api.deepseek.com/responses`，模型目录 ID 分别为 `wework-deepseek-v4-flash` 和 `wework-deepseek-v4-pro`，上下文窗口均为 1,048,576 tokens，推理等级支持 `low`、`high`、`max` 且默认使用 `high`。模型目录开启并行工具、multi-agent v2 和 Web Search，只声明文本输入，不声明图片生成。Wework 从 DeepSeek `/models` 发现模型后只保留当前 Codex profile 支持的 `deepseek-v4-flash` 和 `deepseek-v4-pro`；旧版由该 profile 管理的 Chat Completions 配置会在读取时迁移到 Responses API、`custom` 工具模式和实时搜索。
 
 在云端或远程设备中首次选择本地模型，或者本地模型配置发生变化后再次使用时，Wework 会在真正创建或继续任务之前显示确认框。用户确认后，Wework 将当前本地自定义模型目录写入目标 Executor，使用 `ifIdle` 语义重启该设备维护的 persistent Codex app-server，并通过 `model/list` 校验目标模型已经加载；校验成功后才继续发送当前消息。同一设备和同一配置版本在当前 Wework 会话内只需要确认一次。
 

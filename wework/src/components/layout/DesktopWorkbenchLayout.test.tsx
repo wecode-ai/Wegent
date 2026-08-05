@@ -2552,14 +2552,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
     expect(main).not.toHaveClass('ml-1.5')
 
-    fireEvent.pointerEnter(preview)
+    await userEvent.click(within(preview).getByTestId('collapse-sidebar-button'))
 
-    expect(preview).toHaveClass('translate-x-0', 'opacity-100')
-
-    fireEvent.pointerLeave(preview)
-
-    expect(preview).toHaveClass('pointer-events-none', '-translate-x-full', 'opacity-100')
-    expect(main).not.toHaveClass('ml-1.5')
+    expect(screen.getByTestId('desktop-sidebar')).toHaveStyle({ width: '240px' })
+    expect(screen.getByTestId('desktop-sidebar')).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.queryByTestId('desktop-sidebar-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-sidebar-hover-edge')).not.toBeInTheDocument()
   })
 
   test('keeps sidebar controls out of the page chrome in Tauri', async () => {

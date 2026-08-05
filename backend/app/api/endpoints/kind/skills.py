@@ -1207,6 +1207,7 @@ def list_unified_skills(
     from app.services.group_permission import get_user_groups
 
     user_skills = []
+    user_skill_keys = set()
     user_skill_names = set()
     user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
         db, current_user.id
@@ -1334,7 +1335,9 @@ def list_unified_skills(
 
     # Convert Kind objects to response format
     for kind in skill_kinds:
-        if kind.name not in user_skill_names:
+        skill_key = (kind.namespace, kind.name)
+        if skill_key not in user_skill_keys:
+            user_skill_keys.add(skill_key)
             user_skill_names.add(kind.name)
             spec = kind.json.get("spec", {})
             capability = spec.get("capability") or {}

@@ -336,5 +336,7 @@ describe('DesktopSettingsMenu', () => {
     )
     expect(await screen.findByText('1,126.7 / 1,042 元')).toBeInTheDocument()
     expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toBeInTheDocument()
+    expect(screen.getByText('1,126.7 / 1,042 元')).toHaveClass('break-words')
+    expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toHaveClass('break-words')
   })
 })

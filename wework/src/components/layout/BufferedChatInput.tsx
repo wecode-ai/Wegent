@@ -1,5 +1,10 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
+import {
+  ChatInput,
+  type ChatInputHandle,
+  type ChatInputProps,
+  type ChatSubmitOptions,
+} from '@/components/chat/ChatInput'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -9,6 +14,8 @@ export interface BufferedChatInputInsertion {
 interface BufferedChatInputProps extends ChatInputProps {
   insertion?: BufferedChatInputInsertion | null
 }
+
+const DRAFT_FLUSH_DELAY_MS = 300
 
 export const BufferedChatInput = memo(function BufferedChatInput({
   value,
@@ -27,44 +34,88 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftState.draft : value
   const draftRef = useRef(draft)
   const appliedInsertionIdRef = useRef<number | null>(null)
+  const flushTimeoutRef = useRef<number | null>(null)
+  const composerRef = useRef<ChatInputHandle>(null)
+  const committedValueRef = useRef(value)
+  const pendingChangeRef = useRef(onChange)
 
+  const cancelPendingFlush = useCallback(() => {
+    if (flushTimeoutRef.current !== null) {
+      window.clearTimeout(flushTimeoutRef.current)
+      flushTimeoutRef.current = null
+    }
+  }, [])
+
+  const flushDraft = useCallback(
+    (nextDraft: string) => {
+      cancelPendingFlush()
+      pendingChangeRef.current = onChange
+      onChange(nextDraft)
+    },
+    [cancelPendingFlush, onChange]
+  )
+
+  const scheduleDraftFlush = useCallback(
+    (nextDraft: string) => {
+      cancelPendingFlush()
+      pendingChangeRef.current = onChange
+      flushTimeoutRef.current = window.setTimeout(() => {
+        flushTimeoutRef.current = null
+        onChange(nextDraft)
+      }, DRAFT_FLUSH_DELAY_MS)
+    },
+    [cancelPendingFlush, onChange]
+  )
+
+  // Sync external value changes into composer and local state.
   useEffect(() => {
+    const shouldSetComposer = value !== draftRef.current
     draftRef.current = value
+    committedValueRef.current = value
+    setDraftState({ scopeKey, sourceValue: value, draft: value })
+    if (shouldSetComposer) {
+      composerRef.current?.setValue(value, value.length)
+    }
+  }, [scopeKey, value])
+
+  // Flush a pending draft whenever it would be discarded (scope switch or unmount).
+  useEffect(() => {
     return () => {
       const pendingDraft = draftRef.current
-      if (pendingDraft !== value) {
-        onChange(pendingDraft)
+      if (pendingDraft !== committedValueRef.current) {
+        cancelPendingFlush()
+        pendingChangeRef.current(pendingDraft)
       }
     }
-  }, [onChange, scopeKey, value])
+  }, [cancelPendingFlush, scopeKey])
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
     appliedInsertionIdRef.current = insertion.id
-    setDraftState(current => {
-      const currentDraft =
-        current.scopeKey === scopeKey && current.sourceValue === value ? current.draft : value
-      const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
-      draftRef.current = nextDraft
-      return {
-        scopeKey,
-        sourceValue: value,
-        draft: nextDraft,
-      }
-    })
-  }, [insertion, scopeKey, value])
+    const currentDraft = draftRef.current
+    const nextDraft = currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text
+    draftRef.current = nextDraft
+    setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
+    composerRef.current?.setValue(nextDraft, nextDraft.length)
+    scheduleDraftFlush(nextDraft)
+  }, [insertion, scheduleDraftFlush, scopeKey, value])
+
   const setDraft = useCallback(
     (nextDraft: string) => {
       draftRef.current = nextDraft
-      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
-      onChange(nextDraft)
+      scheduleDraftFlush(nextDraft)
     },
-    [onChange, scopeKey, value]
+    [scheduleDraftFlush]
   )
+
+  // Flush after the next frame so the editor state settles first.
+  const flushDraftNextFrame = useCallback(() => {
+    window.requestAnimationFrame(() => flushDraft(draftRef.current))
+  }, [flushDraft])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {
-      const submittedDraft = valueOverride ?? draft
+      const submittedDraft = valueOverride ?? draftRef.current
       if (options === undefined) {
         void onSubmit(submittedDraft)
       } else {
@@ -72,11 +123,24 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       }
       if (submittedDraft.trim()) {
         draftRef.current = ''
+        cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
+        composerRef.current?.setValue('', 0)
+        onChange('')
       }
     },
-    [draft, onSubmit, scopeKey]
+    [cancelPendingFlush, onChange, onSubmit, scopeKey]
   )
 
-  return <ChatInput {...props} value={draft} onChange={setDraft} onSubmit={handleSubmit} />
+  return (
+    <ChatInput
+      {...props}
+      ref={composerRef}
+      value={draft}
+      onChange={setDraft}
+      onBlur={flushDraftNextFrame}
+      onCompositionEnd={flushDraftNextFrame}
+      onSubmit={handleSubmit}
+    />
+  )
 })

@@ -19,7 +19,11 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
-import { installXtermRenderRecovery, refreshXterm } from './xtermRenderRecovery'
+import {
+  installXtermRenderRecovery,
+  logXtermRenderState,
+  refreshXterm,
+} from './xtermRenderRecovery'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -76,7 +80,18 @@ export function EmbeddedLocalTerminal({
 
   useEffect(() => {
     activeRef.current = active
-  }, [active])
+    const container = containerRef.current
+    if (!container) return
+    logXtermRenderState({
+      active,
+      container,
+      phase: 'active-changed',
+      sessionId,
+      taskId,
+      terminal: terminalRef.current,
+      terminalKind: 'local',
+    })
+  }, [active, sessionId, taskId])
 
   useEffect(() => {
     contextRef.current = { taskId, workspacePath, cwd, title }
@@ -234,6 +249,15 @@ export function EmbeddedLocalTerminal({
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
         refreshXterm(terminal)
+        logXtermRenderState({
+          active,
+          container,
+          phase: 'activation-complete',
+          sessionId,
+          taskId,
+          terminal,
+          terminalKind: 'local',
+        })
         terminal.focus()
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current
@@ -250,7 +274,7 @@ export function EmbeddedLocalTerminal({
     return () => {
       cancelAnimationFrame(frame)
     }
-  }, [active, sessionId, showWorkbenchBackground])
+  }, [active, sessionId, showWorkbenchBackground, taskId])
 
   return (
     <div

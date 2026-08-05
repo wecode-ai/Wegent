@@ -45,6 +45,7 @@ function buildListingsQuery(params?: ResourceLibraryListListingsParams): string 
   appendQueryParam(query, 'keyword', params?.keyword)
   appendQueryParam(query, 'tags', params?.tags)
   appendQueryParam(query, 'status', params?.status)
+  appendQueryParam(query, 'system_only', params?.systemOnly)
   appendQueryParam(query, 'target_namespace', params?.targetNamespace)
   appendQueryParam(query, 'cursor', params?.cursor)
   appendQueryParam(query, 'page', params?.page)

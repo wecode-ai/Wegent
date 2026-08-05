@@ -1560,6 +1560,67 @@ tags: ["public", "api", "test"]
         assert all(item["id"] != skill.id for item in removed_group_response.json())
         assert any(item["id"] == skill.id for item in retained_group_response.json())
 
+    def test_unified_skills_keep_personal_and_group_skills_with_same_name(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ):
+        """Personal and group skills may share a name without hiding either one."""
+        group = _create_group(test_db, test_user, "same-name-skill-group")
+        _add_group_member(test_db, group, test_user, "Developer")
+
+        personal_skill = Kind(
+            user_id=test_user.id,
+            kind="Skill",
+            name="same-name-skill",
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Skill",
+                "metadata": {
+                    "name": "same-name-skill",
+                    "namespace": "default",
+                },
+                "spec": {"description": "Personal skill"},
+            },
+            is_active=True,
+        )
+        group_skill = Kind(
+            user_id=test_user.id,
+            kind="Skill",
+            name="same-name-skill",
+            namespace=group.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Skill",
+                "metadata": {
+                    "name": "same-name-skill",
+                    "namespace": group.name,
+                },
+                "spec": {"description": "Group skill"},
+            },
+            is_active=True,
+        )
+        test_db.add_all([personal_skill, group_skill])
+        test_db.commit()
+
+        response = test_client.get(
+            "/api/v1/kinds/skills/unified",
+            params={"scope": "all"},
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 200
+        matching = [
+            item for item in response.json() if item["name"] == "same-name-skill"
+        ]
+        assert {item["namespace"] for item in matching} == {
+            "default",
+            group.name,
+        }
+
     def test_unified_skills_returns_hidden_public_skill_with_visible_flag(
         self,
         test_client: TestClient,

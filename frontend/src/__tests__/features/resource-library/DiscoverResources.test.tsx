@@ -110,6 +110,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'states.empty': '暂无资源',
         'states.error': '加载失败',
         'messages.install_success': '添加成功',
+        'marketplace_tags.all': '全部',
+        'marketplace_tags.featured': '精选',
       }
 
       return translations[key] ?? key
@@ -258,6 +260,36 @@ describe('DiscoverResources', () => {
     })
     expect(allTags).toHaveAttribute('aria-pressed', 'false')
     expect(technicalDevelopment).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('labels the unfiltered system marketplace as featured', async () => {
+    render(<DiscoverResources resourceType="agent" systemOnly />)
+
+    expect(await screen.findByTestId('marketplace-tag-filter-all')).toHaveTextContent('精选')
+    expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
+      resourceType: 'agent',
+      systemOnly: true,
+      targetNamespace: 'default',
+      cursor: undefined,
+      limit: 20,
+    })
+  })
+
+  it('includes regular marketplace resources after selecting a category', async () => {
+    render(<DiscoverResources resourceType="agent" systemOnly />)
+
+    await screen.findByTestId('marketplace-tag-filter-all')
+    fireEvent.click(screen.getByTestId('marketplace-tag-filter-technical_development'))
+
+    await waitFor(() =>
+      expect(mockResourceLibraryApi.listListings).toHaveBeenLastCalledWith({
+        resourceType: 'agent',
+        tags: ['technical_development'],
+        targetNamespace: 'default',
+        cursor: undefined,
+        limit: 20,
+      })
+    )
   })
 
   it('omits missing publisher metadata without reserving a placeholder', async () => {

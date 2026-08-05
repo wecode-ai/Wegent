@@ -91,6 +91,7 @@ export interface ResourceLibraryListListingsParams {
   keyword?: string
   tags?: string[]
   status?: ResourceLibraryListingStatus | string
+  systemOnly?: boolean
   targetNamespace?: string
   cursor?: string
   page?: number

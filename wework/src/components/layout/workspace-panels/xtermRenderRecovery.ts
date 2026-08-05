@@ -1,5 +1,37 @@
 import type { Terminal } from '@xterm/xterm'
 
+export function logXtermRenderState({
+  active,
+  container,
+  phase,
+  sessionId,
+  taskId,
+  terminal,
+  terminalKind,
+}: {
+  active: boolean
+  container: HTMLElement
+  phase: 'active-changed' | 'activation-complete'
+  sessionId: string
+  taskId?: string | null
+  terminal: Terminal | null
+  terminalKind: 'local' | 'remote'
+}): void {
+  console.info('[Wework][TerminalRender]', {
+    active,
+    clientHeight: container.clientHeight,
+    clientWidth: container.clientWidth,
+    documentVisibility: document.visibilityState,
+    hidden: container.closest('[hidden]') !== null,
+    phase,
+    rows: terminal?.rows ?? null,
+    cols: terminal?.cols ?? null,
+    sessionId,
+    taskId: taskId ?? null,
+    terminalKind,
+  })
+}
+
 export function refreshXterm(terminal: Terminal): void {
   if (terminal.rows <= 0) return
   terminal.refresh(0, terminal.rows - 1)

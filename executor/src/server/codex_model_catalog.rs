@@ -29,19 +29,36 @@ use crate::logging::log_executor_event;
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
+#[cfg(test)]
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
+#[cfg(test)]
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
+#[cfg(test)]
 pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
+#[cfg(test)]
 pub(crate) const VISION_SIDECAR_MODEL: &str = "wework-vision-sidecar";
+#[cfg(test)]
+pub(crate) const DEEPSEEK_V4_PRO_MODEL: &str = "wework-deepseek-v4-pro";
+#[cfg(test)]
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
+#[cfg(test)]
 const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
+#[cfg(test)]
 const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
+#[cfg(test)]
 const WEWORK_GPT_56_SOL_MODEL: &str = "wework-gpt-5.6-sol";
+#[cfg(test)]
 const WEWORK_GPT_56_TERRA_MODEL: &str = "wework-gpt-5.6-terra";
+#[cfg(test)]
 const WEWORK_GPT_56_LUNA_MODEL: &str = "wework-gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_BASE_INSTRUCTIONS: &str =
     include_str!("../../../shared/assets/gptDefaultInstructions.md");
+const KIMI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/kimi.json");
+const DEEPSEEK_CODEX_MODELS: &str =
+    include_str!("../../../shared/assets/codex-models/deepseek.json");
+const OPENAI_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/openai.json");
+const WEWORK_CODEX_MODELS: &str = include_str!("../../../shared/assets/codex-models/wework.json");
 
 fn default_base_instructions() -> String {
     DEFAULT_BASE_INSTRUCTIONS.replace(
@@ -98,18 +115,7 @@ pub(crate) fn catalog() -> Value {
 }
 
 pub(crate) fn models() -> Vec<Value> {
-    let mut models = vec![
-        kimi_k3_model_entry(),
-        kimi_k27_model_entry(),
-        deepseek_v4_flash_model_entry(),
-        vision_sidecar_model_entry(),
-        gpt_56_sol_model_entry(),
-        gpt_56_terra_model_entry(),
-        gpt_56_luna_model_entry(),
-        wework_gpt_56_sol_model_entry(),
-        wework_gpt_56_terra_model_entry(),
-        wework_gpt_56_luna_model_entry(),
-    ];
+    let mut models = builtin_model_entries();
     models.extend(read_custom_models());
     models
 }
@@ -256,111 +262,64 @@ struct CodexCatalogModel {
     experimental_supported_tools: Vec<String>,
 }
 
-fn kimi_k3_model_entry() -> Value {
-    let mut entry = model_entry(KIMI_K3_MODEL, "Kimi K3", Some("freeform"));
-    entry["description"] = Value::String(
-        "Kimi K3 profile for long-horizon coding, multimodal input, and deep reasoning".to_owned(),
-    );
-    entry["default_reasoning_level"] = Value::String("low".to_owned());
-    entry["supported_reasoning_levels"] = json!([
-        {"effort": "low", "description": "Fast responses with lighter reasoning"},
-        {"effort": "high", "description": "Greater reasoning depth for complex work"},
-        {"effort": "max", "description": "Maximum reasoning for long-horizon tasks"}
-    ]);
-    entry["context_window"] = Value::Number(1_048_576.into());
-    entry["max_context_window"] = Value::Number(1_048_576.into());
-    entry["truncation_policy"] = json!({"mode": "tokens", "limit": 10_000});
-    entry
+fn builtin_model_entries() -> Vec<Value> {
+    [
+        ("Kimi", KIMI_CODEX_MODELS),
+        ("DeepSeek", DEEPSEEK_CODEX_MODELS),
+        ("OpenAI", OPENAI_CODEX_MODELS),
+        ("Wework", WEWORK_CODEX_MODELS),
+    ]
+    .into_iter()
+    .flat_map(|(group, source)| catalog_entries_from_resource(group, source))
+    .collect()
 }
 
-fn kimi_k27_model_entry() -> Value {
-    let mut entry = model_entry(KIMI_K27_MODEL, "Kimi K2.7 Code", Some("freeform"));
-    entry["description"] =
-        Value::String("Kimi K2.7 Code profile for stable agentic coding".to_owned());
-    entry["context_window"] = Value::Number(262_144.into());
-    entry["max_context_window"] = Value::Number(262_144.into());
-    entry
+fn catalog_entries_from_resource(group: &str, source: &str) -> Vec<Value> {
+    let catalog: Value = serde_json::from_str(source)
+        .unwrap_or_else(|error| panic!("{group} catalog JSON: {error}"));
+    let models = catalog["models"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{group} catalog contains a models array"));
+    models
+        .iter()
+        .map(|model| catalog_entry_from_resource(group, model, models))
+        .collect()
 }
 
-fn deepseek_v4_flash_model_entry() -> Value {
-    let mut entry = model_entry(
-        DEEPSEEK_V4_FLASH_MODEL,
-        "DeepSeek V4 Flash",
-        Some("freeform"),
-    );
-    entry["description"] = Value::String("DeepSeek V4 Flash profile for agentic coding".to_owned());
-    entry["support_verbosity"] = Value::Bool(true);
-    entry["default_verbosity"] = Value::String("low".to_owned());
-    entry["default_reasoning_level"] = Value::String("high".to_owned());
-    entry["supported_reasoning_levels"] = json!([
-        {"effort": "low", "description": "Fast responses with lighter reasoning"},
-        {"effort": "high", "description": "Extra high reasoning depth for complex problems"},
-        {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"}
-    ]);
-    entry["context_window"] = Value::Number(1_048_576.into());
-    entry["max_context_window"] = Value::Number(1_048_576.into());
-    entry["supports_parallel_tool_calls"] = Value::Bool(true);
-    entry["multi_agent_version"] = Value::String("v2".to_owned());
-    entry["comp_hash"] = Value::String("3000".to_owned());
-    entry["reasoning_summary_format"] = Value::String("experimental".to_owned());
-    entry["default_reasoning_summary"] = Value::String("none".to_owned());
-    entry["input_modalities"] = json!(["text"]);
-    entry["supports_search_tool"] = Value::Bool(true);
-    entry
-}
-
-fn vision_sidecar_model_entry() -> Value {
-    let mut entry = model_entry(VISION_SIDECAR_MODEL, "Vision Sidecar", Some("freeform"));
-    entry["description"] =
-        Value::String("Wework text model routed through a configured vision sidecar".to_owned());
-    entry
-}
-
-fn gpt_56_sol_model_entry() -> Value {
-    let mut entry = picker_model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"), 1);
-    entry["description"] = Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
-    entry
-}
-
-fn gpt_56_terra_model_entry() -> Value {
-    let mut entry = picker_model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"), 2);
-    entry["description"] = Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
-    entry
-}
-
-fn gpt_56_luna_model_entry() -> Value {
-    let mut entry = picker_model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"), 3);
-    entry["description"] = Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
-    entry
-}
-
-fn wework_gpt_56_sol_model_entry() -> Value {
-    let mut entry = model_entry(WEWORK_GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
-    entry["description"] = Value::String("Wework GPT 5.6 Sol compatibility profile".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
-    entry
-}
-
-fn wework_gpt_56_terra_model_entry() -> Value {
-    let mut entry = model_entry(WEWORK_GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
-    entry["description"] = Value::String("Wework GPT 5.6 Terra compatibility profile".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
-    entry
-}
-
-fn wework_gpt_56_luna_model_entry() -> Value {
-    let mut entry = model_entry(WEWORK_GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
-    entry["description"] = Value::String("Wework GPT 5.6 Luna compatibility profile".to_owned());
-    entry["context_window"] = Value::Number(272_000.into());
-    entry["max_context_window"] = Value::Number(272_000.into());
+fn catalog_entry_from_resource(group: &str, model: &Value, models: &[Value]) -> Value {
+    let source = model
+        .as_object()
+        .unwrap_or_else(|| panic!("{group} catalog model is an object"));
+    let slug = source
+        .get("slug")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{group} catalog model has a slug"));
+    let display_name = source
+        .get("display_name")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("{group} catalog model has a display name"));
+    let mut entry = source
+        .get("extends")
+        .and_then(Value::as_str)
+        .map(|base_slug| {
+            let base = models
+                .iter()
+                .find(|candidate| candidate["slug"] == base_slug)
+                .unwrap_or_else(|| panic!("{group} catalog base model {base_slug} exists"));
+            catalog_entry_from_resource(group, base, models)
+        })
+        .unwrap_or_else(|| {
+            model_entry(
+                slug,
+                display_name,
+                source.get("apply_patch_tool_type").and_then(Value::as_str),
+            )
+        });
+    for (key, value) in source {
+        if key != "extends" && key != "upstream_model_id" {
+            entry[key] = value.clone();
+        }
+    }
     entry
 }
 
@@ -562,18 +521,6 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
     entry
 }
 
-fn picker_model_entry(
-    slug: &str,
-    display_name: &str,
-    apply_patch_tool_type: Option<&str>,
-    priority: i64,
-) -> Value {
-    let mut entry = model_entry(slug, display_name, apply_patch_tool_type);
-    entry["visibility"] = Value::String("list".to_owned());
-    entry["priority"] = Value::Number(priority.into());
-    entry
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_includes_native_deepseek_v4_flash_profile() {
+    fn catalog_includes_native_deepseek_v4_profiles() {
         let catalog = catalog();
         let model = catalog["models"]
             .as_array()
@@ -621,6 +568,20 @@ mod tests {
             .expect("vision sidecar entry");
         assert_eq!(vision_model["visibility"], "none");
         assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
+
+        let pro_model = catalog["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .find(|model| model["slug"] == DEEPSEEK_V4_PRO_MODEL)
+            .expect("DeepSeek V4 Pro entry");
+        assert_eq!(pro_model["context_window"], 1_048_576);
+        assert_eq!(pro_model["default_reasoning_level"], "high");
+        assert_eq!(pro_model["apply_patch_tool_type"], "freeform");
+        assert_eq!(pro_model["supports_parallel_tool_calls"], true);
+        assert_eq!(pro_model["multi_agent_version"], "v2");
+        assert_eq!(pro_model["visibility"], "none");
+        assert_eq!(pro_model["input_modalities"], json!(["text"]));
     }
 
     #[test]
@@ -667,6 +628,7 @@ mod tests {
             KIMI_K27_MODEL,
             DEEPSEEK_V4_FLASH_MODEL,
             VISION_SIDECAR_MODEL,
+            DEEPSEEK_V4_PRO_MODEL,
             WEWORK_GPT_56_SOL_MODEL,
             WEWORK_GPT_56_TERRA_MODEL,
             WEWORK_GPT_56_LUNA_MODEL,
