@@ -362,6 +362,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
       await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
       await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      // The right panel opens with a width transition that stays frozen in
+      // unfocused verification windows; finish it so the browser host has a
+      // measurable size before the panel tries to attach the native webview.
+      await control.command('finishAnimations', 'body')
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureUrl })
       await waitForControlValue(
         control,
@@ -373,12 +377,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, payload)
+      // A bridge open adopts the pane-derived label created by the UI submit
+      // (the frontend relabels the existing webview to the fixed bridge
+      // label), so later bridge calls and agent-state events resolve to the
+      // same logical browser.
+      const openResult = await bridgeCall({
+        action: 'open',
+        url: fixtureUrl,
+        timeoutMs: 8_000,
+      })
+      assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await bridgeCall({
+      const readyWait = await bridgeCall({
         action: 'waitFor',
         options: { condition: { textVisible: READY_TEXT } },
         timeoutMs: 5_000,
       })
+      assert.equal(readyWait.ok, true, `Bridge fixture wait failed: ${JSON.stringify(readyWait)}`)
       await new Promise(resolve => setTimeout(resolve, 300))
 
       const pendingAgentWait = bridgeCall({
