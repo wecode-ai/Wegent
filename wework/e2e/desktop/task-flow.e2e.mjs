@@ -1278,6 +1278,12 @@ async function verifyBackgroundGuidanceNavigation({
   const sourceUserMessageCountBeforeGuidance = Number(
     await control.command('getElementCount', '[data-testid="message-user"]')
   )
+  const sourceAssistantMessageCountBeforeGuidance = Number(
+    await control.command(
+      'getElementCount',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+    )
+  )
 
   await control.command('fill', composerSelector, { value: BACKGROUND_GUIDANCE })
   await control.command('click', '[data-testid="send-mode-menu-button"]')
@@ -1333,6 +1339,15 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId === 'message-assistant').length >
+      sourceAssistantMessageCountBeforeGuidance,
+    'The assistant continuation after background guidance was not rendered',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   const activeGuidanceUserMessages = await getElementMetrics(
     control,
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -4382,16 +4397,20 @@ async function installOfficialPluginFixture({
   })
 
   const pluginId = `${OFFICIAL_PLUGIN_MARKETPLACE_NAME}:${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`
-  await control.command('waitFor', `[data-testid="plugin-marketplace-row-${pluginId}"]`, {
-    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  const rowTestId = `plugin-marketplace-row-${pluginId}`
+  const installTestId = `plugin-marketplace-install-${pluginId}`
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('plugins-marketplace-dialog') &&
+      snapshot.testIds.includes(rowTestId) &&
+      snapshot.testIds.includes(installTestId),
+    'The pinned OpenAI marketplace did not become installable',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
   await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
 
-  await control.command('waitFor', installSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command('click', installSelector)
   await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

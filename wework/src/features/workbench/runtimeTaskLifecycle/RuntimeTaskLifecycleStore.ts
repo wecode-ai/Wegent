@@ -267,6 +267,7 @@ export class RuntimeTaskLifecycleStore {
       const keys = new Set<string>(
         Array.isArray(value) ? value.filter(item => typeof item === 'string') : []
       )
+      this.persistedUnreadSerialized = serializeUnreadKeys(keys)
       return keys
     } catch {
       return new Set()
