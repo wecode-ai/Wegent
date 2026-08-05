@@ -6610,9 +6610,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('Remote task')
     )
+    runtimeWorkApi.listRuntimeWork.mockClear()
     await userEvent.click(screen.getByText('archive remote task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
     await waitFor(() =>
       expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
     )
@@ -6690,8 +6692,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(cloudListRuntimeWork).toHaveBeenCalledTimes(1)
 
+    expect(typeof streamHandlers.onRuntimeGoalCleared).toBe('function')
     await act(async () => {
-      streamHandlers.onRuntimeGoalCleared?.({
+      streamHandlers.onRuntimeGoalCleared!({
         deviceId: 'remote-device',
         taskId: 'remote-task',
       })
