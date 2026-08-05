@@ -384,6 +384,43 @@ def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
     assert [item.id for item in second_page.items] == [older.id]
 
 
+def test_discovery_filters_hidden_system_skills_without_breaking_pagination(
+    test_db, test_user
+):
+    older = _create_skill(test_db, user_id=0, name="older-visible-skill")
+    newer = _create_skill(test_db, user_id=0, name="newer-visible-skill")
+    hidden = _create_skill(test_db, user_id=0, name="newest-hidden-skill")
+    hidden.json["spec"]["visible"] = False
+    flag_modified(hidden, "json")
+    older.updated_at = datetime(2026, 1, 1)
+    newer.updated_at = datetime(2026, 1, 2)
+    hidden.updated_at = datetime(2026, 1, 3)
+    test_db.commit()
+
+    first_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        limit=1,
+    )
+    second_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        cursor=first_page.next_cursor,
+        limit=1,
+    )
+
+    assert [item.id for item in first_page.items] == [newer.id]
+    assert first_page.has_more is True
+    assert [item.id for item in second_page.items] == [older.id]
+    assert second_page.has_more is False
+
+
 @pytest.mark.parametrize("target_namespace", ["default", "capability-team"])
 def test_system_agent_cannot_be_installed(test_db, test_user, target_namespace: str):
     source = _create_agent(test_db)
