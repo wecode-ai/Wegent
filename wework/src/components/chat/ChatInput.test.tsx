@@ -207,6 +207,33 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
+  test('shows pending supervision as task context above the editor', () => {
+    const onConfigureSupervisor = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        onConfigureSupervisor={onConfigureSupervisor}
+        supervisorEnabled
+        supervisorPending
+      />
+    )
+
+    const indicator = screen.getByTestId('pending-supervisor-indicator')
+    fireEvent.click(indicator)
+
+    expect(indicator).toHaveTextContent('workbench.supervisor_pending')
+    expect(indicator).toHaveTextContent('workbench.supervisor_pending_edit')
+    expect(indicator.compareDocumentPosition(screen.getByTestId('chat-message-input'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.queryByTestId('pending-supervisor-pill')).not.toBeInTheDocument()
+    expect(onConfigureSupervisor).toHaveBeenCalledOnce()
+  })
+
   test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
     const props = {
       value: 'next draft',
@@ -1698,9 +1725,10 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')

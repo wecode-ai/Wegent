@@ -32,9 +32,6 @@ const MARKETPLACE_KEYWORD_PARAM = 'keyword'
 
 function isVisibleListing(listing: ResourceLibraryListing, targetNamespace: string) {
   if (listing.resource_type === 'mcp') return false
-  if (targetNamespace === 'default' && listing.resource_type === 'skill' && listing.is_installed) {
-    return false
-  }
   return !(
     targetNamespace !== 'default' &&
     listing.resource_type === 'agent' &&
@@ -321,7 +318,7 @@ export function DiscoverResources({
       {isLoading ? (
         <div className={listingGridClassName} aria-label={t('states.loading')}>
           {Array.from({ length: 8 }).map((_, index) => (
-            <Skeleton key={index} className="h-[220px] rounded-lg" />
+            <Skeleton key={index} className="h-[180px] rounded-lg" />
           ))}
         </div>
       ) : hasError ? (

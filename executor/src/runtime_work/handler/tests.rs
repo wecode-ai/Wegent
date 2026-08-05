@@ -236,6 +236,80 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
 }
 
 #[test]
+fn hydrating_goal_status_does_not_update_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("hydrate-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.hydrate_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn hydrating_unchanged_goal_status_does_not_update_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("hydrate-unchanged-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("active".to_owned());
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.hydrate_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn syncing_changed_goal_status_updates_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("sync-changed-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("pending".to_owned());
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert!(task.updated_at > 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn current_codex_model_provider_reads_configured_provider_name() {
     let provider = current_codex_model_provider_from_config(&json!({
         "config": {
@@ -607,6 +681,33 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_i
 }
 
 #[test]
+fn transcript_restores_a_missing_supervisor_generated_user_message() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "role": "assistant",
+        "content": "Corrected",
+        "createdAt": 200
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "supervisor-correction-1",
+        "content": "Use Japanese",
+        "createdAt": 100,
+        "ensureVisible": true,
+        "references": [],
+        "source": {
+            "source": "supervisor",
+            "channel_type": "task_supervisor"
+        }
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[1]["role"], "assistant");
+}
+
+#[test]
 fn transcript_only_adds_presentations_missing_from_provider_content() {
     let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
     let mut provider_messages = vec![json!({
@@ -696,6 +797,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
         &[
             json!({
                 "id": "provider-user-1",
+                "messageIndex": 8,
                 "turnId": "turn-1",
                 "clientUserMessageId": "client-user-1",
                 "role": "user",
@@ -703,6 +805,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
             }),
             json!({
                 "id": "provider-assistant-1",
+                "messageIndex": 9,
                 "turnId": "turn-1",
                 "role": "assistant",
                 "content": "First response",
@@ -731,6 +834,7 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
             }),
             json!({
                 "id": "provider-user-2",
+                "messageIndex": 10,
                 "turnId": "turn-2",
                 "clientUserMessageId": "client-user-2",
                 "role": "user",
@@ -743,10 +847,30 @@ fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
     assert_eq!(turns.len(), 2);
     assert_eq!(turns[0]["id"], "turn-1");
     assert_eq!(turns[1]["id"], "turn-2");
+    assert_eq!(turns[0]["messageIndex"], 8);
+    assert_eq!(turns[1]["messageIndex"], 10);
     assert_eq!(turns[0]["items"][0]["id"], "client-user-1");
     assert_eq!(turns[0]["items"][1]["id"], "assistant-item-1");
     assert_eq!(turns[0]["items"][2]["id"], "tool-call-1");
     assert_eq!(turns[1]["items"][0]["id"], "client-user-2");
+}
+
+#[test]
+fn transcript_canonical_turns_accept_snake_case_message_indexes() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "message_index": 8,
+            "turn_id": "turn-1",
+            "client_user_message_id": "client-user-1",
+            "role": "user",
+            "content": "First prompt"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["messageIndex"], 8);
 }
 
 #[test]
@@ -913,16 +1037,6 @@ async fn codex_personality_write_rejects_unsupported_value() {
     assert_eq!(error.code, "invalid_request");
 }
 
-#[test]
-fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
-    let combined = combined_codex_developer_instructions("用中文回复");
-
-    assert!(combined.contains("用中文回复"));
-    assert!(combined.contains("browser_open"));
-    assert!(combined.contains("Wework built-in browser"));
-    assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
-}
-
 #[tokio::test]
 async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -1047,6 +1161,12 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                         "reasoningEffort": "high"
                     }
                 },
+                "initialSupervisor": {
+                    "mode": "auto",
+                    "instructions": "Keep the task focused",
+                    "modelId": "supervisor-model",
+                    "intervalSeconds": 10
+                },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
             }
         }))
@@ -1078,6 +1198,15 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
             }
         })
     );
+    let supervisor = link
+        .supervisor
+        .expect("initial supervisor should be stored with the task");
+    assert_eq!(supervisor.mode, "auto");
+    assert_eq!(supervisor.instructions, "Keep the task focused");
+    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(supervisor.interval_seconds, 10);
+    assert_eq!(supervisor.status, "active");
+    assert!(supervisor.last_error.is_none());
 
     let _ = fs::remove_file(index_path);
 }
@@ -1210,11 +1339,15 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let event = event_rx
         .try_recv()
         .expect("a non-active turn should still be routed by its own identity");
-    assert_eq!(event["event"], "response.output_text.delta");
+    assert_eq!(event["event"], "response.block.created");
     assert_eq!(event["payload"]["taskId"], local_task_id);
     assert_eq!(event["payload"]["subtaskId"], "turn-earlier");
-    assert_eq!(event["payload"]["data"]["delta"], "Earlier");
-    assert_eq!(event["payload"]["data"]["itemId"], "msg-earlier");
+    assert_eq!(event["payload"]["data"]["block"]["type"], "text");
+    assert_eq!(event["payload"]["data"]["block"]["content"], "Earlier");
+    assert_eq!(
+        event["payload"]["data"]["block"]["process_item_id"],
+        "msg-earlier"
+    );
 
     let _ = fs::remove_file(index_path);
 }

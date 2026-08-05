@@ -400,10 +400,21 @@ export function settleRuntimeConversationGuidance(
   const turns = turnsByConversation.get(key)
   if (!turns) return null
 
-  const guidanceMessage = takeAppliedRuntimeConversationGuidance(address, payload)
+  const queuedGuidance = takeAppliedRuntimeConversationGuidance(address, payload)
+  const guidanceMessage =
+    queuedGuidance ??
+    (payload.clientGuidanceId && payload.message
+      ? {
+          id: payload.clientGuidanceId,
+          content: payload.message,
+          status: 'sending',
+          deliveryMode: 'guidance',
+          createdAt: new Date(payload.appliedAtMs).toISOString(),
+        }
+      : null)
   if (!guidanceMessage) return null
 
-  if (takeInterruptedRuntimeConversationGuidance(address, guidanceMessage.id)) {
+  if (queuedGuidance && takeInterruptedRuntimeConversationGuidance(address, guidanceMessage.id)) {
     notifyRuntimeConversation(key)
     return guidanceMessage
   }

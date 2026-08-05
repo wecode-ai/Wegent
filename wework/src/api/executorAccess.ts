@@ -11,6 +11,11 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeCompactRequest,
@@ -107,6 +112,14 @@ export interface ExecutorRuntimeClient {
   getRuntimeGoal: (data: RuntimeGoalGetRequest) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>
+  getRuntimeSupervisor: (data: RuntimeSupervisorGetRequest) => Promise<RuntimeSupervisorResponse>
+  setRuntimeSupervisor: (data: RuntimeSupervisorSetRequest) => Promise<RuntimeSupervisorResponse>
+  clearRuntimeSupervisor: (
+    data: RuntimeSupervisorClearRequest
+  ) => Promise<RuntimeSupervisorResponse>
+  resolveRuntimeSupervisor: (
+    data: RuntimeSupervisorResolveRequest
+  ) => Promise<RuntimeSupervisorResponse>
   openRuntimeWorkspace: (data: RuntimeWorkspaceOpenRequest) => Promise<RuntimeWorkspaceOpenResponse>
   upsertLocalRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['upsertLocalRuntimeProject']
   renameRuntimeWorkspace: (

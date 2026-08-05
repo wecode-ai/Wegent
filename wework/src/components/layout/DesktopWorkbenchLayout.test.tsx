@@ -869,7 +869,9 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout?: () => void
   }
 
-  function DesktopWorkbenchLayout(props: LegacyDesktopWorkbenchLayoutProps) {
+  function DesktopWorkbenchLayout(
+    props: LegacyDesktopWorkbenchLayoutProps & { routeActive?: boolean }
+  ) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
     const lifecycleTaskRunning =
@@ -893,7 +895,7 @@ describe('DesktopWorkbenchLayout', () => {
           <AuthContext.Provider value={authValue}>
             <WorkbenchContext.Provider value={workbenchValue}>
               <WorkbenchPaneContext.Provider value={paneValue}>
-                <ActualDesktopWorkbenchLayout />
+                <ActualDesktopWorkbenchLayout routeActive={props.routeActive} />
               </WorkbenchPaneContext.Provider>
             </WorkbenchContext.Provider>
           </AuthContext.Provider>
@@ -1706,12 +1708,22 @@ describe('DesktopWorkbenchLayout', () => {
     const desktopContent = screen.getByTestId('desktop-workbench-content')
     expect(desktopContent).toHaveClass('h-full', 'overflow-x-hidden', 'overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
+    expect(screen.getByTestId('desktop-chat-scroll').parentElement?.parentElement).toHaveClass(
+      'flex',
+      'min-h-full',
+      'shrink-0',
+      'flex-col'
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
+      'min-h-full',
       'overflow-visible',
-      'scrollbar-none',
       'flex',
       'flex-col'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
+      'overflow-y-auto',
+      'scrollbar-none'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
@@ -2086,6 +2098,28 @@ describe('DesktopWorkbenchLayout', () => {
           value: previousTauriInternals,
         })
       }
+    }
+  })
+
+  test('does not publish titlebar actions from an inactive workspace document tab', () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
+
+      expect(screen.getByTestId('workbench-main-header')).toBeEmptyDOMElement()
+      expect(screen.queryByTestId('titlebar-main-actions')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, '__TAURI_INTERNALS__', {
+        configurable: true,
+        value: previousTauriInternals,
+      })
     }
   })
 
@@ -2918,7 +2952,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
+    expect(screen.getByTestId('about-menu-button')).toHaveTextContent('关于')
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('opens the About settings page from the sidebar menu', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('about-menu-button'))
+
+    expect(window.location.pathname).toBe('/settings/about')
+    expect(screen.getByTestId('settings-nav-about')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+    expect(screen.getByRole('heading', { name: 'Wework' })).toBeInTheDocument()
   })
 
   test('opens settings page from the browser path on reload', () => {

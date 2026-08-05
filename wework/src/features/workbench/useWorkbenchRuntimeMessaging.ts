@@ -513,6 +513,7 @@ export function useWorkbenchRuntimeMessaging({
         SendCurrentInputOptions,
         | 'clientUserMessageId'
         | 'initialGoal'
+        | 'initialSupervisor'
         | 'onError'
         | 'onRuntimeTaskOptimisticOpen'
         | 'additionalContext'
@@ -680,6 +681,7 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.ephemeral ? { ephemeral: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
+        ...(options?.initialSupervisor ? { initialSupervisor: options.initialSupervisor } : {}),
         ...(options?.deliveryId ? { deliveryId: options.deliveryId } : {}),
         ...(options?.cloudProjectId ? { cloudProjectId: options.cloudProjectId } : {}),
         ...(options?.additionalContext ? { additionalContext: options.additionalContext } : {}),
@@ -1025,6 +1027,7 @@ export function useWorkbenchRuntimeMessaging({
         prepared.activeDeviceId,
         {
           initialGoal: options?.initialGoal,
+          initialSupervisor: options?.initialSupervisor,
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientUserMessageId: options?.clientUserMessageId,
@@ -1184,6 +1187,7 @@ export function useWorkbenchRuntimeMessaging({
 
       return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
+        initialSupervisor: options.initialSupervisor,
         collaborationMode: options.collaborationMode,
         deliveryId: options.deliveryId,
         cloudProjectId: options.cloudProjectId,

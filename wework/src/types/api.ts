@@ -381,6 +381,32 @@ export interface RuntimeTaskSummary {
   modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
+  supervisor?: RuntimeSupervisorState | null
+}
+
+export type RuntimeSupervisorMode = 'suggest' | 'auto'
+export type RuntimeSupervisorStatus = 'active' | 'checking' | 'error' | 'disabled'
+export type RuntimeSupervisorSuggestionStatus = 'pending' | 'accepted' | 'dismissed'
+
+export interface RuntimeSupervisorSuggestion {
+  id: string
+  message: string
+  rationale: string
+  status: RuntimeSupervisorSuggestionStatus
+  createdAt: number
+  resolvedAt?: number | null
+  sourceTurnId?: string | null
+}
+
+export interface RuntimeSupervisorState {
+  mode: RuntimeSupervisorMode
+  status: RuntimeSupervisorStatus
+  instructions: string
+  modelId?: string | null
+  intervalSeconds?: number
+  lastEvaluatedAt?: number | null
+  lastError?: string | null
+  suggestions: RuntimeSupervisorSuggestion[]
 }
 
 export interface DeviceWorkspaceUpsert {
@@ -568,6 +594,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeTranscriptTurn {
   id: string
   items: RuntimeTranscriptTurnItem[]
+  messageIndex?: number | null
   status?: string
   runtimeStatus?: string | null
   completedAt?: string | number | null
@@ -609,6 +636,7 @@ export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
   clientUserMessageId?: string
+  initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -734,6 +762,43 @@ export interface RuntimeGoalClearResponse {
   taskId: string
   cleared: boolean
   error?: string | null
+}
+
+export interface RuntimeSupervisorGetRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorSetRequest {
+  address: RuntimeTaskAddress
+  mode: RuntimeSupervisorMode
+  instructions?: string
+  modelId?: string | null
+  intervalSeconds: number
+}
+
+export type RuntimeSupervisorCreateInput = Omit<RuntimeSupervisorSetRequest, 'address'>
+
+export interface RuntimeSupervisorClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorResolveRequest {
+  address: RuntimeTaskAddress
+  suggestionId: string
+  status: 'accepted' | 'dismissed'
+}
+
+export interface RuntimeSupervisorResponse {
+  accepted: boolean
+  taskId: string
+  supervisor: RuntimeSupervisorState | null
+  error?: string | null
+}
+
+export interface RuntimeSupervisorEventPayload {
+  deviceId?: string
+  taskId?: string
+  supervisor: RuntimeSupervisorState | null
 }
 
 export interface RuntimeWorkspaceOpenRequest {
@@ -1100,6 +1165,7 @@ export interface RuntimeTaskCreateRequest {
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
@@ -1482,6 +1548,12 @@ export interface ChatStartPayload {
   taskId?: string
   subtaskId?: string
   clientUserMessageId?: string
+  runtimeGeneratedUserMessage?: {
+    id: string
+    message: string
+    createdAt: number
+    source: Record<string, unknown>
+  }
   bot_name?: string
   shellType?: string
   deviceId?: string

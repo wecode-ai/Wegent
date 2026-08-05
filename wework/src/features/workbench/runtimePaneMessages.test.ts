@@ -8,6 +8,19 @@ import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('runtime transcript status', () => {
+  test('preserves the first transcript message index for turn ordering', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        messageIndex: 42,
+        items: [],
+        status: 'done',
+      },
+    ])
+
+    expect(turn.runtimeMessageIndex).toBe(42)
+  })
+
   test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
     const [turn] = runtimeTranscriptTurnsToConversationTurns([
       {
@@ -145,6 +158,45 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
     })
     expect('messageId' in actions[0]).toBe(false)
+  })
+
+  test('inserts an idle supervisor correction before its assistant turn starts', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'supervisor-correction-1',
+      runtimeGeneratedUserMessage: {
+        id: 'supervisor-correction-1',
+        message: 'Return to scope.',
+        createdAt: 1_700_000_000_000,
+        source: { source: 'supervisor' },
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'user_added',
+        message: expect.objectContaining({
+          id: 'supervisor-correction-1',
+          content: 'Return to scope.',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_started',
+        subtaskId: 'turn-1',
+        clientUserMessageId: 'supervisor-correction-1',
+      }),
+    ])
   })
 
   test('preserves completed item snapshot semantics', () => {
@@ -654,6 +706,31 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(
       (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
     ).toBeUndefined()
+  })
+
+  test('uses completed runtime content as the authoritative final answer', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: '最终回答。',
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'assistant_done',
+        subtaskId: 'subtask-9',
+        content: '最终回答。',
+      }),
+    ])
   })
 
   test('builds the completed turn file changes summary from streamed blocks', () => {

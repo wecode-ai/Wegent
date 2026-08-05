@@ -16,6 +16,22 @@ fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     true
 }
 
+fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) -> bool {
+    if !running {
+        return normalize_inactive_running_codex_task(link);
+    }
+
+    let changed = !link.running
+        || link.status != "running"
+        || link.thread_status != "active"
+        || link.turn_status.as_deref() != Some("inProgress");
+    link.running = true;
+    link.status = "running".to_owned();
+    link.thread_status = "active".to_owned();
+    link.turn_status = Some("inProgress".to_owned());
+    changed
+}
+
 fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
     if !link.running || !is_codex_runtime(&link.runtime) {
         return false;

@@ -324,6 +324,7 @@ export interface UnifiedSkill {
   is_active: boolean
   is_public: boolean
   user_id: number // ID of the user who uploaded this skill
+  publication_status?: 'published' | 'archived'
   availability?: SkillAvailability
   /** Source information for git-imported skills */
   source?: SkillSource

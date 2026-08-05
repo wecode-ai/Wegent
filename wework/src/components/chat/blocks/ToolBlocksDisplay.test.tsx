@@ -1080,7 +1080,7 @@ describe('ToolBlocksDisplay', () => {
     })
   })
 
-  test('keeps live duration when the run finishes', async () => {
+  test('keeps the concrete tool duration when the run finishes', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
 
@@ -1096,78 +1096,25 @@ describe('ToolBlocksDisplay', () => {
     })
 
     rerender(
-      <ToolBlocksDisplay blocks={[{ ...runningBlock, status: 'done' }]} isStreaming={false} />
+      <ToolBlocksDisplay
+        blocks={[{ ...runningBlock, status: 'done', completedAt: runningBlock.createdAt + 3000 }]}
+        isStreaming={false}
+      />
     )
 
     act(() => {
       vi.advanceTimersByTime(0)
     })
 
-    expect(screen.getByRole('button', { name: /已处理 3 秒/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '调用 1 个工具 已处理' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+    expect(screen.getByText('3.0s')).toBeInTheDocument()
   })
 
-  test('uses restored block timestamps for completed historical duration', () => {
-    const turnStart = new Date('2026-06-05T00:00:00.000Z').getTime()
-    const completedHistoricalBlock: ProcessingBlock = {
-      ...completedCommandBlock,
-      createdAt: turnStart + 368000,
-    }
-
-    render(
-      <ToolBlocksDisplay
-        blocks={[completedHistoricalBlock]}
-        isStreaming={false}
-        startedAt={turnStart}
-      />
-    )
-
-    expect(screen.getByRole('button', { name: /已处理 6 分 8 秒/ })).toBeInTheDocument()
-  })
-
-  test('formats live duration with minutes and seconds after one minute', () => {
+  test('shows thinking without an aggregate timer after all tool blocks are done', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
 
-    const runningBlock: ProcessingBlock = {
-      ...completedCommandBlock,
-      status: 'streaming',
-      createdAt: Date.now(),
-    }
-
-    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
-
-    act(() => {
-      vi.advanceTimersByTime(62000)
-    })
-
-    expect(screen.getByText('1 分 2 秒')).toBeInTheDocument()
-  })
-
-  test('formats exactly one minute with zero remaining seconds', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
-
-    const runningBlock: ProcessingBlock = {
-      ...completedCommandBlock,
-      status: 'streaming',
-      createdAt: Date.now(),
-    }
-
-    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
-
-    act(() => {
-      vi.advanceTimersByTime(60000)
-    })
-
-    expect(screen.getByText('1 分 0 秒')).toBeInTheDocument()
-  })
-
-  test('keeps the segment ticking but shows thinking after all tool blocks are done', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
-
-    // All blocks are done but the model is still streaming (pure thinking
-    // phase with no new tool output). The timer must keep advancing.
     const doneBlock: ProcessingBlock = {
       ...completedCommandBlock,
       status: 'done',
@@ -1180,8 +1127,7 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(5000)
     })
 
-    expect(screen.getByText('5 秒')).toBeInTheDocument()
-    expect(screen.queryByText('5.0s')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('5 秒')
     expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
   })
 
@@ -1208,8 +1154,8 @@ describe('ToolBlocksDisplay', () => {
     )
     act(() => vi.advanceTimersByTime(2300))
 
-    expect(screen.getByText('3 秒')).toBeInTheDocument()
     expect(screen.getByText('1.2s')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('3 秒')
     expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
@@ -1235,8 +1181,7 @@ describe('ToolBlocksDisplay', () => {
     )
     act(() => vi.advanceTimersByTime(5000))
 
-    expect(screen.getByText('2 秒')).toBeInTheDocument()
-    expect(screen.queryByText('7 秒')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
   })
 
   test('keeps thinking inside the latest tool block when a narrative segment follows', () => {
@@ -1253,7 +1198,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
   })
 
-  test('uses the sum of concrete tool durations for the segment duration', () => {
+  test('shows concrete durations only on their tool rows', () => {
     const firstBlock: ProcessingBlock = {
       ...completedCommandBlock,
       completedAt: completedCommandBlock.createdAt + 1200,
@@ -1274,7 +1219,7 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
-    expect(screen.getByText('3 秒')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
     fireEvent.click(screen.getByTestId('processing-summary-toggle'))
     expect(screen.getByText('1.2s')).toBeInTheDocument()
     expect(screen.getByText('2.3s')).toBeInTheDocument()
@@ -1548,14 +1493,10 @@ describe('ToolBlocksDisplay', () => {
     expect(scrollArea.scrollTop).toBe(192)
   })
 
-  test('anchors the running duration to the turn start, surviving a refresh', () => {
+  test('does not present the turn start as the running tool duration after a refresh', () => {
     vi.useFakeTimers()
-    // The page was refreshed 10s into a still-running turn.
     vi.setSystemTime(new Date('2026-06-05T00:00:10.000Z'))
 
-    // After a refresh the in-progress blocks are re-streamed with fresh client
-    // timestamps (createdAt === now), so anchoring to the first block would
-    // restart the timer. The turn actually started 10s ago.
     const restreamedBlock: ProcessingBlock = {
       ...completedCommandBlock,
       status: 'streaming',
@@ -1571,7 +1512,8 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(0)
     })
 
-    expect(screen.getByText('10 秒')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('10 秒')
+    expect(screen.getByText('0.0s')).toBeInTheDocument()
   })
 
   test('renders the running header as a non-collapsible summary', () => {
@@ -1583,7 +1525,8 @@ describe('ToolBlocksDisplay', () => {
     render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
     expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
-    expect(screen.getByText(/\d+ 秒/)).toBeInTheDocument()
+    expect(screen.getByTestId('processing-summary-header')).toHaveTextContent('调用 1 个工具')
+    expect(screen.getByTestId('processing-summary-header')).not.toHaveTextContent('秒')
   })
 
   test('shows a subtle one-line reconnecting status only while it is active', () => {
@@ -1611,20 +1554,18 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
   })
 
-  test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
-    const thinkingBlock: ProcessingBlock = {
-      id: 'thinking-1',
-      subtaskId: 1,
-      type: 'thinking',
-      content: 'Reading files',
-      status: 'streaming',
-      createdAt: 1770000000000,
-    }
+  test('shows the current reasoning summary in the trailing tool thinking row', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        thinkingContent="First step. Reading the latest files"
+      />
+    )
 
-    render(<ToolBlocksDisplay blocks={[thinkingBlock]} isStreaming={true} />)
-
-    expect(screen.getByTestId('thinking-live-preview')).toBeInTheDocument()
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    const preview = screen.getByTestId('tool-block-thinking')
+    expect(preview).toHaveTextContent('正在思考 · Reading the latest files')
+    expect(preview).not.toHaveTextContent('First step.')
   })
 
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {

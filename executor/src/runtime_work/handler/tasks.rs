@@ -169,6 +169,12 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        if let Some(supervisor) = payload
+            .get("initialSupervisor")
+            .or_else(|| payload.get("initial_supervisor"))
+        {
+            link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
+        }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         self.schedule_worktree_prune();
@@ -238,7 +244,7 @@ impl RuntimeWorkRpcHandler {
         }
         if existing_link
             .as_ref()
-            .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
+            .is_some_and(|link| self.is_active_local_task(&link.local_task_id))
         {
             return Ok(json!({
                 "success": false,
@@ -338,6 +344,7 @@ impl RuntimeWorkRpcHandler {
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
+        let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
@@ -347,7 +354,7 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id,
             initial_thread_name: None,
-            initial_thread_goal: None,
+            initial_thread_goal,
         });
 
         Ok(json!({
@@ -381,7 +388,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
-        if existing_link.running && self.is_active_local_task(&existing_link.local_task_id) {
+        if self.is_active_local_task(&existing_link.local_task_id) {
             return Ok(json!({
                 "success": false,
                 "accepted": false,

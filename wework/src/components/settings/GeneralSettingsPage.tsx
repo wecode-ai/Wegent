@@ -30,6 +30,8 @@ import {
   type AppPreferencesPatch,
 } from '@/tauri/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
+import { getWegentUsageDisplay } from '@/api/wegentUsage'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -57,7 +59,9 @@ interface TrayDisplayOption {
 
 export function GeneralSettingsPage() {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
+  const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,6 +94,34 @@ export function GeneralSettingsPage() {
       cancelled = true
     }
   }, [t])
+
+  useEffect(() => {
+    if (!cloudConnection.isConnected) return
+
+    let cancelled = false
+    getWegentUsageDisplay({
+      isConnected: cloudConnection.isConnected,
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    })
+      .then(usage => {
+        if (!cancelled) {
+          setCloudQuotaName(usage.status === 'available' ? usage.sourceText : null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCloudQuotaName(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.serviceKey,
+    cloudConnection.token,
+  ])
 
   const handlePreferenceChange = async (key: BooleanPreferenceKey, value: boolean) => {
     setPreferences(current => ({ ...current, [key]: value }))
@@ -172,6 +204,7 @@ export function GeneralSettingsPage() {
     />
   )
 
+  const displayedCloudQuotaName = cloudConnection.isConnected ? cloudQuotaName : null
   const trayDisplayOptions: TrayDisplayOption[] = [
     {
       preferenceKey: 'trayUnreadEnabled',
@@ -192,6 +225,13 @@ export function GeneralSettingsPage() {
       testId: 'general-tray-usage-toggle',
       label: t('workbench.general_settings_tray_usage'),
       description: t('workbench.general_settings_tray_usage_description'),
+      icon: Gauge,
+    },
+    {
+      preferenceKey: 'trayWegentUsageEnabled',
+      testId: 'general-tray-wegent-usage-toggle',
+      label: displayedCloudQuotaName ?? t('workbench.general_settings_tray_wegent_usage'),
+      description: t('workbench.general_settings_tray_wegent_usage_description'),
       icon: Gauge,
     },
   ]
@@ -331,7 +371,7 @@ export function GeneralSettingsPage() {
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
-              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-3 gap-2">
+              <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
                 {trayDisplayOptions.map(option => {
                   const Icon = option.icon
                   const selected = Boolean(preferences[option.preferenceKey])

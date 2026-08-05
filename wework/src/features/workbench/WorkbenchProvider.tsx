@@ -1283,15 +1283,15 @@ export function WorkbenchProvider({
         createRuntimeConversationStreamHandlers({
           onMessageAction: applyCanonicalRuntimeAction,
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
-          onAssistantStart: (address, subtaskId) => {
+          onAssistantStart: (address, turnId) => {
             markRuntimeConversationAssistantStarted(address)
-            lifecycleStore.turnStarted(address)
-            aiGenerationTelemetry.onAssistantStart(address, subtaskId)
+            lifecycleStore.turnStarted(address, turnId)
+            aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
-          onAssistantSettled: (address, subtaskId, result, contextUsage) => {
+          onAssistantSettled: (address, turnId, result, contextUsage) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address)
-            aiGenerationTelemetry.onAssistantSettled(address, subtaskId, result, contextUsage)
+            lifecycleStore.turnSettled(address, turnId)
+            aiGenerationTelemetry.onAssistantSettled(address, turnId, result, contextUsage)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
@@ -1304,6 +1304,9 @@ export function WorkbenchProvider({
           onRuntimeGoalCleared: address => {
             setRuntimeConversationGoal(address, null)
             lifecycleStore.goalStatusReceived(address, null)
+            refreshRuntimeWorkLists(address)
+          },
+          onRuntimeSupervisorUpdated: address => {
             refreshRuntimeWorkLists(address)
           },
           onRuntimeGoalContinuation: (address, payload) => {

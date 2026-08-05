@@ -4,7 +4,14 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, Codex and local models, proxies, context, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, appearance, Codex and local models, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+
+## View app information
+
+Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
+The version shown in the About page is read from the running Tauri application package metadata,
+so it matches the version shown by the macOS **About Wework** system menu. Release builds that
+inject a version through the Tauri configuration use that value in both places.
 
 Common macOS shortcuts include:
 
@@ -17,6 +24,13 @@ Common macOS shortcuts include:
 | Back / Forward         | `Command+[` / `Command+]` |
 | Select model           | `Control+Shift+M`         |
 | Appshot                | `Command+Shift+2`         |
+
+## Model availability
+
+**My Codex** shows official Codex models only when the current device has a configured
+`auth.json`. Without that file, the group is omitted from the model picker; provider models,
+local custom models, and cloud models remain available according to their own configuration. If
+no source provides a model, the picker displays **No models available**.
 
 ## Custom Codex models
 

@@ -19,6 +19,7 @@ const defaultPreferences: AppPreferences = {
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  trayWegentUsageEnabled: true,
   browserExternalLinkTarget: 'system',
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
@@ -34,6 +35,7 @@ const updateAppPreferencesMock = vi.hoisted(() => vi.fn())
 const applyLanguagePreferenceMock = vi.hoisted(() => vi.fn())
 const translateMock = vi.hoisted(() => (key: string, fallback?: string) => fallback ?? key)
 const importExternalContentMock = vi.hoisted(() => vi.fn())
+const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -57,6 +59,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
+    trayWegentUsageEnabled: true,
     browserExternalLinkTarget: 'system',
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
@@ -100,12 +103,26 @@ vi.mock('@/api/local/codexPlugins', () => ({
   }),
 }))
 
+vi.mock('@/api/wegentUsage', () => ({
+  getWegentUsageDisplay: getWegentUsageDisplayMock,
+}))
+
+vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
+  useOptionalCloudConnection: () => ({
+    isConnected: true,
+    apiBaseUrl: 'https://wegent.example.com/api',
+    token: 'token',
+    serviceKey: 'test-cloud',
+  }),
+}))
+
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
     applyLanguagePreferenceMock.mockReset()
     importExternalContentMock.mockReset()
+    getWegentUsageDisplayMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -117,6 +134,19 @@ describe('GeneralSettingsPage', () => {
       Promise.resolve({ ...defaultPreferences, ...patch })
     )
     applyLanguagePreferenceMock.mockResolvedValue('zh-CN')
+    getWegentUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      sourceText: 'AIGC额度',
+      sourceLabel: 'AIGC',
+      quota: 1042,
+      usage: 1127.68,
+      remaining: -85.68,
+      usageRate: 108.22,
+      value: '1,127.68 / 1,042 元',
+      detail: '已用 108.22% · 剩余 -85.68 元',
+      trayTitle: 'AIGC -85.68',
+      tooltip: 'AIGC额度\n1,127.68 / 1,042 元 (108.22%)\n剩余 -85.68 元',
+    })
   })
 
   test('renders language preference options', async () => {
@@ -297,12 +327,18 @@ describe('GeneralSettingsPage', () => {
       'true'
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('general-tray-wegent-usage-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
     expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
+    expect(await screen.findByText('AIGC额度')).toBeInTheDocument()
 
     await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-running-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-usage-toggle'))
+    await userEvent.click(screen.getByTestId('general-tray-wegent-usage-toggle'))
 
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
@@ -311,6 +347,7 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUnreadEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayRunningEnabled: false })
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayWegentUsageEnabled: false })
     })
   })
 

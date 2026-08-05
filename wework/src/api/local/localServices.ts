@@ -31,6 +31,11 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorSetRequest,
   RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
@@ -305,17 +310,25 @@ function localRuntimeModels(
   codexOfficialError: string | null = null,
   codexAuthConfigured = false
 ): UnifiedModel[] {
-  const officialModels =
-    codexOfficialError || codexOfficialModels.length === 0
+  const officialCatalogModels = codexOfficialModels.filter(
+    model => model.providerType === 'official'
+  )
+  const officialModels = !codexAuthConfigured
+    ? []
+    : codexOfficialError || officialCatalogModels.length === 0
       ? [
           unavailableCodexModel(
             codexOfficialError || 'Codex model list returned no available models'
           ),
         ]
-      : codexOfficialModels.map(model => localCodexModel(model, codexAuthConfigured))
+      : officialCatalogModels.map(model => localCodexModel(model, true))
+  const providerModels = codexOfficialModels
+    .filter(model => model.providerType === 'provider')
+    .map(model => localCodexModel(model, codexAuthConfigured))
 
   return [
     ...officialModels,
+    ...providerModels,
     ...listLocalModelConfigs()
       .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),
@@ -820,6 +833,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: localModel.modelId,
+      wework_model_kind: 'model-interface',
       codex_catalog_model_id: localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
@@ -871,6 +885,7 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: modelName,
+      wework_model_kind: 'cloud',
       codex_catalog_model_id: DEFAULT_GPT_56_CATALOG_MODEL_ID,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: upstreamApiFormat,
@@ -903,9 +918,11 @@ function localRuntimeModelConfig(
 
   const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
   const codexProviderName = modelOptions?.codexProviderName || modelOptions?.codex_provider_name
+  const codexProviderType = modelOptions?.codexProviderType || modelOptions?.codex_provider_type
   return {
     model: 'openai',
     model_id: builtInCodexModelId(modelName),
+    wework_model_kind: codexProviderType === 'provider' ? 'codex-provider' : 'codex-official',
     api_format: RESPONSES_API_FORMAT,
     protocol: OPENAI_RESPONSES_PROTOCOL,
     ...(codexProviderId ? { model_provider: codexProviderId } : {}),
@@ -2216,6 +2233,22 @@ export function createRuntimeWorkApiFromIpc(
     },
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.clear', data)
+    },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.get', data)
+    },
+    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.set', data)
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.clear', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return requestWithLocalDevice('runtime.tasks.supervisor.resolve', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.open', data)

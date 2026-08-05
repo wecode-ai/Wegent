@@ -388,7 +388,15 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Priority task entries are selectable two-line data rows rather than compact
+  navigation rows. They use a `48px` minimum height so the title and `12px–14px`
+  source metadata remain readable.
 - Hover and active states use subtle neutral surface changes, not colored fills.
+- Sortable sidebar rows must keep the sortable container separate from the
+  pointer activator. Only the primary icon-and-label or label region may start
+  pointer sorting, after at least `6px` of movement; trailing actions, metadata,
+  and unused row space must remain click-only. Preserve keyboard sorting on the
+  sortable container.
 - Section spacing may be larger than row spacing; avoid divider-heavy grouping.
 - On macOS light theme, use the captured warm translucent/off-white sidebar
   material and keep the main canvas pure white. Preserve the traffic-light safe
@@ -527,6 +535,12 @@ recipe closely:
   than roughly `440px–475px`;
 - drag state uses a subtle neutral overlay; blocked/submitting state dims and
   becomes inert without destroying entered content.
+- In an active desktop thread, the workbench viewport owns vertical scrolling.
+  Its conversation column must be a `min-height: 100%`, non-shrinking flex
+  column, with the composer rendered as the sticky footer inside that flow.
+  Short threads therefore fill the viewport while long and virtualized threads
+  grow naturally. Keep bottom following stable across delayed virtual
+  measurements, but stop following immediately after an explicit user scroll.
 
 The Composer is not a green brand block, a thick outlined form, or a card with
 an exaggerated shadow.
@@ -664,6 +678,11 @@ semantics for all three.
   active task and unsent composer input.
 - Opening the bottom workspace panel starts or restores its Terminal directly;
   it must not show an IDE launcher or require an intermediate tool choice.
+- Terminal sessions may remain mounted while the bottom panel is hidden so the
+  shell session and scrollback survive panel restoration. Only the active
+  terminal should be fitted and resized; after activation, window focus, or
+  document visibility restoration, refresh the buffered xterm rows so the
+  existing session remains visible.
 - Workspace IDEs and native editors launch only from the titlebar “Open
   location” control, including its local-editor picker and remote code-server
   behavior.
@@ -680,6 +699,8 @@ semantics for all three.
 - Runtime conversation events are keyed by task address and must update the
   shared conversation cache even when that task's pane is not active or
   mounted.
+- Turn lifecycle events are additionally keyed by turn identity. A settlement
+  from an older turn must not clear the running state of a newer active turn.
 - A guidance item remains pending until a matching runtime
   `guidance_applied` event settles it. Match the client identifier first and
   use guidance content only when the runtime replaces that identifier.

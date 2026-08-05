@@ -8,8 +8,6 @@ mod embedded_browser_tls;
 #[cfg(desktop)]
 mod feedback;
 mod local_executor;
-#[cfg(desktop)]
-mod local_model_secrets;
 mod local_terminal;
 #[cfg(desktop)]
 mod popout_window;
@@ -325,41 +323,37 @@ const TRAY_MENU_TASK_PREFIX: &str = "task:";
 
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
-#[cfg(desktop)]
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_USAGE_ICON_HEIGHT: u32 = 36;
+#[cfg(all(desktop, not(target_os = "macos")))]
 const TRAY_USAGE_ICON_HEIGHT: u32 = 22;
 #[cfg(all(desktop, target_os = "macos"))]
-const TRAY_STATUS_ICON_SIZE: u32 = TRAY_USAGE_ICON_HEIGHT;
+const TRAY_USAGE_LOGICAL_HEIGHT: f64 = 18.0;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_STATUS_ICON_SIZE: u32 = 36;
 #[cfg(all(desktop, not(target_os = "macos")))]
 const TRAY_STATUS_ICON_SIZE: u32 = 32;
 #[cfg(all(desktop, target_os = "windows"))]
 const WINDOWS_TRAY_ICON_BYTES: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/128x128.png"));
-#[cfg(desktop)]
-const TRAY_USAGE_ICON_LEFT_PADDING: u32 = 0;
-#[cfg(desktop)]
-const TRAY_USAGE_ICON_TEXT_GAP: u32 = 2;
-#[cfg(desktop)]
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_STATUS_METER_WIDTH: u32 = 6;
+#[cfg(all(desktop, not(target_os = "macos")))]
 const TRAY_STATUS_METER_WIDTH: u32 = 7;
-#[cfg(desktop)]
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_STATUS_METER_GAP: u32 = 8;
+#[cfg(all(desktop, not(target_os = "macos")))]
 const TRAY_STATUS_METER_GAP: u32 = 6;
-#[cfg(desktop)]
-const TRAY_STATUS_METER_TEXT_GAP_OFFSET: u32 = 2;
-#[cfg(desktop)]
-const TRAY_USAGE_TEXT_LEFT_EXTRA_GAP: u32 = 2;
-#[cfg(desktop)]
-const TRAY_USAGE_ICON_SCALE: u32 = 2;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_USAGE_TEXT_GAP: u32 = 8;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_USAGE_TEXT_FONT_SIZE: f64 = 9.0;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_USAGE_TEXT_LINE_HEIGHT: f64 = 8.0;
 #[cfg(desktop)]
 const TRAY_USAGE_GLYPH_WIDTH: u32 = 3;
 #[cfg(desktop)]
-const TRAY_USAGE_GLYPH_HEIGHT: u32 = 5;
-#[cfg(desktop)]
 const TRAY_USAGE_GLYPH_GAP: u32 = 1;
-#[cfg(desktop)]
-const TRAY_USAGE_SPACE_WIDTH: u32 = 1;
-#[cfg(desktop)]
-const TRAY_USAGE_LINE_GAP: u32 = 2;
-#[cfg(desktop)]
-const TRAY_USAGE_MAX_LINE: &str = "7d 100%";
 #[cfg(desktop)]
 const FRONTEND_RESUME_PROBE_FUNCTION: &str = "__WEWORK_NATIVE_RESUME_PROBE__";
 #[cfg(desktop)]
@@ -593,6 +587,7 @@ struct AppPreferences {
     telemetry_consent_asked: bool,
     #[serde(default)]
     telemetry_enabled: bool,
+    supervisor_principles: String,
     #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
@@ -601,6 +596,8 @@ struct AppPreferences {
     tray_running_enabled: bool,
     #[serde(default = "default_true")]
     tray_usage_enabled: bool,
+    #[serde(default = "default_true")]
+    tray_wegent_usage_enabled: bool,
     #[serde(default = "default_browser_external_link_target")]
     browser_external_link_target: String,
     #[serde(default = "default_browser_local_link_target")]
@@ -700,10 +697,12 @@ impl Default for AppPreferences {
             experimental_features_enabled: false,
             telemetry_consent_asked: false,
             telemetry_enabled: false,
+            supervisor_principles: String::new(),
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
             tray_usage_enabled: true,
+            tray_wegent_usage_enabled: true,
             browser_external_link_target: default_browser_external_link_target(),
             browser_local_link_target: default_browser_local_link_target(),
             browser_download_directory: None,
@@ -751,10 +750,12 @@ struct AppPreferencesPatch {
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
+    supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
     tray_usage_enabled: Option<bool>,
+    tray_wegent_usage_enabled: Option<bool>,
     browser_external_link_target: Option<String>,
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
@@ -1334,6 +1335,9 @@ fn update_app_preferences(
     if let Some(value) = patch.telemetry_enabled {
         preferences.telemetry_enabled = value;
     }
+    if let Some(value) = patch.supervisor_principles {
+        preferences.supervisor_principles = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -1345,6 +1349,9 @@ fn update_app_preferences(
     }
     if let Some(value) = patch.tray_usage_enabled {
         preferences.tray_usage_enabled = value;
+    }
+    if let Some(value) = patch.tray_wegent_usage_enabled {
+        preferences.tray_wegent_usage_enabled = value;
     }
     if let Some(value) = patch.browser_external_link_target {
         preferences.browser_external_link_target = value;
@@ -1397,10 +1404,12 @@ struct AppPreferences {
     experimental_features_enabled: bool,
     telemetry_consent_asked: bool,
     telemetry_enabled: bool,
+    supervisor_principles: String,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
     tray_usage_enabled: bool,
+    tray_wegent_usage_enabled: bool,
     browser_external_link_target: String,
     browser_local_link_target: String,
     browser_download_directory: Option<String>,
@@ -1423,10 +1432,12 @@ struct AppPreferencesPatch {
     experimental_features_enabled: Option<bool>,
     telemetry_consent_asked: Option<bool>,
     telemetry_enabled: Option<bool>,
+    supervisor_principles: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
     tray_usage_enabled: Option<bool>,
+    tray_wegent_usage_enabled: Option<bool>,
     browser_external_link_target: Option<String>,
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
@@ -1449,10 +1460,12 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         experimental_features_enabled: false,
         telemetry_consent_asked: false,
         telemetry_enabled: false,
+        supervisor_principles: String::new(),
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
         tray_usage_enabled: true,
+        tray_wegent_usage_enabled: true,
         browser_external_link_target: "system".to_string(),
         browser_local_link_target: "wework".to_string(),
         browser_download_directory: None,
@@ -1481,12 +1494,14 @@ fn update_app_preferences(
         experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
         telemetry_consent_asked: patch.telemetry_consent_asked.unwrap_or(false),
         telemetry_enabled: patch.telemetry_enabled.unwrap_or(false),
+        supervisor_principles: patch.supervisor_principles.unwrap_or_default(),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
         tray_unread_enabled: patch.tray_unread_enabled.unwrap_or(true),
         tray_running_enabled: patch.tray_running_enabled.unwrap_or(true),
         tray_usage_enabled: patch.tray_usage_enabled.unwrap_or(true),
+        tray_wegent_usage_enabled: patch.tray_wegent_usage_enabled.unwrap_or(true),
         browser_external_link_target: patch
             .browser_external_link_target
             .map(|value| normalized_browser_link_target(value, "system"))
@@ -3442,80 +3457,6 @@ fn tray_usage_glyph(character: char) -> Option<[u8; 5]> {
 }
 
 #[cfg(desktop)]
-fn tray_usage_line_width(line: &str) -> u32 {
-    let glyph_count = line.chars().count() as u32;
-    if glyph_count == 0 {
-        return 1;
-    }
-    line.chars()
-        .map(|character| {
-            if character == ' ' {
-                TRAY_USAGE_SPACE_WIDTH * TRAY_USAGE_ICON_SCALE
-            } else {
-                TRAY_USAGE_GLYPH_WIDTH * TRAY_USAGE_ICON_SCALE
-            }
-        })
-        .sum::<u32>()
-        + glyph_count.saturating_sub(1) * TRAY_USAGE_GLYPH_GAP * TRAY_USAGE_ICON_SCALE
-}
-
-#[cfg(desktop)]
-fn tray_status_meter_slot_width(icon_size: u32) -> u32 {
-    if icon_size == 0 {
-        0
-    } else {
-        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP - TRAY_STATUS_METER_TEXT_GAP_OFFSET
-    }
-}
-
-#[cfg(desktop)]
-fn tray_usage_text_x(icon_size: u32) -> u32 {
-    icon_size
-        + tray_status_meter_slot_width(icon_size)
-        + TRAY_USAGE_ICON_TEXT_GAP
-        + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP
-}
-
-#[cfg(desktop)]
-fn tray_usage_canvas_width(icon_size: u32) -> u32 {
-    tray_usage_text_x(icon_size)
-        + tray_usage_line_width(TRAY_USAGE_MAX_LINE)
-        + TRAY_USAGE_ICON_LEFT_PADDING
-}
-
-#[cfg(desktop)]
-fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &str) {
-    let mut cursor_x = x;
-    for character in line.chars() {
-        if character == ' ' {
-            cursor_x += (TRAY_USAGE_SPACE_WIDTH + TRAY_USAGE_GLYPH_GAP) * TRAY_USAGE_ICON_SCALE;
-            continue;
-        }
-        if let Some(glyph) = tray_usage_glyph(character) {
-            for (row_index, row) in glyph.iter().enumerate() {
-                for column in 0..TRAY_USAGE_GLYPH_WIDTH {
-                    if row & (1 << (TRAY_USAGE_GLYPH_WIDTH - column - 1)) == 0 {
-                        continue;
-                    }
-                    for dy in 0..TRAY_USAGE_ICON_SCALE {
-                        for dx in 0..TRAY_USAGE_ICON_SCALE {
-                            let pixel_x = cursor_x + column * TRAY_USAGE_ICON_SCALE + dx;
-                            let pixel_y = y + row_index as u32 * TRAY_USAGE_ICON_SCALE + dy;
-                            let offset = ((pixel_y * width + pixel_x) * 4) as usize;
-                            if offset + 3 < buffer.len() {
-                                buffer[offset..offset + 4]
-                                    .copy_from_slice(&tray_foreground_rgba(255));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        cursor_x += (TRAY_USAGE_GLYPH_WIDTH + TRAY_USAGE_GLYPH_GAP) * TRAY_USAGE_ICON_SCALE;
-    }
-}
-
-#[cfg(desktop)]
 fn tray_foreground_rgba(alpha: u8) -> [u8; 4] {
     if cfg!(target_os = "macos") {
         [0, 0, 0, alpha]
@@ -3630,7 +3571,11 @@ fn draw_tray_running_meter(
     x: u32,
     running_count: usize,
 ) {
-    let meter_height = 22_u32.min(height);
+    let meter_height = if cfg!(target_os = "macos") {
+        32_u32.min(height)
+    } else {
+        22_u32.min(height)
+    };
     if meter_height < 10 {
         return;
     }
@@ -3777,80 +3722,163 @@ fn draw_tray_unread_badge(
     );
 }
 
-#[cfg(desktop)]
-fn tray_usage_icon(
-    title: &str,
-    base_icon: Option<&tauri::image::Image<'_>>,
-    running_count: usize,
-    show_running_status: bool,
-    unread_count: usize,
-) -> Option<tauri::image::Image<'static>> {
+#[cfg(all(desktop, target_os = "macos"))]
+fn resize_tray_image_to_height(
+    image: tauri::image::Image<'_>,
+    target_height: u32,
+) -> tauri::image::Image<'static> {
+    if image.height() == target_height {
+        return image.to_owned();
+    }
+    let target_width =
+        ((image.width() as u64 * target_height as u64) / image.height() as u64).max(1) as u32;
+    let mut resized = vec![0; (target_width * target_height * 4) as usize];
+    for target_y in 0..target_height {
+        let source_y_start = target_y * image.height() / target_height;
+        let source_y_end = ((target_y + 1) * image.height()).div_ceil(target_height);
+        for target_x in 0..target_width {
+            let source_x_start = target_x * image.width() / target_width;
+            let source_x_end = ((target_x + 1) * image.width()).div_ceil(target_width);
+            let mut channels = [0_u32; 4];
+            let mut samples = 0_u32;
+            for source_y in source_y_start..source_y_end {
+                for source_x in source_x_start..source_x_end {
+                    let source_offset = ((source_y * image.width() + source_x) * 4) as usize;
+                    for channel in 0..4 {
+                        channels[channel] += image.rgba()[source_offset + channel] as u32;
+                    }
+                    samples += 1;
+                }
+            }
+            let target_offset = ((target_y * target_width + target_x) * 4) as usize;
+            for channel in 0..4 {
+                resized[target_offset + channel] = (channels[channel] / samples) as u8;
+            }
+        }
+    }
+    tauri::image::Image::new_owned(resized, target_width, target_height)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn macos_tray_usage_text_image(title: &str) -> Result<tauri::image::Image<'static>, String> {
+    use objc2::{runtime::AnyObject, AnyThread};
+    use objc2_app_kit::{
+        NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey, NSColor, NSFont,
+        NSFontAttributeName, NSFontWeightSemibold, NSForegroundColorAttributeName, NSImage,
+        NSStringDrawing,
+    };
+    use objc2_foundation::{NSDictionary, NSPoint, NSSize, NSString};
+
     let lines = title
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .take(2)
+        .map(NSString::from_str)
         .collect::<Vec<_>>();
-    if lines.len() != 2 {
-        return None;
+    if lines.is_empty() {
+        return Err("Tray usage title has no visible lines".to_string());
     }
 
-    let text_height = TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE * 2 + TRAY_USAGE_LINE_GAP;
-    let base_icon_size = base_icon
-        .map(|icon| icon.width().min(icon.height()).min(TRAY_USAGE_ICON_HEIGHT))
-        .unwrap_or(0);
-    let text_x = tray_usage_text_x(base_icon_size);
-    let width = tray_usage_canvas_width(base_icon_size);
-    let height = TRAY_USAGE_ICON_HEIGHT.max(text_height);
-    let mut buffer = vec![0; (width * height * 4) as usize];
-    let first_y = (height - text_height) / 2;
-    let second_y = first_y + TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE + TRAY_USAGE_LINE_GAP;
-    let mut icon_y = 0;
-
-    if let Some(icon) = base_icon {
-        let source_width = icon.width();
-        let source_height = icon.height();
-        let source_size = source_width.min(source_height);
-        if source_size > 0 && base_icon_size > 0 {
-            let source_x = (source_width - source_size) / 2;
-            let source_y = (source_height - source_size) / 2;
-            let target_y = (height - base_icon_size) / 2;
-            icon_y = target_y;
-            let rgba = icon.rgba();
-            for y in 0..base_icon_size {
-                for x in 0..base_icon_size {
-                    let sample_x = source_x + x * source_size / base_icon_size;
-                    let sample_y = source_y + y * source_size / base_icon_size;
-                    let source_offset = ((sample_y * source_width + sample_x) * 4) as usize;
-                    let target_offset = (((target_y + y) * width + x) * 4) as usize;
-                    copy_tray_icon_pixel(&mut buffer, target_offset, rgba, source_offset);
-                }
-            }
-        }
-    }
-    if base_icon_size > 0 {
-        draw_tray_unread_badge(
-            &mut buffer,
-            width,
-            height,
-            base_icon_size,
-            icon_y,
-            unread_count,
-        );
-        if show_running_status {
-            draw_tray_running_meter(
-                &mut buffer,
-                width,
-                height,
-                base_icon_size + TRAY_STATUS_METER_GAP / 2 + 1,
-                running_count,
+    let font = NSFont::monospacedSystemFontOfSize_weight(TRAY_USAGE_TEXT_FONT_SIZE, unsafe {
+        NSFontWeightSemibold
+    });
+    let color = NSColor::blackColor();
+    let font_object = unsafe { &*(font.as_ref() as *const NSFont).cast::<AnyObject>() };
+    let color_object = unsafe { &*(color.as_ref() as *const NSColor).cast::<AnyObject>() };
+    let attributes = NSDictionary::from_slices(
+        &[unsafe { NSFontAttributeName }, unsafe {
+            NSForegroundColorAttributeName
+        }],
+        &[font_object, color_object],
+    );
+    let width = lines
+        .iter()
+        .map(|line| unsafe { line.sizeWithAttributes(Some(&attributes)).width })
+        .fold(0.0_f64, f64::max)
+        .ceil()
+        .max(1.0) as u32;
+    let image = NSImage::initWithSize(
+        NSImage::alloc(),
+        NSSize::new(width as f64, TRAY_USAGE_LOGICAL_HEIGHT),
+    );
+    #[allow(deprecated)]
+    image.lockFocus();
+    let total_text_height = TRAY_USAGE_TEXT_LINE_HEIGHT * lines.len() as f64;
+    let bottom = ((TRAY_USAGE_LOGICAL_HEIGHT - total_text_height) / 2.0 - 0.5).max(0.0);
+    for (index, line) in lines.iter().rev().enumerate() {
+        unsafe {
+            line.drawAtPoint_withAttributes(
+                NSPoint::new(0.0, bottom + index as f64 * TRAY_USAGE_TEXT_LINE_HEIGHT),
+                Some(&attributes),
             );
         }
     }
+    #[allow(deprecated)]
+    image.unlockFocus();
 
-    for (line_index, line) in lines.iter().enumerate() {
-        let y = if line_index == 0 { first_y } else { second_y };
-        draw_tray_usage_text(&mut buffer, width, text_x, y, line);
+    let tiff = image
+        .TIFFRepresentation()
+        .ok_or_else(|| "Failed to encode tray usage image as TIFF".to_string())?;
+    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
+        .ok_or_else(|| "Failed to create tray usage bitmap".to_string())?;
+    let properties = NSDictionary::<NSBitmapImageRepPropertyKey, AnyObject>::dictionary();
+    let png = unsafe {
+        bitmap.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+    }
+    .ok_or_else(|| "Failed to encode tray usage bitmap".to_string())?;
+    let decoded = tauri::image::Image::from_bytes(unsafe { png.as_bytes_unchecked() })
+        .map_err(|error| format!("Failed to decode tray usage bitmap: {error}"))?;
+    Ok(resize_tray_image_to_height(decoded, TRAY_USAGE_ICON_HEIGHT))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn tray_usage_icon(
+    title: &str,
+    base_icon: Option<&tauri::image::Image<'_>>,
+) -> Option<tauri::image::Image<'static>> {
+    let text = match macos_tray_usage_text_image(title) {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!("Failed to render tray usage text: {error}");
+            return None;
+        }
+    };
+    let base_width = base_icon.map(tauri::image::Image::width).unwrap_or(0);
+    let width = base_width
+        + if base_width > 0 {
+            TRAY_USAGE_TEXT_GAP
+        } else {
+            0
+        }
+        + text.width();
+    let height = TRAY_USAGE_ICON_HEIGHT.max(text.height());
+    let mut buffer = vec![0; (width * height * 4) as usize];
+
+    if let Some(base_icon) = base_icon {
+        let target_y = (height - base_icon.height()) / 2;
+        for y in 0..base_icon.height() {
+            for x in 0..base_icon.width() {
+                let source_offset = ((y * base_icon.width() + x) * 4) as usize;
+                let target_offset = ((((target_y + y) * width) + x) * 4) as usize;
+                copy_tray_icon_pixel(&mut buffer, target_offset, base_icon.rgba(), source_offset);
+            }
+        }
+    }
+
+    let text_x = base_width
+        + if base_width > 0 {
+            TRAY_USAGE_TEXT_GAP
+        } else {
+            0
+        };
+    let target_y = (height - text.height()) / 2;
+    for y in 0..text.height() {
+        for x in 0..text.width() {
+            let source_offset = ((y * text.width() + x) * 4) as usize;
+            let target_offset = ((((target_y + y) * width) + text_x + x) * 4) as usize;
+            copy_tray_icon_pixel(&mut buffer, target_offset, text.rgba(), source_offset);
+        }
     }
 
     Some(tauri::image::Image::new_owned(buffer, width, height))
@@ -3998,26 +4026,19 @@ fn update_tray_visual<R: tauri::Runtime>(
     }
 
     #[cfg(target_os = "macos")]
-    let icon = state
-        .usage_title
-        .as_deref()
-        .and_then(|title| {
-            tray_usage_icon(
-                title,
-                app.default_window_icon(),
-                state.running_count,
-                state.show_running_status,
-                state.unread_count,
-            )
-        })
-        .or_else(|| {
-            tray_status_icon(
-                app.default_window_icon(),
-                state.running_count,
-                state.show_running_status,
-                state.unread_count,
-            )
-        });
+    let icon = {
+        let status_icon = tray_status_icon(
+            app.default_window_icon(),
+            state.running_count,
+            state.show_running_status,
+            state.unread_count,
+        );
+        state
+            .usage_title
+            .as_deref()
+            .and_then(|title| tray_usage_icon(title, status_icon.as_ref()))
+            .or(status_icon)
+    };
     #[cfg(target_os = "windows")]
     let icon = match tauri::image::Image::from_bytes(WINDOWS_TRAY_ICON_BYTES) {
         Ok(icon) => Some(icon),
@@ -4037,8 +4058,12 @@ fn update_tray_visual<R: tauri::Runtime>(
         tray.set_icon_with_as_template(Some(icon), cfg!(target_os = "macos"))
             .map_err(|error| format!("Failed to update tray icon: {error}"))?;
     }
+    #[cfg(target_os = "macos")]
     tray.set_title(None::<&str>)
         .map_err(|error| format!("Failed to clear tray title: {error}"))?;
+    #[cfg(not(target_os = "macos"))]
+    tray.set_title(state.usage_title.as_deref())
+        .map_err(|error| format!("Failed to update tray title: {error}"))?;
     *cached_signature = Some(signature);
     Ok(())
 }
@@ -4077,14 +4102,14 @@ mod tests {
         can_replace_wework_cli_path, executor_home_attachment_root,
         inspect_workspace_path_candidates, install_wework_cli_impl,
         local_workspace_opener_app_name, normalized_browser_link_target,
-        parse_local_workspace_open_request, tray_template_pixel, tray_usage_icon,
-        wework_cli_launcher_content,
+        parse_local_workspace_open_request, tray_template_pixel, wework_cli_launcher_content,
     };
     #[cfg(target_os = "macos")]
     use super::{
-        classify_process, collect_descendant_pids, parse_launch_services_processes,
-        parse_process_snapshot_line, process_physical_footprint_kib,
-        related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
+        classify_process, collect_descendant_pids, macos_tray_usage_text_image,
+        parse_launch_services_processes, parse_process_snapshot_line,
+        process_physical_footprint_kib, related_macos_webkit_process_ids, tray_usage_icon,
+        LaunchServicesProcess, RawProcessInfo, TRAY_USAGE_ICON_HEIGHT,
     };
     #[cfg(desktop)]
     use super::{
@@ -4108,6 +4133,30 @@ mod tests {
         assert_eq!(tray_template_pixel([255, 255, 255, 255]), [0, 0, 0, 0]);
         assert_eq!(tray_template_pixel([0, 0, 0, 255]), [0, 0, 0, 255]);
         assert_eq!(tray_template_pixel([20, 120, 220, 128]), [0, 0, 0, 117]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn renders_antialiased_two_line_tray_usage_inside_menu_bar_height() {
+        let text =
+            macos_tray_usage_text_image("Codex  55%\nWegent -85.67").expect("tray usage text");
+        assert_eq!(text.height(), TRAY_USAGE_ICON_HEIGHT);
+        assert!(text.width() > 20);
+        assert!(text.rgba().chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(
+            text.rgba()
+                .chunks_exact(4)
+                .map(|pixel| pixel[3])
+                .max()
+                .unwrap_or_default()
+                > 200
+        );
+
+        let base_icon = tauri::image::Image::new_owned(vec![255; 22 * 22 * 4], 22, 22);
+        let combined = tray_usage_icon("Codex  55%\nWegent -85.67", Some(&base_icon))
+            .expect("combined tray icon");
+        assert_eq!(combined.height(), TRAY_USAGE_ICON_HEIGHT);
+        assert!(combined.width() > base_icon.width());
     }
 
     #[test]
@@ -4256,18 +4305,6 @@ mod tests {
             *transport.shutdown_timeouts.lock().unwrap(),
             vec![Duration::ZERO]
         );
-    }
-
-    #[test]
-    fn keeps_tray_usage_canvas_stable_across_usage_and_running_states() {
-        let base_icon = tauri::image::Image::new_owned(vec![255; 32 * 32 * 4], 32, 32);
-        let compact = tray_usage_icon("5h 9%\n7d --", Some(&base_icon), 0, false, 0)
-            .expect("compact usage icon");
-        let full = tray_usage_icon("5h 100%\n7d 100%", Some(&base_icon), 3, true, 7)
-            .expect("full usage icon");
-
-        assert_eq!(compact.width(), full.width());
-        assert_eq!(compact.height(), full.height());
     }
 
     #[test]
@@ -4832,10 +4869,6 @@ pub fn run() {
             local_executor::local_executor_request,
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
-            #[cfg(desktop)]
-            local_model_secrets::read_local_model_api_keys,
-            #[cfg(desktop)]
-            local_model_secrets::update_local_model_api_key,
             get_app_log_directory,
             get_app_preferences,
             close_main_window_to_tray,

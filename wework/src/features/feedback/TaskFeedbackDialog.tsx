@@ -108,28 +108,17 @@ interface FeedbackOptionGroup {
   }[]
 }
 
-// Full task data contains verbatim conversation history and a window
-// screenshot. Free text cannot be reliably redacted, so it stays off by
-// default and is labeled as a privacy risk instead of being masked.
-const fullTaskSelection: FeedbackSelection = {
-  runtimeLogs: true,
-  taskInfo: true,
-  screenshot: true,
-  systemInfo: true,
-}
-
-const standardSelection: FeedbackSelection = {
-  runtimeLogs: true,
-  taskInfo: false,
-  screenshot: false,
-  systemInfo: true,
-}
-
 const noSelection: FeedbackSelection = {
   runtimeLogs: false,
   taskInfo: false,
   screenshot: false,
   systemInfo: false,
+}
+
+const defaultSelection: FeedbackSelection = {
+  ...noSelection,
+  runtimeLogs: true,
+  systemInfo: true,
 }
 
 const MAX_ATTACHMENT_COUNT = 20
@@ -160,7 +149,7 @@ function TaskFeedbackDialogContent({
   onClose,
 }: Omit<TaskFeedbackDialogProps, 'open'>) {
   const { t, i18n } = useTranslation('common')
-  const [selection, setSelection] = useState<FeedbackSelection>(standardSelection)
+  const [selection, setSelection] = useState<FeedbackSelection>(defaultSelection)
   const [note, setNote] = useState('')
   const [attachments, setAttachments] = useState<File[]>([])
   const [exporting, setExporting] = useState(false)
@@ -174,8 +163,8 @@ function TaskFeedbackDialogContent({
   const [expandedCategory, setExpandedCategory] = useState<FeedbackCategory | null>(null)
   const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
-  const hasFeedback =
-    Object.values(selection).some(Boolean) || note.trim() !== '' || attachments.length > 0
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const hasProblem = note.trim() !== ''
 
   const addAttachments = (incoming: File[]) => {
     setError(null)
@@ -571,14 +560,38 @@ function TaskFeedbackDialogContent({
                   onChange={event => setNote(event.target.value)}
                   onPaste={handleNotePaste}
                   placeholder={t('workbench.feedback_note_placeholder')}
+                  required
+                  aria-required="true"
                   rows={5}
                   className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-blue-500"
                 />
               </label>
               <div>
-                <p className="text-xs text-text-secondary">
-                  {t('workbench.feedback_paste_attachments_hint')}
-                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-text-secondary">
+                    {t('workbench.feedback_paste_attachments_hint')}
+                  </p>
+                  <input
+                    ref={attachmentInputRef}
+                    data-testid="task-feedback-attachment-input"
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={event => {
+                      addAttachments(Array.from(event.target.files ?? []))
+                      event.target.value = ''
+                    }}
+                  />
+                  <button
+                    type="button"
+                    data-testid="task-feedback-add-attachment-button"
+                    onClick={() => attachmentInputRef.current?.click()}
+                    className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium hover:bg-muted md:h-8"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                    {t('workbench.feedback_add_attachment')}
+                  </button>
+                </div>
                 {attachments.length > 0 ? (
                   <ul
                     data-testid="task-feedback-attachment-list"
@@ -609,13 +622,14 @@ function TaskFeedbackDialogContent({
                   </ul>
                 ) : null}
               </div>
+              <div className="pt-1">
+                <p className="text-sm font-medium">{t('workbench.feedback_optional_details')}</p>
+                <p className="mt-1 text-xs text-text-secondary">
+                  {t('workbench.feedback_optional_details_description')}
+                </p>
+              </div>
               {optionGroups.map(group => {
                 const disabled = group.sensitive && !hasActiveTask
-                const target = group.sensitive ? fullTaskSelection : standardSelection
-                const empty = {
-                  ...noSelection,
-                  ...(group.sensitive ? standardSelection : {}),
-                }
                 const checked = !disabled && group.options.every(option => selection[option.key])
                 const GroupIcon = group.icon
                 return (
@@ -639,7 +653,12 @@ function TaskFeedbackDialogContent({
                         checked={checked}
                         disabled={disabled}
                         onChange={event =>
-                          setSelection(event.target.checked ? { ...target } : { ...empty })
+                          setSelection(current => ({
+                            ...current,
+                            ...Object.fromEntries(
+                              group.options.map(option => [option.key, event.target.checked])
+                            ),
+                          }))
                         }
                         className="h-4 w-4 shrink-0 accent-current"
                       />
@@ -698,7 +717,7 @@ function TaskFeedbackDialogContent({
             <button
               type="button"
               data-testid="task-feedback-export-button"
-              disabled={!hasFeedback || exporting}
+              disabled={!hasProblem || exporting}
               onClick={() => void buildPreview()}
               className="inline-flex h-9 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
             >

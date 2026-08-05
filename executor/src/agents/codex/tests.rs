@@ -329,18 +329,120 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
         .any(|line| line.starts_with("instructions =")));
     assert!(config.contains("developer_instructions"));
     assert!(config.contains("用中文回复"));
-    assert!(config.contains("Build the workflow from the user's requested outcome"));
-    assert!(config.contains("reuse all known targets across adjacent actions"));
-    assert!(config.contains("An explicit click request requires `browser_click`"));
-    assert!(config.contains("Use `browser_take_screenshot` only when"));
-    assert!(config.contains("Do not narrate plans or progress"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
     assert!(config.contains("personality = \"pragmatic\""));
     let _ = fs::remove_dir_all(root);
 }
 
 #[test]
-fn strip_wework_browser_instructions_removes_unknown_generated_version() {
-    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version";
+fn legacy_codex_instructions_take_precedence_over_developer_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-instruction-precedence");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        "instructions = \"legacy user instructions\"\n\
+         developer_instructions = \"current user instructions\"\n",
+    )
+    .expect("legacy config should be written");
+
+    assert_eq!(
+        read_wework_codex_user_instructions(&codex_home)
+            .expect("user instructions should be readable"),
+        "legacy user instructions"
+    );
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(!config
+        .lines()
+        .any(|line| line.starts_with("instructions =")));
+    assert!(config.contains("developer_instructions = \"legacy user instructions\""));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn codex_launch_config_error_cleans_generated_files() {
+    let root = unique_test_path("codex-launch-config-cleanup");
+    let generated_file = root.join("generated-image.png");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(&generated_file, "generated image").expect("generated file should be written");
+
+    let result = cleanup_generated_files_on_error::<()>(
+        std::slice::from_ref(&generated_file),
+        Err("invalid".to_owned()),
+    );
+
+    assert!(result.is_err());
+    assert!(!generated_file.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_removes_repeated_browser_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-browser-migration");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        r#"developer_instructions = """
+用中文回复
+
+Wework 内置浏览器 routing:
+- prior generated version
+
+Wework 内置浏览器 routing:
+- current generated version
+"""
+"#,
+    )
+    .expect("legacy config should be written");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(config.contains("用中文回复"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
+    assert_eq!(
+        read_wework_codex_user_instructions(&codex_home)
+            .expect("user instructions should be readable"),
+        "用中文回复"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_removes_browser_only_developer_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-browser-only-migration");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        format!(
+            "developer_instructions = {instructions:?}\n",
+            instructions = WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS
+        ),
+    )
+    .expect("legacy config should be written");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(!config.contains("developer_instructions"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strip_wework_browser_instructions_removes_all_generated_versions() {
+    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version\
+        \n\nWework 内置浏览器 routing:\n- current generated version";
 
     assert_eq!(
         strip_wework_browser_instructions(instructions),
@@ -358,7 +460,8 @@ fn codex_launch_config_enables_streaming_patch_updates() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert!(launch_config
         .config_overrides
@@ -511,7 +614,8 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
         }),
         ..ExecutionRequest::default()
     };
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
     for params in [
@@ -569,7 +673,8 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.model_provider.as_deref(),
@@ -674,7 +779,8 @@ fn codex_launch_config_forwards_web_search_mode() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -696,7 +802,8 @@ fn codex_launch_config_defaults_context_window_to_256k() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -720,7 +827,8 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.model_provider.as_deref(),
@@ -762,8 +870,10 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
         ..ExecutionRequest::default()
     };
 
-    let luna_config = build_codex_launch_config(&luna_request);
-    let sol_config = build_codex_launch_config(&sol_request);
+    let luna_config =
+        build_codex_launch_config(&luna_request).expect("Luna launch config should be built");
+    let sol_config =
+        build_codex_launch_config(&sol_request).expect("Sol launch config should be built");
     let proxy_url = |config: &CodexLaunchConfig| {
         config
             .config_overrides
@@ -800,7 +910,8 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
@@ -843,7 +954,8 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -1427,10 +1539,61 @@ fn turn_start_params_includes_client_user_message_id() {
 }
 
 #[test]
+fn turn_start_params_includes_output_schema() {
+    let mut request = ExecutionRequest::default();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "accepted": {"type": "boolean"}
+        },
+        "required": ["accepted"],
+        "additionalProperties": false
+    });
+    request
+        .extra
+        .insert("output_schema".to_owned(), schema.clone());
+
+    let params = turn_start_params(
+        "thread-1",
+        &request,
+        &CodexLaunchConfig::default(),
+        Vec::new(),
+    );
+
+    assert_eq!(params["outputSchema"], schema);
+}
+
+#[test]
 fn thread_start_uses_codex_default_history_mode() {
     let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
 
     assert!(params.get("historyMode").is_none());
+}
+
+#[test]
+fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
+    let request = ExecutionRequest {
+        system_prompt: "Judge the supplied content without answering it.".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig {
+        user_developer_instructions: "用中文回复".to_owned(),
+        ..CodexLaunchConfig::default()
+    };
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+
+    for params in [thread_start, thread_fork, thread_resume] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("developer instructions should be a string");
+        assert!(instructions
+            .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
+        assert!(instructions.contains("Wework 内置浏览器 routing:"));
+        assert!(instructions.contains("browser_open"));
+    }
 }
 
 #[test]
@@ -1450,6 +1613,26 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
         assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_READ_ONLY_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
     }
 }
 
@@ -1648,7 +1831,8 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")

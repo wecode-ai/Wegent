@@ -33,6 +33,7 @@ interface ModelListWithScopeProps {
   onCategoryFilterChange?: (category: ResourceLibraryModelCategoryFilter) => void
   hideCategoryFilterControls?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 export function ModelListWithScope({
@@ -53,6 +54,7 @@ export function ModelListWithScope({
   onCategoryFilterChange,
   hideCategoryFilterControls = false,
   compact = false,
+  searchQuery = '',
 }: ModelListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -114,6 +116,7 @@ export function ModelListWithScope({
         onCategoryFilterChange={onCategoryFilterChange}
         hideCategoryFilterControls={hideCategoryFilterControls}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -137,6 +140,7 @@ export function ModelListWithScope({
         onCategoryFilterChange={onCategoryFilterChange}
         hideCategoryFilterControls={hideCategoryFilterControls}
         compact={compact}
+        searchQuery={searchQuery}
       />
     )
   }
@@ -170,6 +174,7 @@ export function ModelListWithScope({
         onCategoryFilterChange={onCategoryFilterChange}
         hideCategoryFilterControls={hideCategoryFilterControls}
         compact={compact}
+        searchQuery={searchQuery}
       />
     </div>
   )

@@ -51,6 +51,7 @@ import {
 import { Pagination } from '@/components/ui/pagination'
 import { toast } from '@/hooks/use-toast'
 import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
+import { useOffPageDocumentPolling } from '../hooks/useOffPageDocumentPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
 import type {
   KnowledgeBase,
@@ -82,6 +83,14 @@ import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
+
+export function resolveCurrentDocumentSnapshot(
+  selectedDocument: KnowledgeDocument | null,
+  documents: KnowledgeDocument[]
+): KnowledgeDocument | null {
+  if (!selectedDocument) return null
+  return documents.find(document => document.id === selectedDocument.id) ?? selectedDocument
+}
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -371,6 +380,10 @@ export function DocumentList({
   const [showUpload, setShowUpload] = useState(false)
   const [showRetrievalTest, setShowRetrievalTest] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
+  const currentViewingDoc = useMemo(
+    () => resolveCurrentDocumentSnapshot(viewingDoc, documents),
+    [documents, viewingDoc]
+  )
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const {
@@ -468,6 +481,11 @@ export function DocumentList({
   // See hooks/useDocumentIndexPolling for details.
   useDocumentIndexPolling(documents, () => {
     if (isMountedRef.current) refresh()
+  })
+  useOffPageDocumentPolling({
+    document: viewingDoc,
+    visibleDocuments: documents,
+    onUpdate: setViewingDoc,
   })
 
   // Check if summary generation failed
@@ -615,7 +633,9 @@ export function DocumentList({
     t(
       document.index_status === 'not_indexed'
         ? 'document.document.indexStatus.notIndexedHint'
-        : 'document.document.indexStatus.unavailableHint'
+        : document.index_status === 'failed'
+          ? 'document.document.indexStatus.failedHint'
+          : 'document.document.indexStatus.unavailableHint'
     )
 
   const folderSelectionBlocksDocumentBatchActions = selectionSummary.hasFolderScopeSelection
@@ -1555,10 +1575,10 @@ export function DocumentList({
       <DocumentDetailDialog
         open={!!viewingDoc}
         onOpenChange={open => !open && setViewingDoc(null)}
-        document={viewingDoc}
+        document={currentViewingDoc}
         knowledgeBaseId={knowledgeBase.id}
         kbType={knowledgeBase.kb_type}
-        canEdit={viewingDoc ? canManageDocument(viewingDoc) : false}
+        canEdit={currentViewingDoc ? canManageDocument(currentViewingDoc) : false}
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
         isOrganization={isOrganization}

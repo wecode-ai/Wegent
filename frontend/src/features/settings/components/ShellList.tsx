@@ -23,7 +23,7 @@ import {
   GlobeAltIcon,
   LinkSlashIcon,
 } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, MoreHorizontal } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -52,6 +52,7 @@ import {
   type ResourceLibrarySortMode,
   type ResourceLibrarySortSource,
 } from '@/features/resource-library/resourceSorting'
+import { matchesResourceSearch } from '@/features/resource-library/resourceSearch'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
@@ -60,6 +61,12 @@ import {
 } from '@/features/resource-library/components/ResourceCreateButton'
 import { UnbindInUseDialog } from '@/features/resource-library/components/UnbindInUseDialog'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 interface ShellListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -77,6 +84,7 @@ interface ShellListProps {
   creationOnly?: boolean
   hideCreateActions?: boolean
   compact?: boolean
+  searchQuery?: string
 }
 
 /**
@@ -103,6 +111,7 @@ const ShellList: React.FC<ShellListProps> = ({
   creationOnly = false,
   hideCreateActions = false,
   compact = false,
+  searchQuery = '',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -147,10 +156,24 @@ const ShellList: React.FC<ShellListProps> = ({
       filteredShells = shells.filter(shell => shell.type === 'group')
     } else if (sourceFilter === 'system') {
       filteredShells = shells.filter(shell => shell.type === 'public')
+    } else if (sourceFilter === 'mine') {
+      filteredShells = shells.filter(shell => shell.type !== 'public')
     }
 
-    return filterResourceLibraryItemsByGroups(filteredShells, groupFilter, shell => shell.namespace)
-  }, [shells, sourceFilter, groupFilter])
+    return filterResourceLibraryItemsByGroups(
+      filteredShells,
+      groupFilter,
+      shell => shell.namespace
+    ).filter(shell =>
+      matchesResourceSearch(
+        searchQuery,
+        shell.name,
+        shell.displayName,
+        shell.shellType,
+        shell.baseImage
+      )
+    )
+  }, [shells, sourceFilter, groupFilter, searchQuery])
 
   const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
@@ -375,7 +398,7 @@ const ShellList: React.FC<ShellListProps> = ({
               {sortedShells.map(shell => (
                 <Card
                   key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
-                  className={getResourceCardClassName(compact)}
+                  className={cn(getResourceCardClassName(compact), compact && 'min-w-0 gap-2')}
                   data-testid={`shell-card-${shell.type}-${shell.name}`}
                 >
                   <div className={getResourceCardBodyClassName(compact)}>
@@ -383,7 +406,14 @@ const ShellList: React.FC<ShellListProps> = ({
                       cardLayout={compact}
                       name={shell.name}
                       displayName={shell.displayName || undefined}
-                      showId={true}
+                      showId={!compact}
+                      identity={
+                        compact
+                          ? [getExecutionTypeLabel(shell.executionType), shell.baseImage]
+                              .filter(Boolean)
+                              .join(' · ')
+                          : undefined
+                      }
                       isPublic={shell.type === 'public'}
                       publicLabel={t('common:shells.public')}
                       icon={
@@ -427,13 +457,17 @@ const ShellList: React.FC<ShellListProps> = ({
                               },
                             ]
                           : []),
-                        {
-                          key: 'execution-type',
-                          label: getExecutionTypeLabel(shell.executionType),
-                          variant: 'info',
-                          className: 'hidden sm:inline-flex text-xs',
-                        },
-                        ...(shell.baseImage
+                        ...(!compact
+                          ? [
+                              {
+                                key: 'execution-type',
+                                label: getExecutionTypeLabel(shell.executionType),
+                                variant: 'info' as const,
+                                className: 'hidden sm:inline-flex text-xs',
+                              },
+                            ]
+                          : []),
+                        ...(!compact && shell.baseImage
                           ? [
                               {
                                 key: 'base-image',
@@ -445,7 +479,7 @@ const ShellList: React.FC<ShellListProps> = ({
                           : []),
                       ]}
                     />
-                    {hasShellActions(shell) && (
+                    {!compact && hasShellActions(shell) && (
                       <div
                         className={cn(
                           'flex flex-shrink-0 items-center gap-1',
@@ -496,6 +530,76 @@ const ShellList: React.FC<ShellListProps> = ({
                       </div>
                     )}
                   </div>
+                  {compact && hasShellActions(shell) && (
+                    <div
+                      className={cn(
+                        'relative z-20 flex min-w-0 shrink-0 items-center justify-end gap-1.5',
+                        getResourceCardActionsClassName(true)
+                      )}
+                      data-testid={`shell-card-actions-${shell.type}-${shell.name}`}
+                    >
+                      {canEditShell(shell) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => handleEdit(shell)}
+                          title={t('common:shells.edit')}
+                          aria-label={t('common:shells.edit')}
+                          data-testid={`edit-shell-${shell.name}-button`}
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                          <span>{t('common:actions.edit')}</span>
+                        </Button>
+                      )}
+                      {canUnbindShell(shell) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-11 min-w-0 flex-1 gap-2 px-3 text-xs md:h-8"
+                          onClick={() => void handleUnbindRequest(shell)}
+                          disabled={checkingReferenceUsageName === shell.name}
+                          title={t('common:actions.unbind')}
+                          aria-label={t('common:actions.unbind')}
+                          data-testid={`unbind-shell-${shell.name}-button`}
+                        >
+                          {checkingReferenceUsageName === shell.name ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <LinkSlashIcon className="h-4 w-4" />
+                          )}
+                          <span>{t('common:actions.unbind')}</span>
+                        </Button>
+                      )}
+                      {canDeleteShell(shell) && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-11 w-11 shrink-0 md:h-8 md:w-8"
+                              aria-label={t('common:actions.more_actions')}
+                              data-testid={`shell-more-actions-${shell.name}-button`}
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-40">
+                            {canDeleteShell(shell) && (
+                              <DropdownMenuItem
+                                danger
+                                onClick={() => setDeleteConfirmShell(shell)}
+                                data-testid={`delete-shell-${shell.name}-button`}
+                              >
+                                <TrashIcon className="mr-2 h-4 w-4" />
+                                {t('common:shells.delete')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+                  )}
                 </Card>
               ))}
             </div>

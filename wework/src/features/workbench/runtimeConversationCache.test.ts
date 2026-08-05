@@ -304,6 +304,37 @@ describe('runtimeConversationCache', () => {
     ])
   })
 
+  test('places executor-originated guidance at its applied position without a frontend queue item', () => {
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'working',
+    })
+
+    const settled = settleRuntimeConversationGuidance(address, {
+      taskId: address.taskId,
+      deviceId: address.deviceId,
+      subtaskId: 'subtask-1',
+      guidanceId: 'runtime-guidance-1',
+      clientGuidanceId: 'supervisor-correction-1',
+      message: 'Return to the required language.',
+      appliedAtMs: Date.parse('2026-07-27T00:00:02.000Z'),
+    })
+
+    expect(settled?.id).toBe('supervisor-correction-1')
+    expect(getRuntimeConversationMessages(address).map(message => message.content)).toEqual([
+      'working',
+      'Return to the required language.',
+      '',
+    ])
+  })
+
   test('settles an optimistic guidance message into the active turn without duplicating its id', () => {
     applyRuntimeConversationAction(address, {
       type: 'assistant_started',

@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'core-task-flow',
   'window-lifecycle',
   'goal-lifecycle',
+  'supervisor-lifecycle',
   'resilience',
   'conversation-state',
   'workspace-attachments',

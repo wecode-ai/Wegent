@@ -79,7 +79,7 @@ describe('TaskFeedbackDialog', () => {
     })
   })
 
-  test('offers two groups: standard diagnostics on and full task data off by default', () => {
+  test('requires a problem description and selects standard diagnostics by default', () => {
     render(
       <TaskFeedbackDialog
         open
@@ -92,6 +92,7 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.getByText(/运行日志/)).toBeInTheDocument()
     expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeChecked()
     expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).not.toBeChecked()
+    expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
   })
 
   test('allows user-authored feedback without diagnostic categories', async () => {
@@ -105,7 +106,6 @@ describe('TaskFeedbackDialog', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
     expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
 
     fireEvent.change(screen.getByTestId('task-feedback-note'), {
@@ -159,6 +159,9 @@ describe('TaskFeedbackDialog', () => {
     fireEvent.paste(screen.getByTestId('task-feedback-note'), {
       clipboardData: { files: [attachment] },
     })
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The console output may help explain the problem' },
+    })
 
     expect(await screen.findByText('console.txt')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
@@ -182,6 +185,47 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.getByText('用户附件')).toBeInTheDocument()
   })
 
+  test('adds files through the attachment picker', async () => {
+    invokeMock.mockResolvedValue(previewResult)
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={vi.fn()}
+      />
+    )
+    const attachment = new File(['details'], 'details.txt', { type: 'text/plain' })
+
+    fireEvent.change(screen.getByTestId('task-feedback-attachment-input'), {
+      target: { files: [attachment] },
+    })
+
+    expect(await screen.findByText('details.txt')).toBeInTheDocument()
+    expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The attached details explain the problem' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await screen.findByTestId('task-feedback-preview-list')
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'preview_feedback_bundle',
+      expect.objectContaining({
+        request: expect.objectContaining({
+          attachments: [
+            {
+              name: 'details.txt',
+              mimeType: 'text/plain',
+              dataBase64: 'ZGV0YWlscw==',
+            },
+          ],
+        }),
+      })
+    )
+  })
+
   test('removes a pasted attachment before previewing', async () => {
     invokeMock.mockResolvedValue(previewResult)
     render(
@@ -196,6 +240,9 @@ describe('TaskFeedbackDialog', () => {
 
     fireEvent.paste(screen.getByTestId('task-feedback-note'), {
       clipboardData: { files: [attachment] },
+    })
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The screenshot is no longer needed' },
     })
     await screen.findByText('screenshot.png')
     fireEvent.click(screen.getByTestId('task-feedback-remove-attachment-0'))
@@ -225,6 +272,11 @@ describe('TaskFeedbackDialog', () => {
     expect(screen.getByTestId('task-feedback-group-full-task-checkbox')).toBeDisabled()
     expect(screen.getByTestId('task-feedback-group-standard-checkbox')).toBeEnabled()
     expect(screen.getAllByText('workbench.feedback_requires_task')).toHaveLength(1)
+    expect(screen.getByTestId('task-feedback-export-button')).toBeDisabled()
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The new conversation screen is broken' },
+    })
     expect(screen.getByTestId('task-feedback-export-button')).toBeEnabled()
   })
 
@@ -247,6 +299,9 @@ describe('TaskFeedbackDialog', () => {
       <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Messages are missing from the task' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
 
@@ -324,6 +379,10 @@ describe('TaskFeedbackDialog', () => {
       <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
     )
 
+    fireEvent.click(screen.getByTestId('task-feedback-group-standard-checkbox'))
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The toolbar disappears after reconnecting' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
 
     await waitFor(() =>
@@ -335,8 +394,10 @@ describe('TaskFeedbackDialog', () => {
       'preview_feedback_bundle',
       expect.objectContaining({
         request: expect.objectContaining({
+          includeRuntimeLogs: false,
           includeTaskInfo: false,
           includeScreenshot: false,
+          includeSystemInfo: false,
           taskContext: null,
           screenshotDataUrl: null,
         }),
@@ -363,6 +424,9 @@ describe('TaskFeedbackDialog', () => {
       />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The captured window is incorrect' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
 
@@ -401,6 +465,9 @@ describe('TaskFeedbackDialog', () => {
       <TaskFeedbackDialog open hasActiveTask getTaskContext={getTaskContext} onClose={vi.fn()} />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Task context is unavailable' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
 
@@ -429,6 +496,9 @@ describe('TaskFeedbackDialog', () => {
       />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'The task context contains the failure details' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-group-full-task-checkbox'))
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
     await waitFor(() =>
@@ -465,6 +535,9 @@ describe('TaskFeedbackDialog', () => {
       />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Export this problem for manual sharing' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
     await waitFor(() =>
       expect(screen.getByTestId('task-feedback-confirm-button')).toBeInTheDocument()
@@ -495,6 +568,9 @@ describe('TaskFeedbackDialog', () => {
       />
     )
 
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Return to edit this problem' },
+    })
     fireEvent.click(screen.getByTestId('task-feedback-export-button'))
     await waitFor(() => expect(screen.getByText('返回')).toBeInTheDocument())
     fireEvent.click(screen.getByText('返回'))
@@ -506,5 +582,38 @@ describe('TaskFeedbackDialog', () => {
       decision: { stagingId: 'staging-1' },
     })
     expect(invokeMock).not.toHaveBeenCalledWith('confirm_feedback_bundle', expect.anything())
+  })
+
+  test('discards the staged bundle when the dialog is closed from the preview', async () => {
+    const onClose = vi.fn()
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'capture_main_webview')
+        return Promise.resolve('data:image/png;base64,aGVsbG8=')
+      if (command === 'preview_feedback_bundle') return Promise.resolve(previewResult)
+      if (command === 'discard_feedback_bundle') return Promise.resolve(null)
+      return Promise.reject(new Error(`Unexpected command: ${command}`))
+    })
+    render(
+      <TaskFeedbackDialog
+        open
+        hasActiveTask
+        getTaskContext={async () => ({ taskId: 'task-1' })}
+        onClose={onClose}
+      />
+    )
+
+    fireEvent.change(screen.getByTestId('task-feedback-note'), {
+      target: { value: 'Close this problem without submitting' },
+    })
+    fireEvent.click(screen.getByTestId('task-feedback-export-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('task-feedback-preview-list')).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId('task-feedback-close-button'))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(invokeMock).toHaveBeenCalledWith('discard_feedback_bundle', {
+      decision: { stagingId: 'staging-1' },
+    })
   })
 })

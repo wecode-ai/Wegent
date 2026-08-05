@@ -103,7 +103,7 @@ A Codex turn may interleave reasoning, assistant text, and tool calls. The execu
 
 Assistant text enters final content during streaming only when Codex explicitly provides a `final` or `final_answer` phase. Text with a missing or unrecognized phase must first be emitted as process text, preventing third-party models from making Wework alternate between final content and process blocks when text and tool calls are interleaved. The executor retains the latest unresolved text and promotes it to the final result only when the turn succeeds without explicit final text. If explicit final text appears later in the same turn, it always takes precedence.
 
-Reasoning content may remain in the runtime transcript for diagnostics and restoration, but Wework does not display reasoning characters or character counts. While the turn is active, the UI shows only the generic “Thinking” status. The task state machine and visible message or tool content determine when that indicator appears and disappears.
+Reasoning summaries supplied by Codex enter Wework as `thinking` processing blocks. A streaming summary appears as a single “Thinking · summary” row and reports only the currently active reasoning progress. After the turn completes, fails, or is cancelled, Wework removes the thinking block instead of retaining a summary placeholder or detail in message history. The executor must map both reasoning deltas and `item/completed` notifications that carry only the complete summary; otherwise a long reasoning phase degrades to a generic waiting state with no visible progress. Internal reasoning that the provider does not include in its summary is not displayed.
 
 ### Backend Device Chat Task REST Entrypoint
 
@@ -453,7 +453,7 @@ On startup, the local executor resolves configuration in this order: environment
 
 Development mode uses `wegent-executor-dev` to watch the source tree and restart the real executor. The supervisor must also monitor the Wework process that launched it: on Unix, a parent PID change stops the current executor and exits so the operating system cannot adopt the supervisor and let it keep restarting executors after Wework has exited.
 
-`EXECUTOR_MODE` overrides `mode`. `docker` starts only the HTTP server. Other values start the loopback HTTP server and select either the Wework stdio control plane or the standalone Local Executor remote Backend control plane from the explicit identity described above; no local IPC socket is created. `WEGENT_BACKEND_URL` overrides `connection.backend_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. Normal standalone startup scripts therefore do not set `WEGENT_APP_IPC_DEVICE_ID`, preserving the existing remote behavior and transport.
+`EXECUTOR_MODE` overrides `mode`. `docker` starts only the HTTP server. Other values start the loopback HTTP server and select either the Wework stdio control plane or the standalone Local Executor remote Backend control plane from the explicit identity described above; no local IPC socket is created. `WEGENT_BACKEND_URL` overrides `connection.backend_url`, `WEGENT_SOCKET_URL` overrides `connection.socket_url`, and `WEGENT_AUTH_TOKEN` overrides `connection.auth_token`. An empty Socket URL defaults to the Backend URL. When the origins are split, HTTP APIs use the Backend URL while the executor Socket.IO transport uses the independent Socket URL. Normal standalone startup scripts therefore do not set `WEGENT_APP_IPC_DEVICE_ID`, preserving the existing remote behavior and transport.
 
 ### Cloud Device Bootstrap Identity Variables
 

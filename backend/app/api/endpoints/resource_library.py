@@ -171,7 +171,7 @@ def uninstall_resource_library_listing(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Remove a model, executor, or retriever reference from a scope."""
+    """Remove an Agent, model, executor, or retriever reference from a scope."""
     resource_library_service.uninstall_kind_reference(
         db,
         listing_id=listing_id,
@@ -286,7 +286,7 @@ def list_my_resource_library_installs(
 
 
 @router.get(
-    "/groups/{group_namespace}/installs", response_model=ResourceLibraryInstallList
+    "/groups/{group_namespace:path}/installs", response_model=ResourceLibraryInstallList
 )
 def list_group_resource_library_installs(
     group_namespace: str,

@@ -59,7 +59,11 @@ function boardProjectIdFromRoute(contentRoute: string): string | null {
   return new URLSearchParams(contentRoute.slice(searchIndex + 1)).get('projectId')
 }
 
-export function DesktopWorkbenchLayout() {
+interface DesktopWorkbenchLayoutProps {
+  routeActive?: boolean
+}
+
+export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
   const {
@@ -608,9 +612,11 @@ export function DesktopWorkbenchLayout() {
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
         navigateTo(
-          options?.autoOpenAddCloudDeviceDialog || options?.settingsPage === 'connections'
+          options?.autoOpenAddCloudDeviceDialog
             ? '/settings/connections'
-            : '/settings'
+            : options?.settingsPage
+              ? `/settings/${options.settingsPage}`
+              : '/settings'
         )
       }}
       onLogout={onLogout}
@@ -714,7 +720,7 @@ export function DesktopWorkbenchLayout() {
             ))}
           <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
             <DesktopWorkbenchMain
-              visible={!settingsOpen && !todoOpen}
+              visible={routeActive && !settingsOpen && !todoOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
               sidebarResizing={sidebarResizing}
               onSidebarCollapsedChange={updateSidebarCollapsed}

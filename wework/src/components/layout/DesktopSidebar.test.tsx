@@ -154,6 +154,26 @@ function enableTauri() {
   })
 }
 
+function mockSidebarSortableRect(element: HTMLElement, top: number) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: top,
+    top,
+    left: 0,
+    right: 240,
+    bottom: top + 30,
+    width: 240,
+    height: 30,
+    toJSON: () => ({}),
+  } as DOMRect)
+}
+
+async function waitForSidebarPointerSensorCleanup() {
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 60))
+  })
+}
+
 describe('DesktopSidebar', () => {
   beforeEach(() => {
     experimentalFeatures.enabled = true
@@ -250,7 +270,7 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('exposes a remote project as sortable through its local Codex state identity', () => {
+  test('starts project pointer sorting only from its content-sized activator', async () => {
     const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
     renderSidebar({
       devices: [
@@ -321,9 +341,73 @@ describe('DesktopSidebar', () => {
     const remoteSortable = document.querySelector(
       '[data-sidebar-sortable-id="local-device:remote-project-id"]'
     ) as HTMLElement
+    const localSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:/repo/local"]'
+    ) as HTMLElement
+    const remoteActivator = screen.getByTestId('project-drag-activator-8')
+    const remoteButton = remoteActivator.closest('button') as HTMLButtonElement
+
+    mockSidebarSortableRect(localSortable, 0)
+    mockSidebarSortableRect(remoteSortable, 30)
+
     expect(remoteSortable).toHaveAttribute('tabindex', '0')
     expect(remoteSortable).toHaveAttribute('role', 'button')
-    expect(remoteSortable).toHaveClass('touch-none')
+    expect(remoteActivator).toHaveAttribute('data-sidebar-drag-activator')
+    expect(remoteButton).not.toHaveAttribute('data-sidebar-drag-activator')
+
+    fireEvent.pointerDown(remoteButton, {
+      button: 0,
+      buttons: 1,
+      clientX: 220,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 220,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 1,
+    })
+    expect(remoteSortable).not.toHaveAttribute('data-dragging')
+    fireEvent.pointerUp(document, { button: 0, clientX: 220, clientY: 10, pointerId: 1 })
+
+    fireEvent.pointerDown(remoteActivator, {
+      button: 0,
+      buttons: 1,
+      clientX: 20,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    expect(remoteSortable).toHaveAttribute('data-dragging', 'true')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 5,
+      isPrimary: true,
+      pointerId: 2,
+    })
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 20,
+      clientY: 5,
+      isPrimary: true,
+      pointerId: 2,
+    })
+
+    await waitFor(() => expect(onReorderRuntimeProjects).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(remoteSortable).not.toHaveAttribute('data-dragging'))
+    await waitForSidebarPointerSensorCleanup()
   })
 
   test('shows an interactive Codex-style project hover card', async () => {
@@ -760,6 +844,12 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-row-running-waiting-task')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-local-task-waiting-waiting-task')).toBeInTheDocument()
     expect(screen.queryByTestId('runtime-local-task-row-idle-task')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-unread-task')).toHaveClass(
+      'min-h-[48px]',
+      'py-1.5'
+    )
+    expect(screen.getByTestId('runtime-local-task-source-unread-task')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('runtime-local-task-source-waiting-task')).toHaveTextContent('Wegent')
     const priorityRows = Array.from(
       screen
         .getByTestId('runtime-priority-list')
@@ -780,6 +870,248 @@ describe('DesktopSidebar', () => {
 
     expect(screen.queryByTestId('runtime-priority-section')).not.toBeInTheDocument()
     expect(screen.getByTestId('projects-section-toggle')).toBeInTheDocument()
+  })
+
+  test('keeps a read task in the active priority session and moves it to recent after reopening', async () => {
+    const onMarkRuntimeTaskRead = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
+    const updatedAt = new Date().toISOString()
+    const runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: '/workspace/chats/priority-session',
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'session-unread',
+              workspacePath: '/workspace/chats/priority-session',
+              workspaceKind: 'chat' as const,
+              title: 'Session unread',
+              runtime: 'codex' as const,
+              updatedAt,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    const initialProps = createSidebarProps({
+      runtimeWork,
+      unreadRuntimeTaskKeys: new Set(['local-device\0session-unread']),
+      onMarkRuntimeTaskRead,
+      onOpenRuntimeTask,
+    })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-priority-session-test')
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    await userEvent.click(screen.getByTestId('runtime-local-task-row-session-unread'))
+
+    const readProps = createSidebarProps({
+      runtimeWork,
+      unreadRuntimeTaskKeys: new Set(),
+      onMarkRuntimeTaskRead,
+      onOpenRuntimeTask,
+    })
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...readProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    expect(
+      screen
+        .getByTestId('runtime-priority-list')
+        .querySelector('[data-testid="runtime-local-task-row-session-unread"]')
+    ).not.toBeNull()
+    expect(
+      screen.queryByTestId('runtime-local-task-unread-dot-session-unread')
+    ).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+
+    expect(screen.queryByTestId('runtime-priority-list')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId(/^runtime-priority-recent-list-/)
+        .querySelector('[data-testid="runtime-local-task-row-session-unread"]')
+    ).not.toBeNull()
+  })
+
+  test('keeps existing recent placement stable and appends newly urgent tasks', async () => {
+    const updatedAt = new Date().toISOString()
+    const initialRuntimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          available: true,
+          workspacePath: '/workspace/chats/priority-recent',
+          workspaceKind: 'chat' as const,
+          tasks: [
+            {
+              taskId: 'existing-recent',
+              workspacePath: '/workspace/chats/priority-recent',
+              workspaceKind: 'chat' as const,
+              title: 'Existing recent',
+              runtime: 'codex' as const,
+              updatedAt,
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    const initialProps = createSidebarProps({ runtimeWork: initialRuntimeWork })
+    const lifecycleStore = new RuntimeTaskLifecycleStore('desktop-sidebar-priority-recent-test')
+    lifecycleStore.syncRuntimeWork(initialRuntimeWork)
+    const view = render(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...initialProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(
+      screen
+        .getByTestId(/^runtime-priority-recent-list-/)
+        .querySelector('[data-testid="runtime-local-task-row-existing-recent"]')
+    ).not.toBeNull()
+
+    const updatedRuntimeWork = {
+      ...initialRuntimeWork,
+      chats: [
+        {
+          ...initialRuntimeWork.chats[0],
+          tasks: [
+            ...initialRuntimeWork.chats[0].tasks,
+            {
+              taskId: 'new-waiting',
+              workspacePath: '/workspace/chats/priority-recent',
+              workspaceKind: 'chat' as const,
+              title: 'New waiting',
+              runtime: 'codex' as const,
+              status: 'waiting_for_user_input',
+              updatedAt,
+            },
+          ],
+        },
+      ],
+      totalTasks: 2,
+    }
+    const updatedProps = createSidebarProps({
+      runtimeWork: updatedRuntimeWork,
+      unreadRuntimeTaskKeys: new Set(['local-device\0existing-recent']),
+    })
+    act(() => lifecycleStore.syncRuntimeWork(updatedRuntimeWork))
+    view.rerender(
+      <RuntimeTaskLifecycleProvider store={lifecycleStore}>
+        <DesktopSidebar {...updatedProps} />
+      </RuntimeTaskLifecycleProvider>
+    )
+
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId('runtime-priority-list')
+          .querySelector('[data-testid="runtime-local-task-row-new-waiting"]')
+      ).not.toBeNull()
+    })
+    expect(
+      screen
+        .getByTestId(/^runtime-priority-recent-list-/)
+        .querySelector('[data-testid="runtime-local-task-row-existing-recent"]')
+    ).not.toBeNull()
+    expect(screen.getByTestId('runtime-local-task-unread-dot-existing-recent')).toBeInTheDocument()
+  })
+
+  test('marks unread priority tasks as read and continues scoped archiving after a failure', async () => {
+    const onMarkRuntimeTaskRead = vi.fn()
+    const archiveError = new Error('Device offline')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const onArchiveRuntimeTask = vi
+      .fn()
+      .mockRejectedValueOnce(archiveError)
+      .mockResolvedValue(undefined)
+    const updatedAt = new Date().toISOString()
+    renderSidebar({
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/priority-actions',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'priority-unread',
+                workspacePath: '/workspace/chats/priority-actions',
+                workspaceKind: 'chat',
+                title: 'Priority unread',
+                runtime: 'codex',
+                updatedAt,
+              },
+              {
+                taskId: 'priority-waiting',
+                workspacePath: '/workspace/chats/priority-actions',
+                workspaceKind: 'chat',
+                title: 'Priority waiting',
+                runtime: 'codex',
+                status: 'waiting_for_user_input',
+                updatedAt,
+              },
+              {
+                taskId: 'recent-only',
+                workspacePath: '/workspace/chats/priority-actions',
+                workspaceKind: 'chat',
+                title: 'Recent only',
+                runtime: 'codex',
+                updatedAt,
+              },
+            ],
+          },
+        ],
+        totalTasks: 3,
+      },
+      unreadRuntimeTaskKeys: new Set(['local-device\0priority-unread']),
+      onMarkRuntimeTaskRead,
+      onArchiveRuntimeTask,
+    })
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-mark-all-read'))
+
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(1)
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'priority-unread' })
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-archive'))
+    expect(screen.getByTestId('runtime-priority-archive-dialog')).toHaveTextContent(
+      '归档 2 个优先级任务？'
+    )
+    await userEvent.click(screen.getByTestId('runtime-priority-archive-dialog-confirm-button'))
+
+    await waitFor(() => expect(onArchiveRuntimeTask).toHaveBeenCalledTimes(2))
+    expect(onArchiveRuntimeTask.mock.calls.map(([address]) => address.taskId)).toEqual([
+      'priority-unread',
+      'priority-waiting',
+    ])
+    expect(consoleError).toHaveBeenCalledWith('Failed to archive priority task', archiveError)
+    expect(screen.queryByTestId('runtime-priority-archive-dialog')).not.toBeInTheDocument()
+    consoleError.mockRestore()
   })
 
   test('sorts priority tasks with numeric-string timestamps', async () => {
@@ -885,7 +1217,7 @@ describe('DesktopSidebar', () => {
     expect(tooltip).toHaveTextContent('U')
   })
 
-  test('keeps pinned conversations out of the priority list until requested', async () => {
+  test('moves pinned priority tasks into a separate section when requested', async () => {
     renderSidebar({
       runtimeWork: {
         projects: [],
@@ -923,15 +1255,28 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
 
     expect(screen.getByTestId('runtime-local-task-row-regular-waiting')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-local-task-row-pinned-waiting')).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('runtime-priority-list')
+        .querySelector('[data-testid="runtime-local-task-row-pinned-waiting"]')
+    ).not.toBeNull()
 
     await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
     await userEvent.click(screen.getByTestId('runtime-priority-filter-toggle-pinned'))
 
-    expect(screen.getByTestId('runtime-local-task-row-pinned-waiting')).toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('runtime-priority-pinned-list')
+        .querySelector('[data-testid="runtime-local-task-row-pinned-waiting"]')
+    ).not.toBeNull()
+    expect(
+      screen
+        .getByTestId('runtime-priority-list')
+        .querySelector('[data-testid="runtime-local-task-row-pinned-waiting"]')
+    ).toBeNull()
   })
 
-  test('does not show an attention dot for hidden pinned priority tasks', async () => {
+  test('shows attention for pinned priority tasks when pinned items are not separated', async () => {
     renderSidebar({
       runtimeWork: {
         projects: [],
@@ -958,9 +1303,15 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.queryByTestId('runtime-priority-filter-attention-dot')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-filter-attention-dot')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('runtime-priority-filter-button'))
+    expect(screen.getByTestId('runtime-local-task-row-pinned-waiting')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-options'))
+    await userEvent.click(screen.getByTestId('runtime-priority-filter-toggle-pinned'))
     expect(screen.getByTestId('runtime-priority-empty')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-priority-pinned-list')).toHaveTextContent(
+      'Pinned waiting task'
+    )
   })
 
   test('keeps search in the product header and orders primary sidebar actions', () => {
@@ -1554,8 +1905,9 @@ describe('DesktopSidebar', () => {
     })
   })
 
-  test('exposes pointer and keyboard sorting affordances in the task section', () => {
+  test('starts task pointer sorting only from its content-sized activator', async () => {
     const onReorderRuntimeProjectTasks = vi.fn().mockResolvedValue(undefined)
+    const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/Documents/Codex/2026-07-12/manual'
     renderSidebar({
       runtimeWork: {
@@ -1589,6 +1941,7 @@ describe('DesktopSidebar', () => {
         totalTasks: 2,
       },
       onReorderRuntimeProjectTasks,
+      onOpenRuntimeTask,
     })
 
     const firstSortable = document.querySelector(
@@ -1600,8 +1953,98 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-chat-task-sortable-list')).toContainElement(firstSortable)
     expect(firstSortable).toHaveAttribute('tabindex', '0')
     expect(firstSortable).toHaveAttribute('role', 'button')
-    expect(firstSortable).toHaveClass('touch-none')
     expect(secondSortable).toHaveAttribute('tabindex', '0')
+
+    const firstActivator = screen.getByTestId('runtime-local-task-drag-activator-chat-1')
+    const firstTitleSpace = firstActivator.parentElement as HTMLElement
+    const firstTrailing = screen.getByTestId('runtime-local-task-trailing-chat-1')
+    const firstActions = screen.getByTestId('runtime-local-task-hover-actions-chat-1')
+    mockSidebarSortableRect(firstSortable, 0)
+    mockSidebarSortableRect(secondSortable, 30)
+
+    expect(firstSortable).toContainElement(firstActivator)
+    expect(firstActivator).not.toContainElement(firstActions)
+    expect(firstActivator).toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstTitleSpace).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstTrailing).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(firstActions).not.toHaveAttribute('data-sidebar-drag-activator')
+    expect(screen.getByTestId('runtime-local-task-row-chat-1')).not.toHaveAttribute(
+      'data-sidebar-drag-activator'
+    )
+
+    fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
+    fireEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(2)
+    expect(onReorderRuntimeProjectTasks).not.toHaveBeenCalled()
+
+    for (const [pointerId, target] of [firstTitleSpace, firstTrailing, firstActions].entries()) {
+      fireEvent.pointerDown(target, {
+        button: 0,
+        buttons: 1,
+        clientX: 220,
+        clientY: 10,
+        isPrimary: true,
+        pointerId: pointerId + 1,
+      })
+      fireEvent.pointerMove(document, {
+        buttons: 1,
+        clientX: 220,
+        clientY: 45,
+        isPrimary: true,
+        pointerId: pointerId + 1,
+      })
+      expect(firstSortable).not.toHaveAttribute('data-dragging')
+      fireEvent.pointerUp(document, {
+        button: 0,
+        clientX: 220,
+        clientY: 45,
+        pointerId: pointerId + 1,
+      })
+    }
+
+    fireEvent.pointerDown(firstActivator, {
+      button: 0,
+      buttons: 1,
+      clientX: 20,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 15,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    expect(firstSortable).not.toHaveAttribute('data-dragging')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 45,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    expect(firstSortable).toHaveAttribute('data-dragging', 'true')
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 20,
+      clientY: 50,
+      isPrimary: true,
+      pointerId: 4,
+    })
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 20,
+      clientY: 50,
+      isPrimary: true,
+      pointerId: 4,
+    })
+
+    await waitFor(() => expect(onReorderRuntimeProjectTasks).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(firstSortable).not.toHaveAttribute('data-dragging'))
+    await waitForSidebarPointerSensorCleanup()
   })
 
   test('refreshes relative runtime task time while the sidebar stays mounted', () => {
@@ -2532,7 +2975,8 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('project-item-button'))
 
-    const title = screen.getByText(taskTitle)
+    const titleActivator = screen.getByText(taskTitle)
+    const title = titleActivator.parentElement as HTMLElement
     const trailing = screen.getByTestId('runtime-local-task-trailing-codex-1')
     const hoverActions = screen.getByTestId('runtime-local-task-hover-actions-codex-1')
 

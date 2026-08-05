@@ -26,7 +26,7 @@ use tokio::{
 use crate::{
     agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
-    image_preprocessor::prepare_image_bytes_for_model,
+    image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::ExecutionRequest,
@@ -45,6 +45,7 @@ const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
+const NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE: u32 = 720;
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
@@ -85,7 +86,6 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
-const WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR: &str = "\n\nWework 内置浏览器 routing:";
 
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
@@ -102,10 +102,11 @@ mod diagnostics;
 mod home;
 
 use diagnostics::{json_scalar_field, json_string_field};
+pub(crate) use home::select_wework_codex_user_instructions;
 pub(crate) use home::wework_codex_home;
 #[cfg(test)]
 use home::WEGENT_CODEX_HOME_ENV;
-use home::{prepare_wework_codex_home, CODEX_HOME_ENV};
+use home::{prepare_wework_codex_home, read_wework_codex_user_instructions, CODEX_HOME_ENV};
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
@@ -1176,7 +1177,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         active_turn_started,
         active_turn_finished,
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
@@ -1187,6 +1188,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
+        let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
         let mut notification_rx = client
             .subscribe_notifications_for_launch_config(&launch_config)
             .await?;
@@ -1278,19 +1280,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if !request.ephemeral {
-            if let Some(goal) = initial_thread_goal.as_ref() {
-                let goal_params = thread_goal_set_params(&thread_id, goal)?;
-                let goal_response = client.request("thread/goal/set", goal_params).await?;
-                sync_goal_status_from_response(&mut state, &goal_response);
-            } else if resuming_thread {
-                if let Ok(goal_response) = client
-                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                    .await
-                {
-                    sync_goal_status_from_response(&mut state, &goal_response);
-                }
-            }
-
             if let Some(name) = initial_thread_name
                 .as_deref()
                 .map(str::trim)
@@ -1305,10 +1294,24 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         }
 
-        let turn_input = turn_input(&request.prompt);
+        if awaits_initial_goal_turn {
+            let goal = initial_thread_goal
+                .as_ref()
+                .expect("initial goal must exist when awaiting its turn");
+            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+            let goal_response = client.request("thread/goal/set", goal_params).await?;
+            sync_goal_status_from_response(&mut state, &goal_response);
+        } else if !request.ephemeral && resuming_thread {
+            if let Ok(goal_response) = client
+                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                .await
+            {
+                sync_goal_status_from_response(&mut state, &goal_response);
+            }
+        }
+
         let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
-        turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
@@ -1316,31 +1319,38 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
-        log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
-        let turn_start_response = match timeout_at(
-            startup_deadline,
-            client.request(
-                "turn/start",
-                turn_start_params(&thread_id, request, &launch_config, turn_input),
-            ),
-        )
-        .await
-        {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => return Err(error),
-            Err(_) => {
-                return Err(recover_stalled_shared_turn(
-                    client,
-                    &thread_id,
-                    startup_timeout_seconds,
-                )
-                .await);
-            }
+        let active_turn_id = if awaits_initial_goal_turn {
+            log_executor_event("codex shared goal turn awaiting", &turn_fields);
+            None
+        } else {
+            let turn_input = turn_input(&request.prompt);
+            turn_fields.push(("input_items", turn_input.len().to_string()));
+            log_executor_event("codex shared turn request started", &turn_fields);
+            let turn_start_response = match timeout_at(
+                startup_deadline,
+                client.request(
+                    "turn/start",
+                    turn_start_params(&thread_id, request, &launch_config, turn_input),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => return Err(error),
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        &thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
+            };
+            turn_start_response_id(&turn_start_response)
         };
-        let active_turn_id = turn_start_response_id(&turn_start_response);
         if let Some(turn_id) = active_turn_id.as_ref() {
             if let Some(callback) = active_turn_started.as_ref() {
                 callback(thread_id.clone(), turn_id.clone());
@@ -1428,7 +1438,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         request_user_input_answers,
         ..
     } = options;
-    let launch_config = build_codex_launch_config(&prepared.request);
+    let launch_config = build_codex_launch_config_for_prepared_request(&prepared)?;
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
@@ -2112,22 +2122,23 @@ fn spawn_codex_app_server(
         .map_err(|error| format!("failed to start codex app-server: {error}"))
 }
 
-pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
-    let user_instructions = user_instructions.trim();
-    if user_instructions.is_empty() {
-        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
-    }
-    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+fn codex_thread_developer_instructions(user_instructions: &str, task_instructions: &str) -> String {
+    [
+        user_instructions.trim(),
+        task_instructions.trim(),
+        WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
+    ]
+    .into_iter()
+    .filter(|instructions| !instructions.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
     let instructions = instructions.trim();
-    if instructions.starts_with("Wework 内置浏览器 routing:") {
-        return "";
-    }
     instructions
-        .rsplit_once(WEWORK_BROWSER_INSTRUCTIONS_SEPARATOR)
-        .map(|(user_instructions, _)| user_instructions)
+        .find("Wework 内置浏览器 routing:")
+        .map(|index| &instructions[..index])
         .unwrap_or(instructions)
         .trim()
 }
@@ -2275,6 +2286,7 @@ struct CodexLaunchConfig {
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
     env: BTreeMap<String, String>,
+    user_developer_instructions: String,
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
@@ -2316,13 +2328,14 @@ struct CodexLocalImage {
     source_path: String,
 }
 
-fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
+fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchConfig, String> {
     let model = codex_request_model(request);
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
     let mut launch_config = CodexLaunchConfig {
         thread_config,
+        user_developer_instructions: read_wework_codex_user_instructions(&wework_codex_home())?,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
         env: runtime_proxy_env(&request.model_config),
@@ -2393,7 +2406,26 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
-    launch_config
+    Ok(launch_config)
+}
+
+fn build_codex_launch_config_for_prepared_request(
+    prepared: &PreparedCodexExecutionRequest,
+) -> Result<CodexLaunchConfig, String> {
+    cleanup_generated_files_on_error(
+        &prepared.generated_files,
+        build_codex_launch_config(&prepared.request),
+    )
+}
+
+fn cleanup_generated_files_on_error<T>(
+    generated_files: &[PathBuf],
+    result: Result<T, String>,
+) -> Result<T, String> {
+    if result.is_err() {
+        cleanup_generated_files(generated_files);
+    }
+    result
 }
 
 fn configure_codex_router(
@@ -3256,6 +3288,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
+    let resize_images = !is_official_codex_model(&request.model_config);
     for attachment in attachments {
         if let Some(local_path) = attachment
             .local_path
@@ -3271,6 +3304,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
                         .mime_type
                         .as_deref()
                         .unwrap_or("image/png"),
+                    resize_images,
                     &mut generated_files,
                 )
                 .unwrap_or_else(|| local_path.to_owned());
@@ -3388,10 +3422,18 @@ fn is_image_attachment(attachment: &AttachmentRecord) -> bool {
 fn prepare_local_image_path(
     path: &str,
     mime_type: &str,
+    resize: bool,
     generated_files: &mut Vec<PathBuf>,
 ) -> Option<String> {
+    if !resize {
+        return Some(path.to_owned());
+    }
     let image_data = fs::read(path).ok()?;
-    let prepared = prepare_image_bytes_for_model(&image_data, mime_type, None);
+    let prepared = prepare_image_bytes_for_model_with_short_edge_limit(
+        &image_data,
+        mime_type,
+        NON_OFFICIAL_MODEL_IMAGE_SHORT_EDGE,
+    );
     if !prepared.resized {
         return Some(path.to_owned());
     }
@@ -3402,6 +3444,12 @@ fn prepare_local_image_path(
     }
     generated_files.push(output_path.clone());
     Some(output_path.display().to_string())
+}
+
+fn is_official_codex_model(model_config: &Value) -> bool {
+    non_empty_config(model_config, "wework_model_kind")
+        .or_else(|| non_empty_config(model_config, "weworkModelKind"))
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("codex-official"))
 }
 
 fn model_input_image_path(path: &Path, mime_type: &str) -> PathBuf {
@@ -3738,6 +3786,7 @@ fn resolve_codex_binary(value: &str) -> String {
 }
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+const CODEX_READ_ONLY_PERMISSION_PROFILE: &str = ":read-only";
 
 pub(crate) fn codex_runtime_approval_policy() -> Value {
     json!({
@@ -3751,10 +3800,27 @@ pub(crate) fn codex_runtime_approval_policy() -> Value {
     })
 }
 
-fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+fn codex_runtime_permission_profile(request: &ExecutionRequest) -> &'static str {
+    if request
+        .extra
+        .get("runtime_permission_profile")
+        .or_else(|| request.extra.get("runtimePermissionProfile"))
+        .and_then(Value::as_str)
+        == Some(CODEX_READ_ONLY_PERMISSION_PROFILE)
+    {
+        CODEX_READ_ONLY_PERMISSION_PROFILE
+    } else {
+        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+    }
+}
+
+fn insert_codex_runtime_permissions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
     params.insert(
         "permissions".to_owned(),
-        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+        Value::String(codex_runtime_permission_profile(request).to_owned()),
     );
 }
 
@@ -3808,13 +3874,14 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3836,13 +3903,14 @@ fn thread_fork_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3897,14 +3965,30 @@ fn thread_resume_params(
     if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
+    insert_codex_developer_instructions(&mut params, request, launch_config);
     append_thread_launch_params(&mut params, launch_config);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
     insert_runtime_workspace_roots(&mut params, request);
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
+}
+
+fn insert_codex_developer_instructions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) {
+    let instructions = codex_thread_developer_instructions(
+        &launch_config.user_developer_instructions,
+        &request.system_prompt,
+    );
+    params.insert(
+        "developerInstructions".to_owned(),
+        Value::String(instructions),
+    );
 }
 
 fn append_thread_launch_params(
@@ -3951,7 +4035,7 @@ fn turn_start_params(
         );
     }
     params.insert("approvalPolicy".to_owned(), codex_runtime_approval_policy());
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -3971,7 +4055,19 @@ fn turn_start_params(
     if let Some(additional_context) = codex_additional_context(request) {
         params.insert("additionalContext".to_owned(), additional_context);
     }
+    if let Some(output_schema) = codex_output_schema(request) {
+        params.insert("outputSchema".to_owned(), output_schema);
+    }
     Value::Object(params)
+}
+
+fn codex_output_schema(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("outputSchema")
+        .or_else(|| request.extra.get("output_schema"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {

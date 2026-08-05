@@ -45,6 +45,14 @@ describe('createLocalAppServices', () => {
       catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: true },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -268,8 +276,16 @@ describe('createLocalAppServices', () => {
     await Promise.all([firstDevices, secondDevices])
   })
 
-  test('returns Codex provider models in local model list', async () => {
+  test('hides official Codex models without auth while keeping provider models', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: false },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -280,7 +296,7 @@ describe('createLocalAppServices', () => {
               current: false,
               available: true,
               error: null,
-              data: [],
+              data: OFFICIAL_CODEX_MODELS,
             },
             {
               id: 'wecode-openai',
@@ -323,7 +339,9 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'Doubao-Seed-2.0-pro-260215',
@@ -342,6 +360,9 @@ describe('createLocalAppServices', () => {
         }),
       ]),
     })
+    expect(models.data.some(model => model.config?.weworkModelKind === 'codex-official')).toBe(
+      false
+    )
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {
@@ -584,6 +605,7 @@ describe('createLocalAppServices', () => {
         model_config: expect.objectContaining({
           model: 'openai',
           model_id: 'gpt-5',
+          wework_model_kind: 'codex-official',
           api_format: 'responses',
           protocol: 'openai-responses',
           runtime_config: {
@@ -1697,6 +1719,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
@@ -1710,6 +1733,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
 
@@ -1722,6 +1746,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'Doubao-Seed-2.0-pro-260215',
+        wework_model_kind: 'codex-provider',
         api_format: 'responses',
         protocol: 'openai-responses',
         model_provider: 'wecode-openai',
@@ -1737,6 +1762,41 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'gpt-5.5',
+      modelOptions: {
+        codexProviderId: 'openai',
+        codexProviderName: 'OpenAI',
+        codexProviderType: 'official',
+      },
+    })
+
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(sendPayload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'gpt-5.5',
+        wework_model_kind: 'codex-official',
+        model_provider: 'openai',
+        provider_name: 'OpenAI',
+      })
     )
   })
 
@@ -2116,6 +2176,39 @@ describe('createLocalAppServices', () => {
       objective: '实现 plan 里的功能',
       status: 'active',
       tokenBudget: null,
+    })
+  })
+
+  test('normalizes local task supervisor requests before IPC', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      supervisor: {
+        mode: 'suggest',
+        status: 'active',
+        instructions: 'Keep scope focused',
+        suggestions: [],
+      },
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
     })
   })
 

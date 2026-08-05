@@ -149,6 +149,12 @@ export function ensureLocalModelApiKeysHydrated(): Promise<void> {
   return localModelApiKeyHydration
 }
 
+function persistableLocalModelConfig(config: LocalModelConfig): Omit<LocalModelConfig, 'apiKey'> {
+  const persistableConfig = { ...config }
+  delete persistableConfig.apiKey
+  return persistableConfig
+}
+
 export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
   if (apiFormat === 'openai-chat-completions') {
     return DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
@@ -380,12 +386,6 @@ function writeStoredConfigs(configs: LocalModelConfig[]): void {
     )
   )
   dispatchChanged(configs)
-}
-
-function persistableLocalModelConfig(config: LocalModelConfig): Omit<LocalModelConfig, 'apiKey'> {
-  const persistableConfig = { ...config }
-  delete persistableConfig.apiKey
-  return persistableConfig
 }
 
 function dispatchChanged(configs: LocalModelConfig[]): void {
