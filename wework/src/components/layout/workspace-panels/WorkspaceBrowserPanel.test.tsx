@@ -32,6 +32,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
   listenEmbeddedBrowserAgentState: vi.fn(),
+  listenEmbeddedBrowserCloseRequests: vi.fn(),
   listenEmbeddedBrowserDownloads: vi.fn(),
   listenEmbeddedBrowserInvalidTlsCertificates: vi.fn(),
   listenEmbeddedBrowserLocalFilePreview: vi.fn(),
@@ -88,6 +89,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
     embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
@@ -123,8 +125,10 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
     fireEvent.click(screen.getByTestId('workspace-browser-clear-cookies-item'))
 
-    expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cookies'])
     expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cookies'])
+    })
 
     await waitFor(() => {
       expect(screen.getByTestId('transient-notice')).toHaveTextContent('浏览数据已清除')
@@ -139,6 +143,9 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
     fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
 
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith(['cache'])
+    })
     await waitFor(() => {
       expect(screen.getByTestId('transient-notice')).toHaveTextContent('清除失败，请重试')
     })

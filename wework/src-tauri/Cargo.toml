@@ -62,7 +62,7 @@ block2 = "0.6.2"
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "libc", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSScreen", "NSView", "NSWindow", "NSWorkspace"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDate", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSSet", "NSString", "std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSData", "NSDate", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSSet", "NSString", "NSURLCache", "std"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWebView", "WKWebViewConfiguration", "WKWebsiteDataRecord", "WKWebsiteDataStore", "block2", "objc2-app-kit", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

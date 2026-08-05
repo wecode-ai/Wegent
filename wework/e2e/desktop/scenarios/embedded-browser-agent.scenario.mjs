@@ -40,6 +40,7 @@ const BROWSER_MORE_BUTTON_SELECTOR = '[data-testid="workspace-browser-more-butto
 const BROWSER_CLEAR_DATA_SELECTOR = '[data-testid="workspace-browser-clear-data-item"]'
 const BROWSER_CLEAR_COOKIES_SELECTOR = '[data-testid="workspace-browser-clear-cookies-item"]'
 const BROWSER_CLEAR_CACHE_SELECTOR = '[data-testid="workspace-browser-clear-cache-item"]'
+const BROWSER_NATIVE_VIEW_SELECTOR = '[data-testid="workspace-browser-native-view"]'
 const BROWSER_CLEAR_STARTED_TEXT = '开始清除浏览数据'
 const BROWSER_CLEAR_COMPLETED_TEXT = '浏览数据已清除'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -372,12 +373,13 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
       const bridgeCall = payload => callBridge(bridgeIdentity, payload)
-      const openResult = await bridgeCall({
-        action: 'open',
-        url: fixtureUrl,
-        timeoutMs: 8_000,
+      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await bridgeCall({
+        action: 'waitFor',
+        options: { condition: { textVisible: READY_TEXT } },
+        timeoutMs: 5_000,
       })
-      assert.equal(openResult.ok, true, `Bridge open failed: ${JSON.stringify(openResult)}`)
+      await new Promise(resolve => setTimeout(resolve, 300))
 
       const pendingAgentWait = bridgeCall({
         action: 'waitFor',
@@ -419,7 +421,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         expression: "document.cookie.includes('wework_browser_data_e2e=present')",
         timeoutMs: 5_000,
       })
-      assert.equal(cookieBeforeClear, true, 'Cookie fixture did not set its test cookie')
+      assert.equal(
+        cookieBeforeClear.ok,
+        true,
+        `Cookie fixture evaluation failed: ${JSON.stringify(cookieBeforeClear)}`
+      )
+      assert.equal(cookieBeforeClear.value, true, 'Cookie fixture did not set its test cookie')
       await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
       await control.command('click', BROWSER_CLEAR_DATA_SELECTOR)
       await control.command('click', BROWSER_CLEAR_COOKIES_SELECTOR)
@@ -436,7 +443,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         expression: "document.cookie.includes('wework_browser_data_e2e=present')",
         timeoutMs: 5_000,
       })
-      assert.equal(cookieAfterClear, false, 'Cookie clear did not remove the fixture cookie')
+      assert.equal(
+        cookieAfterClear.ok,
+        true,
+        `Cookie clear evaluation failed: ${JSON.stringify(cookieAfterClear)}`
+      )
+      assert.equal(cookieAfterClear.value, false, 'Cookie clear did not remove the fixture cookie')
 
       const cacheFixtureUrl = `${control.url}${BROWSER_DATA_CACHE_PATH}`
       await bridgeCall({ action: 'open', url: cacheFixtureUrl, timeoutMs: 8_000 })
@@ -453,7 +465,10 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: BROWSER_CLEAR_COMPLETED_TEXT,
         timeoutMs: uiTimeoutMs,
       })
-      await bridgeCall({ action: 'open', url: cacheFixtureUrl, timeoutMs: 8_000 })
+      await bridgeCall({ action: 'close', timeoutMs: 8_000 })
+      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })
+      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await bridgeCall({
         action: 'waitFor',
         options: { condition: { textVisible: 'Browser data cache fixture' } },

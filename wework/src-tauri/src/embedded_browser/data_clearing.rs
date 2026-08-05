@@ -7,6 +7,11 @@ use serde::Deserialize;
 use tauri::{LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Wry};
 use tokio::{sync::oneshot, time::timeout};
 
+#[cfg(target_os = "windows")]
+use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
+#[cfg(target_os = "windows")]
+use windows::core::Interface;
+
 use super::{
     browser_data_directory, EmbeddedBrowserEntry, EmbeddedBrowserReadiness, EmbeddedBrowserState,
     EMBEDDED_BROWSER_DATA_STORE_ID, EMBEDDED_BROWSER_NOT_READY_ERROR, MAIN_WINDOW_LABEL,
@@ -162,10 +167,11 @@ async fn clear_platform_webview_data(
     data_kinds: DataKindSet,
 ) -> Result<(), String> {
     use block2::RcBlock;
-    use objc2_foundation::{NSDate, NSSet, NSString};
+    use objc2_foundation::{NSDate, NSSet, NSString, NSURLCache};
     use objc2_web_kit::{
         WKWebView, WKWebsiteDataTypeCookies, WKWebsiteDataTypeDiskCache,
-        WKWebsiteDataTypeMemoryCache,
+        WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeMemoryCache,
+        WKWebsiteDataTypeOfflineWebApplicationCache,
     };
 
     let (sender, receiver) = oneshot::channel();
@@ -187,7 +193,9 @@ async fn clear_platform_webview_data(
             }
             if data_kinds.cache {
                 data_types.push(unsafe { WKWebsiteDataTypeDiskCache });
+                data_types.push(unsafe { WKWebsiteDataTypeFetchCache });
                 data_types.push(unsafe { WKWebsiteDataTypeMemoryCache });
+                data_types.push(unsafe { WKWebsiteDataTypeOfflineWebApplicationCache });
             }
             let data_types = NSSet::from_slice(&data_types);
             let date = NSDate::dateWithTimeIntervalSince1970(0.0);
@@ -205,6 +213,9 @@ async fn clear_platform_webview_data(
                         &completion_handler,
                     );
             }
+            if data_kinds.cache {
+                NSURLCache::sharedURLCache().removeAllCachedResponses();
+            }
         })
         .map_err(|error| format!("Failed to access embedded browser data store: {error}"))?;
     wait_for_clear_completion(receiver).await
@@ -215,9 +226,6 @@ async fn clear_platform_webview_data(
     webview: &Webview<Wry>,
     data_kinds: DataKindSet,
 ) -> Result<(), String> {
-    use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
-    use windows::core::Interface;
-
     let (sender, receiver) = oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
     webview
@@ -268,6 +276,7 @@ fn windows_data_kinds(data_kinds: DataKindSet) -> COREWEBVIEW2_BROWSING_DATA_KIN
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES.0;
     }
     if data_kinds.cache {
+        kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0;
         kinds |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0;
     }
     COREWEBVIEW2_BROWSING_DATA_KINDS(kinds)
@@ -323,8 +332,10 @@ fn linux_data_kinds(data_kinds: DataKindSet) -> webkit2gtk::WebsiteDataTypes {
         kinds |= webkit2gtk::WebsiteDataTypes::COOKIES;
     }
     if data_kinds.cache {
+        kinds |= webkit2gtk::WebsiteDataTypes::DOM_CACHE;
         kinds |= webkit2gtk::WebsiteDataTypes::DISK_CACHE;
         kinds |= webkit2gtk::WebsiteDataTypes::MEMORY_CACHE;
+        kinds |= webkit2gtk::WebsiteDataTypes::OFFLINE_APPLICATION_CACHE;
     }
     kinds
 }

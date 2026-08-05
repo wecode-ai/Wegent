@@ -17,6 +17,9 @@ use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
 
+#[cfg(target_os = "macos")]
+use objc2_web_kit::WKWebView;
+
 mod agent_control;
 mod bridge_security;
 mod bridge_server;
@@ -25,6 +28,8 @@ mod data_clearing;
 mod local_file_preview;
 mod popup;
 mod screenshot;
+
+const EMBEDDED_BROWSER_CLOSE_EVENT: &str = "wework:embedded-browser-close";
 
 use agent_control::{
     agent_action_signature, agent_action_target, agent_control_paused_result,
@@ -1031,6 +1036,16 @@ fn handle_bridge_request(
                 .map_err(|error| format!("Failed to reload embedded browser: {error}"))?;
             Ok(json!({ "ok": true }))
         }
+        "close" => {
+            close_embedded_browser_entry(state, &label)?;
+            app.emit_to(
+                MAIN_WINDOW_LABEL,
+                EMBEDDED_BROWSER_CLOSE_EVENT,
+                json!({ "label": label }),
+            )
+            .map_err(|error| format!("Failed to notify embedded browser close: {error}"))?;
+            Ok(json!({ "ok": true }))
+        }
         "back" => eval_json(
             state,
             &label,
@@ -1788,9 +1803,28 @@ pub fn embedded_browser_reload(
 ) -> Result<(), String> {
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
+    #[cfg(target_os = "macos")]
+    {
+        return reload_embedded_browser_from_origin(&webview);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        return webview
+            .reload()
+            .map_err(|error| format!("Failed to reload embedded browser: {error}"));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reload_embedded_browser_from_origin(webview: &Webview<Wry>) -> Result<(), String> {
     webview
-        .reload()
-        .map_err(|error| format!("Failed to reload embedded browser: {error}"))
+        .with_webview(|platform_webview| unsafe {
+            if let Some(native_webview) = platform_webview.inner().cast::<WKWebView>().as_ref() {
+                native_webview.reloadFromOrigin();
+            }
+        })
+        .map_err(|error| format!("Failed to reload embedded browser: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1884,17 +1918,32 @@ pub async fn embedded_browser_relabel(
 
 #[tauri::command]
 pub async fn embedded_browser_close(
+    app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
     label: Option<String>,
 ) -> Result<(), String> {
     let label = browser_label(label);
     let _lifecycle = state.lifecycle.lock().await;
+    close_embedded_browser_entry(&state, &label)?;
+    app.emit_to(
+        MAIN_WINDOW_LABEL,
+        EMBEDDED_BROWSER_CLOSE_EVENT,
+        json!({ "label": label }),
+    )
+    .map_err(|error| format!("Failed to notify embedded browser close: {error}"))?;
+    Ok(())
+}
+
+fn close_embedded_browser_entry(
+    state: &EmbeddedBrowserState,
+    label: &str,
+) -> Result<(), String> {
     let entry = {
         let webviews = state
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(&label).cloned()
+        webviews.get(label).cloned()
     };
     if let Some(entry) = entry {
         let webview = entry.ready_webview()?;
@@ -1909,12 +1958,12 @@ pub async fn embedded_browser_close(
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
         remove_logical_entry_if_native_matches(
             &mut webviews,
-            &label,
+            label,
             &entry.native_label,
             |current| current.native_label.as_str(),
         );
     }
-    clear_label_agent_state(&state, &label)
+    clear_label_agent_state(state, label)
 }
 
 #[tauri::command]
