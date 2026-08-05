@@ -4463,8 +4463,6 @@ async function declineInitialTelemetryConsent(control) {
   )
 }
 
-async function verifyAutomationLifecycle(control, workspacePath) {
-
 async function ensureExperimentalFeaturesEnabled(control) {
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!initialSnapshot.testIds.includes('automation-button')) {
