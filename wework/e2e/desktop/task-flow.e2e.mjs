@@ -354,6 +354,8 @@ const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
+const SIDE_CHAT_QUEUE_INITIAL = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_INITIAL'
+const SIDE_CHAT_QUEUE_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_QUEUE_FOLLOW_UP'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -6712,6 +6714,25 @@ async function verifySideChatAttachmentIsolation({
   )
   await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
 
+  control.setScenario('side_chat_queue')
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_INITIAL })
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.awaitScenarioRequestCount('side_chat_queue', 1)
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_QUEUE_FOLLOW_UP })
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.command('waitFor', `${sideChatSelector} [data-testid="conversation-queue-panel"]`, {
+    text: SIDE_CHAT_QUEUE_FOLLOW_UP,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const queuedSideChat = JSON.parse(await control.command('snapshot', sideChatSelector))
+  assert.equal(
+    queuedSideChat.testIds.includes('chat-input-error'),
+    false,
+    'The side chat exposed a runtime busy error instead of queueing the follow-up'
+  )
+  await captureVerificationScreenshot(control, '04-side-chat-follow-up-queued.png')
+  control.releaseSideChatQueueResponse()
+
   await control.command('click', '[data-testid="toggle-right-workspace-panel-expanded-button"]')
   await control.command(
     'waitFor',
@@ -6739,7 +6760,7 @@ async function verifySideChatAttachmentIsolation({
     0,
     'The main task composer remained visible behind the expanded temporary chat'
   )
-  await captureVerificationScreenshot(control, '04-side-chat-expanded-single-composer.png')
+  await captureVerificationScreenshot(control, '05-side-chat-expanded-single-composer.png')
 
   await control.command(
     'click',
@@ -6920,14 +6941,25 @@ function latestModelInputText(body) {
 }
 
 function responseCreated(id) {
-  return { type: 'response.created', response: { id } }
+  return {
+    type: 'response.created',
+    response: {
+      id,
+      object: 'response',
+      status: 'in_progress',
+      output: [],
+    },
+  }
 }
 
-function responseCompleted(id) {
+function responseCompleted(id, output) {
   return {
     type: 'response.completed',
     response: {
       id,
+      object: 'response',
+      status: 'completed',
+      ...(output ? { output } : {}),
       usage: {
         input_tokens: 0,
         input_tokens_details: null,
@@ -6991,14 +7023,18 @@ function customToolCall(callId, name, input) {
   }
 }
 
+let assistantMessageSequence = 0
+
 function assistantMessage(text) {
+  const messageId = `wework-e2e-message-${assistantMessageSequence++}`
   return {
     type: 'response.output_item.done',
     item: {
       type: 'message',
+      status: 'completed',
       role: 'assistant',
-      id: 'wework-e2e-message',
-      content: [{ type: 'output_text', text }],
+      id: messageId,
+      content: [{ type: 'output_text', text, annotations: [] }],
       phase: 'final_answer',
     },
   }
@@ -8303,6 +8339,9 @@ class DesktopE2EServer {
     this.cancellationCompletionRelease = new Promise(resolvePromise => {
       this.releaseCancellationCompletion = resolvePromise
     })
+    this.sideChatQueueRelease = new Promise(resolvePromise => {
+      this.resolveSideChatQueueRelease = resolvePromise
+    })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
     })
@@ -8542,6 +8581,7 @@ class DesktopE2EServer {
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
+        'side_chat_queue',
         'cloud_initial',
         'cloud_follow_up',
         'model_protocol_matrix',
@@ -8644,6 +8684,10 @@ class DesktopE2EServer {
 
   releaseCancellationResponse() {
     this.releaseCancellationCompletion()
+  }
+
+  releaseSideChatQueueResponse() {
+    this.resolveSideChatQueueRelease()
   }
 
   awaitReconnectResponseStarted() {
@@ -10497,6 +10541,35 @@ class DesktopE2EServer {
         assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'side_chat_queue') {
+      this.recordScenarioRequest('side_chat_queue', modelRequest)
+      const requestText = JSON.stringify(body)
+      const requestCount = this.scenarioRequests.get('side_chat_queue')?.length ?? 0
+      if (requestCount === 1) {
+        assert.ok(
+          requestText.includes(SIDE_CHAT_QUEUE_INITIAL),
+          'The initial side-chat queue request lost its prompt'
+        )
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        await this.sideChatQueueRelease
+        if (response.destroyed || response.writableEnded) return
+        response.end(createSse([responseCompleted(responseId)]))
+        return
+      }
+      assert.ok(
+        requestText.includes(SIDE_CHAT_QUEUE_FOLLOW_UP),
+        'The queued side-chat follow-up lost its prompt'
+      )
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
 
