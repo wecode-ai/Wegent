@@ -4685,6 +4685,28 @@ async function verifyPluginLifecycle({ control, fixture }) {
   await captureVerificationScreenshot(control, 'plugins-04-skill-and-mcp-complete.png')
 }
 
+async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin remained installed after the uninstall request'
+  )
+  // Uninstalling bumps the marketplace refresh tick, which temporarily replaces
+  // the catalog rows with a loading state, so poll until the install action
+  // settles back instead of asserting against the transient refresh UI.
+  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  const startedAt = Date.now()
+  let lastActionText = ''
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    lastActionText = await control.command('getText', installSelector)
+    if (/Install|安装/.test(lastActionText)) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail(
+    `The marketplace did not return to the install state after uninstall; last install action text: ${JSON.stringify(lastActionText)}`
+  )
+}
+
 async function verifyMarketplacePluginLifecycle({
   control,
   executorHome,
@@ -5030,16 +5052,7 @@ async function verifyMarketplacePluginLifecycle({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
-    'The plugin remained installed after the uninstall request'
-  )
-  assert.match(
-    await control.command('getText', installSelector),
-    /Install|安装/,
-    'The marketplace did not return to the install state after uninstall'
-  )
+  await waitForMarketplaceInstallStateAfterUninstall(control, pluginId)
   await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -5148,16 +5161,7 @@ async function uninstallOfficialPlugin(control, fixture) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${fixture.pluginId}`),
-    'The plugin remained installed after the uninstall request'
-  )
-  assert.match(
-    await control.command('getText', fixture.installSelector),
-    /Install|安装/,
-    'The marketplace did not return to the install state after uninstall'
-  )
+  await waitForMarketplaceInstallStateAfterUninstall(control, fixture.pluginId)
   await captureVerificationScreenshot(control, 'plugins-05-uninstalled.png')
 }
 
