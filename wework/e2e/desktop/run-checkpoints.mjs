@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url'
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
+const CHECKPOINT_SCENARIO_MODULES = {
+  'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
+  'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
+}
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const taskFlowPath = join(scriptDir, 'task-flow.e2e.mjs')
 const cliArgs = process.argv.slice(2)
@@ -105,7 +109,39 @@ async function readBuildManifest(path) {
   return JSON.parse(await readFile(path, 'utf8'))
 }
 
+function checkpointScenarioEnv(env, checkpoint) {
+  const nextEnv = { ...env }
+  const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
+  if (module) {
+    nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module
+  } else {
+    delete nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE
+  }
+  return nextEnv
+}
+
+function existingBuildManifest(env) {
+  if (!env.WEWORK_E2E_APP_BIN || !env.WEWORK_E2E_EXECUTOR_BIN) return null
+  return {
+    appBinary: env.WEWORK_E2E_APP_BIN,
+    executorBinary: env.WEWORK_E2E_EXECUTOR_BIN,
+  }
+}
+
+function requestedCheckpointRange(args) {
+  if (args.length !== 2) return null
+  const [flag, checkpoint] = args
+  const startIndex = DESKTOP_CHECKPOINTS.indexOf(checkpoint)
+  if (startIndex < 0) return null
+  if (flag === '--segment') return [checkpoint]
+  if (flag === '--from-segment') return DESKTOP_CHECKPOINTS.slice(startIndex)
+  return null
+}
+
 async function runRequestedArgs() {
+  const checkpoints = requestedCheckpointRange(requestedArgs)
+  if (checkpoints) return runCheckpoints(checkpoints)
+
   const label = requestedArgs.join(' ') || 'desktop task flow'
   console.log(`[desktop-e2e] START ${label}`)
   const result = await runTaskFlow(requestedArgs, process.env, label)
@@ -122,7 +158,7 @@ async function runRequestedArgs() {
   process.exitCode = result.code
 }
 
-async function runAllCheckpoints() {
+async function runCheckpoints(checkpoints) {
   const tempDir = await mkdtemp(join(tmpdir(), 'wework-desktop-e2e-'))
   const buildManifestPath = join(tempDir, 'build-manifest.json')
   const modelServerPort = await reservePort()
@@ -131,27 +167,30 @@ async function runAllCheckpoints() {
     controlServerPort = await reservePort()
   }
   const failures = []
-  let buildManifest = null
+  let buildManifest = existingBuildManifest(process.env)
 
   try {
-    for (const checkpoint of DESKTOP_CHECKPOINTS) {
-      const env = {
-        ...process.env,
-        WEWORK_E2E_CONTROL_SERVER_PORT: String(controlServerPort),
-        WEWORK_E2E_MODEL_SERVER_PORT: String(modelServerPort),
-        ...(buildManifest
-          ? {
-              WEWORK_E2E_APP_BIN: buildManifest.appBinary,
-              WEWORK_E2E_EXECUTOR_BIN: buildManifest.executorBinary,
-            }
-          : {
-              WEWORK_E2E_BUILD_MANIFEST: buildManifestPath,
-            }),
-      }
+    for (const checkpoint of checkpoints) {
+      const env = checkpointScenarioEnv(
+        {
+          ...process.env,
+          WEWORK_E2E_CONTROL_SERVER_PORT: String(controlServerPort),
+          WEWORK_E2E_MODEL_SERVER_PORT: String(modelServerPort),
+          ...(buildManifest
+            ? {
+                WEWORK_E2E_APP_BIN: buildManifest.appBinary,
+                WEWORK_E2E_EXECUTOR_BIN: buildManifest.executorBinary,
+              }
+            : {
+                WEWORK_E2E_BUILD_MANIFEST: buildManifestPath,
+              }),
+        },
+        checkpoint
+      )
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
       const result = await runTaskFlow(['--segment', checkpoint], env, checkpoint)
 
-      if (!buildManifest) {
+      if (!buildManifest && !existingBuildManifest(env)) {
         try {
           buildManifest = await readBuildManifest(buildManifestPath)
           console.log(
@@ -196,6 +235,10 @@ async function runAllCheckpoints() {
     )
   }
   process.exitCode = 1
+}
+
+async function runAllCheckpoints() {
+  await runCheckpoints(DESKTOP_CHECKPOINTS)
 }
 
 if (requestedArgs.length > 0) {

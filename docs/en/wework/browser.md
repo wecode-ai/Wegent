@@ -6,7 +6,7 @@ sidebar_position: 6
 
 The built-in browser opens in the right workspace so you can inspect websites, verify local applications, and provide page context to AI.
 
-Open the new-tab menu, choose **Browser**, and enter an `http` or `https` address. The current page remains loaded when you switch to file or review tabs.
+Open the new-tab menu, choose **Browser**, and enter an `http`, `https`, or `file://` address, or a local absolute path. The current page remains loaded when you switch to file or review tabs. `file://` addresses and paths such as `/Users/.../file.html` are useful for previewing local HTML, PDF, image, and text files, and they can also open local folders. Markdown and extensionless text files also render as text. Folders render as read-only index pages where you can enter child folders or open files. When a local file cannot be previewed, Wework cancels the local-file download and shows a short toast.
 
 Background page-state synchronization does not overwrite the address while you are editing it. If a page is already open, leaving the address field without submitting restores the current page URL. If no page is open yet, the unsubmitted address is preserved and restored after switching conversations.
 
