@@ -24,6 +24,7 @@ import {
   projectSpaceApis,
   projectSpaceKey,
   projectSpaceRef,
+  runtimeCloudProjectId,
 } from '@/features/todo/projectSpaceSelection'
 import {
   hydrateLocalWorkItems,
@@ -709,7 +710,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         additionalContext:
           cloudProjectAdditionalContext(submissionProject, submissionItem) ??
           cloudAdditionalContext,
-        cloudProjectId: submissionProject?.id,
+        cloudProjectId: runtimeCloudProjectId(submissionProject),
         initialSupervisor: supervisorConfig,
         onRuntimeTaskCreated: address => {
           if (pendingTodoBinding) {
