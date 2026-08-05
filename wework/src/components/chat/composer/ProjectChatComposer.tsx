@@ -206,7 +206,6 @@ export function ProjectChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-
   return (
     <div
       data-testid="project-chat-composer"

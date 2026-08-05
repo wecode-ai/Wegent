@@ -422,7 +422,7 @@ const PLUGIN_REFINEMENT_COMPLETION_TEXT =
 const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
 const CONNECTOR_AUTH_MARKER_NAME = 'desktop-e2e-browser-auth'
 const CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT =
-  'Trigger unmatched connector auth resume without a local connector identity.'
+  'Verify recovery behavior when no matching local identity is installed.'
 const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
   'connector_auth_required need_login pluginKey=github connectorSlug=github WEWORK_DESKTOP_E2E_UNMATCHED_CONNECTOR_AUTH_RESUME'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
@@ -1983,7 +1983,7 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   await control.command('press', composerSelector, { key: 'Enter' })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: FRESH_CHAT_COMPLETION_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await sendPrompt(control, composerSelector, `${FRESH_CHAT_PROMPT} FOLLOW_UP`)
   await waitForScenarioRequestCount(control, 'fresh_chat', 2)
@@ -4588,15 +4588,9 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('plugins-search-input') ||
-      snapshot.testIds.includes('plugins-marketplace-tab-default') ||
-      snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
-      snapshot.testIds.includes('plugins-add-marketplace-button'),
-    'The plugin marketplace controls did not become ready'
-  )
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
   await control.command('click', '[data-testid="plugins-create-button"]')
@@ -4641,6 +4635,9 @@ async function verifyMarketplacePluginLifecycle({
 
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
@@ -4859,7 +4856,10 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
     value: CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT,
   })
-  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4880,6 +4880,13 @@ async function verifyMarketplacePluginLifecycle({
   )
 
   await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command(
+    'click',
+    `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`
+  )
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })

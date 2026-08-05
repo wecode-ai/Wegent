@@ -2,6 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 
 import {
   createProjectTaskTrackingSingleFlight,
+  nextTaskTrackingStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudProject,
@@ -568,13 +569,7 @@ export function createLocalDeliveryApi(
       }
       if (!binding.loop_item_id) return null
       const item = await api.getLoopItem(binding.loop_item_id)
-      const nextStatus =
-        executionStatus === 'running' &&
-        (item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review')
-          ? 'in_progress'
-          : executionStatus === 'succeeded' && item.status === 'in_progress'
-            ? 'in_review'
-            : null
+      const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
       return nextStatus
         ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
         : item

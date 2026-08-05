@@ -33,12 +33,12 @@ CloudProject
 
 ## Data ownership
 
-| Data | Source of truth |
-| --- | --- |
-| Cloud projects, members, TODOs, task links, delivery metadata | Backend MySQL |
+| Data                                                                                    | Source of truth                  |
+| --------------------------------------------------------------------------------------- | -------------------------------- |
+| Cloud projects, members, TODOs, task links, delivery metadata                           | Backend MySQL                    |
 | Local paths, devices, Git, execution configuration, and default project-space reference | Device-local Codex project state |
-| Shared files, Markdown, conversations, and delivery snapshots | MinIO/S3 |
-| AI access to cloud data | MCP authorized by the Backend |
+| Shared files, Markdown, conversations, and delivery snapshots                           | MinIO/S3                         |
+| AI access to cloud data                                                                 | MCP authorized by the Backend    |
 
 Objects are isolated by the cloud project's public ID:
 
@@ -95,12 +95,12 @@ Completed TODOs may be reopened into `in_progress`. Updates carry a `version` va
 
 Reuse `resource_members` and `share_links` with a new `CloudProject` resource type.
 
-| Role | Read | Edit TODOs/files | Manage members | Archive project |
-| --- | --- | --- | --- | --- |
-| Reporter | Yes | No | No | No |
-| Developer | Yes | Yes | No | No |
-| Maintainer | Yes | Yes | Yes | No |
-| Owner | Yes | Yes | Yes | Yes |
+| Role       | Read | Edit TODOs/files | Manage members | Archive project |
+| ---------- | ---- | ---------------- | -------------- | --------------- |
+| Reporter   | Yes  | No               | No             | No              |
+| Developer  | Yes  | Yes              | No             | No              |
+| Maintainer | Yes  | Yes              | Yes            | No              |
+| Owner      | Yes  | Yes              | Yes            | Yes             |
 
 Every TODO, delivery, file, and MCP request resolves the caller's cloud-project role first. Inaccessible resources return 404 to avoid disclosing their existence.
 
@@ -145,6 +145,8 @@ Delivery services do not own TODO CRUD. LoopItem services do not access MinIO di
 ```
 
 Creation and updates use separate endpoints rather than PUT upsert. Shared files support folder creation, upload, rename/move, short-lived access, and recursive deletion. A move copies MinIO objects first, commits metadata, and only then removes the old objects; failed moves clean up newly copied objects.
+
+When Wework adds a new runtime task to a cloud project space, it composes the existing primitives: create a `LoopItem`, then bind the runtime task; when execution status changes, read the task context and update the linked TODO. The Backend intentionally has no aggregate tracking endpoint dedicated to that orchestration. This allows the desktop app and Backend to be released independently while the stable TODO-creation, task-binding, and optimistic-locking APIs preserve the same behavior. The desktop app deduplicates concurrent association requests for the same runtime task and reuses a created TODO after a temporary binding failure to avoid duplicate cards.
 
 The Wework Composer encodes cloud projects, directories, files, TODOs, and deliveries as atomic `cloud://` references. Tasks carrying cloud-project context receive the Delivery MCP, and `resolve_cloud_reference` authorizes and resolves every reference in Backend so neither clients nor AI receive S3 credentials. The TODO board refreshes periodically while visible, while writes continue to use `version` optimistic locking for concurrent collaborators.
 

@@ -377,7 +377,8 @@ button:disabled {
     object-fit: cover;
   }
 
-  .composer-mention-node {
+  .composer-mention-node,
+  .composer-link-node {
     display: inline-flex;
     align-items: baseline;
     max-width: 100%;
@@ -388,6 +389,10 @@ button:disabled {
     white-space: nowrap;
     user-select: text;
     -webkit-user-select: text;
+  }
+
+  .composer-link-node {
+    cursor: pointer;
   }
 
   .composer-mention-link {
@@ -442,6 +447,10 @@ button:disabled {
 
   .composer-mention-node[data-composer-skill-path] {
     cursor: pointer;
+  }
+
+  .composer-link-node .composer-mention-icon {
+    object-fit: contain;
   }
 
   .composer-mention-label {
