@@ -39,6 +39,8 @@ const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const BUNDLED_PLUGIN_MARKETPLACE_DIR_NAME: &str = "bundled-plugins";
 const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
+const WEGENT_AUTH_TOKEN_ENV: &str = "WEGENT_AUTH_TOKEN";
+const WEGENT_RUNTIME_AUTH_TOKEN_ENV: &str = "WEGENT_RUNTIME_AUTH_TOKEN";
 const SESSION_GATEWAY_HOST_ENV: &str = "DEVICE_SESSION_GATEWAY_HOST";
 const SESSION_GATEWAY_PORT_ENV: &str = "DEVICE_SESSION_GATEWAY_PORT";
 const SESSION_GATEWAY_PUBLIC_BASE_URL_ENV: &str = "DEVICE_PUBLIC_BASE_URL";
@@ -105,6 +107,7 @@ struct LocalExecutorBackendConnection {
     backend_url: String,
     socket_url: String,
     auth_token: String,
+    runtime_auth_token: Option<String>,
 }
 
 enum LocalExecutorChild {
@@ -776,6 +779,12 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
     }
 }
 
+fn normalize_optional_command_arg(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn non_empty_env(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
@@ -851,7 +860,7 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
             connection.socket_url.clone(),
         ),
         (
-            "WEGENT_AUTH_TOKEN".to_string(),
+            WEGENT_AUTH_TOKEN_ENV.to_string(),
             connection.auth_token.clone(),
         ),
     ]);
@@ -1039,6 +1048,127 @@ fn set_remote_apps_enabled_in_config(content: &str, enabled: bool) -> String {
     next.push_str(&apps_line);
     next.push('\n');
     next
+}
+
+fn toml_basic_string(value: &str) -> String {
+    let mut output = String::with_capacity(value.len() + 2);
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '\u{08}' => output.push_str("\\b"),
+            '\u{0C}' => output.push_str("\\f"),
+            character if character.is_control() => {
+                output.push_str(&format!("\\u{:04X}", character as u32));
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+    output
+}
+
+fn set_shell_environment_value_in_config(content: &str, key: &str, value: Option<&str>) -> String {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let mut section_start = None;
+    let mut section_end = lines.len();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if section_start.is_some() {
+                section_end = index;
+                break;
+            }
+            if trimmed == "[shell_environment_policy.set]" {
+                section_start = Some(index);
+            }
+        }
+    }
+
+    if let Some(start) = section_start {
+        for index in (start + 1)..section_end {
+            let trimmed = lines[index].trim_start();
+            let Some(rest) = trimmed.strip_prefix(key) else {
+                continue;
+            };
+            if !rest.trim_start().starts_with('=') {
+                continue;
+            }
+
+            if let Some(value) = value {
+                let indent_len = lines[index].len() - trimmed.len();
+                lines[index] = format!(
+                    "{}{} = {}",
+                    " ".repeat(indent_len),
+                    key,
+                    toml_basic_string(value)
+                );
+            } else {
+                lines.remove(index);
+            }
+            return format!("{}\n", lines.join("\n"));
+        }
+
+        if let Some(value) = value {
+            lines.insert(start + 1, format!("{key} = {}", toml_basic_string(value)));
+            return format!("{}\n", lines.join("\n"));
+        }
+        return content.to_string();
+    }
+
+    let Some(value) = value else {
+        return content.to_string();
+    };
+    let mut next = content.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str("[shell_environment_policy.set]\n");
+    next.push_str(&format!("{key} = {}\n", toml_basic_string(value)));
+    next
+}
+
+fn write_codex_shell_environment_value(
+    key: &str,
+    value: Option<&str>,
+) -> Result<CodexLocalConfig, String> {
+    let (codex_home, config_path) = wework_codex_config_path()?;
+    fs::create_dir_all(&codex_home)
+        .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let next_content = set_shell_environment_value_in_config(&content, key, value);
+    if next_content != content {
+        fs::write(&config_path, next_content)
+            .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    }
+    read_codex_local_config()
+}
+
+fn snapshot_codex_shell_environment_config() -> Result<(PathBuf, bool, String), String> {
+    let (_, config_path) = wework_codex_config_path()?;
+    let existed = config_path.exists();
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    Ok((config_path, existed, content))
+}
+
+fn restore_codex_shell_environment_config(
+    config_path: &Path,
+    existed: bool,
+    content: &str,
+) -> Result<(), String> {
+    if existed {
+        fs::write(config_path, content)
+            .map_err(|error| format!("failed to restore {}: {error}", config_path.display()))?;
+    } else if config_path.exists() {
+        fs::remove_file(config_path)
+            .map_err(|error| format!("failed to remove {}: {error}", config_path.display()))?;
+    }
+    Ok(())
 }
 
 fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, String> {
@@ -2419,15 +2549,22 @@ pub async fn local_executor_connect_backend(
     backend_url: String,
     socket_url: String,
     auth_token: String,
+    runtime_auth_token: Option<String>,
 ) -> Result<LocalExecutorStatus, String> {
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
     let socket_url = normalize_command_arg(socket_url, "socket_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
+    let runtime_auth_token = normalize_optional_command_arg(runtime_auth_token);
     let _guard = state.backend_connection_lock.lock().await;
+    let (config_path, config_existed, previous_config) = snapshot_codex_shell_environment_config()?;
+    write_codex_shell_environment_value(
+        WEGENT_RUNTIME_AUTH_TOKEN_ENV,
+        runtime_auth_token.as_deref(),
+    )?;
     log::info!(
         "Local executor backend connection update requested: connected=true, backend_url={backend_url}, socket_url={socket_url}"
     );
-    send_executor_request(
+    let configure_result = send_executor_request(
         app.clone(),
         &state,
         LocalExecutorRequest {
@@ -2436,10 +2573,16 @@ pub async fn local_executor_connect_backend(
                 "backend_url": backend_url.clone(),
                 "socket_url": socket_url.clone(),
                 "auth_token": auth_token.clone(),
+                "runtime_auth_token": runtime_auth_token.clone(),
             }),
         },
     )
-    .await?;
+    .await;
+    if let Err(error) = configure_result {
+        restore_codex_shell_environment_config(&config_path, config_existed, &previous_config)
+            .map_err(|restore_error| format!("{error}; {restore_error}"))?;
+        return Err(error);
+    }
     let changed = {
         let mut inner = state
             .inner
@@ -2451,6 +2594,7 @@ pub async fn local_executor_connect_backend(
                 backend_url,
                 socket_url,
                 auth_token,
+                runtime_auth_token,
             }),
         )
     };
@@ -2466,8 +2610,10 @@ pub async fn local_executor_disconnect_backend(
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
     let _guard = state.backend_connection_lock.lock().await;
+    let (config_path, config_existed, previous_config) = snapshot_codex_shell_environment_config()?;
+    write_codex_shell_environment_value(WEGENT_RUNTIME_AUTH_TOKEN_ENV, None)?;
     log::info!("Local executor backend connection update requested: connected=false");
-    send_executor_request(
+    let configure_result = send_executor_request(
         app.clone(),
         &state,
         LocalExecutorRequest {
@@ -2478,7 +2624,12 @@ pub async fn local_executor_disconnect_backend(
             }),
         },
     )
-    .await?;
+    .await;
+    if let Err(error) = configure_result {
+        restore_codex_shell_environment_config(&config_path, config_existed, &previous_config)
+            .map_err(|restore_error| format!("{error}; {restore_error}"))?;
+        return Err(error);
+    }
     let changed = {
         let mut inner = state
             .inner
@@ -2763,6 +2914,45 @@ command = "example"
 
         assert!(next.contains("[features]\napps = true\nshell_environment_policy"));
         assert!(next.contains("[mcp_servers.example]\ncommand = \"example\""));
+    }
+
+    #[test]
+    fn codex_local_config_backend_auth_token_updates_shell_environment() {
+        let content = r#"
+model = "gpt-5.5"
+
+[shell_environment_policy.set]
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+WEGENT_RUNTIME_AUTH_TOKEN = "old"
+
+[projects."/tmp/example"]
+trust_level = "trusted"
+"#;
+
+        let next = set_shell_environment_value_in_config(
+            content,
+            WEGENT_RUNTIME_AUTH_TOKEN_ENV,
+            Some("runtime-task-token"),
+        );
+
+        assert!(next.contains("WEGENT_RUNTIME_AUTH_TOKEN = \"runtime-task-token\""));
+        assert!(next.contains("BROWSER_USE_AVAILABLE_BACKENDS = \"chrome,iab\""));
+        assert!(next.contains("[projects.\"/tmp/example\"]\ntrust_level = \"trusted\""));
+    }
+
+    #[test]
+    fn codex_local_config_backend_auth_token_removes_stale_shell_environment_value() {
+        let content = r#"
+[shell_environment_policy.set]
+WEGENT_RUNTIME_AUTH_TOKEN = "runtime-task-token"
+BROWSER_USE_AVAILABLE_BACKENDS = "chrome,iab"
+"#;
+
+        let next =
+            set_shell_environment_value_in_config(content, WEGENT_RUNTIME_AUTH_TOKEN_ENV, None);
+
+        assert!(!next.contains("WEGENT_RUNTIME_AUTH_TOKEN"));
+        assert!(next.contains("BROWSER_USE_AVAILABLE_BACKENDS = \"chrome,iab\""));
     }
 
     #[test]
@@ -3117,6 +3307,7 @@ command = "example"
                 backend_url: "https://cloud.example.com".to_string(),
                 socket_url: "wss://socket.example.com".to_string(),
                 auth_token: "wg-token".to_string(),
+                runtime_auth_token: Some("runtime-task-token".to_string()),
             }),
             device_id: Some("local-device-abc".to_string()),
             ..LocalExecutorInner::default()
@@ -3144,6 +3335,7 @@ command = "example"
             envs.get("WEGENT_AUTH_TOKEN").map(String::as_str),
             Some("wg-token")
         );
+        assert!(!envs.contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
         assert_eq!(
             envs.get("WEGENT_APP_IPC_DEVICE_ID").map(String::as_str),
             Some("local-device-abc")
@@ -3214,6 +3406,7 @@ command = "example"
             backend_url: "https://cloud.example.com".to_string(),
             socket_url: "wss://socket.example.com".to_string(),
             auth_token: "wg-token".to_string(),
+            runtime_auth_token: Some("runtime-task-token".to_string()),
         };
         let mut inner = LocalExecutorInner::default();
 

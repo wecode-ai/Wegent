@@ -23,6 +23,11 @@ function connectorRefreshDelayMs(expiresInSeconds: number) {
   return Math.max(1_000, (expiresInSeconds - leadSeconds) * 1_000)
 }
 
+function runtimeAuthRefreshDelayMs(expiresInSeconds: number) {
+  const leadSeconds = Math.min(300, Math.max(1, expiresInSeconds * 0.2))
+  return Math.max(1_000, (expiresInSeconds - leadSeconds) * 1_000)
+}
+
 type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection
 
 export function LocalExecutorCloudBridge({
@@ -32,29 +37,73 @@ export function LocalExecutorCloudBridge({
   isConnected,
   token,
 }: LocalExecutorCloudBridgeProps) {
-  const lastTargetRef = useRef<string | null>(null)
+  const connectionGenerationRef = useRef(0)
 
   useEffect(() => {
+    const generation = connectionGenerationRef.current + 1
+    connectionGenerationRef.current = generation
     const backendUrl = isConnected ? configuredBackendUrl : null
     const authToken = isConnected ? token : null
     const connected = Boolean(backendUrl && socketBaseUrl && authToken)
-    const target = connected ? `${backendUrl}\n${socketBaseUrl}\n${authToken}` : 'disconnected'
-    if (lastTargetRef.current === target) return
+    let cancelled = false
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    const isCurrentConnectionAttempt = () =>
+      !cancelled && connectionGenerationRef.current === generation
 
-    lastTargetRef.current = target
-    void applyLocalExecutorCloudConnection({
-      apiBaseUrl,
-      backendUrl: configuredBackendUrl,
-      socketBaseUrl,
-      isConnected,
-      token,
-    }).catch(error => {
-      if (connected) {
-        console.error('[CloudConnection] Failed to connect runtime task service to cloud', error)
-        return
+    const scheduleRefresh = (expiresInSeconds: number) => {
+      if (!isCurrentConnectionAttempt()) return
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(
+        () => void applyConnection(),
+        runtimeAuthRefreshDelayMs(expiresInSeconds)
+      )
+    }
+
+    const scheduleRetry = () => {
+      if (!isCurrentConnectionAttempt() || !connected) return
+      if (refreshTimer) clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(() => void applyConnection(), 30_000)
+    }
+
+    const applyConnection = async () => {
+      try {
+        const result = await applyLocalExecutorCloudConnection(
+          {
+            apiBaseUrl,
+            backendUrl: configuredBackendUrl,
+            socketBaseUrl,
+            isConnected,
+            token,
+          },
+          { isCurrent: isCurrentConnectionAttempt }
+        )
+        if (!isCurrentConnectionAttempt()) return
+        if (
+          result.connected &&
+          typeof result.runtimeAuthTokenExpiresIn === 'number' &&
+          result.runtimeAuthTokenExpiresIn > 0
+        ) {
+          scheduleRefresh(result.runtimeAuthTokenExpiresIn)
+        }
+      } catch (error) {
+        if (connected) {
+          console.error('[CloudConnection] Failed to connect runtime task service to cloud', error)
+          scheduleRetry()
+          return
+        }
+        console.error(
+          '[CloudConnection] Failed to disconnect runtime task service from cloud',
+          error
+        )
       }
-      console.error('[CloudConnection] Failed to disconnect runtime task service from cloud', error)
-    })
+    }
+
+    void applyConnection()
+    return () => {
+      cancelled = true
+      connectionGenerationRef.current += 1
+      if (refreshTimer) clearTimeout(refreshTimer)
+    }
   }, [apiBaseUrl, configuredBackendUrl, isConnected, socketBaseUrl, token])
 
   useEffect(() => {

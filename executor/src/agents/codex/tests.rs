@@ -1021,6 +1021,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     let request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
         skill_identity_token: Some("skill-jwt".to_owned()),
         user_name: Some("alice".to_owned()),
         prompt: Value::String("create a file".to_owned()),
@@ -1040,6 +1041,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
     assert!(!launch_config
         .env
         .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));
@@ -1053,6 +1055,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         "task-jwt"
     );
     assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
         "skill-jwt"
     );
@@ -1060,6 +1066,57 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
     );
+}
+
+#[test]
+fn turn_start_params_refreshes_task_identity_shell_environment() {
+    let request = ExecutionRequest {
+        task_id: "task-525".to_owned(),
+        auth_token: Some("task-jwt".to_owned()),
+        runtime_auth_token: Some("runtime-jwt".to_owned()),
+        skill_identity_token: Some("skill-jwt".to_owned()),
+        user_name: Some("alice".to_owned()),
+        prompt: Value::String("continue".to_owned()),
+        model_config: json!({
+            "model_id": "gpt-5.5-codex",
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let mut launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    launch_config
+        .config_overrides
+        .push("model_provider=wework-router".to_owned());
+
+    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("turn config should include shell env");
+
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_TASK_ID"],
+        "task-525"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.AUTH_TOKEN"],
+        "task-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
+        "runtime-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
+        "skill-jwt"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
+        "alice"
+    );
+    assert!(config.contains_key("shell_environment_policy.set.PATH"));
+    assert!(config.get("model_provider").is_none());
 }
 
 #[test]
@@ -1072,6 +1129,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "mcp_servers.wework.command=\"node\"".to_owned(),
             "shell_environment_policy.set.WEGENT_TASK_ID=\"task-525\"".to_owned(),
             "shell_environment_policy.set.AUTH_TOKEN=\"task-jwt\"".to_owned(),
+            "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN=\"runtime-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
         ],
@@ -1098,6 +1156,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     for key in [
         "WEGENT_TASK_ID",
         "AUTH_TOKEN",
+        "WEGENT_RUNTIME_AUTH_TOKEN",
         "WEGENT_SKILL_IDENTITY_TOKEN",
         "WEGENT_SKILL_USER_NAME",
     ] {
