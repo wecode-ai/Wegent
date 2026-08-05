@@ -18,6 +18,7 @@ import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import SystemTeamTag from './SystemTeamTag'
 import { useTeamFavorites } from './useTeamFavorites'
 import { getRecentTeams } from './team-selector-utils'
+import type { TeamModeFilter } from './team-selector-utils'
 import { useRecentTeams } from './useRecentTeams'
 
 interface MobileTeamSelectorProps {
@@ -30,6 +31,7 @@ interface MobileTeamSelectorProps {
   triggerText?: string
   // Optional: hide team icon in trigger button
   hideTriggerIcon?: boolean
+  currentMode?: TeamModeFilter
 }
 
 const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
@@ -46,6 +48,7 @@ export default function MobileTeamSelector({
   isLoading,
   triggerText,
   hideTriggerIcon = false,
+  currentMode = 'chat',
 }: MobileTeamSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -58,7 +61,7 @@ export default function MobileTeamSelector({
     quickAccessMetaLoaded,
     systemRecommendedTeamIdSet,
   } = useTeamFavorites()
-  const { recentTeamIds, refreshRecentTeams } = useRecentTeams()
+  const { recentTeamIds, refreshRecentTeams } = useRecentTeams(currentMode)
 
   const recentTeams = useMemo(() => getRecentTeams(teams, recentTeamIds), [recentTeamIds, teams])
 

@@ -344,6 +344,7 @@ export default function TeamSelector({
           }}
           disabled={disabled}
           isLoading={isLoading}
+          currentMode={currentMode}
         />
       ) : (
         <>
