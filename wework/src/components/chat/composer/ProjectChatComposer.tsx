@@ -64,6 +64,7 @@ interface ProjectChatComposerProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -123,6 +124,7 @@ export function ProjectChatComposer({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -198,7 +200,6 @@ export function ProjectChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-
   return (
     <div
       data-testid="project-chat-composer"
@@ -376,6 +377,9 @@ export function ProjectChatComposer({
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
           leadingContext={toolbarLeadingContext}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
       </form>
     </div>

@@ -32,6 +32,7 @@ pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
+pub(crate) const VISION_SIDECAR_MODEL: &str = "wework-vision-sidecar";
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
 const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
@@ -101,6 +102,7 @@ pub(crate) fn models() -> Vec<Value> {
         kimi_k3_model_entry(),
         kimi_k27_model_entry(),
         deepseek_v4_flash_model_entry(),
+        vision_sidecar_model_entry(),
         gpt_56_sol_model_entry(),
         gpt_56_terra_model_entry(),
         gpt_56_luna_model_entry(),
@@ -265,8 +267,8 @@ fn kimi_k3_model_entry() -> Value {
         {"effort": "high", "description": "Greater reasoning depth for complex work"},
         {"effort": "max", "description": "Maximum reasoning for long-horizon tasks"}
     ]);
-    entry["context_window"] = Value::Number(262_144.into());
-    entry["max_context_window"] = Value::Number(262_144.into());
+    entry["context_window"] = Value::Number(1_048_576.into());
+    entry["max_context_window"] = Value::Number(1_048_576.into());
     entry["truncation_policy"] = json!({"mode": "tokens", "limit": 10_000});
     entry
 }
@@ -304,6 +306,13 @@ fn deepseek_v4_flash_model_entry() -> Value {
     entry["default_reasoning_summary"] = Value::String("none".to_owned());
     entry["input_modalities"] = json!(["text"]);
     entry["supports_search_tool"] = Value::Bool(true);
+    entry
+}
+
+fn vision_sidecar_model_entry() -> Value {
+    let mut entry = model_entry(VISION_SIDECAR_MODEL, "Vision Sidecar", Some("freeform"));
+    entry["description"] =
+        Value::String("Wework text model routed through a configured vision sidecar".to_owned());
     entry
 }
 
@@ -579,7 +588,7 @@ mod tests {
             .as_str()
             .is_some_and(|instructions| instructions.len() > 10_000
                 && !instructions.contains("based on GPT-5")));
-        assert_eq!(models[0]["context_window"], 262_144);
+        assert_eq!(models[0]["context_window"], 1_048_576);
         assert_eq!(models[0]["default_reasoning_level"], "low");
         assert_eq!(models[0]["supports_parallel_tool_calls"], false);
         assert_eq!(models[1]["slug"], KIMI_K27_MODEL);
@@ -602,6 +611,16 @@ mod tests {
         assert_eq!(model["supports_parallel_tool_calls"], true);
         assert_eq!(model["multi_agent_version"], "v2");
         assert_eq!(model["visibility"], "none");
+        assert_eq!(model["input_modalities"], json!(["text"]));
+
+        let vision_model = catalog["models"]
+            .as_array()
+            .expect("models array")
+            .iter()
+            .find(|model| model["slug"] == VISION_SIDECAR_MODEL)
+            .expect("vision sidecar entry");
+        assert_eq!(vision_model["visibility"], "none");
+        assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
     }
 
     #[test]
@@ -647,6 +666,7 @@ mod tests {
             KIMI_K3_MODEL,
             KIMI_K27_MODEL,
             DEEPSEEK_V4_FLASH_MODEL,
+            VISION_SIDECAR_MODEL,
             WEWORK_GPT_56_SOL_MODEL,
             WEWORK_GPT_56_TERRA_MODEL,
             WEWORK_GPT_56_LUNA_MODEL,

@@ -265,6 +265,45 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('cloud-projects-home-manage')).toBeInTheDocument()
   })
 
+  it('opens a routed project task in the board detail drawer', async () => {
+    const user = { id: 1, user_name: 'local', email: 'local@example.com' } as User
+    const workbenchServices = services()
+    const controlledProject = { ...project, id: String(project.id) }
+    const controlledItem = {
+      ...item,
+      cloud_project_id: controlledProject.id,
+    }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [controlledProject],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({
+      items: [controlledItem],
+    })
+    const onFocusedItemHandled = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={user}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectId={controlledProject.id}
+        focusedItemId={controlledItem.id}
+        onFocusedItemHandled={onFocusedItemHandled}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-detail-title')).toHaveValue(controlledItem.title)
+    expect(onFocusedItemHandled).toHaveBeenCalledOnce()
+    await userEvent.click(await screen.findByTestId('cloud-todo-execution-1'))
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      taskId: 'runtime-248868498',
+    })
+  })
+
   it('renames and archives a project from the sidebar menu', async () => {
     const workbenchServices = services()
 

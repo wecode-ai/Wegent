@@ -356,6 +356,121 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    const originalResizeObserver = globalThis.ResizeObserver
+    const originalCaretRangeDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      'caretRangeFromPoint'
+    )
+    const originalGetClientRectsDescriptor = Object.getOwnPropertyDescriptor(
+      Range.prototype,
+      'getClientRects'
+    )
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    try {
+      render(
+        <ScrollableMessageArea
+          conversationKey="line-width-reflow"
+          messages={[
+            {
+              id: 'line-width-reflow-message',
+              role: 'assistant',
+              content: '第一行需要在调整对话宽度后保持原来的屏幕位置。',
+              status: 'done',
+              createdAt: '2026-05-29T00:00:00.000Z',
+            },
+          ]}
+        />
+      )
+
+      const scroller = screen.getByTestId('chat-message-scroll-area')
+      const anchor = screen
+        .getByText('第一行需要在调整对话宽度后保持原来的屏幕位置。')
+        .closest('[data-scroll-anchor]')!
+      const textNode = anchor.firstChild!
+      const caretRange = document.createRange()
+      caretRange.setStart(textNode, 4)
+      caretRange.collapse(true)
+      Object.defineProperty(document, 'caretRangeFromPoint', {
+        configurable: true,
+        value: vi.fn(() => caretRange),
+      })
+
+      let lineTopAtScrollZero = 410
+      Object.defineProperty(Range.prototype, 'getClientRects', {
+        configurable: true,
+        value: vi.fn(() => {
+          const top = lineTopAtScrollZero - scroller.scrollTop
+          return [
+            {
+              top,
+              bottom: top + 24,
+              left: 0,
+              right: 240,
+              width: 240,
+              height: 24,
+              x: 0,
+              y: top,
+              toJSON: () => ({}),
+            } as DOMRect,
+          ]
+        }),
+      })
+
+      Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1200, configurable: true })
+      Object.defineProperty(scroller, 'scrollTop', {
+        value: 300,
+        writable: true,
+        configurable: true,
+      })
+      scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+        scroller.scrollTop = Number(top)
+      })
+      mockRect(scroller, 100, 300)
+      mockScrollRelativeRect(anchor, scroller, 250, 400)
+
+      scroller.scrollTop = 1000
+      fireEvent.scroll(scroller)
+      scroller.scrollTop = 300
+      fireEvent.wheel(scroller)
+      fireEvent.scroll(scroller)
+
+      lineTopAtScrollZero = 650
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1440, configurable: true })
+      act(() => {
+        resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+      })
+
+      expect(scroller.scrollTop).toBe(540)
+      expect(lineTopAtScrollZero - scroller.scrollTop).toBe(110)
+    } finally {
+      vi.stubGlobal('ResizeObserver', originalResizeObserver)
+      if (originalCaretRangeDescriptor) {
+        Object.defineProperty(document, 'caretRangeFromPoint', originalCaretRangeDescriptor)
+      } else {
+        Reflect.deleteProperty(document, 'caretRangeFromPoint')
+      }
+      if (originalGetClientRectsDescriptor) {
+        Object.defineProperty(Range.prototype, 'getClientRects', originalGetClientRectsDescriptor)
+      } else {
+        Reflect.deleteProperty(Range.prototype, 'getClientRects')
+      }
+    }
+  })
+
   test('tracks scrolling from the external desktop scroll container', () => {
     const externalScrollRef = createRef<HTMLDivElement>()
     const messages = [

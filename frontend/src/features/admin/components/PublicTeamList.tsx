@@ -8,8 +8,8 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tag } from '@/components/ui/tag'
-import { UsersRound, Loader2 } from 'lucide-react'
-import { PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
+import { UsersRound, Loader2, TagsIcon } from 'lucide-react'
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -25,6 +25,8 @@ import {
 import { adminApis, AdminPublicTeam } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import PublicTeamEditDialog from './PublicTeamEditDialog'
+import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 
 const PublicTeamList: React.FC = () => {
   const { t } = useTranslation('admin')
@@ -39,6 +41,7 @@ const PublicTeamList: React.FC = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedTeam, setSelectedTeam] = useState<AdminPublicTeam | null>(null)
   const [saving, setSaving] = useState(false)
+  const [tagEditingTeamId, setTagEditingTeamId] = useState<number | null>(null)
 
   const fetchTeams = useCallback(async () => {
     setLoading(true)
@@ -115,6 +118,11 @@ const PublicTeamList: React.FC = () => {
     return members.length
   }
 
+  const getTeamIcon = (json: Record<string, unknown>): string | null => {
+    const spec = (json?.spec as Record<string, unknown>) || {}
+    return typeof spec.icon === 'string' ? spec.icon : null
+  }
+
   return (
     <div className="space-y-3">
       {/* Header */}
@@ -150,7 +158,11 @@ const PublicTeamList: React.FC = () => {
               >
                 <div className="flex items-center justify-between min-w-0">
                   <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <TeamIconDisplay
+                      iconId={getTeamIcon(team.json)}
+                      size="lg"
+                      className="flex-shrink-0 text-primary"
+                    />
                     <div className="flex flex-col justify-center min-w-0 flex-1">
                       <div className="flex items-center space-x-2 min-w-0">
                         <h3 className="text-base font-medium text-text-primary truncate">
@@ -183,6 +195,16 @@ const PublicTeamList: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setTagEditingTeamId(team.id)}
+                      title={t('resource-library:marketplace_tags.edit_title')}
+                      data-testid={`edit-team-marketplace-tags-button-${team.id}`}
+                    >
+                      <TagsIcon className="w-4 h-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -230,6 +252,15 @@ const PublicTeamList: React.FC = () => {
         editingTeam={selectedTeam}
         onSuccess={handleDialogSuccess}
         toast={toast}
+      />
+
+      <MarketplaceTagsDialog
+        resourceId={tagEditingTeamId}
+        open={tagEditingTeamId !== null}
+        onSaved={fetchTeams}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setTagEditingTeamId(null)
+        }}
       />
 
       {/* Delete Confirmation Dialog */}

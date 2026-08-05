@@ -42,11 +42,13 @@ import { workspacePathReferenceText } from './composerPathTransfer'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
+import { LinkEditPopover } from './LinkEditPopover'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
 import { useComposerMentionCandidates } from './useComposerMentionCandidates'
 import type { ComposerTextareaProps } from './composerTextareaTypes'
+import type { ComposerLinkPayload } from './composerLinks'
 
 export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
@@ -67,6 +69,8 @@ export function ComposerTextarea({
   textareaRef,
   className,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+  disableAutocomplete = false,
+  onKeyDown,
   onPasteFiles,
   onOpenSkillFile,
   workspaceTarget,
@@ -121,6 +125,11 @@ export function ComposerTextarea({
   const [appsLoading, setAppsLoading] = useState(false)
   const [appsLoadError, setAppsLoadError] = useState(false)
   const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
+  const [editingLink, setEditingLink] = useState<ComposerLinkPayload | null>(null)
+  const [editingLinkRange, setEditingLinkRange] = useState<{ start: number; end: number } | null>(
+    null
+  )
+  const [editingLinkAnchor, setEditingLinkAnchor] = useState<HTMLElement | null>(null)
   const canPickNativeWorkspacePaths =
     canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
@@ -504,6 +513,7 @@ export function ComposerTextarea({
 
   const updateAutocompleteTrigger = useCallback(
     (snapshot?: ComposerEditorSnapshot) => {
+      if (disableAutocomplete) return
       const editor = editorRef.current
       const current = snapshot ?? editor?.getSnapshot()
       if (!current) return
@@ -555,7 +565,7 @@ export function ComposerTextarea({
         }
       }
     },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills]
+    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
   )
 
   const commitEditorValue = useCallback(
@@ -1014,14 +1024,26 @@ export function ComposerTextarea({
         return true
       }
 
-      if (event.key !== 'Backspace' && event.key !== 'Delete') return false
+      const delegateKeyDown = (): boolean => {
+        const handledByProp = onKeyDown?.(event, snapshot)
+        if (!handledByProp) return false
+        event.preventDefault()
+        event.stopPropagation()
+        return true
+      }
+
+      if (event.key !== 'Backspace' && event.key !== 'Delete') {
+        return delegateKeyDown()
+      }
       const range = findComposerMentionDeletionRange(
         snapshot.value,
         snapshot.selectionStart,
         snapshot.selectionEnd,
         event.key
       )
-      if (!range) return false
+      if (!range) {
+        return delegateKeyDown()
+      }
       event.preventDefault()
       const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
       editorRef.current?.setValue(nextValue, range.cursor)
@@ -1032,6 +1054,7 @@ export function ComposerTextarea({
       closeAutocompleteMenu,
       isComposing,
       moveHighlightedIndex,
+      onKeyDown,
       onSubmit,
       selectHighlightedMention,
       selectHighlightedSlashCommand,
@@ -1104,6 +1127,11 @@ export function ComposerTextarea({
         onDrop={handleDrop}
         onOpenMentionFile={onOpenSkillFile}
         onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
+        onEditComposerLink={(payload, anchor, range) => {
+          setEditingLink(payload)
+          setEditingLinkRange(range ?? null)
+          setEditingLinkAnchor(anchor ?? null)
+        }}
         onClick={() => updateAutocompleteTrigger()}
         onFocus={() => updateAutocompleteTrigger()}
         disabled={disabled}
@@ -1168,6 +1196,53 @@ export function ComposerTextarea({
             getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
           />
         </div>
+      )}
+      {editingLink && (
+        <LinkEditPopover
+          key={`${editingLink.url}-${editingLink.label}`}
+          payload={{ url: editingLink.url, label: editingLink.label }}
+          anchor={editingLinkAnchor}
+          onClose={() => {
+            setEditingLink(null)
+            setEditingLinkRange(null)
+            setEditingLinkAnchor(null)
+          }}
+          onChange={next => {
+            const editor = editorRef.current
+            if (!editor || !editingLinkRange) return
+            const snapshot = editor.getSnapshot()
+            const nextPayload = { ...editingLink, ...next }
+            const nextMarkdown = nextPayload.label
+              ? `[${nextPayload.label}](${nextPayload.url})`
+              : nextPayload.url
+            const nextValue =
+              snapshot.value.slice(0, editingLinkRange.start) +
+              nextMarkdown +
+              snapshot.value.slice(editingLinkRange.end)
+            const nextCursor = editingLinkRange.start + nextMarkdown.length
+            commitEditorValue(nextValue, nextCursor)
+            setEditingLink(null)
+            setEditingLinkRange(null)
+            setEditingLinkAnchor(null)
+          }}
+          onRemove={() => {
+            const editor = editorRef.current
+            if (!editor || !editingLinkRange) return
+            const snapshot = editor.getSnapshot()
+            const before = snapshot.value.slice(0, editingLinkRange.start)
+            const after = snapshot.value.slice(editingLinkRange.end)
+            let nextValue = before + after
+            let cursor = before.length
+            if (before.endsWith(' ') && after.startsWith(' ')) {
+              nextValue = before.slice(0, -1) + after
+              cursor = before.length - 1
+            }
+            commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, cursor))
+            setEditingLink(null)
+            setEditingLinkRange(null)
+            setEditingLinkAnchor(null)
+          }}
+        />
       )}
     </div>
   )

@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
-from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
@@ -784,54 +783,6 @@ def test_backend_routes_gitlab_updates_and_comments(
     assert any(method == "PUT" for method, _, _ in requests)
     assert any(url.endswith("/notes") for _, url, _ in requests)
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
-
-
-def test_cloud_project_can_link_local_workspace(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-) -> None:
-    local_project = Project(
-        user_id=test_user.id,
-        name="Local checkout",
-        client_origin="wework",
-    )
-    test_db.add(local_project)
-    test_db.commit()
-    test_db.refresh(local_project)
-
-    created = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={
-            "project_key": "collab",
-            "name": "Shared collaboration",
-            "description": "A cloud-first project",
-        },
-    )
-    assert created.status_code == 201
-    cloud_project = created.json()
-    assert cloud_project["project_key"] == "COLLAB"
-
-    linked = test_client.post(
-        f"/api/v1/cloud-projects/{cloud_project['id']}/local-bindings",
-        headers=_auth(test_token),
-        json={
-            "local_project_id": local_project.id,
-            "device_id": "desktop-1",
-            "is_default": True,
-        },
-    )
-    assert linked.status_code == 201
-    assert linked.json()["local_project_id"] == local_project.id
-
-    bindings = test_client.get(
-        f"/api/v1/cloud-projects/{cloud_project['id']}/local-bindings",
-        headers=_auth(test_token),
-    )
-    assert bindings.status_code == 200
-    assert bindings.json()[0]["device_id"] == "desktop-1"
 
 
 def test_todo_lifecycle_and_multiple_local_tasks(

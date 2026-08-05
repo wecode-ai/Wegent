@@ -86,6 +86,39 @@ def _create_user(test_db, name: str) -> User:
     return user
 
 
+def test_system_marketplace_listing_uses_current_source_display_fields(
+    test_db,
+    test_user,
+):
+    source = _create_skill(
+        test_db,
+        user_id=0,
+        name="system-source-fields",
+        capability={
+            "displayName": "Old Market Name",
+            "description": "Old market description",
+            "icon": "/old-market-icon.png",
+            "tags": ["technical_development"],
+        },
+    )
+    source.json["spec"]["displayName"] = "Current Skill Name"
+    source.json["spec"]["description"] = "Current skill description"
+    source.json["spec"]["icon"] = "/current-skill-icon.png"
+    flag_modified(source, "json")
+    test_db.commit()
+
+    listing = resource_library_service.to_listing(
+        test_db,
+        source,
+        user_id=test_user.id,
+    )
+
+    assert listing.display_name == "Current Skill Name"
+    assert listing.description == "Current skill description"
+    assert listing.icon == "/current-skill-icon.png"
+    assert listing.tags == ["technical_development"]
+
+
 def _create_group_with_member(
     test_db,
     user: User,
@@ -258,6 +291,58 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
     assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
+def test_discovery_hides_installed_skill_only_without_search_filters(
+    test_db, test_user
+):
+    skill = _create_skill(
+        test_db,
+        user_id=0,
+        name="installed-data-skill",
+        capability={
+            "visibility": "public",
+            "publishStatus": "published",
+            "tags": ["technical_development"],
+        },
+    )
+    skill_binding_service.add_user_default_skill(
+        test_db,
+        user_id=test_user.id,
+        skill_id=skill.id,
+        created_by=test_user.id,
+    )
+
+    default_result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        limit=20,
+    )
+    tag_result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=["technical_development"],
+        limit=20,
+    )
+    keyword_result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword="installed-data",
+        tags=[],
+        limit=20,
+    )
+
+    assert skill.id not in {item.id for item in default_result.items}
+    assert [item.id for item in tag_result.items] == [skill.id]
+    assert tag_result.items[0].is_installed is True
+    assert [item.id for item in keyword_result.items] == [skill.id]
+    assert keyword_result.items[0].is_installed is True
+
+
 def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
     older = _create_skill(
         test_db,
@@ -297,6 +382,43 @@ def test_discovery_cursor_continues_after_last_resource(test_db, test_user):
     assert second_page.has_more is False
     assert second_page.next_cursor is None
     assert [item.id for item in second_page.items] == [older.id]
+
+
+def test_discovery_filters_hidden_system_skills_without_breaking_pagination(
+    test_db, test_user
+):
+    older = _create_skill(test_db, user_id=0, name="older-visible-skill")
+    newer = _create_skill(test_db, user_id=0, name="newer-visible-skill")
+    hidden = _create_skill(test_db, user_id=0, name="newest-hidden-skill")
+    hidden.json["spec"]["visible"] = False
+    flag_modified(hidden, "json")
+    older.updated_at = datetime(2026, 1, 1)
+    newer.updated_at = datetime(2026, 1, 2)
+    hidden.updated_at = datetime(2026, 1, 3)
+    test_db.commit()
+
+    first_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        limit=1,
+    )
+    second_page = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="skill",
+        keyword=None,
+        tags=[],
+        cursor=first_page.next_cursor,
+        limit=1,
+    )
+
+    assert [item.id for item in first_page.items] == [newer.id]
+    assert first_page.has_more is True
+    assert [item.id for item in second_page.items] == [older.id]
+    assert second_page.has_more is False
 
 
 @pytest.mark.parametrize("target_namespace", ["default", "capability-team"])
@@ -493,6 +615,7 @@ def test_list_published_only_returns_current_user_publications(
             source_id=user_skill.id,
             name=user_skill.name,
             display_name="User Published Skill",
+            tags=["technical_development"],
         ),
         current_user=test_user,
     )
@@ -503,6 +626,7 @@ def test_list_published_only_returns_current_user_publications(
             source_id=admin_skill.id,
             name=admin_skill.name,
             display_name="Admin Published Skill",
+            tags=["technical_development"],
         ),
         current_user=test_admin_user,
     )
@@ -561,6 +685,7 @@ def test_update_skill_publication_distributes_to_selected_groups(test_db, test_u
             source_id=source.id,
             name=source.name,
             display_name="Team Targeted Published Skill",
+            tags=["technical_development"],
         ),
         current_user=test_user,
     )
@@ -627,6 +752,101 @@ def test_group_install_list_skips_binding_with_inactive_skill(test_db, test_user
     assert installs.total == 0
 
 
+def test_group_install_list_returns_empty_for_inaccessible_group(test_db, test_user):
+    group_owner = _create_user(test_db, "inaccessible-group-owner")
+    group_name = _create_group_with_member(test_db, group_owner)
+
+    installs = resource_library_service.list_group_installs(
+        test_db,
+        group_namespace=group_name,
+        current_user=test_user,
+        resource_type="skill",
+        page=2,
+        limit=20,
+    )
+
+    assert installs.items == []
+    assert installs.total == 0
+    assert installs.page == 2
+    assert installs.limit == 20
+
+
+def test_group_install_batch_combines_accessible_groups(test_db, test_user):
+    first_group = _create_group_with_member(test_db, test_user, name="batch-group-one")
+    second_group = _create_group_with_member(test_db, test_user, name="batch-group-two")
+    inaccessible_owner = _create_user(test_db, "batch-inaccessible-owner")
+    inaccessible_group = _create_group_with_member(
+        test_db,
+        inaccessible_owner,
+        name="batch-inaccessible-group",
+    )
+    first_skill = _create_skill(
+        test_db,
+        user_id=test_user.id,
+        name="batch-skill-one",
+        namespace=first_group,
+    )
+    second_skill = _create_skill(
+        test_db,
+        user_id=test_user.id,
+        name="batch-skill-two",
+        namespace=second_group,
+    )
+    _create_skill(
+        test_db,
+        user_id=inaccessible_owner.id,
+        name="batch-hidden-skill",
+        namespace=inaccessible_group,
+    )
+
+    installs = resource_library_service.list_group_installs_batch(
+        test_db,
+        group_namespaces=[first_group, second_group, inaccessible_group, first_group],
+        current_user=test_user,
+        resource_type="skill",
+        page=1,
+        limit=20,
+    )
+
+    assert {item.listing_id for item in installs.items} == {
+        first_skill.id,
+        second_skill.id,
+    }
+    assert installs.total == 2
+
+
+def test_group_install_batch_includes_group_owned_agent(test_db, test_user):
+    group_name = _create_group_with_member(
+        test_db,
+        test_user,
+        name="batch-agent-group",
+    )
+    agent = _create_agent(test_db, owner_user_id=test_user.id)
+    agent.namespace = group_name
+    agent.json["metadata"]["namespace"] = group_name
+    flag_modified(agent, "json")
+    test_db.commit()
+
+    installs = resource_library_service.list_group_installs_batch(
+        test_db,
+        group_namespaces=[group_name],
+        current_user=test_user,
+        resource_type="agent",
+        page=1,
+        limit=20,
+    )
+
+    assert [item.listing_id for item in installs.items] == [agent.id]
+    assert installs.items[0].installed_reference == {
+        "namespace": group_name,
+        "name": agent.name,
+        "kind": "Team",
+        "team_id": agent.id,
+        "resource_type": "agent",
+        "ownership": "group",
+    }
+
+
 def test_group_install_list_includes_group_owned_skill(test_db, test_user):
     group_name = _create_group_with_member(test_db, test_user)
     source = _create_skill(
@@ -675,7 +895,7 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
         name="published-skill",
         display_name="Published Skill",
         description="Published description",
-        tags=["docs", "Docs"],
+        tags=["technical_development"],
         version="1.1.0",
     )
 
@@ -697,7 +917,8 @@ def test_archiving_published_skill_revokes_existing_install_access(test_db, test
     )
 
     assert listing.current_version.version == "1.1.0"
-    assert listing.tags == ["docs"]
+    assert listing.tags == ["technical_development"]
+    assert listing.feature_tags == ["test"]
     assert first_install.id == second_install.id
     assert first_install.installed_reference["skill_id"] == source.id
     publication = test_db.get(MarketplaceResource, source.id)

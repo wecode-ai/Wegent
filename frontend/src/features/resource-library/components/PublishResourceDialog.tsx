@@ -29,6 +29,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ResourceLibraryTypeFilter, VisibleResourceLibraryResourceType } from '../types'
+import { MarketplaceTagSelector } from './MarketplaceTagSelector'
 
 interface PublishResourceDialogProps {
   open: boolean
@@ -87,7 +88,7 @@ export function PublishResourceDialog({
   const [name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
-  const [tags, setTags] = useState('')
+  const [tags, setTags] = useState<string[]>([])
   const [version, setVersion] = useState('1.0.0')
   const [isPublishing, setIsPublishing] = useState(false)
   const [resources, setResources] = useState<PublishableResource[]>([])
@@ -98,6 +99,10 @@ export function PublishResourceDialog({
       setSelectedType(defaultPublishType(resourceType))
     }
   }, [open, resourceType])
+
+  useEffect(() => {
+    setTags([])
+  }, [selectedType])
 
   useEffect(() => {
     if (!open) return
@@ -200,15 +205,22 @@ export function PublishResourceDialog({
   }, [initialSourceId, open, selectedType])
 
   const canPublish = useMemo(() => {
-    return Boolean(sourceId && name.trim() && displayName.trim() && version.trim())
-  }, [displayName, name, sourceId, version])
+    const requiresMarketplaceTags = selectedType === 'agent' || selectedType === 'skill'
+    return Boolean(
+      sourceId &&
+      name.trim() &&
+      displayName.trim() &&
+      version.trim() &&
+      (!requiresMarketplaceTags || tags.length > 0)
+    )
+  }, [displayName, name, selectedType, sourceId, tags.length, version])
 
   const resetForm = () => {
     setSourceId('')
     setName('')
     setDisplayName('')
     setDescription('')
-    setTags('')
+    setTags([])
     setVersion('1.0.0')
   }
 
@@ -241,7 +253,7 @@ export function PublishResourceDialog({
         display_name: displayName.trim(),
         description: description.trim() || null,
         icon: null,
-        tags: parseTags(tags),
+        tags,
         version: version.trim(),
         manifest_options: {},
       })
@@ -348,16 +360,23 @@ export function PublishResourceDialog({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="resource-library-tags">{t('fields.tags')}</Label>
-            <Input
-              id="resource-library-tags"
-              value={tags}
-              onChange={event => setTags(event.target.value)}
-              className="h-11"
-              data-testid="publish-resource-tags-input"
-            />
-          </div>
+          {selectedType === 'agent' || selectedType === 'skill' ? (
+            <div className="space-y-2">
+              <Label>{t('marketplace_tags.field_label')}</Label>
+              <MarketplaceTagSelector value={tags} onChange={setTags} />
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="resource-library-tags">{t('fields.tags')}</Label>
+              <Input
+                id="resource-library-tags"
+                value={tags.join(', ')}
+                onChange={event => setTags(parseTags(event.target.value))}
+                className="h-11"
+                data-testid="publish-resource-tags-input"
+              />
+            </div>
+          )}
 
           <DialogFooter className="gap-2 sm:space-x-0">
             <DialogClose asChild>

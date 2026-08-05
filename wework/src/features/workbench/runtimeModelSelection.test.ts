@@ -1,138 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import {
-  defaultNewChatModelSelection,
-  disableCrossProviderModels,
-  selectedModelExecutionFields,
-} from './runtimeModelSelection'
+import { defaultNewChatModelSelection, selectedModelExecutionFields } from './runtimeModelSelection'
 import type { UnifiedModel } from '@/types/api'
 
 describe('runtimeModelSelection', () => {
-  test('disables third-party models when the conversation uses official Codex', () => {
-    const officialModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'runtime',
-      provider: 'local',
-      config: {
-        weworkModelKind: 'codex-official',
-        ui: { family: 'codex-official' },
-      },
-    }
-    const anotherOfficialModel: UnifiedModel = {
-      ...officialModel,
-      name: 'gpt-5.5',
-    }
-    const providerModel: UnifiedModel = {
-      name: 'kimi-k2.5',
-      type: 'runtime',
-      provider: 'local',
-      config: {
-        weworkModelKind: 'codex-provider',
-        ui: { family: 'codex-provider' },
-      },
-    }
-    const cloudModel: UnifiedModel = {
-      name: 'cloud-model',
-      type: 'public',
-      provider: 'cloud',
-    }
-
-    const models = disableCrossProviderModels(
-      [officialModel, anotherOfficialModel, providerModel, cloudModel],
-      officialModel
-    )
-
-    expect(models).toEqual([
-      officialModel,
-      anotherOfficialModel,
-      expect.objectContaining({
-        name: 'kimi-k2.5',
-        compatibilityDisabled: true,
-        compatibilityDisabledReason: 'provider_boundary_mismatch',
-      }),
-      expect.objectContaining({
-        name: 'cloud-model',
-        compatibilityDisabled: true,
-        compatibilityDisabledReason: 'provider_boundary_mismatch',
-      }),
-    ])
-  })
-
-  test('disables official Codex models when the conversation uses a third-party model', () => {
-    const officialModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'runtime',
-      provider: 'local',
-      config: {
-        weworkModelKind: 'codex-official',
-        ui: { family: 'codex-official' },
-      },
-    }
-    const providerModel: UnifiedModel = {
-      name: 'kimi-k2.5',
-      type: 'runtime',
-      provider: 'local',
-      config: {
-        weworkModelKind: 'codex-provider',
-        ui: { family: 'codex-provider' },
-      },
-    }
-    const anotherProviderModel: UnifiedModel = {
-      ...providerModel,
-      name: 'doubao-seed',
-    }
-
-    expect(
-      disableCrossProviderModels(
-        [officialModel, providerModel, anotherProviderModel],
-        providerModel
-      )
-    ).toEqual([
-      expect.objectContaining({
-        name: 'gpt-5.6-sol',
-        compatibilityDisabled: true,
-        compatibilityDisabledReason: 'provider_boundary_mismatch',
-      }),
-      providerModel,
-      anotherProviderModel,
-    ])
-  })
-
-  test('does not restrict models before a conversation has an active model', () => {
-    const models: UnifiedModel[] = [
-      {
-        name: 'gpt-5.6-sol',
-        type: 'runtime',
-        config: { weworkModelKind: 'codex-official' },
-      },
-      {
-        name: 'kimi-k2.5',
-        type: 'runtime',
-        config: { weworkModelKind: 'codex-provider' },
-      },
-    ]
-
-    expect(disableCrossProviderModels(models, null)).toBe(models)
-  })
-
-  test('preserves a model that is already disabled for another reason', () => {
-    const officialModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'runtime',
-      config: { weworkModelKind: 'codex-official' },
-    }
-    const unavailableProviderModel: UnifiedModel = {
-      name: 'kimi-k2.5',
-      type: 'runtime',
-      compatibilityDisabled: true,
-      compatibilityDisabledReason: 'unavailable',
-      config: { weworkModelKind: 'codex-provider' },
-    }
-
-    expect(
-      disableCrossProviderModels([officialModel, unavailableProviderModel], officialModel)[1]
-    ).toBe(unavailableProviderModel)
-  })
-
   test('sends default collaboration mode when plan mode is not selected', () => {
     expect(selectedModelExecutionFields(null, {})).toEqual({
       modelOptions: { collaborationMode: 'default' },
@@ -296,6 +166,39 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('passes a configured cloud vision sidecar as a hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'primary-cloud-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'openai',
+      runtime: { family: 'openai.openai-responses' },
+      config: {
+        visionSidecarModel: {
+          modelName: 'cloud-vision',
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: 42,
+          apiFormat: 'openai-responses',
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'primary-cloud-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-responses',
+        weworkCloudVisionSidecar:
+          '{"modelName":"cloud-vision","modelType":"user","namespace":"default","resourceUserId":42,"apiFormat":"openai-responses"}',
+      },
+    })
+  })
+
   test('does not pass catalog model id as hidden execution option', () => {
     const cloudModel: UnifiedModel = {
       name: 'shared-model',
@@ -341,6 +244,86 @@ describe('runtimeModelSelection', () => {
 
     expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
       modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+      },
+    })
+  })
+
+  test('selects the Kimi K3 Codex catalog for a cloud chat-completions model', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshot-kimi-k3',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
+      },
+    })
+  })
+
+  test.each(['codex_catalog_model_id', 'codexCatalogModelId'] as const)(
+    'preserves the explicit Codex catalog from %s for a Kimi K3 model',
+    catalogConfigKey => {
+      const cloudModel: UnifiedModel = {
+        name: 'commercial-kimi',
+        type: 'user',
+        namespace: 'default',
+        resourceUserId: 42,
+        provider: 'cloud',
+        config: {
+          protocol: 'openai',
+          apiFormat: 'chat/completions',
+          model_id: 'moonshot-kimi-k3',
+          [catalogConfigKey]: 'operator-selected-catalog',
+        },
+      }
+
+      expect(selectedModelExecutionFields(cloudModel, {}).modelOptions).toEqual(
+        expect.objectContaining({
+          weworkCloudModelCodexCatalogModelId: 'operator-selected-catalog',
+        })
+      )
+    }
+  )
+
+  test('does not select the Kimi K3 catalog for other Moonshot models', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'commercial-kimi',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        base_url: 'https://api.moonshot.cn/v1',
+        model_id: 'moonshotai/kimi-k2.5',
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'commercial-kimi',
       modelType: 'user',
       modelOptions: {
         collaborationMode: 'default',

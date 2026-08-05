@@ -8,6 +8,7 @@ export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
+export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
@@ -25,6 +26,7 @@ export interface LocalModelConfig {
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  visionModelConfigId?: string
   codexCatalogModelId?: string
   catalogEntry?: LocalModelCatalogEntry
   catalogReady: boolean
@@ -56,6 +58,7 @@ export interface SaveLocalModelConfigInput {
   contextWindow?: number | string | null
   webSearchMode?: LocalModelWebSearchMode | null
   imageGenerationEnabled?: boolean | null
+  visionModelConfigId?: string | null
   codexCatalogModelId?: string | null
   catalogEntry?: LocalModelCatalogEntry | null
   catalogReady?: boolean
@@ -164,6 +167,7 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.webSearchMode === 'live') &&
     (record.imageGenerationEnabled === undefined ||
       typeof record.imageGenerationEnabled === 'boolean') &&
+    (record.visionModelConfigId === undefined || typeof record.visionModelConfigId === 'string') &&
     (record.codexCatalogModelId === undefined || typeof record.codexCatalogModelId === 'string') &&
     (record.catalogEntry === undefined ||
       (typeof record.catalogEntry === 'object' &&
@@ -253,6 +257,9 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
       legacyConfig.imageGenerationEnabled
     ),
+    ...(legacyConfig.visionModelConfigId
+      ? { visionModelConfigId: legacyConfig.visionModelConfigId }
+      : {}),
     ...(providerCatalogModelId ||
     legacyConfig.codexCatalogModelId ||
     typeof catalogEntry?.slug === 'string'
@@ -481,6 +488,23 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const imageGenerationEnabled = normalizeLocalModelImageGenerationEnabled(
     input.imageGenerationEnabled ?? previous?.imageGenerationEnabled
   )
+  const visionModelConfigId =
+    input.visionModelConfigId === undefined
+      ? previous?.visionModelConfigId
+      : input.visionModelConfigId?.trim() || undefined
+  const enabled = input.enabled ?? previous?.enabled ?? true
+  if (visionModelConfigId === id) {
+    throw new Error('Vision proxy model must be different from the primary model')
+  }
+  if (
+    visionModelConfigId &&
+    !existing.some(config => config.id === visionModelConfigId && config.enabled)
+  ) {
+    throw new Error('Vision proxy model is missing or disabled')
+  }
+  if (!enabled && existing.some(config => config.id !== id && config.visionModelConfigId === id)) {
+    throw new Error('Vision proxy model is still referenced by another model')
+  }
   const next: LocalModelConfig = {
     id,
     ...(input.providerProfileId ? { providerProfileId: input.providerProfileId } : {}),
@@ -496,6 +520,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     ...(contextWindow ? { contextWindow } : {}),
     webSearchMode,
     imageGenerationEnabled,
+    ...(visionModelConfigId ? { visionModelConfigId } : {}),
     ...(input.codexCatalogModelId?.trim() || typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId: input.codexCatalogModelId?.trim() || (catalogEntry?.slug as string),
@@ -508,7 +533,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     ...(pendingRuntimeInstanceId
       ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
       : {}),
-    enabled: input.enabled ?? previous?.enabled ?? true,
+    enabled,
     updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)
@@ -551,7 +576,17 @@ export function reconcileLocalModelCatalogRuntime(runtimeInstanceId?: string): v
 
 export function deleteLocalModelConfig(id: string): boolean {
   const configs = readStoredConfigs()
-  const next = configs.filter(config => config.id !== id)
+  const next = configs
+    .filter(config => config.id !== id)
+    .map(config => {
+      if (config.visionModelConfigId !== id) return config
+      const nextConfig = { ...config }
+      delete nextConfig.visionModelConfigId
+      return {
+        ...nextConfig,
+        updatedAt: nextLocalModelUpdatedAt(config),
+      }
+    })
   if (next.length === configs.length) return false
   writeStoredConfigs(next)
   return true

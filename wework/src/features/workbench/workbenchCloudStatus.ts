@@ -103,6 +103,46 @@ function cloneChecks(
   }
 }
 
+function resetSyncingChecks(
+  checks: Record<CloudWorkCheckKey, SyncCheckState>,
+  previous: CloudRuntimeSnapshot | null
+): Record<CloudWorkCheckKey, SyncCheckState> {
+  const next = cloneChecks(checks)
+  ;(Object.keys(next) as CloudWorkCheckKey[]).forEach(key => {
+    if (next[key].status === 'syncing') {
+      next[key] = previous?.checks[key] ?? EMPTY_SYNC_CHECKS[key]
+    }
+  })
+  return next
+}
+
+export function abandonCloudRuntimeSync(
+  state: CloudRuntimeState,
+  revision: number
+): CloudRuntimeState {
+  if (state.inFlightRevision !== revision) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
+export function clearCloudRuntimeSync(state: CloudRuntimeState): CloudRuntimeState {
+  if (state.inFlightRevision == null) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
 function syncCheckResult<T>(
   result: PromiseSettledResult<T> | undefined,
   previous: SyncCheckState,
@@ -935,22 +975,48 @@ export function nowMs(): number {
 
 export async function timedWorkbenchBootstrapRequest<T>(
   label: string,
-  request: Promise<T>,
-  timeoutMs?: number
+  request: Promise<T> | (() => Promise<T>),
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<PromiseSettledResult<T>> {
   const startedAt = nowMs()
   try {
-    const value = await raceWithTimeout(request, timeoutMs, timeout => {
-      return new Error(`${label} timed out after ${timeout}ms`)
-    })
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error(`${label} request was aborted`)
+    }
+    const value = await raceWithTimeout(
+      typeof request === 'function' ? request() : request,
+      timeoutMs,
+      timeout => {
+        return new Error(`${label} timed out after ${timeout}ms`)
+      }
+    )
     const elapsedMs = Math.round(nowMs() - startedAt)
     if (elapsedMs > 5000) {
       console.warn(`[Wework] Workbench bootstrap ${label} completed slowly in ${elapsedMs}ms.`)
     }
     return { status: 'fulfilled', value }
   } catch (reason) {
+    if (signal?.aborted) {
+      return { status: 'rejected', reason }
+    }
     const elapsedMs = Math.round(nowMs() - startedAt)
-    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, reason)
+    const error =
+      reason instanceof Error
+        ? { name: reason.name, message: reason.message }
+        : reason && typeof reason === 'object'
+          ? (() => {
+              const record = reason as Record<string, unknown>
+              return {
+                ...(typeof record.name === 'string' ? { name: record.name } : {}),
+                ...(typeof record.message === 'string' ? { message: record.message } : {}),
+                ...(typeof record.name !== 'string' && typeof record.message !== 'string'
+                  ? { message: String(reason) }
+                  : {}),
+              }
+            })()
+          : { message: String(reason) }
+    console.warn(`[Wework] Workbench bootstrap ${label} failed after ${elapsedMs}ms.`, error)
     return { status: 'rejected', reason }
   }
 }

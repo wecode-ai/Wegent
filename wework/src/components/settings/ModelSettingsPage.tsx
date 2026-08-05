@@ -31,6 +31,7 @@ import {
 import {
   discoverProviderModels,
   findLocalModelProviderProfile,
+  localModelSupportsImageInput,
   LOCAL_MODEL_PROVIDER_PROFILES,
   type DiscoveredLocalModel,
   type LocalModelProviderProfileId,
@@ -211,6 +212,7 @@ interface LocalModelFormState {
   contextWindow: string
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  visionModelConfigId: string
   catalogEntry: LocalModelCatalogEntry | null
   enabled: boolean
 }
@@ -244,6 +246,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   contextWindow: '',
   webSearchMode: 'disabled',
   imageGenerationEnabled: false,
+  visionModelConfigId: '',
   catalogEntry: null,
   enabled: true,
 }
@@ -342,6 +345,7 @@ function isLocalModelFormDirty(
       form.contextWindow.trim() !== '' ||
       form.webSearchMode !== 'disabled' ||
       form.imageGenerationEnabled ||
+      form.visionModelConfigId !== '' ||
       form.catalogEntry !== null ||
       !form.enabled
     )
@@ -371,6 +375,7 @@ function isLocalModelFormDirty(
     form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
     form.webSearchMode !== (editingModel.webSearchMode ?? 'disabled') ||
     form.imageGenerationEnabled !== (editingModel.imageGenerationEnabled === true) ||
+    form.visionModelConfigId !== (editingModel.visionModelConfigId ?? '') ||
     JSON.stringify(form.catalogEntry) !== JSON.stringify(editingCatalogEntry) ||
     form.enabled !== editingModel.enabled
   )
@@ -723,6 +728,13 @@ function LocalModelSettingsSection({
     () => formVisible && isLocalModelFormDirty(form, editingModel),
     [editingModel, form, formVisible]
   )
+  const visionModelOptions = useMemo(
+    () =>
+      models.filter(
+        model => model.enabled && model.id !== editingId && localModelSupportsImageInput(model)
+      ),
+    [editingId, models]
+  )
 
   const resetForm = () => {
     setEditingId(null)
@@ -776,6 +788,7 @@ function LocalModelSettingsSection({
           : ''),
       webSearchMode: model.webSearchMode ?? 'disabled',
       imageGenerationEnabled: model.imageGenerationEnabled === true,
+      visionModelConfigId: model.visionModelConfigId ?? '',
       catalogEntry,
       enabled: model.enabled,
     })
@@ -860,6 +873,7 @@ function LocalModelSettingsSection({
           : ''),
       webSearchMode: profile.webSearchMode,
       imageGenerationEnabled: profile.imageGenerationEnabled,
+      visionModelConfigId: '',
       catalogEntry,
     })
   }
@@ -949,6 +963,7 @@ function LocalModelSettingsSection({
         contextWindow: form.contextWindow,
         webSearchMode: form.webSearchMode,
         imageGenerationEnabled: form.imageGenerationEnabled,
+        visionModelConfigId: form.visionModelConfigId || null,
         codexCatalogModelId:
           providerModelDefaults?.codexCatalogModelId ??
           (typeof catalogEntry?.slug === 'string' ? catalogEntry.slug : undefined),
@@ -1250,6 +1265,25 @@ function LocalModelSettingsSection({
                     className={LOCAL_MODEL_FIELD_CLASS}
                   />
                 </label>
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_vision_proxy_label')}
+                  <select
+                    data-testid="local-model-vision-proxy-select"
+                    value={form.visionModelConfigId}
+                    onChange={event => updateForm({ visionModelConfigId: event.target.value })}
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  >
+                    <option value="">{t('workbench.local_model_vision_proxy_disabled')}</option>
+                    {visionModelOptions.map(model => (
+                      <option key={model.id} value={model.id}>
+                        {model.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="font-normal leading-5 text-text-muted">
+                    {t('workbench.local_model_vision_proxy_hint')}
+                  </span>
+                </label>
                 <button
                   type="button"
                   data-testid="local-model-provider-advanced-toggle"
@@ -1505,6 +1539,25 @@ function LocalModelSettingsSection({
                         {t('workbench.local_model_codex_feature_enabled')}
                       </label>
                     </fieldset>
+                    <label className="grid gap-1.5 text-xs font-medium text-text-secondary sm:col-span-2">
+                      {t('workbench.local_model_vision_proxy_label')}
+                      <select
+                        data-testid="local-model-vision-proxy-select"
+                        value={form.visionModelConfigId}
+                        onChange={event => updateForm({ visionModelConfigId: event.target.value })}
+                        className={LOCAL_MODEL_FIELD_CLASS}
+                      >
+                        <option value="">{t('workbench.local_model_vision_proxy_disabled')}</option>
+                        {visionModelOptions.map(model => (
+                          <option key={model.id} value={model.id}>
+                            {model.displayName}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="font-normal leading-5 text-text-muted">
+                        {t('workbench.local_model_vision_proxy_hint')}
+                      </span>
+                    </label>
                   </div>
                 </div>
                 {form.catalogEntry && (

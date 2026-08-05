@@ -32,6 +32,7 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -72,6 +73,8 @@ export type ArchiveRuntimeTaskOptions = {
 export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
+
+export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
 
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
@@ -229,7 +232,7 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
@@ -251,6 +254,7 @@ export interface WorkbenchContextValue {
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>

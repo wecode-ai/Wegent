@@ -14,6 +14,8 @@ import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/typ
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
+  abandonCloudRuntimeSync,
+  clearCloudRuntimeSync,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeDeviceLists,
@@ -36,6 +38,7 @@ import {
   runtimeWorkContainsTask,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
+import type { RefreshWorkLists } from './workbenchContextTypes'
 import {
   readCachedRemoteRuntimeWork,
   reconcileCachedRemoteRuntimeWork,
@@ -51,7 +54,10 @@ interface UseWorkbenchDataRefreshOptions {
   services: WorkbenchServices
 }
 
-const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 8000
+// Cloud synchronization is detached from the local workbench bootstrap. Give
+// authenticated intranet requests enough time to complete without turning a
+// slow successful response into a false unavailable state.
+const CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS = 30_000
 
 function createCloudRuntimeStateWithCache(runtimeWork: RuntimeWorkListResponse): CloudRuntimeState {
   if (runtimeWork.projects.length === 0 && runtimeWork.chats.length === 0) {
@@ -89,14 +95,11 @@ function removeRuntimeTasksFromCloudState(
           runtimeWork: removeRuntimeTasks(snapshot.runtimeWork, addresses),
         }
       : null
-  return {
+  return clearCloudRuntimeSync({
     ...state,
-    availability:
-      state.inFlightRevision == null ? state.availability : state.lastGood ? 'stale' : 'idle',
     current: removeFromSnapshot(state.current),
     lastGood: removeFromSnapshot(state.lastGood),
-    inFlightRevision: null,
-  }
+  })
 }
 
 function removeRuntimeProjectFromCloudState(
@@ -185,6 +188,7 @@ export function useWorkbenchDataRefresh({
   )
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
+  const cloudBackgroundRequestControllerRef = useRef<AbortController | null>(null)
   const runtimeWorkRef = useRef(state.runtimeWork)
   const localRuntimeWorkRef = useRef<RuntimeWorkListResponse | null>(null)
   const devicesRef = useRef(state.devices)
@@ -195,6 +199,12 @@ export function useWorkbenchDataRefresh({
       workspace?: { deviceId: string; workspacePath: string }
     }>
   >([])
+  useEffect(
+    () => () => {
+      cloudBackgroundRequestControllerRef.current?.abort()
+    },
+    []
+  )
   const cloudWorkStatus = useMemo(
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
@@ -316,163 +326,196 @@ export function useWorkbenchDataRefresh({
       if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
 
       if (activeChecks.length === 0) return
-      if (cloudRuntimeStateRef.current.inFlightRevision != null) {
-        if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
-        const inFlightRevision = cloudRuntimeStateRef.current.inFlightRevision
-        const inFlightBackgroundApi = backgroundApi
-        const devicesResult = await timedWorkbenchBootstrapRequest(
-          'cloudDevices',
-          backgroundApi.listDevices(),
-          CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
-        )
-        if (
-          options?.isCancelled?.() ||
-          devicesResult.status !== 'fulfilled' ||
-          cloudRuntimeStateRef.current.inFlightRevision !== inFlightRevision ||
-          cloudBackgroundApiRef.current !== inFlightBackgroundApi
-        ) {
+      cloudBackgroundRequestControllerRef.current?.abort()
+      const controller = new AbortController()
+      cloudBackgroundRequestControllerRef.current = controller
+      const isCurrentRefresh = () =>
+        cloudBackgroundRequestControllerRef.current === controller && !controller.signal.aborted
+
+      try {
+        if (cloudRuntimeStateRef.current.inFlightRevision != null) {
+          if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
+          const inFlightBackgroundApi = backgroundApi
+          const devicesResult = await timedWorkbenchBootstrapRequest(
+            'cloudDevices',
+            () => backgroundApi.listDevices?.({ signal: controller.signal }) ?? Promise.resolve([]),
+            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+            controller.signal
+          )
+          if (
+            !isCurrentRefresh() ||
+            options?.isCancelled?.() ||
+            devicesResult.status !== 'fulfilled' ||
+            cloudBackgroundApiRef.current !== inFlightBackgroundApi
+          ) {
+            return
+          }
+          const devices = resolveDeviceListWithCache(
+            mergeDeviceLists(baseDevices, devicesResult.value)
+          )
+          dispatch({
+            type: 'devices_refreshed',
+            devices,
+            standaloneDeviceId: getPreferredStandaloneDeviceId(
+              devices,
+              options?.standaloneDeviceId ?? null
+            ),
+          })
           return
         }
-        const devices = resolveDeviceListWithCache(
-          mergeDeviceLists(baseDevices, devicesResult.value)
+
+        const startedState = startCloudRuntimeSync(
+          cloudRuntimeStateRef.current,
+          options?.trigger ?? 'manual-refresh',
+          activeChecks
         )
-        dispatch({
-          type: 'devices_refreshed',
-          devices,
-          standaloneDeviceId: getPreferredStandaloneDeviceId(
+        updateCloudRuntimeState(startedState)
+        const revision = startedState.inFlightRevision
+
+        const teamsRequest = backgroundApi?.listTeams
+          ? timedWorkbenchBootstrapRequest(
+              'cloudTeams',
+              () => backgroundApi.listTeams?.({ signal: controller.signal }) ?? Promise.resolve([]),
+              CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+              controller.signal
+            )
+          : Promise.resolve(undefined)
+        const devicesRequest = backgroundApi?.listDevices
+          ? timedWorkbenchBootstrapRequest(
+              'cloudDevices',
+              () =>
+                backgroundApi.listDevices?.({ signal: controller.signal }) ?? Promise.resolve([]),
+              CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+              controller.signal
+            )
+          : Promise.resolve(undefined)
+        const runtimeWorkRequest = backgroundApi?.listRuntimeWork
+          ? timedWorkbenchBootstrapRequest(
+              'cloudRuntimeWork',
+              () =>
+                backgroundApi.listRuntimeWork?.({ signal: controller.signal }) ??
+                Promise.resolve(EMPTY_RUNTIME_WORK),
+              CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS,
+              controller.signal
+            )
+          : Promise.resolve(undefined)
+        const devicesResult = await devicesRequest
+
+        if (
+          isCurrentRefresh() &&
+          !options?.isCancelled?.() &&
+          revision != null &&
+          cloudRuntimeStateRef.current.inFlightRevision === revision &&
+          cloudBackgroundApiRef.current === backgroundApi &&
+          devicesResult?.status === 'fulfilled'
+        ) {
+          const devices = resolveDeviceListWithCache(
+            mergeDeviceLists(baseDevices, devicesResult.value)
+          )
+          dispatch({
+            type: 'devices_refreshed',
             devices,
-            options?.standaloneDeviceId ?? null
-          ),
-        })
-        return
-      }
-
-      const startedState = startCloudRuntimeSync(
-        cloudRuntimeStateRef.current,
-        options?.trigger ?? 'manual-refresh',
-        activeChecks
-      )
-      updateCloudRuntimeState(startedState)
-      const revision = startedState.inFlightRevision
-
-      const teamsRequest = backgroundApi?.listTeams
-        ? timedWorkbenchBootstrapRequest(
-            'cloudTeams',
-            backgroundApi.listTeams(),
-            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
-          )
-        : Promise.resolve(undefined)
-      const devicesRequest = backgroundApi?.listDevices
-        ? timedWorkbenchBootstrapRequest(
-            'cloudDevices',
-            backgroundApi.listDevices(),
-            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
-          )
-        : Promise.resolve(undefined)
-      const runtimeWorkRequest = backgroundApi?.listRuntimeWork
-        ? timedWorkbenchBootstrapRequest(
-            'cloudRuntimeWork',
-            backgroundApi.listRuntimeWork(),
-            CLOUD_BACKGROUND_REQUEST_TIMEOUT_MS
-          )
-        : Promise.resolve(undefined)
-      const devicesResult = await devicesRequest
-
-      if (
-        !options?.isCancelled?.() &&
-        revision != null &&
-        cloudRuntimeStateRef.current.inFlightRevision === revision &&
-        cloudBackgroundApiRef.current === backgroundApi &&
-        devicesResult?.status === 'fulfilled'
-      ) {
-        const devices = resolveDeviceListWithCache(
-          mergeDeviceLists(baseDevices, devicesResult.value)
-        )
-        dispatch({
-          type: 'devices_refreshed',
-          devices,
-          standaloneDeviceId: getPreferredStandaloneDeviceId(
-            devices,
-            options?.standaloneDeviceId ?? null
-          ),
-        })
-      }
-
-      const [teamsResult, runtimeWorkResult] = await Promise.all([teamsRequest, runtimeWorkRequest])
-
-      if (
-        options?.isCancelled?.() ||
-        revision == null ||
-        cloudRuntimeStateRef.current.inFlightRevision !== revision ||
-        cloudBackgroundApiRef.current !== backgroundApi
-      ) {
-        return
-      }
-
-      const latestLocalRuntimeWork = localRuntimeWorkRef.current ?? baseRuntimeWork
-      const filteredRuntimeWorkResult =
-        runtimeWorkResult?.status === 'fulfilled'
-          ? {
-              status: 'fulfilled' as const,
-              value: filterRemovedRuntimeProjects(runtimeWorkResult.value),
-            }
-          : runtimeWorkResult
-      if (filteredRuntimeWorkResult?.status === 'fulfilled') {
-        releaseConfirmedArchivedRuntimeTasks(
-          mergeRuntimeWorkLists(latestLocalRuntimeWork, filteredRuntimeWorkResult.value, {
-            devices: [
-              ...baseDevices,
-              ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
-            ],
+            standaloneDeviceId: getPreferredStandaloneDeviceId(
+              devices,
+              options?.standaloneDeviceId ?? null
+            ),
           })
-        )
-      }
+        }
 
-      const reconciledRuntimeWorkResult =
-        filteredRuntimeWorkResult?.status === 'fulfilled'
-          ? {
-              status: 'fulfilled' as const,
-              value: reconcileCachedRemoteRuntimeWork(
-                cachedRemoteRuntimeWorkRef.current.runtimeWork,
-                removeRuntimeTasks(
-                  filteredRuntimeWorkResult.value,
-                  archivedRuntimeTaskAddressesRef.current
+        const [teamsResult, runtimeWorkResult] = await Promise.all([
+          teamsRequest,
+          runtimeWorkRequest,
+        ])
+
+        if (
+          !isCurrentRefresh() ||
+          options?.isCancelled?.() ||
+          revision == null ||
+          cloudRuntimeStateRef.current.inFlightRevision !== revision ||
+          cloudBackgroundApiRef.current !== backgroundApi
+        ) {
+          if (revision != null) {
+            updateCloudRuntimeState(abandonCloudRuntimeSync(cloudRuntimeStateRef.current, revision))
+          }
+          return
+        }
+
+        const latestLocalRuntimeWork = localRuntimeWorkRef.current ?? baseRuntimeWork
+        const filteredRuntimeWorkResult =
+          runtimeWorkResult?.status === 'fulfilled'
+            ? {
+                status: 'fulfilled' as const,
+                value: filterRemovedRuntimeProjects(runtimeWorkResult.value),
+              }
+            : runtimeWorkResult
+        if (filteredRuntimeWorkResult?.status === 'fulfilled') {
+          releaseConfirmedArchivedRuntimeTasks(
+            mergeRuntimeWorkLists(latestLocalRuntimeWork, filteredRuntimeWorkResult.value, {
+              devices: [
+                ...baseDevices,
+                ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
+              ],
+            })
+          )
+        }
+
+        const reconciledRuntimeWorkResult =
+          filteredRuntimeWorkResult?.status === 'fulfilled'
+            ? {
+                status: 'fulfilled' as const,
+                value: reconcileCachedRemoteRuntimeWork(
+                  cachedRemoteRuntimeWorkRef.current.runtimeWork,
+                  removeRuntimeTasks(
+                    filteredRuntimeWorkResult.value,
+                    archivedRuntimeTaskAddressesRef.current
+                  ),
+                  devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
                 ),
-                devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
-              ),
-            }
-          : runtimeWorkResult
-      if (reconciledRuntimeWorkResult?.status === 'fulfilled') {
-        cachedRemoteRuntimeWorkRef.current = {
-          userId: user.id,
-          runtimeWork: writeCachedRemoteRuntimeWork(
-            user.id,
-            reconciledRuntimeWorkResult.value,
-            devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
+              }
+            : runtimeWorkResult
+        if (reconciledRuntimeWorkResult?.status === 'fulfilled') {
+          cachedRemoteRuntimeWorkRef.current = {
+            userId: user.id,
+            runtimeWork: writeCachedRemoteRuntimeWork(
+              user.id,
+              reconciledRuntimeWorkResult.value,
+              devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
+            ),
+          }
+        }
+
+        const nextCloudState = finishCloudRuntimeSync(cloudRuntimeStateRef.current, revision, {
+          teams: teamsResult,
+          devices: devicesResult,
+          runtimeWork: reconciledRuntimeWorkResult,
+        })
+        updateCloudRuntimeState(nextCloudState)
+
+        const devices = resolveDeviceListWithCache(
+          selectVisibleDevices(baseDevices, nextCloudState)
+        )
+        const runtimeWork = selectVisibleRuntimeWork(
+          latestLocalRuntimeWork,
+          nextCloudState,
+          devices
+        )
+
+        dispatch({
+          type: 'lists_refreshed',
+          projects: options?.projects ?? [],
+          devices,
+          runtimeWork,
+          standaloneDeviceId: getPreferredStandaloneDeviceId(
+            devices,
+            options?.standaloneDeviceId ?? null
           ),
+        })
+      } finally {
+        if (cloudBackgroundRequestControllerRef.current === controller) {
+          cloudBackgroundRequestControllerRef.current = null
+          controller.abort()
         }
       }
-
-      const nextCloudState = finishCloudRuntimeSync(cloudRuntimeStateRef.current, revision, {
-        teams: teamsResult,
-        devices: devicesResult,
-        runtimeWork: reconciledRuntimeWorkResult,
-      })
-      updateCloudRuntimeState(nextCloudState)
-
-      const devices = resolveDeviceListWithCache(selectVisibleDevices(baseDevices, nextCloudState))
-      const runtimeWork = selectVisibleRuntimeWork(latestLocalRuntimeWork, nextCloudState, devices)
-
-      dispatch({
-        type: 'lists_refreshed',
-        projects: options?.projects ?? [],
-        devices,
-        runtimeWork,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(
-          devices,
-          options?.standaloneDeviceId ?? null
-        ),
-      })
     },
     [
       dispatch,
@@ -581,64 +624,75 @@ export function useWorkbenchDataRefresh({
     user,
   ])
 
-  const refreshWorkLists = useCallback(async () => {
-    const [devicesResult, runtimeWorkResult] = await Promise.all([
-      executorClient.commands.listDevices().catch(error => {
-        const cachedDevices = readCachedDeviceList()
-        if (cachedDevices.length === 0) throw error
-        return cachedDevices
-      }),
-      executorClient.runtime.listRuntimeWork().catch(() => undefined),
-    ])
-    const devices = resolveDeviceListWithCache(devicesResult)
-    const visibleDevices = resolveDeviceListWithCache(
-      selectVisibleDevices(devices, cloudRuntimeStateRef.current)
-    )
-    const filteredRuntimeWorkResult = runtimeWorkResult
-      ? filterRemovedRuntimeProjects(runtimeWorkResult)
-      : undefined
-    if (filteredRuntimeWorkResult) {
-      localRuntimeWorkRef.current = filteredRuntimeWorkResult
-    }
-    const localRuntimeWork = filteredRuntimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
-    if (filteredRuntimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
-      releaseConfirmedArchivedRuntimeTasks(filteredRuntimeWorkResult)
-    }
-    const runtimeWork = filteredRuntimeWorkResult
-      ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
-      : hasCloudBackgroundApi
-        ? localRuntimeWork
-        : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
-    debugRuntimeSidebarState('refresh-resolved', {
-      source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
-      executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
-      visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
-    })
-    dispatch({
-      type: 'lists_refreshed',
-      projects: state.projects,
-      devices: visibleDevices,
-      runtimeWork,
-      standaloneDeviceId: getPreferredStandaloneDeviceId(visibleDevices, state.standaloneDeviceId),
-    })
-    void refreshCloudBackgroundData(devices, localRuntimeWork, {
-      projects: state.projects,
-      standaloneDeviceId: state.standaloneDeviceId,
-      trigger: 'manual-refresh',
-    }).catch(() => undefined)
-  }, [
-    dispatch,
-    executorClient,
-    filterRemovedRuntimeProjects,
-    refreshCloudBackgroundData,
-    hasCloudBackgroundApi,
-    releaseConfirmedArchivedRuntimeTasks,
-    selectVisibleRuntimeWork,
-    services.cloudBackgroundApi,
-    state.projects,
-    state.runtimeWork,
-    state.standaloneDeviceId,
-  ])
+  const refreshWorkLists: RefreshWorkLists = useCallback(
+    async options => {
+      const [devicesResult, runtimeWorkResult] = await Promise.all([
+        executorClient.commands.listDevices().catch(error => {
+          const cachedDevices = readCachedDeviceList()
+          if (cachedDevices.length === 0) throw error
+          return cachedDevices
+        }),
+        executorClient.runtime.listRuntimeWork().catch(() => undefined),
+      ])
+      const devices = resolveDeviceListWithCache(devicesResult)
+      const visibleDevices = resolveDeviceListWithCache(
+        selectVisibleDevices(devices, cloudRuntimeStateRef.current)
+      )
+      const filteredRuntimeWorkResult = runtimeWorkResult
+        ? filterRemovedRuntimeProjects(runtimeWorkResult)
+        : undefined
+      if (filteredRuntimeWorkResult) {
+        localRuntimeWorkRef.current = filteredRuntimeWorkResult
+      }
+      const localRuntimeWork = filteredRuntimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+      if (filteredRuntimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
+        releaseConfirmedArchivedRuntimeTasks(filteredRuntimeWorkResult)
+      }
+      const runtimeWork = filteredRuntimeWorkResult
+        ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
+        : removeRuntimeTasks(
+            hasCloudBackgroundApi
+              ? localRuntimeWork
+              : filterDisconnectedRemoteRuntimeWork(localRuntimeWork),
+            archivedRuntimeTaskAddressesRef.current
+          )
+      debugRuntimeSidebarState('refresh-resolved', {
+        source: filteredRuntimeWorkResult ? 'executor' : 'current-state',
+        executorTaskIds: summarizeRuntimeWorkTaskIds(filteredRuntimeWorkResult ?? null),
+        visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+      })
+      dispatch({
+        type: 'lists_refreshed',
+        projects: state.projects,
+        devices: visibleDevices,
+        runtimeWork,
+        standaloneDeviceId: getPreferredStandaloneDeviceId(
+          visibleDevices,
+          state.standaloneDeviceId
+        ),
+      })
+      if (options?.syncCloud !== false) {
+        void refreshCloudBackgroundData(devices, localRuntimeWork, {
+          projects: state.projects,
+          standaloneDeviceId: state.standaloneDeviceId,
+          trigger: 'manual-refresh',
+        }).catch(() => undefined)
+      }
+    },
+    [
+      dispatch,
+      executorClient,
+      filterRemovedRuntimeProjects,
+      refreshCloudBackgroundData,
+      hasCloudBackgroundApi,
+      releaseConfirmedArchivedRuntimeTasks,
+      selectVisibleRuntimeWork,
+      services.cloudBackgroundApi,
+      state.projects,
+      state.runtimeWork,
+      state.standaloneDeviceId,
+    ]
+  )
 
   const loadDevicesForRefresh = useCallback(
     async (options?: { useCacheFallback?: boolean }): Promise<DeviceInfo[]> => {

@@ -39,11 +39,7 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
   onAssistantStart?: (turnId: string) => void
-  onAssistantSettled?: (
-    turnId: string,
-    result: 'success' | 'failure' | 'cancelled',
-    contextUsage?: RuntimeContextUsage
-  ) => void
+  onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
@@ -62,8 +58,7 @@ export interface RuntimeConversationStreamHandlers {
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
     turnId: string,
-    result: 'success' | 'failure' | 'cancelled',
-    contextUsage?: RuntimeContextUsage
+    outcome: 'succeeded' | 'failed' | 'cancelled'
   ) => void
   onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
@@ -110,8 +105,8 @@ export function createRuntimeConversationStreamHandlers(
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
       onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
-      onAssistantSettled: (turnId, result, contextUsage) =>
-        handlers.onAssistantSettled?.(address, turnId, result, contextUsage),
+      onAssistantSettled: (turnId, outcome) =>
+        handlers.onAssistantSettled?.(address, turnId, outcome),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
@@ -276,7 +271,7 @@ export function createRuntimeTaskStreamHandlers(
         blocks,
         fileChanges,
       })
-      handlers.onAssistantSettled?.(identity.subtaskId, 'success', payload.result.contextUsage)
+      handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
@@ -298,7 +293,8 @@ export function createRuntimeTaskStreamHandlers(
       logAcceptedRuntimeTerminalEvent('chat:error', address, payload, {
         errorType: payload.type ?? null,
       })
-      if (isCancelledRuntimeError(payload)) {
+      const cancelled = isCancelledRuntimeError(payload)
+      if (cancelled) {
         handlers.onMessageAction({
           type: 'assistant_cancelled',
           subtaskId: identity.subtaskId,
@@ -318,10 +314,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      handlers.onAssistantSettled?.(
-        identity.subtaskId,
-        isCancelledRuntimeError(payload) ? 'cancelled' : 'failure'
-      )
+      handlers.onAssistantSettled?.(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
       streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
@@ -352,13 +345,14 @@ export function createRuntimeTaskStreamHandlers(
         type: 'block_created',
         subtaskId: identity.subtaskId,
         block,
+        replaceAssistantTextItemId: payload.replacesItemId,
       })
       if (isStandaloneCompletedContextCompaction(identity.subtaskId, block)) {
         handlers.onMessageAction({
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
         })
-        handlers.onAssistantSettled?.(identity.subtaskId, 'success')
+        handlers.onAssistantSettled?.(identity.subtaskId, 'succeeded')
         handlers.onRefreshWorkLists?.()
       }
     },

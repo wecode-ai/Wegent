@@ -700,9 +700,17 @@ def _build_system_function(
         return None
 
     metadata = team_data.get("metadata", {})
+    spec = team_data.get("spec", {})
+    capability = spec.get("capability") or {}
+    function_data = config.model_dump()
+    function_data["description"] = (
+        config.description or capability.get("description") or spec.get("description")
+    )
+    function_data["icon"] = config.icon or capability.get("icon") or spec.get("icon")
     return QuickLaunchFunctionResponse(
-        **config.model_dump(),
+        **function_data,
         name=metadata.get("name", f"team-{config.team_id}"),
+        recommended_mode=team_data.get("recommended_mode") or "both",
     )
 
 

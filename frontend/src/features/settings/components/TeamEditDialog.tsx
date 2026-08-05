@@ -75,6 +75,7 @@ import {
   CapabilityScopeSelector,
   type CapabilityPublishTarget,
 } from '@/features/resource-library/components/CapabilityScopeSelector'
+import { MarketplaceTagSelector } from '@/features/resource-library/components/MarketplaceTagSelector'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -92,7 +93,11 @@ interface TeamEditDialogProps {
   createTarget?: ResourceCreateTarget
   writableGroups?: Group[]
   publishAfterCreate?: boolean
-  onCreateOptionsChange?: (target: ResourceCreateTarget, publishAfterCreate: boolean) => void
+  onCreateOptionsChange?: (
+    target: ResourceCreateTarget,
+    publishAfterCreate: boolean,
+    marketplaceTags: string[]
+  ) => void
 }
 
 const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task'])
@@ -176,6 +181,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     useState<CapabilityPublishTarget>('personal')
   const [editingGroupNames, setEditingGroupNames] = useState<string[]>([])
   const [editingWasPublished, setEditingWasPublished] = useState(false)
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
 
   const publishTarget: CapabilityPublishTarget = publishAfterCreate
     ? 'marketplace'
@@ -217,6 +223,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               await resourceLibraryApi.updatePublication(team.id, {
                 display_name: team.displayName || team.name,
                 description: team.description || null,
+                tags: marketplaceTags,
                 version: '1.0.0',
                 status: 'published',
               })
@@ -228,7 +235,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 display_name: team.displayName || team.name,
                 description: team.description || null,
                 icon: team.icon || null,
-                tags: [],
+                tags: marketplaceTags,
                 version: '1.0.0',
                 manifest_options: {},
               })
@@ -271,6 +278,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       editingPublishTarget,
       editingWasPublished,
       isEditing,
+      marketplaceTags,
       onClose,
       onSaved,
       publishGroupNames,
@@ -478,6 +486,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setEditingWasPublished(false)
       setEditingPublishTarget('personal')
       setEditingGroupNames([])
+      setMarketplaceTags([])
       setName('')
       setDisplayName('')
       setDescription('')
@@ -544,6 +553,22 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     open,
     toast,
   ])
+
+  useEffect(() => {
+    if (!open || !isEditing || !formTeam?.id) return
+    let active = true
+    resourceLibraryApi
+      .getPublication(formTeam.id)
+      .then(listing => {
+        if (active) setMarketplaceTags(listing.tags)
+      })
+      .catch(() => {
+        if (active) setMarketplaceTags([])
+      })
+    return () => {
+      active = false
+    }
+  }, [formTeam?.id, isEditing, open])
 
   // Update bot selection when bots change
   useEffect(() => {
@@ -930,6 +955,13 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       })
       return
     }
+    if (publishTarget === 'marketplace' && marketplaceTags.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:marketplace_tags.required'),
+      })
+      return
+    }
 
     if (useSimpleEditor) {
       await handleSimpleSave()
@@ -1163,11 +1195,19 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 ? [writableGroups[0].name]
                 : [],
         },
-        false
+        false,
+        marketplaceTags
       )
       return
     }
-    onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace')
+    onCreateOptionsChange?.({ scope: 'personal' }, target === 'marketplace', marketplaceTags)
+  }
+
+  const handleMarketplaceTagsChange = (tags: string[]) => {
+    setMarketplaceTags(tags)
+    if (!isEditing) {
+      onCreateOptionsChange?.({ scope: 'personal' }, publishTarget === 'marketplace', tags)
+    }
   }
 
   return (
@@ -1342,6 +1382,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 multipleGroups
               />
             </div>
+            {publishTarget === 'marketplace' && (
+              <div className="space-y-2" data-testid="team-marketplace-tags-section">
+                <h3 className="text-sm font-medium text-text-primary">
+                  {t('resource-library:marketplace_tags.field_label')}
+                </h3>
+                <MarketplaceTagSelector
+                  value={marketplaceTags}
+                  onChange={handleMarketplaceTagsChange}
+                />
+              </div>
+            )}
           </div>
 
           <DialogFooter>

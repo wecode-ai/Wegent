@@ -1064,6 +1064,53 @@ describe('runtimeConversationTurns', () => {
     )
   })
 
+  test('atomically moves final text reclassified as commentary into a process block', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'msg-progress',
+      content: 'I will inspect.',
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      replaceAssistantTextItemId: 'msg-progress',
+      block: {
+        id: 'msg-progress',
+        subtaskId: 'turn-1',
+        type: 'text',
+        content: 'I will inspect.',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+    })
+
+    expect(turns[0].items).toEqual([
+      {
+        id: 'msg-progress',
+        type: 'block',
+        block: expect.objectContaining({
+          id: 'msg-progress',
+          type: 'text',
+          content: 'I will inspect.',
+        }),
+      },
+    ])
+    expect(projectRuntimeConversationTurns(turns)).toEqual([
+      expect.objectContaining({
+        content: '',
+        blocks: [
+          expect.objectContaining({
+            id: 'msg-progress',
+            type: 'text',
+            content: 'I will inspect.',
+          }),
+        ],
+      }),
+    ])
+  })
+
   test('clears the active reasoning summary when final text starts streaming', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',

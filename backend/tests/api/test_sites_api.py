@@ -26,6 +26,23 @@ def _project(**overrides: Any) -> dict[str, Any]:
     return project
 
 
+def _mini_program(**overrides: Any) -> dict[str, Any]:
+    project = {
+        "id": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "app_type": "mini_program",
+        "title": "Campaign assistant",
+        "app_id": "1234567890",
+        "status": "experience",
+        "version": "1.2.0",
+        "experience_url": "https://mini.example.test/experience/1234567890",
+        "snapshot": "https://sites.example.test/mini-program.png",
+        "created_at": "2026-07-16T08:00:00Z",
+        "updated_at": "2026-07-17T08:00:00Z",
+    }
+    project.update(overrides)
+    return project
+
+
 def _authorization(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
@@ -43,6 +60,34 @@ def test_list_sites_requires_authentication(
     response = test_client.get("/api/sites")
 
     assert response.status_code == 401
+
+
+def test_list_site_app_types_returns_ordered_capabilities(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    response = test_client.get(
+        "/api/sites/app-types",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "app_type": "site",
+                "enabled": True,
+                "order": 10,
+                "capabilities": ["create", "publish", "delete"],
+            },
+            {
+                "app_type": "mini_program",
+                "enabled": True,
+                "order": 20,
+                "capabilities": ["create", "open_experience"],
+            },
+        ]
+    }
 
 
 def test_list_sites_returns_not_available_when_upstream_is_not_configured(
@@ -87,6 +132,7 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     assert response.status_code == 200
     body = response.json()
     assert body["items"][0] == {
+        "app_type": "site",
         "siteid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "taskid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "username": "testuser",
@@ -105,6 +151,61 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     assert request.headers["authorization"] == "Bearer platform-token"
     assert request.url.params["username"] == "testuser"
     assert request.url.params["sitename"] == "product"
+
+
+def test_list_sites_returns_mini_programs_from_the_shared_endpoint(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100&app_type=mini_program"
+        ),
+        json={"items": [_mini_program()], "next_cursor": None},
+    )
+
+    response = test_client.get(
+        "/api/sites",
+        params={"app_type": "mini_program", "offset": 0, "limit": 20},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [
+        {
+            "app_type": "mini_program",
+            "siteid": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "taskid": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "username": "testuser",
+            "name": "Campaign assistant",
+            "slug": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "app_id": "1234567890",
+            "status": "experience",
+            "version": "1.2.0",
+            "experience_url": "https://mini.example.test/experience/1234567890",
+            "thumbnail_url": "https://sites.example.test/mini-program.png",
+            "created_at": "2026-07-16T08:00:00Z",
+            "updated_at": "2026-07-17T08:00:00Z",
+        }
+    ]
+
+
+def test_list_sites_rejects_an_unknown_application_type(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    response = test_client.get(
+        "/api/sites",
+        params={"app_type": "desktop_app"},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 422
 
 
 def test_list_sites_fetches_until_offset_page_is_resolved(

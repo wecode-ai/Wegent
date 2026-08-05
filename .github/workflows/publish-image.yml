@@ -117,12 +117,15 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Fetch and stage optional Sites plugin
+      - name: Fetch and stage optional application plugins
         env:
           WEGENT_SITES_PLUGIN_ARCHIVE_URL: ${{ vars.WEGENT_SITES_PLUGIN_ARCHIVE_URL || secrets.WEGENT_SITES_PLUGIN_ARCHIVE_URL }}
           WEGENT_SITES_PLUGIN_ARCHIVE_SHA256: ${{ vars.WEGENT_SITES_PLUGIN_ARCHIVE_SHA256 }}
           WEGENT_SITES_PLUGIN_ARCHIVE_AUTHORIZATION: ${{ secrets.WEGENT_SITES_PLUGIN_ARCHIVE_AUTHORIZATION }}
-        run: node scripts/fetch-builtin-sites-plugin.mjs
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL: ${{ vars.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL || secrets.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL }}
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_SHA256: ${{ vars.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_SHA256 }}
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_AUTHORIZATION: ${{ secrets.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_AUTHORIZATION }}
+        run: node scripts/fetch-builtin-plugins.mjs
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -156,12 +159,15 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Fetch and stage optional Sites plugin
+      - name: Fetch and stage optional application plugins
         env:
           WEGENT_SITES_PLUGIN_ARCHIVE_URL: ${{ vars.WEGENT_SITES_PLUGIN_ARCHIVE_URL || secrets.WEGENT_SITES_PLUGIN_ARCHIVE_URL }}
           WEGENT_SITES_PLUGIN_ARCHIVE_SHA256: ${{ vars.WEGENT_SITES_PLUGIN_ARCHIVE_SHA256 }}
           WEGENT_SITES_PLUGIN_ARCHIVE_AUTHORIZATION: ${{ secrets.WEGENT_SITES_PLUGIN_ARCHIVE_AUTHORIZATION }}
-        run: node scripts/fetch-builtin-sites-plugin.mjs
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL: ${{ vars.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL || secrets.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_URL }}
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_SHA256: ${{ vars.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_SHA256 }}
+          WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_AUTHORIZATION: ${{ secrets.WEGENT_MINI_PROGRAM_PLUGIN_ARCHIVE_AUTHORIZATION }}
+        run: node scripts/fetch-builtin-plugins.mjs
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
