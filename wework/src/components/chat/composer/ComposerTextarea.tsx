@@ -8,7 +8,17 @@ import {
   Store,
   Target,
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  startTransition,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
@@ -76,1313 +86,1358 @@ interface ActiveComposerMenu {
   trigger: ComposerTextTrigger
 }
 
-export function ComposerTextarea({
-  value,
-  onChange,
-  onSubmit,
-  canSend,
-  disabled,
-  placeholder,
-  testId = 'chat-message-input',
-  rows,
-  textareaRef,
-  className,
-  skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
-  disableAutocomplete = false,
-  onKeyDown,
-  onPasteFiles,
-  onOpenSkillFile,
-  workspaceTarget,
-  workspaceFileApi,
-  cloudMentionCandidates = [],
-  conversationMentionCandidates = [],
-  cloudProjectCandidates = [],
-  cloudSpaceEnabled = false,
-  onSelectCloudProject,
-  onListLocalSkills,
-  onListLocalApps,
-  models = [],
-  selectedModel,
-  selectedModelOptions = {},
-  planModeActive = false,
-  onSetPlanMode,
-  onSetGoal,
-  onSelectModel,
-  onBlockedModelSelect,
-  isModelSelectionReady = true,
-}: ComposerTextareaProps) {
-  const { t } = useTranslation('common')
-  const menuRef = useRef<HTMLDivElement>(null)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
-  const skillsLoadedRef = useRef(false)
-  const skillsLoadingRef = useRef(false)
-  const skillsRequestIdRef = useRef(0)
-  const skillsSourceRef = useRef<typeof onListLocalSkills>(undefined)
-  const appsLoadedRef = useRef(false)
-  const appsLoadingRef = useRef(false)
-  const appsRequestIdRef = useRef(0)
-  const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
-  const mountedRef = useRef(true)
-  const editorRef = useRef<ComposerEditorHandle | null>(null)
-  const valueRef = useRef(value)
-  const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
-  const highlightedIndexRef = useRef(0)
-  const showSkillMenuRef = useRef(false)
-  const showSlashMenuRef = useRef(false)
-  const activeOptionCountRef = useRef(0)
-  const suppressEnterUntilKeyUpRef = useRef(false)
-  const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
-  const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
-    onListLocalApps ? readComposerAppsSnapshot() : []
-  )
-  const [isComposing, setIsComposing] = useState(false)
-  const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
-  const [modelQuery, setModelQuery] = useState('')
-  const [modelSelectedIndex, setModelSelectedIndex] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [loadError, setLoadError] = useState(false)
-  const [appsLoading, setAppsLoading] = useState(false)
-  const [appsLoadError, setAppsLoadError] = useState(false)
-  const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
-  const [editingLink, setEditingLink] = useState<ComposerLinkPayload | null>(null)
-  const [editingLinkRange, setEditingLinkRange] = useState<{ start: number; end: number } | null>(
-    null
-  )
-  const [editingLinkAnchor, setEditingLinkAnchor] = useState<HTMLElement | null>(null)
-  const canPickNativeWorkspacePaths =
-    canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
+export interface ComposerTextareaHandle {
+  getValue: () => string
+  setValue: (value: string, selectionOffset?: number) => void
+}
 
-  useEffect(() => {
-    valueRef.current = value
-  }, [value])
-
-  const { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates } =
-    useComposerMentionCandidates(
-      apps,
-      skills,
+export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTextareaProps>(
+  function ComposerTextarea(
+    {
+      value,
+      onChange,
+      onBlur,
+      onCompositionEnd,
+      onSubmit,
+      canSend,
+      disabled,
+      placeholder,
+      testId = 'chat-message-input',
+      rows,
+      textareaRef,
+      className,
+      skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+      disableAutocomplete = false,
+      onKeyDown,
+      onPasteFiles,
+      onOpenSkillFile,
+      workspaceTarget,
+      workspaceFileApi,
+      cloudMentionCandidates = [],
+      conversationMentionCandidates = [],
+      cloudProjectCandidates = [],
+      cloudSpaceEnabled = false,
+      onSelectCloudProject,
+      onListLocalSkills,
+      onListLocalApps,
+      models = [],
       selectedModel,
-      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
-        ? activeMenu.trigger.query
-        : '',
-      cloudMentionCandidates,
-      conversationMentionCandidates
+      selectedModelOptions = {},
+      planModeActive = false,
+      onSetPlanMode,
+      onSetGoal,
+      onSelectModel,
+      onBlockedModelSelect,
+      isModelSelectionReady = true,
+    },
+    ref
+  ) {
+    const { t } = useTranslation('common')
+    const menuRef = useRef<HTMLDivElement>(null)
+    const modelMenuRef = useRef<HTMLDivElement>(null)
+    const skillsLoadedRef = useRef(false)
+    const skillsLoadingRef = useRef(false)
+    const skillsRequestIdRef = useRef(0)
+    const skillsSourceRef = useRef<typeof onListLocalSkills>(undefined)
+    const appsLoadedRef = useRef(false)
+    const appsLoadingRef = useRef(false)
+    const appsRequestIdRef = useRef(0)
+    const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
+    const mountedRef = useRef(true)
+    const editorRef = useRef<ComposerEditorHandle | null>(null)
+    const valueRef = useRef(value)
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
+        setValue: (nextValue, selectionOffset = nextValue.length) => {
+          valueRef.current = nextValue
+          editorRef.current?.setValue(nextValue, selectionOffset)
+        },
+      }),
+      []
     )
-  const filteredSkillCandidates = useMemo(
-    () =>
-      filteredMentionCandidates.filter(
-        candidate => candidate.kind === 'skill' || candidate.kind === 'app'
-      ),
-    [filteredMentionCandidates]
-  )
 
-  const workspaceSearch = useWorkspaceMentionSearch(
-    activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
-    workspaceTarget,
-    workspaceFileApi
-  )
+    const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
+    const highlightedIndexRef = useRef(0)
+    const showSkillMenuRef = useRef(false)
+    const showSlashMenuRef = useRef(false)
+    const activeOptionCountRef = useRef(0)
+    const suppressEnterUntilKeyUpRef = useRef(false)
+    const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
+    const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
+      onListLocalApps ? readComposerAppsSnapshot() : []
+    )
+    const [isComposing, setIsComposing] = useState(false)
+    const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
+    const [selectedIndex, setSelectedIndex] = useState(0)
+    const [modelMenuOpen, setModelMenuOpen] = useState(false)
+    const [modelQuery, setModelQuery] = useState('')
+    const [modelSelectedIndex, setModelSelectedIndex] = useState(0)
+    const [loading, setLoading] = useState(false)
+    const [loadError, setLoadError] = useState(false)
+    const [appsLoading, setAppsLoading] = useState(false)
+    const [appsLoadError, setAppsLoadError] = useState(false)
+    const [cloudProjectsOpen, setCloudProjectsOpen] = useState(false)
+    const [editingLink, setEditingLink] = useState<ComposerLinkPayload | null>(null)
+    const [editingLinkRange, setEditingLinkRange] = useState<{ start: number; end: number } | null>(
+      null
+    )
+    const [editingLinkAnchor, setEditingLinkAnchor] = useState<HTMLElement | null>(null)
+    const canPickNativeWorkspacePaths =
+      canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
-  // The `@项目空间:keyword` scope syntax drills straight into the cloud project
-  // list without clicking the menu entry, matching the other mention flows.
-  const cloudProjectScopeLabels = useMemo(
-    () => [
-      t('workbench.mention_cloud_project_space', '项目空间'),
-      '项目空间',
-      'project space',
-      'project-space',
-    ],
-    [t]
-  )
-  const cloudProjectScopeLabelsRef = useRef(cloudProjectScopeLabels)
-  useEffect(() => {
-    cloudProjectScopeLabelsRef.current = cloudProjectScopeLabels
-  }, [cloudProjectScopeLabels])
-  const cloudProjectScopeKeyword =
-    activeMenu?.kind === 'mention'
-      ? parseCloudProjectScopeQuery(activeMenu.trigger.query, cloudProjectScopeLabels)
-      : null
-  const cloudProjectScopeActive = cloudSpaceEnabled && cloudProjectScopeKeyword !== null
-  const filteredCloudProjectCandidates = useMemo(
-    () =>
-      cloudProjectScopeActive
-        ? cloudProjectCandidates.filter(candidate =>
-            matchesMentionQuery(candidate, cloudProjectScopeKeyword ?? '')
-          )
-        : cloudProjectCandidates,
-    [cloudProjectCandidates, cloudProjectScopeActive, cloudProjectScopeKeyword]
-  )
-  // The direct cloud space reference inserted by the `项目空间` row. Selecting it
-  // never binds a project; it just tags the message with the generic
-  // `cloud://projects` capability reference.
-  const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
+    useEffect(() => {
+      valueRef.current = value
+    }, [value])
 
-  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
-  const openSlashModelMenu = useCallback(() => {
-    setModelQuery('')
-    setModelSelectedIndex(0)
-    setModelMenuOpen(true)
-  }, [])
-  const closeSlashModelMenu = useCallback(
-    (focusTextarea = false) => {
-      setModelMenuOpen(false)
+    const { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates } =
+      useComposerMentionCandidates(
+        apps,
+        skills,
+        selectedModel,
+        activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention'
+          ? activeMenu.trigger.query
+          : '',
+        cloudMentionCandidates,
+        conversationMentionCandidates
+      )
+    const filteredSkillCandidates = useMemo(
+      () =>
+        filteredMentionCandidates.filter(
+          candidate => candidate.kind === 'skill' || candidate.kind === 'app'
+        ),
+      [filteredMentionCandidates]
+    )
+
+    const workspaceSearch = useWorkspaceMentionSearch(
+      activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
+      workspaceTarget,
+      workspaceFileApi
+    )
+
+    // The `@项目空间:keyword` scope syntax drills straight into the cloud project
+    // list without clicking the menu entry, matching the other mention flows.
+    const cloudProjectScopeLabels = useMemo(
+      () => [
+        t('workbench.mention_cloud_project_space', '项目空间'),
+        '项目空间',
+        'project space',
+        'project-space',
+      ],
+      [t]
+    )
+    const cloudProjectScopeLabelsRef = useRef(cloudProjectScopeLabels)
+    useEffect(() => {
+      cloudProjectScopeLabelsRef.current = cloudProjectScopeLabels
+    }, [cloudProjectScopeLabels])
+    const cloudProjectScopeKeyword =
+      activeMenu?.kind === 'mention'
+        ? parseCloudProjectScopeQuery(activeMenu.trigger.query, cloudProjectScopeLabels)
+        : null
+    const cloudProjectScopeActive = cloudSpaceEnabled && cloudProjectScopeKeyword !== null
+    const filteredCloudProjectCandidates = useMemo(
+      () =>
+        cloudProjectScopeActive
+          ? cloudProjectCandidates.filter(candidate =>
+              matchesMentionQuery(candidate, cloudProjectScopeKeyword ?? '')
+            )
+          : cloudProjectCandidates,
+      [cloudProjectCandidates, cloudProjectScopeActive, cloudProjectScopeKeyword]
+    )
+    // The direct cloud space reference inserted by the `项目空间` row. Selecting it
+    // never binds a project; it just tags the message with the generic
+    // `cloud://projects` capability reference.
+    const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
+
+    const canOpenSlashModelMenu =
+      isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
+    const openSlashModelMenu = useCallback(() => {
       setModelQuery('')
       setModelSelectedIndex(0)
-      if (focusTextarea) {
-        window.requestAnimationFrame(() => {
-          textareaRef.current?.focus()
+      setModelMenuOpen(true)
+    }, [])
+    const closeSlashModelMenu = useCallback(
+      (focusTextarea = false) => {
+        setModelMenuOpen(false)
+        setModelQuery('')
+        setModelSelectedIndex(0)
+        if (focusTextarea) {
+          window.requestAnimationFrame(() => {
+            textareaRef.current?.focus()
+          })
+        }
+      },
+      [textareaRef]
+    )
+
+    const actionSlashCommands = useMemo<SlashCommand[]>(() => {
+      const commands: SlashCommand[] = []
+
+      if (onSetPlanMode && !planModeActive) {
+        commands.push({
+          id: 'plan',
+          title: t('workbench.slash_command_plan'),
+          description: t('workbench.slash_command_plan_description'),
+          searchAliases: ['plan', 'plan mode', 'planning'],
+          Icon: ClipboardList,
+          testId: 'plan',
+          onSelect: onSetPlanMode,
         })
       }
-    },
-    [textareaRef]
-  )
 
-  const actionSlashCommands = useMemo<SlashCommand[]>(() => {
-    const commands: SlashCommand[] = []
+      if (onSetGoal) {
+        commands.push({
+          id: 'goal',
+          title: t('workbench.slash_command_goal'),
+          description: t('workbench.slash_command_goal_description'),
+          searchAliases: ['goal', 'target', 'objective'],
+          Icon: Target,
+          testId: 'goal',
+          onSelect: onSetGoal,
+        })
+      }
 
-    if (onSetPlanMode && !planModeActive) {
+      if (canOpenSlashModelMenu) {
+        commands.push({
+          id: 'model',
+          title: t('workbench.slash_command_model'),
+          description: t('workbench.slash_command_model_description'),
+          searchAliases: ['model', 'model selector'],
+          Icon: Cpu,
+          testId: 'model',
+          onSelect: openSlashModelMenu,
+        })
+      }
+
+      return commands
+    }, [canOpenSlashModelMenu, onSetGoal, onSetPlanMode, openSlashModelMenu, planModeActive, t])
+
+    const skillSlashCommands = useMemo<SlashCommand[]>(() => {
+      const skillGroup = t('workbench.slash_command_group_skills')
+      return skillCandidates.map(candidate => ({
+        id: candidate.key,
+        title: candidate.title,
+        description: candidate.description,
+        metaLabel: candidate.metaLabel,
+        group: skillGroup,
+        searchAliases: candidate.searchAliases,
+        Icon: Package,
+        enabled: candidate.enabled,
+        testId: slashSkillTestId(candidate.skill.name),
+        skill: candidate.skill,
+      }))
+    }, [skillCandidates, t])
+
+    const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
+      const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
+      const commands: SlashCommand[] = appCandidates.map(candidate => ({
+        id: candidate.key,
+        title: candidate.title,
+        description: candidate.description,
+        group: pluginGroup,
+        searchAliases: candidate.searchAliases,
+        Icon: Plug,
+        iconUrl: resolvePluginLogoUrl({
+          pluginKey: composerAppPluginKey(candidate.app),
+          logo: candidate.app.logoUrl,
+        }),
+        trailingIcon: CornerDownLeft,
+        enabled: candidate.enabled,
+        testId: slashAppTestId(candidate.app.id),
+        app: candidate.app,
+      }))
+
       commands.push({
-        id: 'plan',
-        title: t('workbench.slash_command_plan'),
-        description: t('workbench.slash_command_plan_description'),
-        searchAliases: ['plan', 'plan mode', 'planning'],
-        Icon: ClipboardList,
-        testId: 'plan',
-        onSelect: onSetPlanMode,
+        id: 'plugin-marketplace',
+        title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
+        description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
+        group: pluginGroup,
+        searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
+        Icon: Store,
+        trailingIcon: ExternalLink,
+        testId: 'plugin-marketplace',
+        onSelect: () => navigateTo('/plugins'),
       })
-    }
 
-    if (onSetGoal) {
-      commands.push({
-        id: 'goal',
-        title: t('workbench.slash_command_goal'),
-        description: t('workbench.slash_command_goal_description'),
-        searchAliases: ['goal', 'target', 'objective'],
-        Icon: Target,
-        testId: 'goal',
-        onSelect: onSetGoal,
-      })
-    }
+      return commands
+    }, [appCandidates, t])
 
-    if (canOpenSlashModelMenu) {
-      commands.push({
-        id: 'model',
-        title: t('workbench.slash_command_model'),
-        description: t('workbench.slash_command_model_description'),
-        searchAliases: ['model', 'model selector'],
-        Icon: Cpu,
-        testId: 'model',
-        onSelect: openSlashModelMenu,
-      })
-    }
-
-    return commands
-  }, [canOpenSlashModelMenu, onSetGoal, onSetPlanMode, openSlashModelMenu, planModeActive, t])
-
-  const skillSlashCommands = useMemo<SlashCommand[]>(() => {
-    const skillGroup = t('workbench.slash_command_group_skills')
-    return skillCandidates.map(candidate => ({
-      id: candidate.key,
-      title: candidate.title,
-      description: candidate.description,
-      metaLabel: candidate.metaLabel,
-      group: skillGroup,
-      searchAliases: candidate.searchAliases,
-      Icon: Package,
-      enabled: candidate.enabled,
-      testId: slashSkillTestId(candidate.skill.name),
-      skill: candidate.skill,
-    }))
-  }, [skillCandidates, t])
-
-  const pluginSlashCommands = useMemo<SlashCommand[]>(() => {
-    const pluginGroup = t('workbench.slash_command_group_plugins', '插件')
-    const commands: SlashCommand[] = appCandidates.map(candidate => ({
-      id: candidate.key,
-      title: candidate.title,
-      description: candidate.description,
-      group: pluginGroup,
-      searchAliases: candidate.searchAliases,
-      Icon: Plug,
-      iconUrl: resolvePluginLogoUrl({
-        pluginKey: composerAppPluginKey(candidate.app),
-        logo: candidate.app.logoUrl,
-      }),
-      trailingIcon: CornerDownLeft,
-      enabled: candidate.enabled,
-      testId: slashAppTestId(candidate.app.id),
-      app: candidate.app,
-    }))
-
-    commands.push({
-      id: 'plugin-marketplace',
-      title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
-      description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
-      group: pluginGroup,
-      searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
-      Icon: Store,
-      trailingIcon: ExternalLink,
-      testId: 'plugin-marketplace',
-      onSelect: () => navigateTo('/plugins'),
-    })
-
-    return commands
-  }, [appCandidates, t])
-
-  const slashCommands = useMemo(
-    () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
-    [actionSlashCommands, pluginSlashCommands, skillSlashCommands]
-  )
-
-  const filteredSlashCommands = useMemo(() => {
-    if (activeMenu?.kind !== 'slash') return []
-    return filterSlashCommands(
-      slashCommands,
-      activeMenu.trigger.query,
-      hasDraftTextForSlashCommands(value)
+    const slashCommands = useMemo(
+      () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
+      [actionSlashCommands, pluginSlashCommands, skillSlashCommands]
     )
-  }, [activeMenu, slashCommands, value])
 
-  const showSkillMenu =
-    (activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention') &&
-    (activeMenu.kind === 'mention' || Boolean(onListLocalSkills) || Boolean(onListLocalApps))
-  const showSlashMenu = activeMenu?.kind === 'slash'
-  const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
-    if (!showSkillMenu) return []
-    if (activeMenu?.kind === 'skill') {
-      return filteredSkillCandidates.map(candidate => ({ kind: 'candidate', candidate }))
-    }
-    if (!activeMenu?.trigger.query.trim()) {
-      const nonCloudCandidates = filteredMentionCandidates.filter(
-        candidate => candidate.kind !== 'cloud'
+    const filteredSlashCommands = useMemo(() => {
+      if (activeMenu?.kind !== 'slash') return []
+      return filterSlashCommands(
+        slashCommands,
+        activeMenu.trigger.query,
+        hasDraftTextForSlashCommands(value)
       )
-      if (cloudProjectsOpen && cloudProjectCandidates.length > 0) {
+    }, [activeMenu, slashCommands, value])
+
+    const showSkillMenu =
+      (activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention') &&
+      (activeMenu.kind === 'mention' || Boolean(onListLocalSkills) || Boolean(onListLocalApps))
+    const showSlashMenu = activeMenu?.kind === 'slash'
+    const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
+      if (!showSkillMenu) return []
+      if (activeMenu?.kind === 'skill') {
+        return filteredSkillCandidates.map(candidate => ({ kind: 'candidate', candidate }))
+      }
+      if (!activeMenu?.trigger.query.trim()) {
+        const nonCloudCandidates = filteredMentionCandidates.filter(
+          candidate => candidate.kind !== 'cloud'
+        )
+        if (cloudProjectsOpen && cloudProjectCandidates.length > 0) {
+          return [
+            { kind: 'cloud-back-action' },
+            ...cloudProjectCandidates.map(
+              candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+            ),
+          ]
+        }
         return [
-          { kind: 'cloud-back-action' },
-          ...cloudProjectCandidates.map(
+          { kind: 'files-action' },
+          ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
+          ...(!planModeActive && onSetPlanMode
+            ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
+            : []),
+          ...(cloudSpaceEnabled
+            ? ([{ kind: 'cloud-space-direct-action' }] as MentionMenuRow[])
+            : []),
+          ...(cloudSpaceEnabled && cloudProjectCandidates.length > 0
+            ? ([{ kind: 'cloud-projects-action' }] as MentionMenuRow[])
+            : []),
+          ...nonCloudCandidates.map(
+            candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+          ),
+        ]
+      }
+      if (cloudProjectScopeActive) {
+        return [
+          { kind: 'cloud-space-direct-action' },
+          ...filteredCloudProjectCandidates.map(
             candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
           ),
         ]
       }
       return [
-        { kind: 'files-action' },
-        ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
-        ...(!planModeActive && onSetPlanMode
-          ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
-          : []),
-        ...(cloudSpaceEnabled ? ([{ kind: 'cloud-space-direct-action' }] as MentionMenuRow[]) : []),
-        ...(cloudSpaceEnabled && cloudProjectCandidates.length > 0
-          ? ([{ kind: 'cloud-projects-action' }] as MentionMenuRow[])
-          : []),
-        ...nonCloudCandidates.map(
+        ...filteredMentionCandidates.map(
           candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
         ),
+        ...workspaceSearch.matches.map(item => ({ kind: 'path', item }) as MentionMenuRow),
       ]
-    }
-    if (cloudProjectScopeActive) {
-      return [
-        { kind: 'cloud-space-direct-action' },
-        ...filteredCloudProjectCandidates.map(
-          candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
-        ),
-      ]
-    }
-    return [
-      ...filteredMentionCandidates.map(
-        candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
-      ),
-      ...workspaceSearch.matches.map(item => ({ kind: 'path', item }) as MentionMenuRow),
-    ]
-  }, [
-    activeMenu,
-    cloudProjectCandidates,
-    cloudProjectScopeActive,
-    cloudProjectsOpen,
-    cloudSpaceEnabled,
-    filteredCloudProjectCandidates,
-    filteredMentionCandidates,
-    filteredSkillCandidates,
-    onSetGoal,
-    onSetPlanMode,
-    planModeActive,
-    showSkillMenu,
-    workspaceSearch.matches,
-  ])
-  const activeOptionCount = showSkillMenu
-    ? mentionMenuRows.length
-    : showSlashMenu
-      ? filteredSlashCommands.length
-      : 0
-  const highlightedIndex = Math.min(selectedIndex, Math.max(activeOptionCount - 1, 0))
-  const hasMentionCandidates = mentionCandidates.length > 0
-  const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
-  const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
-  const hasMentionSlashCommands = skillSlashCommands.length + appCandidates.length > 0
-  const hasSlashMentionLoadError =
-    !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
-  const isSlashMentionLoading =
-    !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loading) || appsLoading)
+    }, [
+      activeMenu,
+      cloudProjectCandidates,
+      cloudProjectScopeActive,
+      cloudProjectsOpen,
+      cloudSpaceEnabled,
+      filteredCloudProjectCandidates,
+      filteredMentionCandidates,
+      filteredSkillCandidates,
+      onSetGoal,
+      onSetPlanMode,
+      planModeActive,
+      showSkillMenu,
+      workspaceSearch.matches,
+    ])
+    const activeOptionCount = showSkillMenu
+      ? mentionMenuRows.length
+      : showSlashMenu
+        ? filteredSlashCommands.length
+        : 0
+    const highlightedIndex = Math.min(selectedIndex, Math.max(activeOptionCount - 1, 0))
+    const hasMentionCandidates = mentionCandidates.length > 0
+    const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
+    const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
+    const hasMentionSlashCommands = skillSlashCommands.length + appCandidates.length > 0
+    const hasSlashMentionLoadError =
+      !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
+    const isSlashMentionLoading =
+      !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loading) || appsLoading)
 
-  useLayoutEffect(() => {
-    activeMenuRef.current = activeMenu
-    highlightedIndexRef.current = highlightedIndex
-    showSkillMenuRef.current = showSkillMenu
-    showSlashMenuRef.current = showSlashMenu
-    activeOptionCountRef.current = activeOptionCount
-  }, [activeMenu, activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
+    useLayoutEffect(() => {
+      activeMenuRef.current = activeMenu
+      highlightedIndexRef.current = highlightedIndex
+      showSkillMenuRef.current = showSkillMenu
+      showSlashMenuRef.current = showSlashMenu
+      activeOptionCountRef.current = activeOptionCount
+    }, [activeMenu, activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
 
-  useEffect(() => {
-    if (!showSkillMenu && !showSlashMenu) return
-    const selectedOption = menuRef.current?.querySelector<HTMLElement>(
-      '[role="option"][aria-selected="true"]'
+    useEffect(() => {
+      if (!showSkillMenu && !showSlashMenu) return
+      const selectedOption = menuRef.current?.querySelector<HTMLElement>(
+        '[role="option"][aria-selected="true"]'
+      )
+      selectedOption?.scrollIntoView?.({ block: 'nearest' })
+    }, [activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
+
+    const closeAutocompleteMenu = useCallback(() => {
+      setActiveMenu(null)
+      setSelectedIndex(0)
+      highlightedIndexRef.current = 0
+    }, [])
+
+    const moveHighlightedIndex = useCallback((delta: number) => {
+      const optionCount = activeOptionCountRef.current
+      if (optionCount <= 0) return false
+
+      setSelectedIndex(currentIndex => {
+        const current = Math.min(currentIndex, optionCount - 1)
+        const nextIndex = Math.max(0, Math.min(current + delta, optionCount - 1))
+        highlightedIndexRef.current = nextIndex
+        return nextIndex
+      })
+      return true
+    }, [])
+
+    const loadLocalSkills = useCallback(
+      (options?: { force?: boolean }) => {
+        if (!onListLocalSkills) return
+        if (skillsSourceRef.current !== onListLocalSkills) {
+          skillsSourceRef.current = onListLocalSkills
+          skillsLoadedRef.current = false
+          skillsLoadingRef.current = false
+          skillsRequestIdRef.current += 1
+          setSkills([])
+        }
+        if (skillsLoadedRef.current || skillsLoadingRef.current || (loadError && !options?.force)) {
+          return
+        }
+
+        const requestId = skillsRequestIdRef.current + 1
+        skillsRequestIdRef.current = requestId
+        skillsLoadingRef.current = true
+        setLoading(true)
+        setLoadError(false)
+        onListLocalSkills()
+          .then(nextSkills => {
+            if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+            skillsLoadedRef.current = true
+            setLoadError(false)
+            setSkills(nextSkills)
+          })
+          .catch(() => {
+            if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+            skillsLoadedRef.current = false
+            setLoadError(true)
+          })
+          .finally(() => {
+            if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
+            skillsLoadingRef.current = false
+            setLoading(false)
+          })
+      },
+      [loadError, onListLocalSkills]
     )
-    selectedOption?.scrollIntoView?.({ block: 'nearest' })
-  }, [activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
 
-  const closeAutocompleteMenu = useCallback(() => {
-    setActiveMenu(null)
-    setSelectedIndex(0)
-    highlightedIndexRef.current = 0
-  }, [])
+    const loadLocalApps = useCallback(
+      (options?: { force?: boolean }) => {
+        if (!onListLocalApps) return
+        if (appsSourceRef.current !== onListLocalApps) {
+          appsSourceRef.current = onListLocalApps
+          appsLoadedRef.current = false
+          appsLoadingRef.current = false
+          appsRequestIdRef.current += 1
+          // Keep stale apps visible while the new source refreshes.
+        }
+        if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
+          return
+        }
 
-  const moveHighlightedIndex = useCallback((delta: number) => {
-    const optionCount = activeOptionCountRef.current
-    if (optionCount <= 0) return false
+        const requestId = appsRequestIdRef.current + 1
+        appsRequestIdRef.current = requestId
+        appsLoadingRef.current = true
+        setAppsLoading(true)
+        setAppsLoadError(false)
+        onListLocalApps()
+          .then(nextApps => {
+            if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+            appsLoadedRef.current = true
+            setAppsLoadError(false)
+            setApps(nextApps)
+          })
+          .catch(() => {
+            if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+            appsLoadedRef.current = false
+            setAppsLoadError(true)
+          })
+          .finally(() => {
+            if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+            appsLoadingRef.current = false
+            setAppsLoading(false)
+          })
+      },
+      [appsLoadError, onListLocalApps]
+    )
 
-    setSelectedIndex(currentIndex => {
-      const current = Math.min(currentIndex, optionCount - 1)
-      const nextIndex = Math.max(0, Math.min(current + delta, optionCount - 1))
-      highlightedIndexRef.current = nextIndex
-      return nextIndex
-    })
-    return true
-  }, [])
+    const loadLocalMentions = useCallback(
+      (options?: { force?: boolean }) => {
+        loadLocalSkills(options)
+        loadLocalApps(options)
+      },
+      [loadLocalApps, loadLocalSkills]
+    )
 
-  const loadLocalSkills = useCallback(
-    (options?: { force?: boolean }) => {
-      if (!onListLocalSkills) return
-      if (skillsSourceRef.current !== onListLocalSkills) {
-        skillsSourceRef.current = onListLocalSkills
+    useEffect(() => {
+      loadLocalApps()
+    }, [loadLocalApps])
+
+    useEffect(() => {
+      const invalidateLocalPluginCandidates = () => {
         skillsLoadedRef.current = false
         skillsLoadingRef.current = false
         skillsRequestIdRef.current += 1
-        setSkills([])
-      }
-      if (skillsLoadedRef.current || skillsLoadingRef.current || (loadError && !options?.force)) {
-        return
-      }
-
-      const requestId = skillsRequestIdRef.current + 1
-      skillsRequestIdRef.current = requestId
-      skillsLoadingRef.current = true
-      setLoading(true)
-      setLoadError(false)
-      onListLocalSkills()
-        .then(nextSkills => {
-          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
-          skillsLoadedRef.current = true
-          setLoadError(false)
-          setSkills(nextSkills)
-        })
-        .catch(() => {
-          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
-          skillsLoadedRef.current = false
-          setLoadError(true)
-        })
-        .finally(() => {
-          if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
-          skillsLoadingRef.current = false
-          setLoading(false)
-        })
-    },
-    [loadError, onListLocalSkills]
-  )
-
-  const loadLocalApps = useCallback(
-    (options?: { force?: boolean }) => {
-      if (!onListLocalApps) return
-      if (appsSourceRef.current !== onListLocalApps) {
-        appsSourceRef.current = onListLocalApps
         appsLoadedRef.current = false
         appsLoadingRef.current = false
         appsRequestIdRef.current += 1
-        // Keep stale apps visible while the new source refreshes.
+        setSkills([])
+        // Keep stale composer apps visible while the forced refresh runs.
+        setLoading(false)
+        setLoadError(false)
+        setAppsLoading(false)
+        setAppsLoadError(false)
+
+        queueMicrotask(() => {
+          if (!mountedRef.current) return
+          loadLocalApps({ force: true })
+          if (showSkillMenuRef.current || showSlashMenuRef.current) {
+            loadLocalSkills({ force: true })
+          }
+        })
       }
-      if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
-        return
+
+      window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
+      return () => {
+        window.removeEventListener(
+          LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+          invalidateLocalPluginCandidates
+        )
       }
+    }, [loadLocalApps, loadLocalSkills])
 
-      const requestId = appsRequestIdRef.current + 1
-      appsRequestIdRef.current = requestId
-      appsLoadingRef.current = true
-      setAppsLoading(true)
-      setAppsLoadError(false)
-      onListLocalApps()
-        .then(nextApps => {
-          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
-          appsLoadedRef.current = true
-          setAppsLoadError(false)
-          setApps(nextApps)
+    const updateAutocompleteTrigger = useCallback(
+      (snapshot?: ComposerEditorSnapshot) => {
+        if (disableAutocomplete) return
+        const editor = editorRef.current
+        const current = snapshot ?? editor?.getSnapshot()
+        if (!current) return
+
+        const nextTrigger = chooseNearestTrigger([
+          findStandaloneTrigger(
+            current.value,
+            current.selectionOffset,
+            '@',
+            'mention',
+            // Keep the trigger alive across whitespace once the query is inside
+            // the `@项目空间 keyword` scope so typed phrases like
+            // `@项目空间 新建项目` keep filtering instead of closing the menu.
+            query => parseCloudProjectScopeQuery(query, cloudProjectScopeLabelsRef.current) !== null
+          ),
+          onListLocalSkills
+            ? findStandaloneTrigger(current.value, current.selectionOffset, '$', 'skill')
+            : null,
+          findStandaloneTrigger(current.value, current.selectionOffset, '/', 'slash'),
+        ])
+        const currentMenu = activeMenuRef.current
+        const currentTriggerEnd = currentMenu
+          ? currentMenu.trigger.start + 1 + currentMenu.trigger.query.length
+          : null
+        const nextTriggerEnd = nextTrigger ? nextTrigger.start + 1 + nextTrigger.query.length : null
+        const triggerUnchanged =
+          currentMenu &&
+          nextTrigger &&
+          currentMenu.kind === nextTrigger.kind &&
+          currentMenu.trigger.start === nextTrigger.start &&
+          currentTriggerEnd === nextTriggerEnd &&
+          currentMenu.trigger.query === nextTrigger.query
+
+        startTransition(() => {
+          setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
+          if (nextTrigger) {
+            setModelMenuOpen(false)
+            if (!triggerUnchanged) {
+              setSelectedIndex(0)
+              highlightedIndexRef.current = 0
+              setCloudProjectsOpen(false)
+            }
+          }
         })
-        .catch(() => {
-          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
-          appsLoadedRef.current = false
-          setAppsLoadError(true)
-        })
-        .finally(() => {
-          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
-          appsLoadingRef.current = false
-          setAppsLoading(false)
-        })
-    },
-    [appsLoadError, onListLocalApps]
-  )
-
-  const loadLocalMentions = useCallback(
-    (options?: { force?: boolean }) => {
-      loadLocalSkills(options)
-      loadLocalApps(options)
-    },
-    [loadLocalApps, loadLocalSkills]
-  )
-
-  useEffect(() => {
-    loadLocalApps()
-  }, [loadLocalApps])
-
-  useEffect(() => {
-    const invalidateLocalPluginCandidates = () => {
-      skillsLoadedRef.current = false
-      skillsLoadingRef.current = false
-      skillsRequestIdRef.current += 1
-      appsLoadedRef.current = false
-      appsLoadingRef.current = false
-      appsRequestIdRef.current += 1
-      setSkills([])
-      // Keep stale composer apps visible while the forced refresh runs.
-      setLoading(false)
-      setLoadError(false)
-      setAppsLoading(false)
-      setAppsLoadError(false)
-
-      queueMicrotask(() => {
-        if (!mountedRef.current) return
-        loadLocalApps({ force: true })
-        if (showSkillMenuRef.current || showSlashMenuRef.current) {
-          loadLocalSkills({ force: true })
-        }
-      })
-    }
-
-    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
-    return () => {
-      window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, invalidateLocalPluginCandidates)
-    }
-  }, [loadLocalApps, loadLocalSkills])
-
-  const updateAutocompleteTrigger = useCallback(
-    (snapshot?: ComposerEditorSnapshot) => {
-      if (disableAutocomplete) return
-      const editor = editorRef.current
-      const current = snapshot ?? editor?.getSnapshot()
-      if (!current) return
-
-      const nextTrigger = chooseNearestTrigger([
-        findStandaloneTrigger(
-          current.value,
-          current.selectionOffset,
-          '@',
-          'mention',
-          // Keep the trigger alive across whitespace once the query is inside
-          // the `@项目空间 keyword` scope so typed phrases like
-          // `@项目空间 新建项目` keep filtering instead of closing the menu.
-          query => parseCloudProjectScopeQuery(query, cloudProjectScopeLabelsRef.current) !== null
-        ),
-        onListLocalSkills
-          ? findStandaloneTrigger(current.value, current.selectionOffset, '$', 'skill')
-          : null,
-        findStandaloneTrigger(current.value, current.selectionOffset, '/', 'slash'),
-      ])
-      const currentMenu = activeMenuRef.current
-      const currentTriggerEnd = currentMenu
-        ? currentMenu.trigger.start + 1 + currentMenu.trigger.query.length
-        : null
-      const nextTriggerEnd = nextTrigger ? nextTrigger.start + 1 + nextTrigger.query.length : null
-      const triggerUnchanged =
-        currentMenu &&
-        nextTrigger &&
-        currentMenu.kind === nextTrigger.kind &&
-        currentMenu.trigger.start === nextTrigger.start &&
-        currentTriggerEnd === nextTriggerEnd &&
-        currentMenu.trigger.query === nextTrigger.query
-
-      setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
-      if (nextTrigger) {
-        setModelMenuOpen(false)
-        if (!triggerUnchanged) {
-          setSelectedIndex(0)
-          highlightedIndexRef.current = 0
-          setCloudProjectsOpen(false)
-        }
         if (
-          nextTrigger.kind === 'skill' ||
-          nextTrigger.kind === 'mention' ||
-          onListLocalSkills ||
-          onListLocalApps
+          nextTrigger &&
+          (nextTrigger.kind === 'skill' ||
+            nextTrigger.kind === 'mention' ||
+            onListLocalSkills ||
+            onListLocalApps)
         ) {
           loadLocalMentions()
         }
-      }
-    },
-    [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
-  )
-
-  const commitEditorValue = useCallback(
-    (nextValue: string, nextCursor: number) => {
-      const editor = editorRef.current
-      valueRef.current = nextValue
-      if (editor) {
-        editor.setValue(nextValue, nextCursor)
-      } else {
-        onChange(nextValue)
-      }
-      window.requestAnimationFrame(() =>
-        updateAutocompleteTrigger({
-          value: nextValue,
-          selectionOffset: nextCursor,
-          selectionStart: nextCursor,
-          selectionEnd: nextCursor,
-        })
-      )
-    },
-    [onChange, updateAutocompleteTrigger]
-  )
-
-  useEffect(() => {
-    const openSlashMenu = () => {
-      const editor = editorRef.current
-      if (!editor) return
-      const snapshot = editor.getSnapshot()
-      const before = snapshot.value.slice(0, snapshot.selectionStart)
-      const after = snapshot.value.slice(snapshot.selectionEnd)
-      const spacer = before && !/\s$/.test(before) ? ' ' : ''
-      const inserted = `${spacer}/`
-      commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
-      editor.focus()
-      textareaRef.current?.focus()
-    }
-    window.addEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
-    return () => window.removeEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
-  }, [commitEditorValue, textareaRef])
-
-  useEffect(() => {
-    const insertReference = (event: Event) => {
-      const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference?.trim()
-      const editor = editorRef.current
-      if (!reference || !editor) return
-      const snapshot = editor.getSnapshot()
-      const before = snapshot.value.slice(0, snapshot.selectionStart)
-      const after = snapshot.value.slice(snapshot.selectionEnd)
-      const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
-      const trailingSpace = after && !/^\s/.test(after) ? ' ' : ' '
-      const inserted = `${leadingSpace}${reference}${trailingSpace}`
-      const nextValue = `${before}${inserted}${after}`
-      const nextCursor = before.length + inserted.length
-      commitEditorValue(nextValue, nextCursor)
-      closeAutocompleteMenu()
-      editor.focus()
-      textareaRef.current?.focus()
-    }
-    window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
-    return () => window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
-  }, [closeAutocompleteMenu, commitEditorValue, textareaRef])
-
-  const insertPathReferences = useCallback(
-    (entries: NativeWorkspacePath[]) => {
-      if (entries.length === 0) return
-      const editor = editorRef.current
-      if (!editor) return
-
-      const references = workspacePathReferenceText(entries)
-      const current = editor.getSnapshot()
-      const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
-      const nextValue =
-        current.value.slice(0, current.selectionOffset) +
-        spacer +
-        references +
-        ' ' +
-        current.value.slice(current.selectionOffset)
-      commitEditorValue(nextValue, current.selectionOffset + spacer.length + references.length + 1)
-      editor.focus()
-    },
-    [commitEditorValue]
-  )
-
-  const selectMentionCandidate = useCallback(
-    (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
-      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
-      const editor = editorRef.current
-      if (!trigger || !editor) return false
-
-      const snapshot = editor.getSnapshot()
-      if (candidate.kind === 'app') {
-        registerComposerMentionIcon(
-          candidate.reference,
-          resolvePluginLogoUrl({
-            pluginKey: composerAppPluginKey(candidate.app),
-            logo: candidate.app.logoUrl,
-          })
-        )
-      }
-      const replacement = replaceComposerMentionTrigger(
-        snapshot.value,
-        candidate.reference,
-        trigger.start,
-        snapshot.selectionEnd
-      )
-
-      commitEditorValue(replacement.value, replacement.cursor)
-      if (candidate.kind === 'app') {
-        showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
-      }
-      closeAutocompleteMenu()
-      textareaRef.current?.focus()
-      editor.focus()
-      return true
-    },
-    [closeAutocompleteMenu, commitEditorValue, textareaRef]
-  )
-
-  const selectSkill = useCallback(
-    (skill: LocalDeviceSkill, explicitTrigger?: ComposerTextTrigger | null) => {
-      const skillCandidate = skillCandidates.find(candidate => candidate.skill.name === skill.name)
-      return skillCandidate ? selectMentionCandidate(skillCandidate, explicitTrigger) : false
-    },
-    [selectMentionCandidate, skillCandidates]
-  )
-
-  const selectSlashCommand = useCallback(
-    (command: SlashCommand, explicitTrigger?: ComposerTextTrigger | null) => {
-      if (command.skill) return selectSkill(command.skill, explicitTrigger)
-      if (command.app) {
-        const appCandidate = appCandidates.find(candidate => candidate.app.id === command.app?.id)
-        return appCandidate ? selectMentionCandidate(appCandidate, explicitTrigger) : false
-      }
-
-      const trigger =
-        explicitTrigger ??
-        (activeMenuRef.current?.kind === 'slash' ? activeMenuRef.current.trigger : null)
-      const editor = editorRef.current
-      if (!trigger || !editor) return false
-
-      const snapshot = editor.getSnapshot()
-      const nextValue =
-        snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
-      const nextCursor = trigger.start
-
-      commitEditorValue(nextValue, nextCursor)
-      closeAutocompleteMenu()
-      command.onSelect?.()
-      textareaRef.current?.focus()
-      editor.focus()
-      return true
-    },
-    [
-      appCandidates,
-      closeAutocompleteMenu,
-      commitEditorValue,
-      selectMentionCandidate,
-      selectSkill,
-      textareaRef,
-    ]
-  )
-
-  const selectMentionMenuRow = useCallback(
-    (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
-      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
-      const editor = editorRef.current
-      if (!trigger || !editor) return false
-      if (row.kind === 'candidate') {
-        if (!row.candidate.enabled) return false
-        const selected = selectMentionCandidate(row.candidate, trigger)
-        if (selected && row.candidate.kind === 'cloud' && row.candidate.project) {
-          onSelectCloudProject?.(row.candidate.project)
-        }
-        return selected
-      }
-      if (row.kind === 'cloud-projects-action') {
-        setCloudProjectsOpen(true)
-        setSelectedIndex(0)
-        highlightedIndexRef.current = 0
-        return true
-      }
-      if (row.kind === 'cloud-back-action') {
-        setCloudProjectsOpen(false)
-        setSelectedIndex(0)
-        highlightedIndexRef.current = 0
-        return true
-      }
-
-      const snapshot = editor.getSnapshot()
-      if (row.kind === 'cloud-space-direct-action') {
-        const replacement = replaceComposerMentionTrigger(
-          snapshot.value,
-          cloudSpaceDirectReference,
-          trigger.start,
-          snapshot.selectionEnd
-        )
-        commitEditorValue(replacement.value, replacement.cursor)
-        closeAutocompleteMenu()
-        editor.focus()
-        return true
-      }
-      if (row.kind === 'path') {
-        const path = resolveComposerWorkspacePath(row.item.root, row.item.path)
-        const reference = createComposerPathReference(path, row.item.matchType === 'directory')
-        const replacement = replaceComposerMentionTrigger(
-          snapshot.value,
-          reference,
-          trigger.start,
-          snapshot.selectionEnd
-        )
-        commitEditorValue(replacement.value, replacement.cursor)
-        closeAutocompleteMenu()
-        editor.focus()
-        return true
-      }
-
-      const nextValue =
-        snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
-      commitEditorValue(nextValue, trigger.start)
-      closeAutocompleteMenu()
-      if (row.kind === 'goal-action') onSetGoal?.()
-      if (row.kind === 'plan-action') onSetPlanMode?.()
-      if (row.kind === 'files-action') {
-        void openNativeWorkspacePathPicker(workspaceTarget?.path)
-          .then(entries => {
-            if (entries.length === 0) return
-            const currentEditor = editorRef.current
-            if (!currentEditor) return
-            const references = entries
-              .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
-              .join(' ')
-            const current = currentEditor.getSnapshot()
-            const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
-            const nextValue =
-              current.value.slice(0, current.selectionOffset) +
-              spacer +
-              references +
-              ' ' +
-              current.value.slice(current.selectionOffset)
-            commitEditorValue(
-              nextValue,
-              current.selectionOffset + spacer.length + references.length + 1
-            )
-            currentEditor.focus()
-          })
-          .catch(error => {
-            console.warn('[Wework composer] native workspace picker failed', error)
-          })
-      }
-      editor.focus()
-      return true
-    },
-    [
-      closeAutocompleteMenu,
-      cloudSpaceDirectReference,
-      commitEditorValue,
-      onSelectCloudProject,
-      onSetGoal,
-      onSetPlanMode,
-      selectMentionCandidate,
-      workspaceTarget?.path,
-    ]
-  )
-
-  const selectHighlightedMention = useCallback(() => {
-    const row = mentionMenuRows[highlightedIndexRef.current]
-    return row ? selectMentionMenuRow(row) : false
-  }, [mentionMenuRows, selectMentionMenuRow])
-
-  const handleMentionRowClick = useCallback(
-    (index: number) => {
-      const row = mentionMenuRows[index]
-      if (!row) return
-      setSelectedIndex(index)
-      selectMentionMenuRow(row, activeMenu?.trigger)
-    },
-    [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow]
-  )
-
-  const selectHighlightedSlashCommand = useCallback(() => {
-    const editor = editorRef.current
-    if (!editor) return false
-    const snapshot = editor.getSnapshot()
-    const currentSlashTrigger = findStandaloneTrigger(
-      snapshot.value,
-      snapshot.selectionOffset,
-      '/',
-      'slash'
+      },
+      [loadLocalMentions, onListLocalApps, onListLocalSkills, disableAutocomplete]
     )
-    const commands = currentSlashTrigger
-      ? filterSlashCommands(
-          slashCommands,
-          currentSlashTrigger.query,
-          hasDraftTextForSlashCommands(snapshot.value)
+
+    const commitEditorValue = useCallback(
+      (nextValue: string, nextCursor: number) => {
+        const editor = editorRef.current
+        valueRef.current = nextValue
+        if (editor) {
+          editor.setValue(nextValue, nextCursor)
+        } else {
+          onChange(nextValue)
+        }
+        window.requestAnimationFrame(() =>
+          updateAutocompleteTrigger({
+            value: nextValue,
+            selectionOffset: nextCursor,
+            selectionStart: nextCursor,
+            selectionEnd: nextCursor,
+          })
         )
-      : filteredSlashCommands
-    const command = commands[highlightedIndexRef.current] ?? commands[0]
-    if (!command || command.enabled === false) return false
-    return selectSlashCommand(command, currentSlashTrigger)
-  }, [filteredSlashCommands, selectSlashCommand, slashCommands])
+      },
+      [onChange, updateAutocompleteTrigger]
+    )
 
-  const getModelCompatibilityDisabledMessage = useCallback(
-    (model: UnifiedModel): string | undefined => {
-      if (!model.compatibilityDisabled) return undefined
-      if (model.compatibilityDisabledReason === 'missing_current_runtime_family') {
-        return t(
-          'workbench.model_disabled_missing_current_runtime_family',
-          'Current model is missing runtime.family'
+    useEffect(() => {
+      const openSlashMenu = () => {
+        const editor = editorRef.current
+        if (!editor) return
+        const snapshot = editor.getSnapshot()
+        const before = snapshot.value.slice(0, snapshot.selectionStart)
+        const after = snapshot.value.slice(snapshot.selectionEnd)
+        const spacer = before && !/\s$/.test(before) ? ' ' : ''
+        const inserted = `${spacer}/`
+        commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
+        editor.focus()
+        textareaRef.current?.focus()
+      }
+      window.addEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+      return () => window.removeEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
+    }, [commitEditorValue, textareaRef])
+
+    useEffect(() => {
+      const insertReference = (event: Event) => {
+        const reference = (event as CustomEvent<{ reference?: string }>).detail?.reference?.trim()
+        const editor = editorRef.current
+        if (!reference || !editor) return
+        const snapshot = editor.getSnapshot()
+        const before = snapshot.value.slice(0, snapshot.selectionStart)
+        const after = snapshot.value.slice(snapshot.selectionEnd)
+        const leadingSpace = before && !/\s$/.test(before) ? ' ' : ''
+        const trailingSpace = after && !/^\s/.test(after) ? ' ' : ' '
+        const inserted = `${leadingSpace}${reference}${trailingSpace}`
+        const nextValue = `${before}${inserted}${after}`
+        const nextCursor = before.length + inserted.length
+        commitEditorValue(nextValue, nextCursor)
+        closeAutocompleteMenu()
+        editor.focus()
+        textareaRef.current?.focus()
+      }
+      window.addEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+      return () => window.removeEventListener(INSERT_PLUGIN_REFERENCE_EVENT, insertReference)
+    }, [closeAutocompleteMenu, commitEditorValue, textareaRef])
+
+    const insertPathReferences = useCallback(
+      (entries: NativeWorkspacePath[]) => {
+        if (entries.length === 0) return
+        const editor = editorRef.current
+        if (!editor) return
+
+        const references = workspacePathReferenceText(entries)
+        const current = editor.getSnapshot()
+        const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+        const nextValue =
+          current.value.slice(0, current.selectionOffset) +
+          spacer +
+          references +
+          ' ' +
+          current.value.slice(current.selectionOffset)
+        commitEditorValue(
+          nextValue,
+          current.selectionOffset + spacer.length + references.length + 1
         )
-      }
-      if (model.compatibilityDisabledReason === 'missing_target_runtime_family') {
-        return t(
-          'workbench.model_disabled_missing_target_runtime_family',
-          'This model is missing runtime.family'
+        editor.focus()
+      },
+      [commitEditorValue]
+    )
+
+    const selectMentionCandidate = useCallback(
+      (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
+        const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
+        const editor = editorRef.current
+        if (!trigger || !editor) return false
+
+        const snapshot = editor.getSnapshot()
+        if (candidate.kind === 'app') {
+          registerComposerMentionIcon(
+            candidate.reference,
+            resolvePluginLogoUrl({
+              pluginKey: composerAppPluginKey(candidate.app),
+              logo: candidate.app.logoUrl,
+            })
+          )
+        }
+        const replacement = replaceComposerMentionTrigger(
+          snapshot.value,
+          candidate.reference,
+          trigger.start,
+          snapshot.selectionEnd
         )
-      }
-      if (model.compatibilityDisabledReason === 'unavailable') {
-        return t('workbench.model_disabled_unavailable', 'This model is unavailable')
-      }
-      return t(
-        'workbench.model_disabled_runtime_family_mismatch',
-        'Incompatible with the current model protocol'
-      )
-    },
-    [t]
-  )
 
-  const selectSlashModel = useCallback(
-    (model: UnifiedModel) => {
-      onSelectModel?.(model)
-      closeSlashModelMenu(true)
-    },
-    [closeSlashModelMenu, onSelectModel]
-  )
+        commitEditorValue(replacement.value, replacement.cursor)
+        if (candidate.kind === 'app') {
+          showPluginTrialGuide(candidate.title, candidate.app.trialTemplates)
+        }
+        closeAutocompleteMenu()
+        textareaRef.current?.focus()
+        editor.focus()
+        return true
+      },
+      [closeAutocompleteMenu, commitEditorValue, textareaRef]
+    )
 
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
+    const selectSkill = useCallback(
+      (skill: LocalDeviceSkill, explicitTrigger?: ComposerTextTrigger | null) => {
+        const skillCandidate = skillCandidates.find(
+          candidate => candidate.skill.name === skill.name
+        )
+        return skillCandidate ? selectMentionCandidate(skillCandidate, explicitTrigger) : false
+      },
+      [selectMentionCandidate, skillCandidates]
+    )
 
-  useEffect(() => {
-    const handleFocusRequest = (event: Event) => {
-      const detail = (event as CustomEvent<{ expectedValue?: string }>).detail
-      if (detail?.expectedValue && detail.expectedValue !== valueRef.current) return
+    const selectSlashCommand = useCallback(
+      (command: SlashCommand, explicitTrigger?: ComposerTextTrigger | null) => {
+        if (command.skill) return selectSkill(command.skill, explicitTrigger)
+        if (command.app) {
+          const appCandidate = appCandidates.find(candidate => candidate.app.id === command.app?.id)
+          return appCandidate ? selectMentionCandidate(appCandidate, explicitTrigger) : false
+        }
+
+        const trigger =
+          explicitTrigger ??
+          (activeMenuRef.current?.kind === 'slash' ? activeMenuRef.current.trigger : null)
+        const editor = editorRef.current
+        if (!trigger || !editor) return false
+
+        const snapshot = editor.getSnapshot()
+        const nextValue =
+          snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
+        const nextCursor = trigger.start
+
+        commitEditorValue(nextValue, nextCursor)
+        closeAutocompleteMenu()
+        command.onSelect?.()
+        textareaRef.current?.focus()
+        editor.focus()
+        return true
+      },
+      [
+        appCandidates,
+        closeAutocompleteMenu,
+        commitEditorValue,
+        selectMentionCandidate,
+        selectSkill,
+        textareaRef,
+      ]
+    )
+
+    const selectMentionMenuRow = useCallback(
+      (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
+        const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
+        const editor = editorRef.current
+        if (!trigger || !editor) return false
+        if (row.kind === 'candidate') {
+          if (!row.candidate.enabled) return false
+          const selected = selectMentionCandidate(row.candidate, trigger)
+          if (selected && row.candidate.kind === 'cloud' && row.candidate.project) {
+            onSelectCloudProject?.(row.candidate.project)
+          }
+          return selected
+        }
+        if (row.kind === 'cloud-projects-action') {
+          setCloudProjectsOpen(true)
+          setSelectedIndex(0)
+          highlightedIndexRef.current = 0
+          return true
+        }
+        if (row.kind === 'cloud-back-action') {
+          setCloudProjectsOpen(false)
+          setSelectedIndex(0)
+          highlightedIndexRef.current = 0
+          return true
+        }
+
+        const snapshot = editor.getSnapshot()
+        if (row.kind === 'cloud-space-direct-action') {
+          const replacement = replaceComposerMentionTrigger(
+            snapshot.value,
+            cloudSpaceDirectReference,
+            trigger.start,
+            snapshot.selectionEnd
+          )
+          commitEditorValue(replacement.value, replacement.cursor)
+          closeAutocompleteMenu()
+          editor.focus()
+          return true
+        }
+        if (row.kind === 'path') {
+          const path = resolveComposerWorkspacePath(row.item.root, row.item.path)
+          const reference = createComposerPathReference(path, row.item.matchType === 'directory')
+          const replacement = replaceComposerMentionTrigger(
+            snapshot.value,
+            reference,
+            trigger.start,
+            snapshot.selectionEnd
+          )
+          commitEditorValue(replacement.value, replacement.cursor)
+          closeAutocompleteMenu()
+          editor.focus()
+          return true
+        }
+
+        const nextValue =
+          snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
+        commitEditorValue(nextValue, trigger.start)
+        closeAutocompleteMenu()
+        if (row.kind === 'goal-action') onSetGoal?.()
+        if (row.kind === 'plan-action') onSetPlanMode?.()
+        if (row.kind === 'files-action') {
+          void openNativeWorkspacePathPicker(workspaceTarget?.path)
+            .then(entries => {
+              if (entries.length === 0) return
+              const currentEditor = editorRef.current
+              if (!currentEditor) return
+              const references = entries
+                .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
+                .join(' ')
+              const current = currentEditor.getSnapshot()
+              const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+              const nextValue =
+                current.value.slice(0, current.selectionOffset) +
+                spacer +
+                references +
+                ' ' +
+                current.value.slice(current.selectionOffset)
+              commitEditorValue(
+                nextValue,
+                current.selectionOffset + spacer.length + references.length + 1
+              )
+              currentEditor.focus()
+            })
+            .catch(error => {
+              console.warn('[Wework composer] native workspace picker failed', error)
+            })
+        }
+        editor.focus()
+        return true
+      },
+      [
+        closeAutocompleteMenu,
+        cloudSpaceDirectReference,
+        commitEditorValue,
+        onSelectCloudProject,
+        onSetGoal,
+        onSetPlanMode,
+        selectMentionCandidate,
+        workspaceTarget?.path,
+      ]
+    )
+
+    const selectHighlightedMention = useCallback(() => {
+      const row = mentionMenuRows[highlightedIndexRef.current]
+      return row ? selectMentionMenuRow(row) : false
+    }, [mentionMenuRows, selectMentionMenuRow])
+
+    const handleMentionRowClick = useCallback(
+      (index: number) => {
+        const row = mentionMenuRows[index]
+        if (!row) return
+        setSelectedIndex(index)
+        selectMentionMenuRow(row, activeMenu?.trigger)
+      },
+      [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow]
+    )
+
+    const selectHighlightedSlashCommand = useCallback(() => {
       const editor = editorRef.current
-      if (!editor) return
-      editor.setValue(valueRef.current, valueRef.current.length)
-      editor.focus()
-      closeAutocompleteMenu()
-    }
+      if (!editor) return false
+      const snapshot = editor.getSnapshot()
+      const currentSlashTrigger = findStandaloneTrigger(
+        snapshot.value,
+        snapshot.selectionOffset,
+        '/',
+        'slash'
+      )
+      const commands = currentSlashTrigger
+        ? filterSlashCommands(
+            slashCommands,
+            currentSlashTrigger.query,
+            hasDraftTextForSlashCommands(snapshot.value)
+          )
+        : filteredSlashCommands
+      const command = commands[highlightedIndexRef.current] ?? commands[0]
+      if (!command || command.enabled === false) return false
+      return selectSlashCommand(command, currentSlashTrigger)
+    }, [filteredSlashCommands, selectSlashCommand, slashCommands])
 
-    window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
-    return () => {
-      window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
-    }
-  }, [closeAutocompleteMenu])
+    const getModelCompatibilityDisabledMessage = useCallback(
+      (model: UnifiedModel): string | undefined => {
+        if (!model.compatibilityDisabled) return undefined
+        if (model.compatibilityDisabledReason === 'missing_current_runtime_family') {
+          return t(
+            'workbench.model_disabled_missing_current_runtime_family',
+            'Current model is missing runtime.family'
+          )
+        }
+        if (model.compatibilityDisabledReason === 'missing_target_runtime_family') {
+          return t(
+            'workbench.model_disabled_missing_target_runtime_family',
+            'This model is missing runtime.family'
+          )
+        }
+        if (model.compatibilityDisabledReason === 'unavailable') {
+          return t('workbench.model_disabled_unavailable', 'This model is unavailable')
+        }
+        return t(
+          'workbench.model_disabled_runtime_family_mismatch',
+          'Incompatible with the current model protocol'
+        )
+      },
+      [t]
+    )
 
-  useEffect(() => {
-    let focusFrame: number | null = null
-    const handleNewChatFocusRequest = () => {
-      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
-      focusFrame = window.requestAnimationFrame(() => {
-        focusFrame = null
+    const selectSlashModel = useCallback(
+      (model: UnifiedModel) => {
+        onSelectModel?.(model)
+        closeSlashModelMenu(true)
+      },
+      [closeSlashModelMenu, onSelectModel]
+    )
+
+    useEffect(() => {
+      mountedRef.current = true
+      return () => {
+        mountedRef.current = false
+      }
+    }, [])
+
+    useEffect(() => {
+      const handleFocusRequest = (event: Event) => {
+        const detail = (event as CustomEvent<{ expectedValue?: string }>).detail
+        if (detail?.expectedValue && detail.expectedValue !== valueRef.current) return
         const editor = editorRef.current
         if (!editor) return
         editor.setValue(valueRef.current, valueRef.current.length)
         editor.focus()
         closeAutocompleteMenu()
-      })
-    }
-
-    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
-    return () => {
-      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
-      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
-    }
-  }, [closeAutocompleteMenu])
-
-  useEffect(() => {
-    if (!showSkillMenu && !showSlashMenu) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        (menuRef.current?.contains(target) || textareaRef.current?.contains(target))
-      ) {
-        return
-      }
-      closeAutocompleteMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [closeAutocompleteMenu, showSkillMenu, showSlashMenu, textareaRef])
-
-  useEffect(() => {
-    if (!modelMenuOpen) return
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        (modelMenuRef.current?.contains(target) || textareaRef.current?.contains(target))
-      ) {
-        return
-      }
-      closeSlashModelMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
-
-  const handleCompositionStart = useCallback(() => {
-    setIsComposing(true)
-    debugComposerEvent('composition-start', {
-      propValue: textMetrics(valueRef.current),
-      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-    })
-  }, [])
-
-  const handleCompositionEnd = useCallback(() => {
-    setIsComposing(false)
-    suppressEnterUntilKeyUpRef.current = true
-    debugComposerEvent('composition-end', {
-      propValue: textMetrics(valueRef.current),
-      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-    })
-  }, [])
-
-  const handleKeyUp = (event: KeyboardEvent) => {
-    if (suppressEnterUntilKeyUpRef.current) {
-      suppressEnterUntilKeyUpRef.current = false
-      debugComposerEvent('keyup-clear-composition-enter-suppression', {
-        key: event.key,
-        propValue: textMetrics(valueRef.current),
-      })
-    }
-    updateAutocompleteTrigger()
-  }
-
-  const handleEditorSnapshot = useCallback(
-    (snapshot: ComposerEditorSnapshot) => {
-      valueRef.current = snapshot.value
-      updateAutocompleteTrigger(snapshot)
-    },
-    [updateAutocompleteTrigger]
-  )
-
-  const handleEditorBeforeInput = useCallback((event: InputEvent) => {
-    if (event.inputType !== 'insertParagraph' && event.inputType !== 'insertLineBreak') {
-      return false
-    }
-    return suppressEnterUntilKeyUpRef.current
-  }, [])
-
-  const handleEditorKeyDown = useCallback(
-    (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
-        if (activeOptionCountRef.current <= 0) return false
-        event.preventDefault()
-        return moveHighlightedIndex(event.key === 'ArrowDown' ? 1 : -1)
       }
 
-      if (event.key === 'Escape') {
-        if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
-        event.preventDefault()
-        closeAutocompleteMenu()
-        return true
+      window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
+      return () => {
+        window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
       }
+    }, [closeAutocompleteMenu])
 
-      if (event.key === 'Enter') {
-        debugComposerEvent('keydown-enter', {
-          shiftKey: event.shiftKey,
-          canSend,
-          stateIsComposing: isComposing,
-          nativeIsComposing: event.isComposing,
-          suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-          showSkillMenu: showSkillMenuRef.current,
-          showSlashMenu: showSlashMenuRef.current,
-          highlightedIndex: highlightedIndexRef.current,
-          activeOptionCount: activeOptionCountRef.current,
-          domValue: textMetrics(snapshot.value),
+    useEffect(() => {
+      let focusFrame: number | null = null
+      const handleNewChatFocusRequest = () => {
+        if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
+        focusFrame = window.requestAnimationFrame(() => {
+          focusFrame = null
+          const editor = editorRef.current
+          if (!editor) return
+          editor.setValue(valueRef.current, valueRef.current.length)
+          editor.focus()
+          closeAutocompleteMenu()
         })
-
-        if (isComposing || isImeEnterEvent(event) || isImeComposingEvent(event)) {
-          suppressEnterUntilKeyUpRef.current = true
-          return false
-        }
-        if (suppressEnterUntilKeyUpRef.current) {
-          event.preventDefault()
-          return true
-        }
-        if (showSkillMenuRef.current && selectHighlightedMention()) {
-          suppressEnterUntilKeyUpRef.current = true
-          event.preventDefault()
-          event.stopPropagation()
-          return true
-        }
-        if (showSlashMenuRef.current && selectHighlightedSlashCommand()) {
-          suppressEnterUntilKeyUpRef.current = true
-          event.preventDefault()
-          event.stopPropagation()
-          return true
-        }
-        if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
-
-        event.preventDefault()
-        if (snapshot.value.trim().length > 0 || canSend) {
-          const modifierPressed = event.metaKey || event.ctrlKey
-          onSubmit(
-            snapshot.value,
-            modifierPressed
-              ? event.shiftKey
-                ? { interruptWhenBusy: true }
-                : { guideWhenBusy: true }
-              : undefined
-          )
-        }
-        return true
       }
 
-      const delegateKeyDown = (): boolean => {
-        const handledByProp = onKeyDown?.(event, snapshot)
-        if (!handledByProp) return false
+      window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+      return () => {
+        window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
+        if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
+      }
+    }, [closeAutocompleteMenu])
+
+    useEffect(() => {
+      if (!showSkillMenu && !showSlashMenu) return
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (
+          target instanceof Node &&
+          (menuRef.current?.contains(target) || textareaRef.current?.contains(target))
+        ) {
+          return
+        }
+        closeAutocompleteMenu()
+      }
+
+      document.addEventListener('pointerdown', handlePointerDown)
+      return () => {
+        document.removeEventListener('pointerdown', handlePointerDown)
+      }
+    }, [closeAutocompleteMenu, showSkillMenu, showSlashMenu, textareaRef])
+
+    useEffect(() => {
+      if (!modelMenuOpen) return
+      const handlePointerDown = (event: PointerEvent) => {
+        const target = event.target
+        if (
+          target instanceof Node &&
+          (modelMenuRef.current?.contains(target) || textareaRef.current?.contains(target))
+        ) {
+          return
+        }
+        closeSlashModelMenu()
+      }
+
+      document.addEventListener('pointerdown', handlePointerDown)
+      return () => {
+        document.removeEventListener('pointerdown', handlePointerDown)
+      }
+    }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
+
+    const handleCompositionStart = useCallback(() => {
+      setIsComposing(true)
+      debugComposerEvent('composition-start', {
+        propValue: textMetrics(valueRef.current),
+        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+      })
+    }, [])
+
+    const handleCompositionEnd = useCallback(() => {
+      setIsComposing(false)
+      suppressEnterUntilKeyUpRef.current = true
+      onCompositionEnd?.()
+      debugComposerEvent('composition-end', {
+        propValue: textMetrics(valueRef.current),
+        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+      })
+    }, [onCompositionEnd])
+
+    const handleBlur = useCallback(() => {
+      onBlur?.()
+    }, [onBlur])
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (suppressEnterUntilKeyUpRef.current) {
+        suppressEnterUntilKeyUpRef.current = false
+        debugComposerEvent('keyup-clear-composition-enter-suppression', {
+          key: event.key,
+          propValue: textMetrics(valueRef.current),
+        })
+      }
+      updateAutocompleteTrigger()
+    }
+
+    const handleEditorSnapshot = useCallback(
+      (snapshot: ComposerEditorSnapshot) => {
+        valueRef.current = snapshot.value
+        updateAutocompleteTrigger(snapshot)
+      },
+      [updateAutocompleteTrigger]
+    )
+
+    const handleEditorBeforeInput = useCallback((event: InputEvent) => {
+      if (event.inputType !== 'insertParagraph' && event.inputType !== 'insertLineBreak') {
+        return false
+      }
+      return suppressEnterUntilKeyUpRef.current
+    }, [])
+
+    const handleEditorKeyDown = useCallback(
+      (event: KeyboardEvent, snapshot: ComposerEditorSnapshot) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
+          if (activeOptionCountRef.current <= 0) return false
+          event.preventDefault()
+          return moveHighlightedIndex(event.key === 'ArrowDown' ? 1 : -1)
+        }
+
+        if (event.key === 'Escape') {
+          if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
+          event.preventDefault()
+          closeAutocompleteMenu()
+          return true
+        }
+
+        if (event.key === 'Enter') {
+          debugComposerEvent('keydown-enter', {
+            shiftKey: event.shiftKey,
+            canSend,
+            stateIsComposing: isComposing,
+            nativeIsComposing: event.isComposing,
+            suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+            showSkillMenu: showSkillMenuRef.current,
+            showSlashMenu: showSlashMenuRef.current,
+            highlightedIndex: highlightedIndexRef.current,
+            activeOptionCount: activeOptionCountRef.current,
+            domValue: textMetrics(snapshot.value),
+          })
+
+          if (isComposing || isImeEnterEvent(event) || isImeComposingEvent(event)) {
+            suppressEnterUntilKeyUpRef.current = true
+            return false
+          }
+          if (suppressEnterUntilKeyUpRef.current) {
+            event.preventDefault()
+            return true
+          }
+          if (showSkillMenuRef.current && selectHighlightedMention()) {
+            suppressEnterUntilKeyUpRef.current = true
+            event.preventDefault()
+            event.stopPropagation()
+            return true
+          }
+          if (showSlashMenuRef.current && selectHighlightedSlashCommand()) {
+            suppressEnterUntilKeyUpRef.current = true
+            event.preventDefault()
+            event.stopPropagation()
+            return true
+          }
+          if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
+
+          event.preventDefault()
+          if (snapshot.value.trim().length > 0 || canSend) {
+            const modifierPressed = event.metaKey || event.ctrlKey
+            onSubmit(
+              snapshot.value,
+              modifierPressed
+                ? event.shiftKey
+                  ? { interruptWhenBusy: true }
+                  : { guideWhenBusy: true }
+                : undefined
+            )
+          }
+          return true
+        }
+
+        const delegateKeyDown = (): boolean => {
+          const handledByProp = onKeyDown?.(event, snapshot)
+          if (!handledByProp) return false
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+
+        if (event.key !== 'Backspace' && event.key !== 'Delete') {
+          return delegateKeyDown()
+        }
+        const range = findComposerMentionDeletionRange(
+          snapshot.value,
+          snapshot.selectionStart,
+          snapshot.selectionEnd,
+          event.key
+        )
+        if (!range) {
+          return delegateKeyDown()
+        }
+        event.preventDefault()
+        const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
+        editorRef.current?.setValue(nextValue, range.cursor)
+        return true
+      },
+      [
+        canSend,
+        closeAutocompleteMenu,
+        isComposing,
+        moveHighlightedIndex,
+        onKeyDown,
+        onSubmit,
+        selectHighlightedMention,
+        selectHighlightedSlashCommand,
+      ]
+    )
+
+    const handlePaste = useCallback(
+      (event: ClipboardEvent) => {
+        if (!event.clipboardData) return false
+        const clipboardData = event.clipboardData
+        const files = Array.from(clipboardData.files)
+        if (files.length > 0) {
+          event.preventDefault()
+          void resolveDataTransferWorkspacePaths(
+            clipboardData,
+            'clipboard',
+            workspaceTarget?.workspaceSource
+          ).then(({ attachmentFiles, referenceEntries }) => {
+            insertPathReferences(referenceEntries)
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          })
+          return true
+        }
+        if (!onPasteFiles) return false
+        const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
+        if (!textAttachment) return false
+        event.preventDefault()
+        onPasteFiles([textAttachment])
+        return true
+      },
+      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+    )
+
+    const handleDrop = useCallback(
+      (event: DragEvent) => {
+        const dataTransfer = event.dataTransfer
+        if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
         event.preventDefault()
         event.stopPropagation()
-        return true
-      }
-
-      if (event.key !== 'Backspace' && event.key !== 'Delete') {
-        return delegateKeyDown()
-      }
-      const range = findComposerMentionDeletionRange(
-        snapshot.value,
-        snapshot.selectionStart,
-        snapshot.selectionEnd,
-        event.key
-      )
-      if (!range) {
-        return delegateKeyDown()
-      }
-      event.preventDefault()
-      const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
-      editorRef.current?.setValue(nextValue, range.cursor)
-      return true
-    },
-    [
-      canSend,
-      closeAutocompleteMenu,
-      isComposing,
-      moveHighlightedIndex,
-      onKeyDown,
-      onSubmit,
-      selectHighlightedMention,
-      selectHighlightedSlashCommand,
-    ]
-  )
-
-  const handlePaste = useCallback(
-    (event: ClipboardEvent) => {
-      if (!event.clipboardData) return false
-      const clipboardData = event.clipboardData
-      const files = Array.from(clipboardData.files)
-      if (files.length > 0) {
-        event.preventDefault()
         void resolveDataTransferWorkspacePaths(
-          clipboardData,
-          'clipboard',
+          dataTransfer,
+          'drop',
           workspaceTarget?.workspaceSource
         ).then(({ attachmentFiles, referenceEntries }) => {
           insertPathReferences(referenceEntries)
           if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
         })
         return true
-      }
-      if (!onPasteFiles) return false
-      const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
-      if (!textAttachment) return false
-      event.preventDefault()
-      onPasteFiles([textAttachment])
-      return true
-    },
-    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
-  )
+      },
+      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+    )
 
-  const handleDrop = useCallback(
-    (event: DragEvent) => {
-      const dataTransfer = event.dataTransfer
-      if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
-      event.preventDefault()
-      event.stopPropagation()
-      void resolveDataTransferWorkspacePaths(
-        dataTransfer,
-        'drop',
-        workspaceTarget?.workspaceSource
-      ).then(({ attachmentFiles, referenceEntries }) => {
-        insertPathReferences(referenceEntries)
-        if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-      })
-      return true
-    },
-    [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
-  )
-
-  return (
-    <div className="relative min-w-0 flex-1 w-full">
-      <ComposerProseMirrorEditor
-        key="composer-editor-multiline-paste-v3"
-        ref={editorRef}
-        value={value}
-        onChange={nextValue => {
-          valueRef.current = nextValue
-          onChange(nextValue)
-        }}
-        onSnapshotChange={handleEditorSnapshot}
-        onKeyDown={handleEditorKeyDown}
-        onBeforeInput={handleEditorBeforeInput}
-        onKeyUp={handleKeyUp}
-        onCompositionStart={handleCompositionStart}
-        onCompositionEnd={handleCompositionEnd}
-        onPaste={handlePaste}
-        onDrop={handleDrop}
-        onOpenMentionFile={onOpenSkillFile}
-        onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
-        onEditComposerLink={(payload, anchor, range) => {
-          setEditingLink(payload)
-          setEditingLinkRange(range ?? null)
-          setEditingLinkAnchor(anchor ?? null)
-        }}
-        onClick={() => updateAutocompleteTrigger()}
-        onFocus={() => updateAutocompleteTrigger()}
-        disabled={disabled}
-        placeholder={placeholder}
-        testId={testId}
-        rows={rows}
-        textareaRef={textareaRef}
-        className={className}
-      />
-      {showSkillMenu && (
-        <ComposerMentionMenu
-          menuRef={menuRef}
-          rows={mentionMenuRows}
-          selectedIndex={highlightedIndex}
-          className={skillMenuClassName}
-          mentionMode={activeMenu?.kind === 'mention'}
-          projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
-          loading={isMentionLoading || workspaceSearch.loading}
-          error={hasMentionLoadError || workspaceSearch.error}
-          canBrowseFiles={canPickNativeWorkspacePaths}
-          onRetry={() => loadLocalMentions({ force: true })}
-          onHighlight={setSelectedIndex}
-          onSelect={handleMentionRowClick}
+    return (
+      <div className="relative min-w-0 flex-1 w-full">
+        <ComposerProseMirrorEditor
+          key="composer-editor-multiline-paste-v3"
+          ref={editorRef}
+          value={value}
+          onChange={nextValue => {
+            valueRef.current = nextValue
+            onChange(nextValue)
+          }}
+          onSnapshotChange={handleEditorSnapshot}
+          onKeyDown={handleEditorKeyDown}
+          onBeforeInput={handleEditorBeforeInput}
+          onKeyUp={handleKeyUp}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
+          onBlur={handleBlur}
+          onPaste={handlePaste}
+          onDrop={handleDrop}
+          onOpenMentionFile={onOpenSkillFile}
+          onOpenMentionPlugin={reference => navigateTo(buildPluginDetailRoute(reference))}
+          onEditComposerLink={(payload, anchor, range) => {
+            setEditingLink(payload)
+            setEditingLinkRange(range ?? null)
+            setEditingLinkAnchor(anchor ?? null)
+          }}
+          onClick={() => updateAutocompleteTrigger()}
+          onFocus={() => updateAutocompleteTrigger()}
+          disabled={disabled}
+          placeholder={placeholder}
+          testId={testId}
+          rows={rows}
+          textareaRef={textareaRef}
+          className={className}
         />
-      )}
-      {showSlashMenu && (
-        <div ref={menuRef}>
-          <SlashCommandMenu
-            commands={filteredSlashCommands}
+        {showSkillMenu && (
+          <ComposerMentionMenu
+            menuRef={menuRef}
+            rows={mentionMenuRows}
             selectedIndex={highlightedIndex}
             className={skillMenuClassName}
-            title={t('workbench.slash_command_menu_title')}
-            noResultsLabel={t('workbench.no_slash_commands')}
-            loadingSkills={isSlashMentionLoading}
-            skillLoadError={hasSlashMentionLoadError}
-            skillGroupLabel={t('workbench.slash_command_group_skills')}
-            skillLoadingLabel={t('workbench.loading_slash_command_skills')}
-            skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
-            skillRetryLabel={t('workbench.retry_local_skills')}
-            onSelectCommand={command => selectSlashCommand(command)}
-            onHighlightCommand={setSelectedIndex}
-            onRetrySkills={() => loadLocalMentions({ force: true })}
+            mentionMode={activeMenu?.kind === 'mention'}
+            projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
+            loading={isMentionLoading || workspaceSearch.loading}
+            error={hasMentionLoadError || workspaceSearch.error}
+            canBrowseFiles={canPickNativeWorkspacePaths}
+            onRetry={() => loadLocalMentions({ force: true })}
+            onHighlight={setSelectedIndex}
+            onSelect={handleMentionRowClick}
           />
-        </div>
-      )}
-      {modelMenuOpen && (
-        <div ref={modelMenuRef}>
-          <SlashModelMenu
-            models={models}
-            selectedModel={selectedModel ?? null}
-            selectedModelOptions={selectedModelOptions}
-            query={modelQuery}
-            selectedIndex={modelSelectedIndex}
-            className={skillMenuClassName}
-            searchPlaceholder={t('workbench.search_models')}
-            noResultsLabel={t('workbench.no_models')}
-            onQueryChange={setModelQuery}
-            onSelectedIndexChange={setModelSelectedIndex}
-            onSelectModel={selectSlashModel}
-            onBlockedModelSelect={onBlockedModelSelect}
-            onClose={() => closeSlashModelMenu(true)}
-            getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
+        )}
+        {showSlashMenu && (
+          <div ref={menuRef}>
+            <SlashCommandMenu
+              commands={filteredSlashCommands}
+              selectedIndex={highlightedIndex}
+              className={skillMenuClassName}
+              title={t('workbench.slash_command_menu_title')}
+              noResultsLabel={t('workbench.no_slash_commands')}
+              loadingSkills={isSlashMentionLoading}
+              skillLoadError={hasSlashMentionLoadError}
+              skillGroupLabel={t('workbench.slash_command_group_skills')}
+              skillLoadingLabel={t('workbench.loading_slash_command_skills')}
+              skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
+              skillRetryLabel={t('workbench.retry_local_skills')}
+              onSelectCommand={command => selectSlashCommand(command)}
+              onHighlightCommand={setSelectedIndex}
+              onRetrySkills={() => loadLocalMentions({ force: true })}
+            />
+          </div>
+        )}
+        {modelMenuOpen && (
+          <div ref={modelMenuRef}>
+            <SlashModelMenu
+              models={models}
+              selectedModel={selectedModel ?? null}
+              selectedModelOptions={selectedModelOptions}
+              query={modelQuery}
+              selectedIndex={modelSelectedIndex}
+              className={skillMenuClassName}
+              searchPlaceholder={t('workbench.search_models')}
+              noResultsLabel={t('workbench.no_models')}
+              onQueryChange={setModelQuery}
+              onSelectedIndexChange={setModelSelectedIndex}
+              onSelectModel={selectSlashModel}
+              onBlockedModelSelect={onBlockedModelSelect}
+              onClose={() => closeSlashModelMenu(true)}
+              getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
+            />
+          </div>
+        )}
+        {editingLink && (
+          <LinkEditPopover
+            key={`${editingLink.url}-${editingLink.label}`}
+            payload={{ url: editingLink.url, label: editingLink.label }}
+            anchor={editingLinkAnchor}
+            onClose={() => {
+              setEditingLink(null)
+              setEditingLinkRange(null)
+              setEditingLinkAnchor(null)
+            }}
+            onChange={next => {
+              const editor = editorRef.current
+              if (!editor || !editingLinkRange) return
+              const snapshot = editor.getSnapshot()
+              const nextPayload = { ...editingLink, ...next }
+              const nextMarkdown = nextPayload.label
+                ? `[${nextPayload.label}](${nextPayload.url})`
+                : nextPayload.url
+              const nextValue =
+                snapshot.value.slice(0, editingLinkRange.start) +
+                nextMarkdown +
+                snapshot.value.slice(editingLinkRange.end)
+              const nextCursor = editingLinkRange.start + nextMarkdown.length
+              commitEditorValue(nextValue, nextCursor)
+              setEditingLink(null)
+              setEditingLinkRange(null)
+              setEditingLinkAnchor(null)
+            }}
+            onRemove={() => {
+              const editor = editorRef.current
+              if (!editor || !editingLinkRange) return
+              const snapshot = editor.getSnapshot()
+              const before = snapshot.value.slice(0, editingLinkRange.start)
+              const after = snapshot.value.slice(editingLinkRange.end)
+              let nextValue = before + after
+              let cursor = before.length
+              if (before.endsWith(' ') && after.startsWith(' ')) {
+                nextValue = before.slice(0, -1) + after
+                cursor = before.length - 1
+              }
+              commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, cursor))
+              setEditingLink(null)
+              setEditingLinkRange(null)
+              setEditingLinkAnchor(null)
+            }}
           />
-        </div>
-      )}
-      {editingLink && (
-        <LinkEditPopover
-          key={`${editingLink.url}-${editingLink.label}`}
-          payload={{ url: editingLink.url, label: editingLink.label }}
-          anchor={editingLinkAnchor}
-          onClose={() => {
-            setEditingLink(null)
-            setEditingLinkRange(null)
-            setEditingLinkAnchor(null)
-          }}
-          onChange={next => {
-            const editor = editorRef.current
-            if (!editor || !editingLinkRange) return
-            const snapshot = editor.getSnapshot()
-            const nextPayload = { ...editingLink, ...next }
-            const nextMarkdown = nextPayload.label
-              ? `[${nextPayload.label}](${nextPayload.url})`
-              : nextPayload.url
-            const nextValue =
-              snapshot.value.slice(0, editingLinkRange.start) +
-              nextMarkdown +
-              snapshot.value.slice(editingLinkRange.end)
-            const nextCursor = editingLinkRange.start + nextMarkdown.length
-            commitEditorValue(nextValue, nextCursor)
-            setEditingLink(null)
-            setEditingLinkRange(null)
-            setEditingLinkAnchor(null)
-          }}
-          onRemove={() => {
-            const editor = editorRef.current
-            if (!editor || !editingLinkRange) return
-            const snapshot = editor.getSnapshot()
-            const before = snapshot.value.slice(0, editingLinkRange.start)
-            const after = snapshot.value.slice(editingLinkRange.end)
-            let nextValue = before + after
-            let cursor = before.length
-            if (before.endsWith(' ') && after.startsWith(' ')) {
-              nextValue = before.slice(0, -1) + after
-              cursor = before.length - 1
-            }
-            commitEditorValue(nextValue, Math.min(snapshot.selectionOffset, cursor))
-            setEditingLink(null)
-            setEditingLinkRange(null)
-            setEditingLinkAnchor(null)
-          }}
-        />
-      )}
-    </div>
-  )
-}
+        )}
+      </div>
+    )
+  }
+)

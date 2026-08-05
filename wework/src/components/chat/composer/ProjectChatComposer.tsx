@@ -8,13 +8,27 @@ import type {
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { Eye } from 'lucide-react'
-import { useMemo, useState, type DragEventHandler, type ReactNode } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type DragEventHandler,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
-import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
+import {
+  ComposerTextarea,
+  type ComposerSubmitOptions,
+  type ComposerTextareaHandle,
+} from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
@@ -34,6 +48,8 @@ import { applyWorkspacePathTransfer } from './composerPathTransfer'
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   submitDisabled?: boolean
@@ -94,309 +110,354 @@ function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files')
 }
 
-export function ProjectChatComposer({
-  value,
-  onChange,
-  onSubmit,
-  disabled,
-  submitDisabled = false,
-  disabledReason,
-  placeholder,
-  inputTestId,
-  submitButtonTestId,
-  models,
-  selectedModel,
-  activeModel,
-  selectedModelOptions,
-  modelSelectorOpenSignal,
-  onModelSelectorOpenChange,
-  isModelSelectionReady,
-  attachments,
-  codeComments = [],
-  uploadingFiles,
-  attachmentErrors,
-  contextUsage,
-  onSelectModel,
-  onSelectModelAndOptions,
-  onSelectModelOption,
-  onBlockedModelSelect,
-  onFileSelect,
-  onOpenSkillFile,
-  workspaceTarget,
-  workspaceFileApi,
-  cloudMentionCandidates,
-  conversationMentionCandidates,
-  cloudProjectCandidates,
-  cloudSpaceEnabled,
-  onSelectCloudProject,
-  selectedCloudProjectId,
-  planModeActive = false,
-  onSetPlanMode,
-  onClearPlanMode,
-  onSetGoal,
-  onConfigureSupervisor,
-  supervisorEnabled = false,
-  supervisorPending = false,
-  onCompactContext,
-  goalDraftActive = false,
-  onCancelGoalDraft,
-  onRemoveAttachment,
-  onClearCodeComments,
-  onListLocalSkills,
-  onListLocalApps,
-  projectWork,
-  showProjectWorkBar = true,
-  isStreaming = false,
-  onPause,
-  showWorkspaceMenu,
-  inputLeadingContext,
-  toolbarLeadingContext,
-}: ProjectChatComposerProps) {
-  const { t } = useTranslation('common')
-  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
-  const workspaceMenuProjects = useMemo(
-    () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
-    [projectWork.projects, projectWork.runtimeWork]
-  )
-  const textareaRef = useAutoResizeTextarea(value, 168)
-  const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
-    !disabled &&
-    !submitDisabled
-  const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
-    if (!hasDraggedFiles(event.dataTransfer)) return
+export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectChatComposerProps>(
+  function ProjectChatComposer(
+    {
+      value,
+      onChange,
+      onBlur,
+      onCompositionEnd,
+      onSubmit,
+      disabled,
+      submitDisabled = false,
+      disabledReason,
+      placeholder,
+      inputTestId,
+      submitButtonTestId,
+      models,
+      selectedModel,
+      activeModel,
+      selectedModelOptions,
+      modelSelectorOpenSignal,
+      onModelSelectorOpenChange,
+      isModelSelectionReady,
+      attachments,
+      codeComments = [],
+      uploadingFiles,
+      attachmentErrors,
+      contextUsage,
+      onSelectModel,
+      onSelectModelAndOptions,
+      onSelectModelOption,
+      onBlockedModelSelect,
+      onFileSelect,
+      onOpenSkillFile,
+      workspaceTarget,
+      workspaceFileApi,
+      cloudMentionCandidates,
+      conversationMentionCandidates,
+      cloudProjectCandidates,
+      cloudSpaceEnabled,
+      onSelectCloudProject,
+      selectedCloudProjectId,
+      planModeActive = false,
+      onSetPlanMode,
+      onClearPlanMode,
+      onSetGoal,
+      onConfigureSupervisor,
+      supervisorEnabled = false,
+      supervisorPending = false,
+      onCompactContext,
+      goalDraftActive = false,
+      onCancelGoalDraft,
+      onRemoveAttachment,
+      onClearCodeComments,
+      onListLocalSkills,
+      onListLocalApps,
+      projectWork,
+      showProjectWorkBar = true,
+      isStreaming = false,
+      onPause,
+      showWorkspaceMenu,
+      inputLeadingContext,
+      toolbarLeadingContext,
+    },
+    ref
+  ) {
+    const { t } = useTranslation('common')
+    const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+    const composerRef = useRef<ComposerTextareaHandle>(null)
+    const [hasText, setHasText] = useState(value.trim().length > 0)
 
-    event.preventDefault()
-    event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
-    setIsDraggingFiles(!disabled)
-  }
-  const handleDrop: DragEventHandler<HTMLFormElement> = event => {
-    if (!hasDraggedFiles(event.dataTransfer)) return
+    useImperativeHandle(
+      ref,
+      () => ({
+        getValue: () => composerRef.current?.getValue() ?? value,
+        setValue: (nextValue, selectionOffset) =>
+          composerRef.current?.setValue(nextValue, selectionOffset),
+      }),
+      [value]
+    )
+    const getLiveValue = () => composerRef.current?.getValue() ?? value
+    const workspaceMenuProjects = useMemo(
+      () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
+      [projectWork.projects, projectWork.runtimeWork]
+    )
+    const textareaRef = useAutoResizeTextarea(value, 168)
+    const canSend =
+      (hasText || attachments.length > 0 || codeComments.length > 0) && !disabled && !submitDisabled
 
-    event.preventDefault()
-    setIsDraggingFiles(false)
-    if (disabled) return
+    useEffect(() => {
+      // Sync local hasText with external value changes (e.g. clear after submit).
 
-    void resolveDataTransferWorkspacePaths(
-      event.dataTransfer,
-      'drop',
-      workspaceTarget?.workspaceSource
-    ).then(transfer => applyWorkspacePathTransfer(value, transfer, onChange, onFileSelect))
-  }
-  const handleShowTextAttachment = (attachment: Attachment) => {
-    const text = attachment.text_content
-    if (!text) return
+      setHasText(value.trim().length > 0)
+    }, [value])
 
-    onChange(value ? `${value}\n${text}` : text)
-    onRemoveAttachment(attachment.id)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }
-  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
-    onClearPlanMode?.()
-    onCancelGoalDraft?.()
-    if (phrase.mode === 'plan') onSetPlanMode?.()
-    if (phrase.mode === 'goal') onSetGoal?.()
-    const phraseValue = value ? `${value}\n${phrase.content}` : phrase.content
-    onChange(phraseValue)
-    if (phrase.attachmentPaths?.length) {
-      void resolveStoredWorkspacePaths(
-        phrase.attachmentPaths,
-        workspaceTarget?.workspaceSource === 'remote'
-      ).then(transfer => applyWorkspacePathTransfer(phraseValue, transfer, onChange, onFileSelect))
+    const handleComposerChange = useCallback(
+      (nextValue: string) => {
+        setHasText(nextValue.trim().length > 0)
+        onChange(nextValue)
+      },
+      [onChange]
+    )
+
+    const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
+      if (!hasDraggedFiles(event.dataTransfer)) return
+
+      event.preventDefault()
+      event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+      setIsDraggingFiles(!disabled)
     }
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }
-  return (
-    <div
-      data-testid="project-chat-composer"
-      className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
-    >
-      {showProjectWorkBar && (
-        <ProjectWorkBar
-          projects={projectWork.projects}
-          devices={projectWork.devices}
-          runtimeWork={projectWork.runtimeWork}
-          currentProject={projectWork.currentProject}
-          currentProjectId={projectWork.currentProjectId}
-          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
-          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
-          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
-          executionMode={projectWork.executionMode}
-          executionModeLocked={projectWork.executionModeLocked}
-          isGitProject={projectWork.isGitProject}
-          onSelectProject={projectWork.onSelectProject}
-          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
-          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
-          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
-          onExecutionModeChange={projectWork.onExecutionModeChange}
-          onCreateProjectMode={projectWork.onCreateProjectMode}
-          branchName={projectWork.branchName}
-          branchLoading={projectWork.branchLoading}
-          onRefreshBranch={projectWork.onRefreshBranch}
-          onListBranches={projectWork.onListBranches}
-          onCheckoutBranch={projectWork.onCheckoutBranch}
-          onCreateBranch={projectWork.onCreateBranch}
-          worktreeBranch={projectWork.worktreeBranch}
-          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
-          projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
-          projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
-          className="min-h-10 rounded-t-[26px] bg-surface px-4"
-          buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
-        />
-      )}
-      <form
-        data-testid="project-chat-composer-form"
-        className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
-          isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
-        )}
-        onDragEnter={handleDragOver}
-        onDragLeave={event => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            setIsDraggingFiles(false)
-          }
-        }}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        onSubmit={event => {
-          event.preventDefault()
-          debugComposerEvent('project-form-submit', {
-            canSend,
-            propValue: textMetrics(value),
-            submittedValue: textMetrics(value),
-            attachmentsCount: attachments.length,
-            codeCommentsCount: codeComments.length,
-            disabled,
-            isStreaming,
-          })
-          if (canSend) onSubmit(value)
-        }}
+    const handleDrop: DragEventHandler<HTMLFormElement> = event => {
+      if (!hasDraggedFiles(event.dataTransfer)) return
+
+      event.preventDefault()
+      setIsDraggingFiles(false)
+      if (disabled) return
+
+      const currentValue = getLiveValue()
+      void resolveDataTransferWorkspacePaths(
+        event.dataTransfer,
+        'drop',
+        workspaceTarget?.workspaceSource
+      ).then(transfer =>
+        applyWorkspacePathTransfer(currentValue, transfer, handleComposerChange, onFileSelect)
+      )
+    }
+    const handleShowTextAttachment = (attachment: Attachment) => {
+      const text = attachment.text_content
+      if (!text) return
+
+      const currentValue = getLiveValue()
+      const nextValue = currentValue ? `${currentValue}\n${text}` : text
+      handleComposerChange(nextValue)
+      onRemoveAttachment(attachment.id)
+      window.requestAnimationFrame(() => textareaRef.current?.focus())
+    }
+    const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+      onClearPlanMode?.()
+      onCancelGoalDraft?.()
+      if (phrase.mode === 'plan') onSetPlanMode?.()
+      if (phrase.mode === 'goal') onSetGoal?.()
+      const currentValue = getLiveValue()
+      const phraseValue = currentValue ? `${currentValue}\n${phrase.content}` : phrase.content
+      handleComposerChange(phraseValue)
+      if (phrase.attachmentPaths?.length) {
+        void resolveStoredWorkspacePaths(
+          phrase.attachmentPaths,
+          workspaceTarget?.workspaceSource === 'remote'
+        ).then(transfer =>
+          applyWorkspacePathTransfer(phraseValue, transfer, handleComposerChange, onFileSelect)
+        )
+      }
+      window.requestAnimationFrame(() => textareaRef.current?.focus())
+    }
+
+    return (
+      <div
+        data-testid="project-chat-composer"
+        className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
       >
-        <AttachmentBadges
-          attachments={attachments}
-          uploadingFiles={uploadingFiles}
-          errors={attachmentErrors}
-          codeComments={codeComments}
-          onRemoveAttachment={onRemoveAttachment}
-          onShowTextAttachment={handleShowTextAttachment}
-          onClearCodeComments={onClearCodeComments}
-        />
-        {disabledReason && (
-          <div
-            data-testid="composer-disabled-reason"
-            className="mb-2 rounded-xl bg-muted px-3 py-2 text-xs text-text-secondary"
-          >
-            {disabledReason}
-          </div>
+        {showProjectWorkBar && (
+          <ProjectWorkBar
+            projects={projectWork.projects}
+            devices={projectWork.devices}
+            runtimeWork={projectWork.runtimeWork}
+            currentProject={projectWork.currentProject}
+            currentProjectId={projectWork.currentProjectId}
+            currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+            selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
+            pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
+            executionMode={projectWork.executionMode}
+            executionModeLocked={projectWork.executionModeLocked}
+            isGitProject={projectWork.isGitProject}
+            onSelectProject={projectWork.onSelectProject}
+            onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+            onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
+            onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
+            onExecutionModeChange={projectWork.onExecutionModeChange}
+            onCreateProjectMode={projectWork.onCreateProjectMode}
+            branchName={projectWork.branchName}
+            branchLoading={projectWork.branchLoading}
+            onRefreshBranch={projectWork.onRefreshBranch}
+            onListBranches={projectWork.onListBranches}
+            onCheckoutBranch={projectWork.onCheckoutBranch}
+            onCreateBranch={projectWork.onCreateBranch}
+            worktreeBranch={projectWork.worktreeBranch}
+            onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+            projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
+            projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+            className="min-h-10 rounded-t-[26px] bg-surface px-4"
+            buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+          />
         )}
-        {supervisorPending && onConfigureSupervisor ? (
-          <button
-            type="button"
-            data-testid="pending-supervisor-indicator"
-            disabled={disabled}
-            onClick={onConfigureSupervisor}
-            className="mb-1 flex h-7 w-fit items-center gap-1.5 rounded-lg bg-muted/70 px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-50"
-          >
-            <Eye className="h-3.5 w-3.5 text-text-muted" />
-            <span>{t('workbench.supervisor_pending')}</span>
-            <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
-          </button>
-        ) : null}
-        <div
-          data-testid={inputLeadingContext ? 'composer-input-leading-context' : undefined}
-          className="flex min-h-[48px] w-full items-baseline gap-1"
+        <form
+          data-testid="project-chat-composer-form"
+          className={cn(
+            'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
+            isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
+          )}
+          onDragEnter={handleDragOver}
+          onDragLeave={event => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setIsDraggingFiles(false)
+            }
+          }}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onSubmit={event => {
+            event.preventDefault()
+            const submittedValue = composerRef.current?.getValue() ?? value
+            debugComposerEvent('project-form-submit', {
+              canSend,
+              propValue: textMetrics(value),
+              submittedValue: textMetrics(submittedValue),
+              attachmentsCount: attachments.length,
+              codeCommentsCount: codeComments.length,
+              disabled,
+              isStreaming,
+            })
+            if (canSend) onSubmit(submittedValue)
+          }}
         >
-          {inputLeadingContext}
-          <ComposerTextarea
-            testId={inputTestId}
-            textareaRef={textareaRef}
-            value={value}
-            onChange={onChange}
-            onSubmit={onSubmit}
+          <AttachmentBadges
+            attachments={attachments}
+            uploadingFiles={uploadingFiles}
+            errors={attachmentErrors}
+            codeComments={codeComments}
+            onRemoveAttachment={onRemoveAttachment}
+            onShowTextAttachment={handleShowTextAttachment}
+            onClearCodeComments={onClearCodeComments}
+          />
+          {disabledReason && (
+            <div
+              data-testid="composer-disabled-reason"
+              className="mb-2 rounded-xl bg-muted px-3 py-2 text-xs text-text-secondary"
+            >
+              {disabledReason}
+            </div>
+          )}
+          {supervisorPending && onConfigureSupervisor ? (
+            <button
+              type="button"
+              data-testid="pending-supervisor-indicator"
+              disabled={disabled}
+              onClick={onConfigureSupervisor}
+              className="mb-1 flex h-7 w-fit items-center gap-1.5 rounded-lg bg-muted/70 px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-50"
+            >
+              <Eye className="h-3.5 w-3.5 text-text-muted" />
+              <span>{t('workbench.supervisor_pending')}</span>
+              <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
+            </button>
+          ) : null}
+          <div
+            data-testid={inputLeadingContext ? 'composer-input-leading-context' : undefined}
+            className="flex min-h-[48px] w-full items-baseline gap-1"
+          >
+            {inputLeadingContext}
+            <ComposerTextarea
+              ref={composerRef}
+              testId={inputTestId}
+              textareaRef={textareaRef}
+              value={value}
+              onChange={handleComposerChange}
+              onBlur={onBlur}
+              onCompositionEnd={onCompositionEnd}
+              onSubmit={onSubmit}
+              canSend={canSend}
+              disabled={disabled}
+              placeholder={placeholder}
+              rows={2}
+              onPasteFiles={onFileSelect}
+              onOpenSkillFile={onOpenSkillFile}
+              workspaceTarget={workspaceTarget}
+              workspaceFileApi={workspaceFileApi}
+              cloudMentionCandidates={cloudMentionCandidates}
+              conversationMentionCandidates={conversationMentionCandidates}
+              cloudProjectCandidates={cloudProjectCandidates}
+              cloudSpaceEnabled={cloudSpaceEnabled}
+              onSelectCloudProject={onSelectCloudProject}
+              className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
+              skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+              onListLocalSkills={onListLocalSkills}
+              onListLocalApps={onListLocalApps}
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              planModeActive={planModeActive}
+              onSetPlanMode={onSetPlanMode}
+              onSetGoal={onSetGoal}
+              onSelectModel={onSelectModel}
+              onBlockedModelSelect={onBlockedModelSelect}
+              isModelSelectionReady={isModelSelectionReady}
+            />
+          </div>
+          <ComposerToolbar
             canSend={canSend}
+            sendButtonTestId={submitButtonTestId}
             disabled={disabled}
-            placeholder={placeholder}
-            rows={2}
-            onPasteFiles={onFileSelect}
-            onOpenSkillFile={onOpenSkillFile}
-            workspaceTarget={workspaceTarget}
-            workspaceFileApi={workspaceFileApi}
-            cloudMentionCandidates={cloudMentionCandidates}
-            conversationMentionCandidates={conversationMentionCandidates}
-            cloudProjectCandidates={cloudProjectCandidates}
-            cloudSpaceEnabled={cloudSpaceEnabled}
-            onSelectCloudProject={onSelectCloudProject}
-            className="max-h-[112px] min-h-[48px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-primary outline-none placeholder:text-text-muted/55"
-            skillMenuClassName="left-[-1rem] right-[-0.5rem]"
-            onListLocalSkills={onListLocalSkills}
-            onListLocalApps={onListLocalApps}
             models={models}
             selectedModel={selectedModel}
+            activeModel={activeModel}
             selectedModelOptions={selectedModelOptions}
+            modelSelectorOpenSignal={modelSelectorOpenSignal}
+            onModelSelectorOpenChange={onModelSelectorOpenChange}
+            isModelSelectionReady={isModelSelectionReady}
+            onSelectModel={onSelectModel}
+            onSelectModelAndOptions={onSelectModelAndOptions}
+            onSelectModelOption={onSelectModelOption}
+            onBlockedModelSelect={onBlockedModelSelect}
+            contextUsage={contextUsage}
+            onFileSelect={onFileSelect}
             planModeActive={planModeActive}
             onSetPlanMode={onSetPlanMode}
+            onClearPlanMode={onClearPlanMode}
             onSetGoal={onSetGoal}
-            onSelectModel={onSelectModel}
-            onBlockedModelSelect={onBlockedModelSelect}
-            isModelSelectionReady={isModelSelectionReady}
+            onConfigureSupervisor={onConfigureSupervisor}
+            supervisorEnabled={supervisorEnabled}
+            supervisorPending={supervisorPending}
+            onCompactContext={onCompactContext}
+            goalDraftActive={goalDraftActive}
+            onCancelGoalDraft={onCancelGoalDraft}
+            isStreaming={isStreaming}
+            onPause={onPause}
+            showWorkspaceMenu={showWorkspaceMenu}
+            projectWorkMenuContext={
+              showWorkspaceMenu
+                ? {
+                    branchName: projectWork.worktreeBranch ?? projectWork.branchName,
+                    currentProjectId: projectWork.currentProjectId,
+                    executionMode: projectWork.executionMode,
+                    executionModeLocked: projectWork.executionModeLocked,
+                    isGitProject: projectWork.isGitProject,
+                    projectName: projectWork.currentProject?.name,
+                    projects: workspaceMenuProjects,
+                    onCheckoutBranch: projectWork.onCheckoutBranch,
+                    onExecutionModeChange: projectWork.onExecutionModeChange,
+                    onListBranches: projectWork.onListBranches,
+                    onSelectProject: projectWork.onSelectProject,
+                  }
+                : undefined
+            }
+            onQuickPhraseSelect={handleQuickPhraseSelect}
+            onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
+            leadingContext={toolbarLeadingContext}
+            cloudProjectCandidates={cloudProjectCandidates}
+            selectedCloudProjectId={selectedCloudProjectId}
+            onSelectCloudProject={onSelectCloudProject}
           />
-        </div>
-        <ComposerToolbar
-          sendButtonTestId={submitButtonTestId}
-          onListLocalApps={onListLocalApps}
-          canSend={canSend}
-          disabled={disabled}
-          models={models}
-          selectedModel={selectedModel}
-          activeModel={activeModel}
-          selectedModelOptions={selectedModelOptions}
-          modelSelectorOpenSignal={modelSelectorOpenSignal}
-          onModelSelectorOpenChange={onModelSelectorOpenChange}
-          isModelSelectionReady={isModelSelectionReady}
-          onSelectModel={onSelectModel}
-          onSelectModelAndOptions={onSelectModelAndOptions}
-          onSelectModelOption={onSelectModelOption}
-          onBlockedModelSelect={onBlockedModelSelect}
-          contextUsage={contextUsage}
-          onFileSelect={onFileSelect}
-          planModeActive={planModeActive}
-          onSetPlanMode={onSetPlanMode}
-          onClearPlanMode={onClearPlanMode}
-          onSetGoal={onSetGoal}
-          onConfigureSupervisor={onConfigureSupervisor}
-          supervisorEnabled={supervisorEnabled}
-          supervisorPending={supervisorPending}
-          onCompactContext={onCompactContext}
-          goalDraftActive={goalDraftActive}
-          onCancelGoalDraft={onCancelGoalDraft}
-          isStreaming={isStreaming}
-          onPause={onPause}
-          showWorkspaceMenu={showWorkspaceMenu}
-          projectWorkMenuContext={
-            showWorkspaceMenu
-              ? {
-                  branchName: projectWork.worktreeBranch ?? projectWork.branchName,
-                  currentProjectId: projectWork.currentProjectId,
-                  executionMode: projectWork.executionMode,
-                  executionModeLocked: projectWork.executionModeLocked,
-                  isGitProject: projectWork.isGitProject,
-                  projectName: projectWork.currentProject?.name,
-                  projects: workspaceMenuProjects,
-                  onCheckoutBranch: projectWork.onCheckoutBranch,
-                  onExecutionModeChange: projectWork.onExecutionModeChange,
-                  onListBranches: projectWork.onListBranches,
-                  onSelectProject: projectWork.onSelectProject,
-                }
-              : undefined
-          }
-          onQuickPhraseSelect={handleQuickPhraseSelect}
-          onSubmit={options => onSubmit(value, options)}
-          leadingContext={toolbarLeadingContext}
-          cloudProjectCandidates={cloudProjectCandidates}
-          selectedCloudProjectId={selectedCloudProjectId}
-          onSelectCloudProject={onSelectCloudProject}
-        />
-      </form>
-    </div>
-  )
-}
+        </form>
+      </div>
+    )
+  }
+)

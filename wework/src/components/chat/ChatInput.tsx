@@ -9,7 +9,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -47,8 +47,11 @@ import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
 import { buildRefinedPluginPrompt } from '@/features/plugins/pluginTrial'
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
+import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+
+export type ChatInputHandle = ComposerTextareaHandle
 
 export interface ProjectChatControls {
   scopeKey?: string
@@ -122,6 +125,8 @@ export interface ProjectWorkControls {
 export interface ChatInputProps {
   value: string
   onChange: (value: string) => void
+  onBlur?: () => void
+  onCompositionEnd?: () => void
   onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
   disabled: boolean
   submitDisabled?: boolean
@@ -499,69 +504,87 @@ function PluginTrialTemplateStrip({
   )
 }
 
-export function ChatInput({
-  value,
-  onChange,
-  onSubmit,
-  disabled,
-  submitDisabled = false,
-  error,
-  disabledReason,
-  placeholder,
-  inputTestId,
-  submitButtonTestId,
-  variant = 'compact',
-  projectChat,
-  projectWork,
-  showProjectWorkBar = true,
-  queuedMessages = [],
-  guidanceMessages = [],
-  codeComments = [],
-  onCancelQueuedMessage,
-  onSendQueuedAsGuidance,
-  onInterruptAndSendQueuedMessage,
-  onEditQueuedMessage,
-  onReorderQueuedMessages,
-  queuePaused,
-  onResumeQueue,
-  onResumeQueueWithInput,
-  onClearQueue,
-  onCancelGuidanceMessage,
-  onClearCodeComments,
-  onOpenSkillFile,
-  workspaceTarget,
-  workspaceFileApi,
-  cloudMentionCandidates,
-  cloudProjectCandidates,
-  cloudSpaceEnabled,
-  onSelectCloudProject,
-  selectedCloudProjectId,
-  isStreaming = false,
-  onPause,
-  showWorkspaceMenu,
-  inputLeadingContext,
-  toolbarLeadingContext,
-  onCompactContext,
-  goal,
-  goalContinuing = false,
-  taskPlan,
-  goalDraftActive = false,
-  onSetGoal,
-  onConfigureSupervisor,
-  supervisorEnabled = false,
-  supervisorPending = false,
-  onCancelGoalDraft,
-  onEditGoal,
-  onPauseGoal,
-  onResumeGoal,
-  onClearGoal,
-}: ChatInputProps) {
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  {
+    value,
+    onChange,
+    onBlur,
+    onCompositionEnd,
+    onSubmit,
+    disabled,
+    submitDisabled = false,
+    error,
+    disabledReason,
+    placeholder,
+    inputTestId,
+    submitButtonTestId,
+    variant = 'compact',
+    projectChat,
+    projectWork,
+    showProjectWorkBar = true,
+    queuedMessages = [],
+    guidanceMessages = [],
+    codeComments = [],
+    onCancelQueuedMessage,
+    onSendQueuedAsGuidance,
+    onInterruptAndSendQueuedMessage,
+    onEditQueuedMessage,
+    onReorderQueuedMessages,
+    queuePaused,
+    onResumeQueue,
+    onResumeQueueWithInput,
+    onClearQueue,
+    onCancelGuidanceMessage,
+    onClearCodeComments,
+    onOpenSkillFile,
+    workspaceTarget,
+    workspaceFileApi,
+    cloudMentionCandidates,
+    cloudProjectCandidates,
+    cloudSpaceEnabled,
+    onSelectCloudProject,
+    selectedCloudProjectId,
+    isStreaming = false,
+    onPause,
+    showWorkspaceMenu,
+    inputLeadingContext,
+    toolbarLeadingContext,
+    onCompactContext,
+    goal,
+    goalContinuing = false,
+    taskPlan,
+    goalDraftActive = false,
+    onSetGoal,
+    onConfigureSupervisor,
+    supervisorEnabled = false,
+    supervisorPending = false,
+    onCancelGoalDraft,
+    onEditGoal,
+    onPauseGoal,
+    onResumeGoal,
+    onClearGoal,
+  },
+  ref
+) {
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
   const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
   const [pendingModelSelection, setPendingModelSelection] = useState<PendingModelSelection | null>(
     null
   )
+
+  const composerRef = useRef<ComposerTextareaHandle>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getValue: () => composerRef.current?.getValue() ?? value,
+      setValue: (nextValue, selectionOffset) =>
+        composerRef.current?.setValue(nextValue, selectionOffset),
+    }),
+    [value]
+  )
+
   const displayedGoal = visibleRuntimeGoal(goal)
   const inputPlaceholder = goalDraftActive
     ? t('workbench.goal_input_placeholder', 'WeWork 应该往哪个方向努力?')
@@ -678,6 +701,8 @@ export function ChatInput({
   const composerProps = {
     value,
     onChange,
+    onBlur,
+    onCompositionEnd,
     onSubmit: handleSubmit,
     disabled,
     submitDisabled,
@@ -776,6 +801,7 @@ export function ChatInput({
           />
         )}
         <ProjectChatComposer
+          ref={composerRef}
           {...composerProps}
           models={controls.models}
           selectedModel={controls.selectedModel}
@@ -881,6 +907,7 @@ export function ChatInput({
         />
       )}
       <CompactChatComposer
+        ref={composerRef}
         {...composerProps}
         attachments={controls.attachments}
         codeComments={codeComments}
@@ -915,7 +942,7 @@ export function ChatInput({
       {modelSwitchWarningDialog}
     </div>
   )
-}
+})
 
 function conversationMentionCandidate(
   candidate: ConversationMentionCandidate,
