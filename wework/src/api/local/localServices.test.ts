@@ -1653,52 +1653,58 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('uses the native DeepSeek Responses profile with high reasoning', async () => {
-    saveLocalModelConfig({
-      id: 'deepseek-v4-flash',
-      providerProfileId: 'deepseek',
-      displayName: 'DeepSeek V4 Flash',
-      modelId: 'deepseek-v4-flash',
-      baseUrl: 'https://api.deepseek.com',
-      apiFormat: 'openai-responses',
-      toolProfile: 'custom',
-      requestPath: '/responses',
-      apiKey: 'deepseek-key',
-      contextWindow: 1_048_576,
-      codexCatalogModelId: 'wework-deepseek-v4-flash',
-    })
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.createRuntimeTask({
-      teamId: 0,
-      deviceId: 'local-device',
-      workspacePath: '/Users/me/project',
-      taskId: 'task-deepseek',
-      runtime: 'codex',
-      message: 'hello',
-      title: 'DeepSeek',
-      modelId: 'local-model:deepseek-v4-flash',
-    })
-
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
-    expect(payload.executionRequest.model_config).toEqual(
-      expect.objectContaining({
-        model_id: 'deepseek-v4-flash',
-        base_url: 'https://api.deepseek.com',
-        responses_url: 'https://api.deepseek.com/responses',
-        upstream_api_format: 'openai-responses',
-        tool_profile: 'custom',
-        codex_catalog_model_id: 'wework-deepseek-v4-flash',
-        model_context_window: 1_048_576,
-        reasoning: { effort: 'high' },
+  test.each([
+    ['deepseek-v4-flash', 'wework-deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'wework-deepseek-v4-pro'],
+  ])(
+    'uses the native %s Responses profile with high reasoning',
+    async (modelId, catalogModelId) => {
+      saveLocalModelConfig({
+        id: modelId,
+        providerProfileId: 'deepseek',
+        displayName: modelId,
+        modelId,
+        baseUrl: 'https://api.deepseek.com',
+        apiFormat: 'openai-responses',
+        toolProfile: 'custom',
+        requestPath: '/responses',
+        apiKey: 'deepseek-key',
+        contextWindow: 1_048_576,
+        codexCatalogModelId: catalogModelId,
       })
-    )
-  })
+      const request = vi.fn().mockResolvedValue({ accepted: true })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+        request,
+        subscribe: vi.fn(),
+      })
+
+      await services.runtimeWorkApi?.createRuntimeTask({
+        teamId: 0,
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: `task-${modelId}`,
+        runtime: 'codex',
+        message: 'hello',
+        title: 'DeepSeek',
+        modelId: `local-model:${modelId}`,
+      })
+
+      const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+      expect(payload.executionRequest.model_config).toEqual(
+        expect.objectContaining({
+          model_id: modelId,
+          base_url: 'https://api.deepseek.com',
+          responses_url: 'https://api.deepseek.com/responses',
+          upstream_api_format: 'openai-responses',
+          tool_profile: 'custom',
+          codex_catalog_model_id: catalogModelId,
+          model_context_window: 1_048_576,
+          reasoning: { effort: 'high' },
+        })
+      )
+    }
+  )
 
   test('routes DeepSeek images through a configured vision proxy model', async () => {
     const visionCatalog = createDefaultLocalModelCatalogEntry({

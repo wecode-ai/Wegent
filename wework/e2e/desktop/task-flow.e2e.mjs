@@ -212,8 +212,8 @@ const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLE
 const LOCAL_VISION_SIDECAR_CASE = {
   source: 'local',
   mainOptionId: 'local-model:desktop-e2e-vision-main',
-  mainLabel: 'Desktop E2E Vision Main',
-  mainModelId: 'desktop-e2e-local-vision-main-upstream',
+  mainLabel: 'Desktop E2E DeepSeek Pro Vision Main',
+  mainModelId: 'deepseek-v4-pro',
   sidecarModelId: 'kimi-k3',
 }
 const CLOUD_VISION_SIDECAR_CASE = {
