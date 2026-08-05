@@ -103,6 +103,46 @@ function cloneChecks(
   }
 }
 
+function resetSyncingChecks(
+  checks: Record<CloudWorkCheckKey, SyncCheckState>,
+  previous: CloudRuntimeSnapshot | null
+): Record<CloudWorkCheckKey, SyncCheckState> {
+  const next = cloneChecks(checks)
+  ;(Object.keys(next) as CloudWorkCheckKey[]).forEach(key => {
+    if (next[key].status === 'syncing') {
+      next[key] = previous?.checks[key] ?? EMPTY_SYNC_CHECKS[key]
+    }
+  })
+  return next
+}
+
+export function abandonCloudRuntimeSync(
+  state: CloudRuntimeState,
+  revision: number
+): CloudRuntimeState {
+  if (state.inFlightRevision !== revision) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
+export function clearCloudRuntimeSync(state: CloudRuntimeState): CloudRuntimeState {
+  if (state.inFlightRevision == null) return state
+  return {
+    ...state,
+    availability: state.lastGood ? 'stale' : 'idle',
+    inFlightRevision: null,
+    current: state.current
+      ? { ...state.current, checks: resetSyncingChecks(state.current.checks, state.lastGood) }
+      : state.current,
+  }
+}
+
 function syncCheckResult<T>(
   result: PromiseSettledResult<T> | undefined,
   previous: SyncCheckState,

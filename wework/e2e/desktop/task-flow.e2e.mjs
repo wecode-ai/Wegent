@@ -151,6 +151,8 @@ const CHECKPOINT_TASK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CHECKPOINT_TASK_COMP
 const FILE_PANEL_ANCHOR_PROMPT =
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR: create a long response with a file link in the middle.'
 const FILE_PANEL_ANCHOR_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_MARKER'
+const FILE_PREVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PREVIEW_RESTORED'
+const REVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_REVIEW_RESTORED'
 const FILE_PANEL_ANCHOR_RESPONSE = [
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_RESPONSE',
   ...Array.from({ length: 30 }, (_, index) =>
@@ -207,10 +209,20 @@ const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
 const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
-const VISION_SIDECAR_MAIN_OPTION_ID = 'local-model:desktop-e2e-vision-main'
-const VISION_SIDECAR_MAIN_LABEL = 'Desktop E2E Vision Main'
-const VISION_SIDECAR_MAIN_MODEL_ID = 'deepseek-v4-flash'
-const VISION_SIDECAR_MODEL_ID = 'kimi-k3'
+const LOCAL_VISION_SIDECAR_CASE = {
+  source: 'local',
+  mainOptionId: 'local-model:desktop-e2e-vision-main',
+  mainLabel: 'Desktop E2E Vision Main',
+  mainModelId: 'desktop-e2e-local-vision-main-upstream',
+  sidecarModelId: 'kimi-k3',
+}
+const CLOUD_VISION_SIDECAR_CASE = {
+  source: 'cloud',
+  mainOptionId: 'desktop-e2e-cloud-vision-main',
+  mainLabel: 'Desktop E2E Cloud Vision Main',
+  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
+}
 const IMAGE_ARTIFACT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
@@ -1560,7 +1572,7 @@ async function verifyStandaloneViewImageTask({ composerSelector, control, projec
   await verifyViewImageProcessingBlock(control)
 }
 
-async function verifyVisionSidecar({ composerSelector, control, projectRowSelector }) {
+async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
   control.setScenario('vision_sidecar')
   control.visionSidecarRequests = []
 
@@ -1573,7 +1585,7 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control, VISION_SIDECAR_MAIN_OPTION_ID, VISION_SIDECAR_MAIN_LABEL)
+    await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
     await control.command('dropFile', composerSelector, {
       filename: 'vision-sidecar.png',
       mimeType: 'image/png',
@@ -1585,8 +1597,8 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     await captureVerificationScreenshot(
       control,
       attempt === 0
-        ? 'vision-sidecar-01-request-ready.png'
-        : 'vision-sidecar-03-cache-request-ready.png'
+        ? `${modelCase.source}-vision-sidecar-01-request-ready.png`
+        : `${modelCase.source}-vision-sidecar-03-cache-request-ready.png`
     )
     await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -1595,7 +1607,9 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     })
     await captureVerificationScreenshot(
       control,
-      attempt === 0 ? 'vision-sidecar-02-response.png' : 'vision-sidecar-04-cache-hit-response.png'
+      attempt === 0
+        ? `${modelCase.source}-vision-sidecar-02-response.png`
+        : `${modelCase.source}-vision-sidecar-04-cache-hit-response.png`
     )
   }
 
@@ -7256,6 +7270,8 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
+      GIT_TOKEN_AES_IV: '1234567890123456',
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
@@ -7291,6 +7307,7 @@ class RealCloudEnvironment {
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
     await this.seedCloudProtocolModels()
+    await this.seedCloudVisionSidecarModels()
 
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
@@ -7361,6 +7378,91 @@ class RealCloudEnvironment {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(items),
+    })
+  }
+
+  async seedCloudVisionSidecarModels() {
+    const headers = {
+      Authorization: `Bearer ${this.authToken}`,
+      'Content-Type': 'application/json',
+    }
+    const createModel = model =>
+      fetchJson(`${this.backendUrl}/api/v1/namespaces/default/models`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(model),
+      })
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: 'desktop-e2e-cloud-vision-sidecar',
+        namespace: 'default',
+        displayName: 'Desktop E2E Cloud Vision Sidecar',
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_VISION_SIDECAR_CASE.sidecarModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+        },
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: true,
+        },
+      },
+    })
+
+    const unifiedModels = await fetchJson(
+      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework`,
+      { headers }
+    )
+    const sidecar = unifiedModels.data?.find(
+      model => model.name === 'desktop-e2e-cloud-vision-sidecar' && model.type === 'user'
+    )
+    assert.ok(sidecar, 'The cloud vision sidecar fixture was not returned by model aggregation')
+    assert.equal(
+      typeof sidecar.resourceUserId,
+      'number',
+      'The cloud vision sidecar fixture did not expose its resource owner'
+    )
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: CLOUD_VISION_SIDECAR_CASE.mainOptionId,
+        namespace: 'default',
+        displayName: CLOUD_VISION_SIDECAR_CASE.mainLabel,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_VISION_SIDECAR_CASE.mainModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+          visionSidecarModel: {
+            modelName: sidecar.name,
+            modelType: sidecar.type,
+            namespace: sidecar.namespace,
+            resourceUserId: sidecar.resourceUserId,
+            apiFormat: 'openai-chat-completions',
+          },
+        },
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+      },
     })
   }
 
@@ -8527,7 +8629,11 @@ class DesktopE2EServer {
 
     if (this.scenario === 'vision_sidecar') {
       const serialized = JSON.stringify(body)
-      if (body.model === VISION_SIDECAR_MODEL_ID) {
+      const modelCase = [LOCAL_VISION_SIDECAR_CASE, CLOUD_VISION_SIDECAR_CASE].find(
+        candidate => body.model === candidate.sidecarModelId || body.model === candidate.mainModelId
+      )
+      assert.ok(modelCase, `Unexpected vision sidecar model request: ${body.model}`)
+      if (body.model === modelCase.sidecarModelId) {
         assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
         assert.equal(body.stream, false, 'The vision sidecar request must not stream')
         assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
@@ -8545,7 +8651,7 @@ class DesktopE2EServer {
         })
         return
       }
-      if (body.model === VISION_SIDECAR_MAIN_MODEL_ID) {
+      if (body.model === modelCase.mainModelId) {
         assert.equal(protocol, 'responses', 'The vision primary model used the wrong protocol')
         if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
           const responseId = `vision-sidecar-empty-${this.modelRequests.length}`
@@ -8574,7 +8680,6 @@ class DesktopE2EServer {
         ])
         return
       }
-      throw new Error(`Unexpected vision sidecar model request: ${body.model}`)
     }
 
     const localModel = localProtocolCase(body.model)
@@ -11357,6 +11462,16 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: CLOUD_VISION_SIDECAR_CASE,
+    projectRowSelector: newConversationSelector.replace(
+      ' [data-testid="project-new-conversation-button"]',
+      ''
+    ),
+  })
+
   const currentProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -13438,8 +13553,13 @@ last_updated = "2026-07-30T00:00:00Z"`
         }
         phase = 'provider-switch-retry'
         await verifyCrossProviderSwitchRetry(control, composerSelector)
-        phase = 'vision-sidecar'
-        await verifyVisionSidecar({ composerSelector, control, projectRowSelector })
+        phase = 'local-vision-sidecar'
+        await verifyVisionSidecar({
+          composerSelector,
+          control,
+          modelCase: LOCAL_VISION_SIDECAR_CASE,
+          projectRowSelector,
+        })
         await writeFile(
           join(resultDir, 'model-switch-protocol-verification.json'),
           `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,
@@ -13821,22 +13941,80 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
 
       phase = 'workspace-resources-across-conversation-switch'
-      const activeBrowserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
-      const activeTerminalSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"]`
-      const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
+      await writeFile(
+        join(workspacePath, GIT_SEED_NAME),
+        `${GIT_SEED_CONTENT}${FILE_PREVIEW_RESTORE_MARKER}\n`
+      )
+      const firstTaskDebugSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      const firstTaskWorkspacePath =
+        firstTaskDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath
+      assert.ok(
+        firstTaskWorkspacePath,
+        'The first task did not expose a workspace path for review restoration'
+      )
+      const activeWorkspaceTabSelector =
+        '[data-testid^="workspace-tab-select-task-"][aria-selected="true"]'
+      await control.command('waitFor', activeWorkspaceTabSelector, {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const activeWorkspaceTabTestId = await control.command(
+        'getAttribute',
+        activeWorkspaceTabSelector,
+        { value: 'data-testid' }
+      )
+      const activeWorkspaceTabId = activeWorkspaceTabTestId.replace('workspace-tab-select-', '')
+      assert.ok(
+        activeWorkspaceTabId.startsWith('task-'),
+        `Expected an active task workspace tab, received ${activeWorkspaceTabTestId}`
+      )
+      const activeTaskWorkbenchSelector =
+        `[data-testid="workspace-tab-content-${activeWorkspaceTabId}"] ` +
+        '[data-testid="desktop-workbench-main"]'
+      const firstTaskReadme = join(firstTaskWorkspacePath, GIT_SEED_NAME)
+      await writeFile(
+        firstTaskReadme,
+        `${await readFile(firstTaskReadme, 'utf8')}${REVIEW_RESTORE_MARKER}\n`
+      )
+      const activeBrowserInputSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-url-input"]`
+      const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
       const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', rightPanelToggleSelector, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      await control.command('waitFor', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command('click', rightPanelToggleSelector)
+      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        value: 'file-panel-anchor',
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       await control.command(
         'click',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
+        `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
       )
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        {
+          text: FILE_PREVIEW_RESTORE_MARKER,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      assert.equal(
+        await control.command(
+          'getText',
+          `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
+        ),
+        join(workspacePath, GIT_SEED_NAME),
+        'The linked absolute file opened from the wrong workspace target'
+      )
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('click', '[data-testid="right-workspace-browser-option"]')
       await control.command('waitFor', activeBrowserInputSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -13844,7 +14022,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       await control.command('submit', activeBrowserInputSelector)
       await control.command(
         'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-native-view"]`,
         { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
       )
       await control.command('click', bottomPanelToggleSelector)
@@ -13861,14 +14039,57 @@ last_updated = "2026-07-30T00:00:00Z"`
         },
         'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
         DEFAULT_STEP_TIMEOUT_MS,
-        ACTIVE_WORKBENCH_SELECTOR
+        activeTaskWorkbenchSelector
       )
       const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
         'workspace-terminal-window'
       )
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('click', '[data-testid="right-workspace-review-option"]')
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="review-view-switcher-button"]`,
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeTaskWorkbenchSelector} [data-testid="review-view-switcher-button"]`
+      )
+      await control.command('click', '[data-testid="review-view-switcher-option"]:first-child')
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-tree"]`,
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-diff-toggle"]`,
+        {
+          text: GIT_SEED_NAME,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      assert.match(
+        await control.command(
+          'getText',
+          `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-toolbar"]`
+        ),
+        /\+2\s*-0/,
+        'The review fixture did not expose both README additions before switching tasks'
+      )
       await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+      const secondTaskId = secondTaskRowTestId.replace('runtime-local-task-row-', '')
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === secondTaskId,
+        'The workbench did not switch to the second task before checking workspace isolation'
+      )
       const secondTaskWorkspaceSnapshot = JSON.parse(
-        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+        await control.command('snapshot', activeTaskWorkbenchSelector)
       )
       assert.equal(
         secondTaskWorkspaceSnapshot.testIds.includes('workspace-terminal-window'),
@@ -13879,6 +14100,16 @@ last_updated = "2026-07-30T00:00:00Z"`
         secondTaskWorkspaceSnapshot.testIds.includes('workspace-browser-panel'),
         false,
         'The first task browser leaked into the second task'
+      )
+      assert.equal(
+        secondTaskWorkspaceSnapshot.testIds.includes('workspace-markdown-preview'),
+        false,
+        'The first task file preview leaked into the second task'
+      )
+      assert.equal(
+        secondTaskWorkspaceSnapshot.testIds.includes('file-changes-review-panel'),
+        false,
+        'The first task review leaked into the second task'
       )
       assert.equal(
         secondTaskWorkspaceSnapshot.testIds.includes('workspace-tool-launcher'),
@@ -13900,9 +14131,57 @@ last_updated = "2026-07-30T00:00:00Z"`
             value.testIds.includes('workspace-local-device-limited-tools'),
           'The first task bottom workspace limited-tools state was not restored',
           DEFAULT_STEP_TIMEOUT_MS,
-          ACTIVE_WORKBENCH_SELECTOR
+          activeTaskWorkbenchSelector
         )
       }
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-tree"]`,
+        {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-diff-toggle"]`,
+        {
+          text: GIT_SEED_NAME,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      assert.match(
+        await control.command(
+          'getText',
+          `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-toolbar"]`
+        ),
+        /\+2\s*-0/,
+        'The restored review lost the README diff statistics'
+      )
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="right-workspace-review-tab"]', {
+          value: 'aria-selected',
+        }),
+        'true',
+        'The review tab was not active after switching back to the first task'
+      )
+      await control.command('click', '[data-testid="right-workspace-file-tab"]')
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
+        {
+          text: FILE_PREVIEW_RESTORE_MARKER,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        }
+      )
+      assert.equal(
+        await control.command(
+          'getText',
+          `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
+        ),
+        join(workspacePath, GIT_SEED_NAME),
+        'The linked absolute file path was lost after switching conversations'
+      )
+      await control.command('click', '[data-testid="right-workspace-browser-tab"]')
       await control.command('waitFor', activeBrowserInputSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -13915,6 +14194,14 @@ last_updated = "2026-07-30T00:00:00Z"`
       assert.ok(
         restoredWorkspaceSnapshot.testIds.includes('right-workspace-browser-tab'),
         'The browser tab was not restored after switching conversations'
+      )
+      assert.ok(
+        restoredWorkspaceSnapshot.testIds.includes('right-workspace-file-tab'),
+        'The file tab was not restored after switching conversations'
+      )
+      assert.ok(
+        restoredWorkspaceSnapshot.testIds.includes('right-workspace-review-tab'),
+        'The review tab was not restored after switching conversations'
       )
       await control.command('finishAnimations', 'body')
       await captureVerificationScreenshot(control, 'workspace-panel-01-default-split.png')
@@ -14016,6 +14303,8 @@ last_updated = "2026-07-30T00:00:00Z"`
       await captureVerificationScreenshot(control, 'workspace-panel-04-restored-split.png')
       await control.command('click', bottomWorkspaceTabCloseSelector)
       await control.command('click', rightBrowserTabCloseSelector)
+      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', '[data-testid="right-workspace-review-tab-close-button"]')
 
       await control.command('fill', composerSelector, { value: '' })
       await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)

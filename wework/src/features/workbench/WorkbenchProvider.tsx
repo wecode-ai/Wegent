@@ -552,7 +552,7 @@ export function WorkbenchProvider({
     remoteProjectSyncSignatureRef.current = signature
     void executorClient.runtime
       .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
-      .then(refreshWorkLists)
+      .then(() => refreshWorkLists())
       .catch(error => {
         remoteProjectSyncSignatureRef.current = ''
         console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
