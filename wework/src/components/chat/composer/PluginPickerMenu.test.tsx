@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceApp } from '@/types/api'
 import {
   INSERT_PLUGIN_REFERENCE_EVENT,
+  notifyLocalPluginSkillsChanged,
   recordPluginUsage,
   SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
 } from '@/features/plugins/pluginTrial'
@@ -152,5 +153,29 @@ describe('PluginPickerMenu', () => {
     await waitFor(() =>
       expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(2)
     )
+  })
+
+  test('removes stale plugin entries immediately when installed plugins change', async () => {
+    writeComposerAppsSnapshot([superpowersApp])
+    const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(
+      await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).toBeInTheDocument()
+
+    let resolveRefresh!: (apps: LocalDeviceApp[]) => void
+    const refresh = new Promise<LocalDeviceApp[]>(resolve => {
+      resolveRefresh = resolve
+    })
+    onListLocalApps.mockImplementationOnce(() => refresh)
+    act(() => notifyLocalPluginSkillsChanged())
+
+    expect(
+      screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).not.toBeInTheDocument()
+
+    await act(async () => resolveRefresh([]))
   })
 })

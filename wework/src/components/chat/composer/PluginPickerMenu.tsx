@@ -58,10 +58,15 @@ export function PluginPickerMenu({
   }, [open])
 
   useEffect(() => {
-    const onSkillsChanged = () => setReloadToken(token => token + 1)
+    const onSkillsChanged = () => {
+      hasCachedAppsRef.current = false
+      setApps([])
+      setLoading(Boolean(onListLocalApps))
+      setReloadToken(token => token + 1)
+    }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, onSkillsChanged)
     return () => window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, onSkillsChanged)
-  }, [])
+  }, [onListLocalApps])
 
   useEffect(() => {
     let current = true

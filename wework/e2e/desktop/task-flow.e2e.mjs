@@ -4516,7 +4516,10 @@ async function createOfficialPluginTask({ control, installSelector, skillPath })
   control.scenarioRequests.delete('official_plugin')
   control.setScenario('official_plugin')
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4885,8 +4888,12 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', actionsSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const uninstallSelector = `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`
   await control.command('click', actionsSelector)
-  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`)
+  await control.command('waitFor', uninstallSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', uninstallSelector)
   await control.command('waitFor', '[data-testid="plugin-uninstall-confirm-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -4941,7 +4948,10 @@ async function verifySkillMentionRendering({ control, fixture }) {
   await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4997,7 +5007,11 @@ async function uninstallOfficialPlugin(control, fixture) {
     marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
     displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
-  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
+  const uninstallSelector = `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`
+  await control.command('waitFor', uninstallSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', uninstallSelector)
   await control.command('waitFor', '[data-testid="plugin-uninstall-confirm-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -5668,6 +5682,11 @@ async function selectE2EModel(
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const selectedModelLabel = await control.command(
+    'getText',
+    '[data-testid="model-selector-button"]'
+  )
+  if (selectedModelLabel.includes(modelLabel)) return
 
   const targetOptionId = `model-option-${modelId}`
   await ensureModelOptionVisible(control, targetOptionId)

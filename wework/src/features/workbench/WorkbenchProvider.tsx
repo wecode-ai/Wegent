@@ -36,7 +36,10 @@ import {
   appendInstalledPluginsAsComposerApps,
   enrichComposerApps,
 } from '@/features/plugins/composerPluginMetadata'
-import { writeComposerAppsSnapshot } from '@/components/chat/composer/composerAppsSnapshot'
+import {
+  clearComposerAppsSnapshot,
+  writeComposerAppsSnapshot,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
@@ -1701,6 +1704,7 @@ export function WorkbenchProvider({
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
       localAppsInflightRef.current = null
+      clearComposerAppsSnapshot()
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {
