@@ -555,7 +555,13 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           appsRequestIdRef.current += 1
           // Keep stale apps visible while the new source refreshes.
         }
-        if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
+        if (options?.force) {
+          // Invalidate in-flight identity so a concurrent response cannot mark
+          // the forced refresh as already settled or leave loading stuck true.
+          appsLoadedRef.current = false
+          appsLoadingRef.current = false
+          appsRequestIdRef.current += 1
+        } else if (appsLoadedRef.current || appsLoadingRef.current || appsLoadError) {
           return
         }
 

@@ -13,6 +13,7 @@ import {
   notifyLocalPluginSkillsChanged,
 } from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
 import { ComposerTextarea } from './ComposerTextarea'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
@@ -105,6 +106,8 @@ describe('ComposerTextarea', () => {
       attachmentFiles: [],
       referenceEntries: [],
     })
+    resetComposerAppsMemory()
+    clearComposerAppsSnapshot()
   })
 
   test('inserts plugin picker references without replacing the current draft', async () => {
