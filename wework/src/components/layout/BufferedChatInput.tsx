@@ -108,11 +108,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     [scheduleDraftFlush]
   )
 
-  const handleBlur = useCallback(() => {
-    window.requestAnimationFrame(() => flushDraft(draftRef.current))
-  }, [flushDraft])
-
-  const handleCompositionEnd = useCallback(() => {
+  // Flush after the next frame so the editor state settles first.
+  const flushDraftNextFrame = useCallback(() => {
     window.requestAnimationFrame(() => flushDraft(draftRef.current))
   }, [flushDraft])
 
@@ -141,8 +138,8 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       ref={composerRef}
       value={draft}
       onChange={setDraft}
-      onBlur={handleBlur}
-      onCompositionEnd={handleCompositionEnd}
+      onBlur={flushDraftNextFrame}
+      onCompositionEnd={flushDraftNextFrame}
       onSubmit={handleSubmit}
     />
   )
