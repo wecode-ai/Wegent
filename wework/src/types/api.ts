@@ -470,6 +470,12 @@ export interface RuntimeProjectRef {
   pinnedOrder?: number | null
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
+}
+
+export interface RuntimeProjectSpaceRef {
+  projectStore: 'local' | 'backend'
+  projectId: string
 }
 
 export interface RuntimeProjectRoot {
@@ -813,6 +819,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
 }
 
@@ -822,6 +829,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
   error?: string | null
 }
@@ -2105,6 +2113,7 @@ export interface ChatBlockCreatedPayload {
   subtaskId?: string
   block: ChatBlock
   deviceId?: string
+  replacesItemId?: string
 }
 
 export interface ChatBlockUpdatedPayload {
@@ -2217,7 +2226,6 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
-  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

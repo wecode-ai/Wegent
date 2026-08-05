@@ -2471,20 +2471,25 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('ignores a manual device refresh after its cloud sync revision is replaced', async () => {
+  test('cancels an in-flight cloud sync before a manual device refresh', async () => {
     const runtimeWork = deferred<RuntimeWorkListResponse>()
     const manualDevices = deferred<DeviceInfo[]>()
+    let initialRuntimeSignal: AbortSignal | undefined
     const listDevices = vi
       .fn()
       .mockResolvedValueOnce([
         createDevice({ device_id: 'current-device', device_type: 'remote', is_default: false }),
       ])
       .mockImplementationOnce(() => manualDevices.promise)
+    const listRuntimeWork = vi.fn((requestOptions?: { signal?: AbortSignal }) => {
+      initialRuntimeSignal = requestOptions?.signal
+      return runtimeWork.promise
+    })
     const services = createWorkbenchServices({
       cloudBackgroundApi: {
         listTeams: vi.fn().mockResolvedValue([]),
         listDevices,
-        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+        listRuntimeWork,
       },
     })
 
@@ -2495,16 +2500,17 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
     await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+    expect(initialRuntimeSignal?.aborted).toBe(true)
     await act(async () => {
       runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
       await Promise.resolve()
       manualDevices.resolve([
-        createDevice({ device_id: 'stale-device', device_type: 'remote', is_default: false }),
+        createDevice({ device_id: 'refreshed-device', device_type: 'remote', is_default: false }),
       ])
     })
 
     await waitFor(() =>
-      expect(screen.getByTestId('device-ids')).not.toHaveTextContent('stale-device')
+      expect(screen.getByTestId('device-ids')).toHaveTextContent('refreshed-device')
     )
   })
 
@@ -2796,6 +2802,128 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+  })
+
+  test('keeps the last confirmed online state when an offline event refresh fails', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockRejectedValue(new Error('network unavailable'))
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceOffline?.({ device_id: 'device-1' })
+    })
+
+    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+  })
+
+  test('applies an offline state after device discovery confirms it', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceOffline?.({ device_id: 'device-1' })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
+  })
+
+  test('keeps the last confirmed online state when an offline status event refresh fails', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockRejectedValue(new Error('network unavailable'))
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'offline' })
+    })
+
+    expect(screen.getByTestId('device-status')).toHaveTextContent('online')
+    await waitFor(() => expect(listDevices).toHaveBeenCalledTimes(2))
+  })
+
+  test('applies an offline state after an offline status event is confirmed', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([createDevice({ status: 'online' })])
+      .mockResolvedValueOnce([createDevice({ status: 'offline' })])
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('online'))
+
+    await act(async () => {
+      streamHandlers.onDeviceStatus?.({ device_id: 'device-1', status: 'offline' })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('device-status')).toHaveTextContent('offline'))
   })
 
   test('ensures the chat socket is connected while mounted', async () => {
@@ -3119,7 +3247,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('disables third-party models inside an existing official Codex conversation', async () => {
+  test('keeps GPT and third-party models selectable inside an existing conversation', async () => {
     const models: UnifiedModel[] = [
       {
         name: 'gpt-5.6-sol',
@@ -3215,12 +3343,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-model-compatibility')).toHaveTextContent(
-        [
-          'gpt-5.6-sol:enabled',
-          'gpt-5.5:enabled',
-          'kimi-k2.5:provider_boundary_mismatch',
-          'cloud-model:provider_boundary_mismatch',
-        ].join('|')
+        ['gpt-5.6-sol:enabled', 'gpt-5.5:enabled', 'kimi-k2.5:enabled', 'cloud-model:enabled'].join(
+          '|'
+        )
       )
     )
   })
@@ -8965,6 +9090,89 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
         'idle:idle'
+      )
+    )
+  })
+
+  test('syncs board completion from the in-memory terminal event while task status stays active', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (handlers.onChatStart) streamHandlers = handlers
+      return vi.fn()
+    })
+    const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'active',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+      projectSpaceApis: {
+        local: { updateTaskTrackingStatus },
+      } as unknown as WorkbenchServices['projectSpaceApis'],
+    })
+
+    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
+
+    act(() => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        shellType: 'Codex',
+        deviceId: 'device-1',
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'running'
+      )
+    )
+
+    act(() => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'done' },
+      })
+    })
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
       )
     )
   })

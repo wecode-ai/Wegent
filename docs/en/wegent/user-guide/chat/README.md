@@ -73,14 +73,9 @@ Flexible conversation control options:
 
 After a task has started, you can adjust the model used for later responses in the current task. The change only affects the current task. It does not modify the agent, bot, or model defaults, and it does not affect other tasks or newly created conversations.
 
-To keep the Codex thread's provider identity consistent, Wework does not allow an existing conversation to switch between official Codex models and third-party models:
+Wework supports switching between official GPT/Codex models and third-party models in the same conversation. After confirmation, the new model applies to the next normal message. A response already in progress still finishes with the previous model.
 
-- Third-party models are disabled in an official Codex conversation
-- Official Codex models are disabled in a third-party conversation
-- Switching among official Codex models or among third-party models remains available
-- A new conversation can start with any available model
-
-To continue the work across categories, start a new conversation and use `@` to reference the current conversation so the new model receives its context.
+Encrypted reasoning and compaction state is provider-specific and cannot be reused directly. At the switch boundary, the executor removes the previous provider's `encrypted_content` and `previous_response_id` while retaining portable messages, tool results, and local context. This prevents the target model from returning `invalid_encrypted_content`.
 
 ---
 

@@ -22,8 +22,13 @@ class BuiltinPluginDefinition:
 
 
 BUILTIN_SITES_PLUGIN_NAME = "wegent-sites"
+BUILTIN_MINI_PROGRAM_PLUGIN_NAME = "wegent-mini-program"
 BUILTIN_PLUGINS = (
     BuiltinPluginDefinition(name=BUILTIN_SITES_PLUGIN_NAME, required=False),
+    BuiltinPluginDefinition(
+        name=BUILTIN_MINI_PROGRAM_PLUGIN_NAME,
+        required=False,
+    ),
 )
 BUILTIN_PLUGINS_BY_NAME = {plugin.name: plugin for plugin in BUILTIN_PLUGINS}
 BUILTIN_PLUGIN_NAMES = tuple(BUILTIN_PLUGINS_BY_NAME)

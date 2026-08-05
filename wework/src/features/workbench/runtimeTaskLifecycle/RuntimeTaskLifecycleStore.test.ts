@@ -82,9 +82,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnStarted(address)
     expect(store.getTask(address)?.turn.phase).toBe('streaming')
 
-    store.turnSettled(address)
+    store.turnSettled(address, null, 'succeeded')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
     expect(store.getTask(address)?.derived.isRunning).toBe(false)
+  })
+
+  test('tracks terminal turn outcome without relying on persisted task status', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ status: 'active' })))
+
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+
+    expect(store.getTask(address)?.task?.status).toBe('active')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+
+    store.turnStarted(address, 'turn-2')
+    expect(store.getTask(address)?.turn.outcome).toBeNull()
   })
 
   test('does not regress a stream that starts before the create acknowledgement', () => {
@@ -202,6 +217,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.execution.phase).toBe('idle')
     expect(snapshot?.turn.phase).toBe('idle')
     expect(snapshot?.derived.isThinking).toBe(false)
+  })
+
+  test('keeps an identified live turn when the task list still reports prior completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    store.turnStarted(address, 'correction-turn')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    const runningSnapshot = store.getTask(address)
+    expect(runningSnapshot?.execution.phase).toBe('running')
+    expect(runningSnapshot?.turn.phase).toBe('streaming')
+    expect(runningSnapshot?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.turnSettled(address, 'correction-turn')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
   test('keeps task execution running across an active Goal turn gap', () => {

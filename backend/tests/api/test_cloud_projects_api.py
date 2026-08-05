@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.delivery import CloudProject, Delivery, DeliveryAsset, LoopItem
-from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
@@ -786,52 +785,51 @@ def test_backend_routes_gitlab_updates_and_comments(
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
 
 
-def test_cloud_project_can_link_local_workspace(
+def test_explicit_project_selection_tracks_runtime_task_idempotently(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
     test_token: str,
 ) -> None:
-    local_project = Project(
-        user_id=test_user.id,
-        name="Local checkout",
-        client_origin="wework",
-    )
-    test_db.add(local_project)
-    test_db.commit()
-    test_db.refresh(local_project)
-
-    created = test_client.post(
+    project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
-        json={
-            "project_key": "collab",
-            "name": "Shared collaboration",
-            "description": "A cloud-first project",
-        },
+        json={"project_key": "track", "name": "Tracked project"},
+    ).json()
+    payload = {
+        "deviceId": "desktop-1",
+        "taskId": "runtime-task-1",
+        "taskTitle": "Implement explicit task tracking",
+        "description": "Created from the Wework task composer.",
+    }
+    tracked = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/tasks/track",
+        headers=_auth(test_token),
+        json=payload,
     )
-    assert created.status_code == 201
-    cloud_project = created.json()
-    assert cloud_project["project_key"] == "COLLAB"
+    assert tracked.status_code == 201
+    assert tracked.json()["item"]["status"] == "in_progress"
+    item_id = tracked.json()["item"]["id"]
 
-    linked = test_client.post(
-        f"/api/v1/cloud-projects/{cloud_project['id']}/local-bindings",
+    retried = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/tasks/track",
+        headers=_auth(test_token),
+        json=payload,
+    )
+    assert retried.status_code == 201
+    assert retried.json()["item"]["id"] == item_id
+
+    reviewed = test_client.patch(
+        "/api/v1/runtime-tasks/cloud-context/tracking-status",
         headers=_auth(test_token),
         json={
-            "local_project_id": local_project.id,
-            "device_id": "desktop-1",
-            "is_default": True,
+            "deviceId": "desktop-1",
+            "taskId": "runtime-task-1",
+            "executionStatus": "succeeded",
         },
     )
-    assert linked.status_code == 201
-    assert linked.json()["local_project_id"] == local_project.id
-
-    bindings = test_client.get(
-        f"/api/v1/cloud-projects/{cloud_project['id']}/local-bindings",
-        headers=_auth(test_token),
-    )
-    assert bindings.status_code == 200
-    assert bindings.json()[0]["device_id"] == "desktop-1"
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "in_review"
 
 
 def test_todo_lifecycle_and_multiple_local_tasks(

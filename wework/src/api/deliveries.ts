@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HttpClient } from './http'
 import type { RuntimeTaskAddress } from '@/types/api'
+
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
@@ -174,17 +175,6 @@ export interface ProjectDeliveryFile {
   delivered_at: string
 }
 
-export interface CloudProjectLocalBinding {
-  id: string
-  cloud_project_id: CloudProjectId
-  local_project_id: number
-  user_id: number
-  device_id: string | null
-  is_default: boolean
-  created_at: string
-  updated_at: string
-}
-
 export interface CloudProjectMember {
   id: number
   user_id: number
@@ -216,7 +206,31 @@ export interface CloudMyWorkItem extends CloudLoopItem {
   has_active_task: boolean
 }
 
+export function createProjectTaskTrackingSingleFlight() {
+  const requests = new Map<string, Promise<{ item: CloudLoopItem }>>()
+
+  return (
+    projectId: CloudProjectIdInput,
+    task: RuntimeTaskAddress,
+    create: () => Promise<{ item: CloudLoopItem }>
+  ): Promise<{ item: CloudLoopItem }> => {
+    const key = `${projectId}:${task.deviceId}:${task.taskId}`
+    const existing = requests.get(key)
+    if (existing) return existing
+
+    const request = create()
+    requests.set(key, request)
+    const clear = () => {
+      if (requests.get(key) === request) requests.delete(key)
+    }
+    void request.then(clear, clear)
+    return request
+  }
+}
+
 export function createDeliveryApi(client: HttpClient) {
+  const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
+
   return {
     listCloudProjects(): Promise<{ items: CloudProject[] }> {
       return client.get('/v1/cloud-projects')
@@ -419,14 +433,34 @@ export function createDeliveryApi(client: HttpClient) {
         ...(taskTitle ? { taskTitle } : {}),
       })
     },
+    trackProjectTask(
+      projectId: CloudProjectIdInput,
+      task: RuntimeTaskAddress,
+      taskTitle: string,
+      description: string
+    ): Promise<{ item: CloudLoopItem }> {
+      return trackProjectTaskOnce(projectId, task, () =>
+        client.post(`/v1/cloud-projects/${projectId}/tasks/track`, {
+          ...task,
+          taskTitle,
+          description,
+        })
+      )
+    },
+    updateTaskTrackingStatus(
+      task: RuntimeTaskAddress,
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    ): Promise<CloudLoopItem | null> {
+      return client.patch('/v1/runtime-tasks/cloud-context/tracking-status', {
+        ...task,
+        executionStatus,
+      })
+    },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {
       return client.delete('/v1/runtime-tasks/cloud-context', task)
     },
     unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, task)
-    },
-    listLocalBindings(projectId: CloudProjectIdInput): Promise<CloudProjectLocalBinding[]> {
-      return client.get(`/v1/cloud-projects/${projectId}/local-bindings`)
     },
     listCloudProjectMembers(projectId: CloudProjectIdInput): Promise<CloudProjectMember[]> {
       return client.get(`/v1/cloud-projects/${projectId}/members`)
@@ -455,12 +489,6 @@ export function createDeliveryApi(client: HttpClient) {
       query: string
     ): Promise<{ users: CloudUserSearchItem[]; total: number }> {
       return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
-    },
-    addLocalBinding(
-      projectId: CloudProjectIdInput,
-      data: { local_project_id: number; device_id?: string; is_default?: boolean }
-    ): Promise<CloudProjectLocalBinding> {
-      return client.post(`/v1/cloud-projects/${projectId}/local-bindings`, data)
     },
     listCloudFiles(projectId: CloudProjectIdInput): Promise<{ items: CloudProjectFile[] }> {
       return client.get(`/v1/cloud-projects/${projectId}/files`)

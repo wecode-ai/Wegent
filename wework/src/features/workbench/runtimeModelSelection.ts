@@ -16,6 +16,9 @@ export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUser
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
 export const CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = 'weworkCloudModelMaxOutputTokens'
 export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
+export const CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCodexCatalogModelId'
+
+const KIMI_K3_CODEX_CATALOG_MODEL_ID = 'wework-kimi-k3'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -47,27 +50,22 @@ function modelKind(model: UnifiedModel): string {
   )
 }
 
-export function isOfficialCodexModel(model: UnifiedModel): boolean {
-  return modelKind(model) === 'codex-official'
-}
+function cloudCodexCatalogModelId(model: UnifiedModel): string {
+  const configured =
+    getRawStringConfigValue(model.config, 'codex_catalog_model_id') ||
+    getRawStringConfigValue(model.config, 'codexCatalogModelId')
+  if (configured) return configured
 
-export function disableCrossProviderModels(
-  models: UnifiedModel[],
-  activeModel: UnifiedModel | null
-): UnifiedModel[] {
-  if (!activeModel) return models
-
-  const activeIsOfficialCodex = isOfficialCodexModel(activeModel)
-  return models.map(model => {
-    if (isOfficialCodexModel(model) === activeIsOfficialCodex || model.compatibilityDisabled) {
-      return model
-    }
-    return {
-      ...model,
-      compatibilityDisabled: true,
-      compatibilityDisabledReason: 'provider_boundary_mismatch',
-    }
-  })
+  const candidates = [
+    model.name,
+    model.modelId,
+    getRawStringConfigValue(model.config, 'model_id'),
+    getRawStringConfigValue(model.config, 'modelId'),
+    getRawStringConfigValue(model.config, 'model'),
+  ]
+  return candidates.some(value => value?.trim().toLowerCase().includes('kimi-k3'))
+    ? KIMI_K3_CODEX_CATALOG_MODEL_ID
+    : ''
 }
 
 function isLocalModel(model: UnifiedModel): boolean {
@@ -148,6 +146,10 @@ export function selectedModelExecutionFields(
     const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
     if (upstreamApiFormat) {
       modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
+    }
+    const codexCatalogModelId = cloudCodexCatalogModelId(selectedModel)
+    if (codexCatalogModelId) {
+      modelOptions[CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION] = codexCatalogModelId
     }
 
     const contextWindow =
