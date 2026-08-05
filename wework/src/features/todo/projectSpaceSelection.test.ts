@@ -4,6 +4,7 @@ import {
   findProjectSpaceContextForTask,
   loadProjectSpaceOptions,
   projectSpaceRef,
+  runtimeCloudProjectId,
   type ProjectSpaceApi,
 } from './projectSpaceSelection'
 
@@ -78,5 +79,13 @@ describe('projectSpaceSelection', () => {
         taskId: 'task-1',
       })
     ).resolves.toEqual(context)
+  })
+
+  test('only scopes runtime creation to backend project spaces', () => {
+    expect(runtimeCloudProjectId(project('space-local', 'Local board', 'local'))).toBeUndefined()
+    expect(runtimeCloudProjectId(project('space-cloud', 'Cloud board', 'backend'))).toBe(
+      'space-cloud'
+    )
+    expect(runtimeCloudProjectId(null)).toBeUndefined()
   })
 })
