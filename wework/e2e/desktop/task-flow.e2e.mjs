@@ -13886,6 +13886,15 @@ last_updated = "2026-07-30T00:00:00Z"`
       const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
         'workspace-terminal-window'
       )
+      await control.command('waitFor', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('markElementWithText', filePanelAnchorScopeSelector, {
+        text: FILE_PANEL_ANCHOR_MARKER,
+        value: 'file-panel-anchor',
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
       await control.command(
         'click',
         `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
@@ -13944,6 +13953,12 @@ last_updated = "2026-07-30T00:00:00Z"`
         'The review fixture did not expose both README additions before switching tasks'
       )
       await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+      const secondTaskId = secondTaskRowTestId.replace('runtime-local-task-row-', '')
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.currentRuntimeTask?.taskId === secondTaskId,
+        'The workbench did not switch to the second task before checking workspace isolation'
+      )
       const secondTaskWorkspaceSnapshot = JSON.parse(
         await control.command('snapshot', activeTaskWorkbenchSelector)
       )
