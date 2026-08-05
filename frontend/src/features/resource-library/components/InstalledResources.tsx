@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Eye, RefreshCw, Settings2 } from 'lucide-react'
+import { Eye, Pencil, RefreshCw, Settings2 } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import {
@@ -32,10 +32,15 @@ import { Switch } from '@/components/ui/switch'
 import { buildChatCodeHref } from '@/config/coding-route'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useUser } from '@/features/common/UserContext'
+import { canEditContent } from '@/types/base-role'
+import type { Group } from '@/types/group'
 import type { ResourceLibraryInstall, ResourceLibraryListing } from '../types'
+import type { ResourceListState } from '@/features/settings/components/SkillListWithScope'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 import { AutoEnabledSkillConfigDialog } from '@/features/settings/components/skills/AutoEnabledSkillConfigDialog'
+import SkillUploadModal from '@/features/settings/components/skills/SkillUploadModal'
 
 type InstalledResourceType = 'agent' | 'skill'
 
@@ -45,6 +50,11 @@ interface InstalledResourcesProps {
   resourceType: InstalledResourceType
   keyword?: string
   groupNamespaces?: string[]
+  excludeGroupOwned?: boolean
+  groups?: Group[]
+  hideLoadingState?: boolean
+  hideEmptyState?: boolean
+  onListStateChange?: (state: ResourceListState) => void
 }
 
 interface InstalledResource extends ResourceLibraryInstall {
@@ -55,10 +65,24 @@ function hasInstalledListing(install: ResourceLibraryInstall): install is Instal
   return install.install_status === 'installed' && Boolean(install.listing)
 }
 
-function normalizeInstalls(items: ResourceLibraryInstall[]): InstalledResource[] {
+function isGroupOwnedSkill(install: ResourceLibraryInstall): boolean {
+  return (
+    install.resource_type === 'skill' &&
+    (install.installed_reference.ownership === 'group' ||
+      install.installed_reference.kind === 'Skill' ||
+      (Boolean(install.installed_reference.namespace) &&
+        install.installed_reference.kind !== 'SkillBinding'))
+  )
+}
+
+function normalizeInstalls(
+  items: ResourceLibraryInstall[],
+  excludeGroupOwned = false
+): InstalledResource[] {
   const installsByListingId = new Map<number, InstalledResource>()
 
   items.filter(hasInstalledListing).forEach(install => {
+    if (excludeGroupOwned && isGroupOwnedSkill(install)) return
     if (installsByListingId.has(install.listing.id)) return
 
     installsByListingId.set(install.listing.id, {
@@ -116,6 +140,25 @@ function buildConfigurableSkill(install: InstalledResource, binding?: SkillBindi
   }
 }
 
+function buildEditableGroupSkill(install: InstalledResource): UnifiedSkill {
+  const { listing, installed_reference: reference } = install
+  return {
+    id: reference.skill_id ?? listing.id,
+    name: reference.name || listing.name,
+    namespace: reference.namespace || 'default',
+    description: listing.description || '',
+    displayName: listing.display_name,
+    version: listing.current_version?.version,
+    tags: listing.tags,
+    is_active: true,
+    is_public: false,
+    user_id: install.user_id,
+    availability: { inMyDefault: false },
+    created_at: listing.created_at,
+    updated_at: listing.updated_at,
+  }
+}
+
 async function loadAllInstallPages(
   loadPage: (page: number) => Promise<{ items: ResourceLibraryInstall[]; total: number }>
 ): Promise<ResourceLibraryInstall[]> {
@@ -139,14 +182,21 @@ export function InstalledResources({
   resourceType,
   keyword,
   groupNamespaces,
+  excludeGroupOwned = false,
+  groups = [],
+  hideLoadingState = false,
+  hideEmptyState = false,
+  onListStateChange,
 }: InstalledResourcesProps) {
   const router = useRouter()
   const { t } = useTranslation('resource-library')
   const { t: tSettings } = useTranslation('settings')
   const { toast } = useToast()
+  const { user } = useUser()
   const [installs, setInstalls] = useState<InstalledResource[]>([])
   const [skillBindings, setSkillBindings] = useState<SkillBinding[]>([])
   const [configuringSkill, setConfiguringSkill] = useState<UnifiedSkill | null>(null)
+  const [editingGroupSkill, setEditingGroupSkill] = useState<InstalledResource | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
   const [selectedListing, setSelectedListing] = useState<ResourceLibraryListing | null>(null)
@@ -190,7 +240,7 @@ export function InstalledResources({
       ])
 
       if (requestGeneration === requestGenerationRef.current) {
-        setInstalls(normalizeInstalls(items))
+        setInstalls(normalizeInstalls(items, excludeGroupOwned))
         setSkillBindings(bindings)
       }
     } catch {
@@ -203,7 +253,7 @@ export function InstalledResources({
         setIsLoading(false)
       }
     }
-  }, [groupNamespacesKey, isGroupMode, resourceType])
+  }, [excludeGroupOwned, groupNamespacesKey, isGroupMode, resourceType])
 
   useEffect(() => {
     void loadInstalls()
@@ -217,6 +267,14 @@ export function InstalledResources({
     const normalizedKeyword = keyword?.trim().toLowerCase() || ''
     return installs.filter(install => matchesKeyword(install.listing, normalizedKeyword))
   }, [installs, keyword])
+
+  useEffect(() => {
+    onListStateChange?.({
+      loading: isLoading,
+      hasItems: filteredInstalls.length > 0,
+      hasError,
+    })
+  }, [filteredInstalls.length, hasError, isLoading, onListStateChange])
 
   const handleUse = (listing: ResourceLibraryListing) => {
     if (listing.resource_type !== 'agent') return
@@ -290,6 +348,8 @@ export function InstalledResources({
   }
 
   if (isLoading) {
+    if (hideLoadingState) return null
+
     return (
       <div
         className={getResourceGridClassName(true)}
@@ -325,6 +385,8 @@ export function InstalledResources({
   }
 
   if (filteredInstalls.length === 0) {
+    if (hideEmptyState) return null
+
     return (
       <div
         className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary"
@@ -341,6 +403,13 @@ export function InstalledResources({
         {filteredInstalls.map(install => {
           const title = install.listing.display_name || install.listing.name
           const isRemoving = removingInstallId === install.id
+          const group = groups.find(item => item.name === install.installed_reference.namespace)
+          const canEditGroupSkill =
+            isGroupMode &&
+            resourceType === 'skill' &&
+            (user?.role === 'admin' ||
+              String(install.listing.publisher_user_id) === String(user?.id) ||
+              canEditContent(group?.my_role))
 
           return (
             <ResourceListingCard
@@ -375,38 +444,50 @@ export function InstalledResources({
               }
               managementFooterAction={
                 resourceType === 'skill' ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-11 w-full gap-1.5 text-xs md:h-8"
-                    disabled={isRemoving}
-                    onClick={() =>
-                      isGroupMode
-                        ? handleViewDetails(install.listing)
-                        : handleConfigureAddedSkill(install)
-                    }
-                    aria-label={`${isGroupMode ? t('actions.details') : tSettings('skills.autoSettings.configure')} ${title}`}
-                    title={
-                      isGroupMode
-                        ? t('actions.details')
-                        : tSettings('skills.autoSettings.configure')
-                    }
-                    data-testid={
-                      isGroupMode
-                        ? `view-shared-skill-${install.id}-button`
-                        : `configure-added-skill-${install.id}-button`
-                    }
-                  >
-                    {isGroupMode ? (
-                      <Eye className="h-4 w-4" aria-hidden />
-                    ) : (
-                      <Settings2 className="h-4 w-4" aria-hidden />
+                  <div className="flex gap-2">
+                    {canEditGroupSkill && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-11 min-w-0 flex-1 gap-1.5 text-xs md:h-8"
+                        disabled={isRemoving}
+                        onClick={() => setEditingGroupSkill(install)}
+                        aria-label={`${t('actions.edit')} ${title}`}
+                        data-testid={`edit-shared-skill-${install.id}-button`}
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden />
+                        {t('actions.edit')}
+                      </Button>
                     )}
-                    {isGroupMode
-                      ? t('actions.details')
-                      : tSettings('skills.autoSettings.configure')}
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-11 min-w-0 flex-1 gap-1.5 text-xs md:h-8"
+                      disabled={isRemoving}
+                      onClick={() =>
+                        isGroupMode
+                          ? handleViewDetails(install.listing)
+                          : handleConfigureAddedSkill(install)
+                      }
+                      aria-label={`${isGroupMode ? t('actions.details') : tSettings('skills.autoSettings.configure')} ${title}`}
+                      data-testid={
+                        isGroupMode
+                          ? `view-shared-skill-${install.id}-button`
+                          : `configure-added-skill-${install.id}-button`
+                      }
+                    >
+                      {isGroupMode ? (
+                        <Eye className="h-4 w-4" aria-hidden />
+                      ) : (
+                        <Settings2 className="h-4 w-4" aria-hidden />
+                      )}
+                      {isGroupMode
+                        ? t('actions.details')
+                        : tSettings('skills.autoSettings.configure')}
+                    </Button>
+                  </div>
                 ) : undefined
               }
             />
@@ -432,6 +513,18 @@ export function InstalledResources({
             binding => binding.skill_ref.skill_id === configuringSkill?.id
           )}
           onBindingChange={handleBindingChange}
+        />
+      )}
+
+      {editingGroupSkill && (
+        <SkillUploadModal
+          open
+          skill={buildEditableGroupSkill(editingGroupSkill)}
+          namespace={editingGroupSkill.installed_reference.namespace}
+          onClose={saved => {
+            setEditingGroupSkill(null)
+            if (saved) void loadInstalls()
+          }}
         />
       )}
 

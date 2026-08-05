@@ -357,7 +357,7 @@ describe('MyResources', () => {
     )
   })
 
-  it('includes added skills in the internal aggregate source', async () => {
+  it('keeps added skills out of the created-by-me source', async () => {
     render(
       <MyResources
         allowedTypes={['skill']}
@@ -369,7 +369,7 @@ describe('MyResources', () => {
 
     expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
       'data-show-auto-enabled',
-      'true'
+      'false'
     )
   })
 

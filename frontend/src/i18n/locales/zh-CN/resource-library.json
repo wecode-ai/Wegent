@@ -32,6 +32,7 @@
   },
   "sources": {
     "all": "全部",
+    "mine": "我创建的",
     "personal": "我创建的",
     "group": "团队共享",
     "installed": "已添加",
@@ -69,6 +70,7 @@
     "installed": "已添加",
     "publish": "发布资源",
     "publish_new_version": "发布新版本",
+    "edit": "编辑",
     "edit_skill": "编辑技能",
     "edit_and_publish": "编辑并发布新版本",
     "upgrade": "升级",
@@ -193,6 +195,7 @@
     "required": "发布到市场时至少选择一个标签",
     "single_skill_required": "通过 Git 发布到市场时一次只能选择一个技能",
     "all": "全部",
+    "featured": "精选",
     "edit_title": "编辑市场标签",
     "edit_description": "无需重新上传资源包，可单独调整市场分类标签。",
     "skill_keywords_fallback": "该技能尚未配置市场分类，当前展示技能关键词"
