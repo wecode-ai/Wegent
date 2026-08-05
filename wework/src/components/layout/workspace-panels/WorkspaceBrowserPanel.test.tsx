@@ -36,6 +36,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   listenEmbeddedBrowserDownloads: vi.fn(),
   listenEmbeddedBrowserInvalidTlsCertificates: vi.fn(),
   listenEmbeddedBrowserLocalFilePreview: vi.fn(),
+  listenEmbeddedBrowserPageStateChanges: vi.fn(),
   navigateEmbeddedBrowser: vi.fn(),
   openEmbeddedBrowser: vi.fn(),
   pauseEmbeddedBrowserDownload: vi.fn(),
@@ -93,6 +94,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserLocalFilePreview.mockReturnValue(null)
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockReturnValue(null)
     localTerminalMocks.revealLocalFile.mockResolvedValue(undefined)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
@@ -215,6 +217,76 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('uses concise tab titles for local files and directories', async () => {
+    const onTitleChange = vi.fn()
+    mockBrowserHostRect()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: null,
+      url: 'file:///Users/me/test%20file.md',
+    })
+    const { rerender } = render(<WorkspaceBrowserPanel active onTitleChange={onTitleChange} />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: '/Users/me/test file.md' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => expect(onTitleChange).toHaveBeenCalledWith('test file.md'))
+    expect(onTitleChange).not.toHaveBeenCalledWith('file:///Users/me/test%20file.md')
+
+    onTitleChange.mockClear()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: null,
+      url: 'file:///Users/me/',
+    })
+    rerender(<WorkspaceBrowserPanel active={false} onTitleChange={onTitleChange} />)
+    rerender(<WorkspaceBrowserPanel active onTitleChange={onTitleChange} />)
+
+    fireEvent.change(input, { target: { value: '/Users/me/' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => expect(onTitleChange).toHaveBeenCalledWith('Index of /Users/me'))
+    expect(onTitleChange).not.toHaveBeenCalledWith('file:///Users/me/')
+  })
+
+  test('syncs the address bar when native browser navigation changes the page URL', async () => {
+    let handlePageStateChange!: (pageState: {
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      invalidTlsCertificate?: null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    mockBrowserHostRect()
+    embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Users',
+      url: 'file:///Users/',
+    })
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: '/Users' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    act(() => {
+      handlePageStateChange({
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'mowei',
+        url: 'file:///Users/mowei/',
+        invalidTlsCertificate: null,
+      })
+    })
+
+    expect(input).toHaveValue('file:///Users/mowei/')
   })
 
   test('warns when the native browser accepts an invalid TLS certificate', async () => {

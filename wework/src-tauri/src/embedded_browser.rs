@@ -59,7 +59,7 @@ pub(crate) use local_file_preview::{
 };
 use local_file_preview::{
     build_directory_preview, build_text_preview, file_url_path, is_generated_preview_path,
-    is_natively_renderable_html,
+    is_natively_renderable_html, local_file_browser_title,
 };
 use popup::{classify_popup_url, emit_popup_observed};
 use screenshot::screenshot_embedded_browser;
@@ -78,6 +78,8 @@ const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT: &str =
     "wework:embedded-browser-local-file-preview";
+const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT: &str =
+    "wework:embedded-browser-page-state-change";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
 const EMBEDDED_BROWSER_AGENT_STATE_EVENT: &str = "wework:embedded-browser-agent-state";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
@@ -230,6 +232,16 @@ struct EmbeddedBrowserLocalFilePreviewPayload {
     label: String,
     native_label: String,
     url: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserPageStateChangePayload {
+    label: String,
+    native_label: String,
+    title: Option<String>,
+    url: Option<String>,
+    invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
 }
 
 #[derive(Clone)]
@@ -618,21 +630,6 @@ fn get_entry(state: &EmbeddedBrowserState, label: &str) -> Result<EmbeddedBrowse
     ready_logical_entry(&webviews, label, EmbeddedBrowserEntry::readiness).cloned()
 }
 
-fn set_entry_url(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    url: impl Into<Option<String>>,
-) -> Result<(), String> {
-    let mut webviews = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-    if let Some(entry) = webviews.get_mut(label) {
-        entry.url = url.into();
-    }
-    Ok(())
-}
-
 fn update_entry_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
@@ -729,6 +726,40 @@ fn page_state_for_label(
         title: entry.title,
         url: entry.url,
     })
+}
+
+fn emit_page_state_change(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    label: String,
+    native_label: String,
+) {
+    let (title, url) = state
+        .webviews
+        .lock()
+        .ok()
+        .and_then(|webviews| {
+            webviews
+                .get(&label)
+                .filter(|entry| entry.native_label == native_label)
+                .map(|entry| (entry.title.clone(), entry.url.clone()))
+        })
+        .unwrap_or((None, None));
+    #[cfg(target_os = "macos")]
+    let invalid_tls_certificate =
+        crate::embedded_browser_tls::invalid_tls_certificate(&native_label);
+    #[cfg(not(target_os = "macos"))]
+    let invalid_tls_certificate = None;
+    let _ = app.emit(
+        EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+        EmbeddedBrowserPageStateChangePayload {
+            label,
+            native_label,
+            title,
+            url,
+            invalid_tls_certificate,
+        },
+    );
 }
 
 fn embedded_browser_entry_snapshot(state: &EmbeddedBrowserState, label: &str) -> Option<Value> {
@@ -1211,6 +1242,10 @@ pub async fn embedded_browser_open(
     let label = browser_label(label);
     let _lifecycle = state.lifecycle.lock().await;
     let display_url = resolve_browser_navigation_url(&state, &url)?;
+    let initial_title = browser_url(&url)
+        .ok()
+        .filter(|url| url.scheme() == "file")
+        .and_then(|url| local_file_browser_title(&url));
     let normalized_bounds = normalize_bounds(bounds);
 
     let existing = {
@@ -1269,7 +1304,11 @@ pub async fn embedded_browser_open(
             );
             return Err(error);
         }
-        set_entry_url(&state, &label, Some(url.clone()))?;
+        let initial_title_for_entry = initial_title.clone();
+        update_entry_for_native_label(&state, &entry.native_label, |entry| {
+            entry.url = Some(url.clone());
+            entry.title = initial_title_for_entry;
+        })?;
         log_embedded_browser_diagnostic(
             &state,
             &label,
@@ -1287,7 +1326,7 @@ pub async fn embedded_browser_open(
             #[cfg(not(target_os = "macos"))]
             invalid_tls_certificate: None,
             native_label: entry.native_label,
-            title: entry.title,
+            title: initial_title,
             url: Some(url),
         });
     }
@@ -1309,12 +1348,13 @@ pub async fn embedded_browser_open(
     let label_for_load = label.clone();
     let label_for_popup = label.clone();
     let app_for_navigation = app.clone();
+    let app_for_load = app.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
     let entry = EmbeddedBrowserEntry {
         native_label: native_label.clone(),
-        title: None,
+        title: initial_title.clone(),
         url: Some(url.clone()),
         opened_at_unix_ms: current_unix_millis(),
         phase: EmbeddedBrowserPhase::Opening,
@@ -1455,6 +1495,12 @@ pub async fn embedded_browser_open(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| entry.url = Some(loaded_url),
+                    );
+                    emit_page_state_change(
+                        &app_for_load,
+                        &load_state_handle,
+                        owner.clone(),
+                        native_label_for_load.clone(),
                     );
                 }
                 log_embedded_browser_page_diagnostics(
@@ -1688,7 +1734,7 @@ pub async fn embedded_browser_open(
         #[cfg(not(target_os = "macos"))]
         invalid_tls_certificate: None,
         native_label,
-        title: None,
+        title: initial_title,
         url: Some(url),
     })
 }

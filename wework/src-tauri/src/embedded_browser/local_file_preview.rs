@@ -51,6 +51,17 @@ pub(crate) fn file_url_path(url: &tauri::Url) -> Result<PathBuf, String> {
         .map_err(|_| format!("Unable to convert file URL to a path: {url}"))
 }
 
+pub(crate) fn local_file_browser_title(url: &tauri::Url) -> Option<String> {
+    let path = file_url_path(url).ok()?;
+    if path.is_dir() {
+        return Some(format!("Index of {}", path.display()));
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .or_else(|| Some(path.display().to_string()))
+}
+
 #[derive(Clone)]
 pub(crate) struct DirectoryEntry {
     pub(crate) name: String,

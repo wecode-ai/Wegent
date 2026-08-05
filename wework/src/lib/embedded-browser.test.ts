@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import {
   EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+  EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
   clearEmbeddedBrowserData,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPageStateChanges,
   relabelEmbeddedBrowser,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
@@ -133,6 +135,17 @@ describe('embedded-browser', () => {
 
     expect(eventMocks.listen).toHaveBeenCalledWith(
       EMBEDDED_BROWSER_AGENT_STATE_EVENT,
+      expect.any(Function)
+    )
+  })
+
+  test('listens for embedded browser page state changes', async () => {
+    const handler = vi.fn()
+
+    await listenEmbeddedBrowserPageStateChanges(handler)
+
+    expect(eventMocks.listen).toHaveBeenCalledWith(
+      EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
       expect.any(Function)
     )
   })

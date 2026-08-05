@@ -14,11 +14,12 @@ use super::{
     browser_open_action, browser_webview_url, consume_approved_agent_risk,
     directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
     file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
-    logical_owner_for_native_label, merge_request_option, native_webview_label, read_http_request,
-    ready_logical_entry, register_agent_approval, register_preview_source, relabel_logical_entry,
-    remove_logical_entry_if_native_matches, resolve_browser_navigation_url, script_browser_action,
-    script_resolve_inspect_target, script_semantic_inspect, should_record_loaded_url,
-    update_logical_entry_if_native_matches, wait_for_browser_ready, DirectoryEntry,
+    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
+    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
+    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
+    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
+    script_semantic_inspect, should_record_loaded_url, update_logical_entry_if_native_matches,
+    wait_for_browser_ready, DirectoryEntry,
     EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
     EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
     EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
@@ -161,6 +162,10 @@ fn directory_preview_navigation_updates_to_nested_directory_url() {
         loaded_browser_url(&state, root_display.as_str()),
         Some(root_url.to_string())
     );
+    assert_eq!(
+        local_file_browser_title(&root_url),
+        Some(format!("Index of {}", root.display()))
+    );
 
     let nested_url = browser_file_url_from_path(&nested).unwrap();
     let nested_display = resolve_browser_navigation_url(&state, nested_url.as_str()).unwrap();
@@ -194,6 +199,10 @@ fn text_file_urls_use_generated_preview_pages() {
     fs::write(&binary_path, [0x50, 0x4b, 0x03, 0x04, 0x00]).unwrap();
 
     let markdown_url = browser_file_url_from_path(&markdown_path).unwrap();
+    assert_eq!(
+        local_file_browser_title(&markdown_url),
+        Some("README.md".to_string())
+    );
     let markdown_display = resolve_browser_navigation_url(&state, markdown_url.as_str()).unwrap();
     assert_ne!(markdown_display.as_str(), markdown_url.as_str());
     let markdown_preview = fs::read_to_string(file_url_path(&markdown_display).unwrap()).unwrap();

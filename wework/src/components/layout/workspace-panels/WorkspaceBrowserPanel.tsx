@@ -36,6 +36,7 @@ import {
   goForwardEmbeddedBrowser,
   listenEmbeddedBrowserInvalidTlsCertificates,
   listenEmbeddedBrowserLocalFilePreview,
+  listenEmbeddedBrowserPageStateChanges,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -131,6 +132,14 @@ function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
 function getFallbackBrowserTitle(url: string) {
   try {
     const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') {
+      const pathname = decodeURIComponent(parsedUrl.pathname)
+      const normalizedPath = pathname.replace(/\/+$/, '')
+      if (parsedUrl.pathname.endsWith('/')) {
+        return `Index of ${normalizedPath || '/'}`
+      }
+      return normalizedPath.split('/').filter(Boolean).pop() || normalizedPath || url
+    }
     return parsedUrl.hostname.replace(/^www\./, '') || url
   } catch {
     return url
@@ -957,6 +966,38 @@ export function WorkspaceBrowserPanel({
     [onFaviconChange, onTitleChange]
   )
 
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+      if (!activeRef.current || pageState.nativeLabel !== nativeLabelRef.current) return
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+      const nextUrl = pageState.url || currentUrlRef.current
+      updatePageUrl(nextUrl)
+      if (nextUrl) {
+        onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
+        onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
+      }
+      setStatus('ready')
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser page state changes:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [onFaviconChange, onTitleChange, updatePageUrl])
+
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
       if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
@@ -1739,6 +1780,9 @@ export function WorkspaceBrowserPanel({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    addressEditingRef.current = false
+    const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
+    urlInput?.blur()
     openBrowserUrl(address)
   }
 
@@ -1940,6 +1984,7 @@ export function WorkspaceBrowserPanel({
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
             <input
+              name="url"
               data-testid="workspace-browser-url-input"
               value={address}
               onChange={event => setAddress(event.target.value)}

@@ -13,6 +13,7 @@ export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
 export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
   'wework:embedded-browser-local-file-preview'
+export const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT = 'wework:embedded-browser-page-state-change'
 export const EMBEDDED_BROWSER_CLOSE_EVENT = 'wework:embedded-browser-close'
 export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
   'wework:embedded-browser-invalid-tls-certificate'
@@ -148,6 +149,15 @@ export function listenEmbeddedBrowserLocalFilePreview(
     EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
     event => handler(event.payload)
   )
+}
+
+export function listenEmbeddedBrowserPageStateChanges(
+  handler: (event: EmbeddedBrowserPageState) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserPageState>(EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT, event => {
+    handler(event.payload)
+  })
 }
 
 export function listenEmbeddedBrowserCloseRequests(
