@@ -13,9 +13,10 @@ tables, renamed source_provider values, and added restricted-sharing columns.
 Fresh installs get the final schema in one revision.
 
 Schema follows production DB audit rules: every column has COMMENT, non-PK
-columns are NOT NULL with explicit DEFAULT, no ENUM, no foreign keys, no
-table/column collation overrides, unique indexes use uniq_ prefix, and
-optional API values use sentinels (0 / '' / 1970-01-01 00:00:00.000000).
+columns are NOT NULL with explicit DEFAULT (JSON columns intentionally omit
+DEFAULT per DBA guidance; the app always writes []/{}), no ENUM, no foreign
+keys, no table/column collation overrides, unique indexes use uniq_ prefix,
+and optional API values use sentinels (0 / '' / 1970-01-01 00:00:00.000000).
 """
 
 from typing import Sequence, Union
@@ -125,15 +126,13 @@ def upgrade() -> None:
             "keywords_json",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'[]'"),
-            comment="Search keywords JSON array",
+            comment="Search keywords JSON array; app writes [] when unset",
         ),
         sa.Column(
             "interface_json",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'"),
-            comment="Composer/UI interface metadata JSON object",
+            comment="Composer/UI interface metadata JSON object; app writes {} when unset",
         ),
         sa.Column(
             "visibility",
@@ -237,15 +236,13 @@ def upgrade() -> None:
             "manifest_json",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'"),
-            comment="Parsed package manifest JSON object",
+            comment="Parsed package manifest JSON object; app writes {} when unset",
         ),
         sa.Column(
             "interface_json",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'"),
-            comment="Release interface metadata JSON object",
+            comment="Release interface metadata JSON object; app writes {} when unset",
         ),
         sa.Column(
             "release_notes",
@@ -293,8 +290,7 @@ def upgrade() -> None:
             "scan_report_json",
             sa.JSON(),
             nullable=False,
-            server_default=sa.text("'{}'"),
-            comment="Security scan report JSON object",
+            comment="Security scan report JSON object; app writes {} when unset",
         ),
         sa.Column(
             "created_by_user_id",

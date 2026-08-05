@@ -140,15 +140,13 @@ class Plugin(Base):
         JSON,
         nullable=False,
         default=list,
-        server_default="[]",
-        comment="Search keywords JSON array",
+        comment="Search keywords JSON array; app writes [] when unset",
     )
     interface_json = Column(
         JSON,
         nullable=False,
         default=dict,
-        server_default="{}",
-        comment="Composer/UI interface metadata JSON object",
+        comment="Composer/UI interface metadata JSON object; app writes {} when unset",
     )
     visibility = Column(
         String(20),
@@ -258,15 +256,13 @@ class PluginRelease(Base):
         JSON,
         nullable=False,
         default=dict,
-        server_default="{}",
-        comment="Parsed package manifest JSON object",
+        comment="Parsed package manifest JSON object; app writes {} when unset",
     )
     interface_json = Column(
         JSON,
         nullable=False,
         default=dict,
-        server_default="{}",
-        comment="Release interface metadata JSON object",
+        comment="Release interface metadata JSON object; app writes {} when unset",
     )
     release_notes = Column(
         String(4096),
@@ -314,8 +310,7 @@ class PluginRelease(Base):
         JSON,
         nullable=False,
         default=dict,
-        server_default="{}",
-        comment="Security scan report JSON object",
+        comment="Security scan report JSON object; app writes {} when unset",
     )
     created_by_user_id = Column(
         big_integer_id_type(),
