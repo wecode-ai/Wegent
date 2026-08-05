@@ -26,6 +26,7 @@ interface DiscoverResourcesProps {
   targetNamespace?: string
   leadingFilterControls?: ReactNode
   hideSearch?: boolean
+  systemOnly?: boolean
 }
 
 const RESOURCE_LIBRARY_PAGE_SIZE = 20
@@ -60,6 +61,7 @@ export function DiscoverResources({
   targetNamespace = 'default',
   leadingFilterControls,
   hideSearch = false,
+  systemOnly = false,
 }: DiscoverResourcesProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -141,6 +143,7 @@ export function DiscoverResources({
           resourceType,
           ...(keyword ? { keyword } : {}),
           ...(selectedTag ? { tags: [selectedTag] } : {}),
+          ...(systemOnly && !selectedTag ? { systemOnly: true } : {}),
           targetNamespace,
           cursor,
           limit: RESOURCE_LIBRARY_PAGE_SIZE,
@@ -175,7 +178,7 @@ export function DiscoverResources({
         }
       }
     },
-    [keyword, resourceType, selectedTag, targetNamespace]
+    [keyword, resourceType, selectedTag, systemOnly, targetNamespace]
   )
 
   useEffect(() => {
@@ -346,7 +349,7 @@ export function DiscoverResources({
             aria-pressed={!selectedTag}
             data-testid="marketplace-tag-filter-all"
           >
-            {t('marketplace_tags.all')}
+            {t(systemOnly ? 'marketplace_tags.featured' : 'marketplace_tags.all')}
           </Button>
           {enabledMarketplaceTags.map(item => (
             <Button

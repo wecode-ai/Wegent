@@ -32,6 +32,7 @@
   },
   "sources": {
     "all": "All",
+    "mine": "Created by me",
     "personal": "Created by me",
     "group": "Team shared",
     "installed": "Added",
@@ -69,6 +70,7 @@
     "installed": "Added",
     "publish": "Publish Resource",
     "publish_new_version": "Publish New Version",
+    "edit": "Edit",
     "edit_skill": "Edit Skill",
     "edit_and_publish": "Edit and Publish New Version",
     "upgrade": "Upgrade",
@@ -193,6 +195,7 @@
     "required": "Select at least one tag when publishing to the marketplace",
     "single_skill_required": "Select exactly one Skill when publishing a Git import to the marketplace",
     "all": "All",
+    "featured": "Featured",
     "edit_title": "Edit marketplace tags",
     "edit_description": "Update marketplace classification without uploading the resource package again.",
     "skill_keywords_fallback": "This Skill has no marketplace category, so its package keywords are shown instead"
