@@ -2,6 +2,7 @@ import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 
 const MODEL_RESOURCES_URL = '/resource-library?tab=mine&type=model&scope=personal'
+const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
 async function expectModelResourcePage(page: Page) {
   await expect(page).toHaveURL(/\/resource-library/)
@@ -72,6 +73,7 @@ test.describe('Settings - Model Management', () => {
 
   test('should configure an LLM with an image understanding sidecar', async ({
     page,
+    request,
     testPrefix,
   }) => {
     const visionModelName = TestData.uniqueName(`${testPrefix}-vision`)
@@ -82,7 +84,7 @@ test.describe('Settings - Model Management', () => {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     }
-    const createResponse = await page.request.post('/api/v1/namespaces/default/models', {
+    const createResponse = await request.post(`${API_BASE_URL}/api/v1/namespaces/default/models`, {
       headers,
       data: {
         apiVersion: 'agent.wecode.io/v1',
@@ -130,8 +132,8 @@ test.describe('Settings - Model Management', () => {
 
       await expect
         .poll(async () => {
-          const response = await page.request.get(
-            `/api/v1/namespaces/default/models/${primaryModelName}`,
+          const response = await request.get(
+            `${API_BASE_URL}/api/v1/namespaces/default/models/${primaryModelName}`,
             { headers }
           )
           if (!response.ok()) return null
@@ -147,8 +149,8 @@ test.describe('Settings - Model Management', () => {
         })
     } finally {
       for (const modelName of [primaryModelName, visionModelName]) {
-        const deleteResponse = await page.request.delete(
-          `/api/v1/namespaces/default/models/${modelName}`,
+        const deleteResponse = await request.delete(
+          `${API_BASE_URL}/api/v1/namespaces/default/models/${modelName}`,
           { headers }
         )
         expect([200, 204, 404]).toContain(deleteResponse.status())
