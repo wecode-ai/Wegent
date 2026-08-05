@@ -8,7 +8,7 @@ export const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
 export const KIMI_K27_CATALOG_MODEL_ID = 'wework-kimi-k2-7'
 export const DEEPSEEK_V4_FLASH_MODEL_ID = 'deepseek-v4-flash'
 export const DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash'
-export const DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID = 'wework-deepseek-v4-flash-vision'
+export const VISION_SIDECAR_CATALOG_MODEL_ID = 'wework-vision-sidecar'
 export const DEEPSEEK_V4_CONTEXT_WINDOW = 1_048_576
 
 export interface LocalModelConfig {
