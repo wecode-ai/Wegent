@@ -296,6 +296,10 @@ pnpm run dev
 
 The repository root `pnpm-workspace.yaml` declares the dependency build-script allowlist required by pnpm and disables `node_modules` rebuild confirmation in non-interactive environments. Developers and Git hooks should run `pnpm install` from the repository root and should not maintain separate `approve-builds` settings in subdirectories.
 
+`pnpm-workspace.yaml` can also use `patchedDependencies` to pin compatibility fixes for third-party packages. When adding or updating a patch, commit its matching file under `patches/` and refresh the root `pnpm-lock.yaml`; do not modify installed `node_modules` directly.
+
+Wework production builds target Safari 13 to support the WebKit shipped with OS X 10.13. After adding a browser-side dependency, run `pnpm --filter wework build` so modern syntax that cannot be lowered is exposed before release.
+
 ### Step 6: Install Executor Manager
 
 [Local Development](/executor_manager/README.md)

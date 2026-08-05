@@ -1,0 +1,74 @@
+diff --git a/dist/constants.js b/dist/constants.js
+index a898e91bdc137d9fcadb04d14e49ef197dd30d0e..ca569caa81c7436519aa3486300d689cb3b8564b 100644
+--- a/dist/constants.js
++++ b/dist/constants.js
+@@ -12,7 +12,7 @@ const GIT_DIFF_FILE_BREAK_REGEX = /(?=^diff --git)/gm;
+ const UNIFIED_DIFF_FILE_BREAK_REGEX = /(?=^---\s+\S)/gm;
+ const FILE_CONTEXT_BLOB = /(?=^@@ )/gm;
+ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: (.*))?/m;
+-const SPLIT_WITH_NEWLINES = /(?<=\n)/;
++const SPLIT_WITH_NEWLINES = /\n/;
+ const FILENAME_HEADER_REGEX = /^(---|\+\+\+)\s+([^\t\r\n]+)/;
+ const FILENAME_HEADER_REGEX_GIT = /^(---|\+\+\+)\s+[ab]\/([^\t\r\n]+)/;
+ const ALTERNATE_FILE_NAMES_GIT = /^diff --git (?:"a\/(.+?)"|a\/(.+?)) (?:"b\/(.+?)"|b\/(.+?))$/;
+diff --git a/dist/utils/splitFileContents.js b/dist/utils/splitFileContents.js
+index 07fe419a2ec7b42f6f586280128b0676d709f8d6..471ff3ab8125d129c23dd513ee147e88456bab55 100644
+--- a/dist/utils/splitFileContents.js
++++ b/dist/utils/splitFileContents.js
+@@ -1,5 +1,3 @@
+-import { SPLIT_WITH_NEWLINES } from "../constants.js";
+-
+ //#region src/utils/splitFileContents.ts
+ /**
+ * Splits file contents into lines using the same logic as diff parsing.
+@@ -9,7 +7,7 @@ import { SPLIT_WITH_NEWLINES } from "../constants.js";
+ * @returns Array of lines with newlines preserved
+ */
+ function splitFileContents(contents) {
+-	return contents !== "" ? contents.split(SPLIT_WITH_NEWLINES) : [];
++	return contents !== "" ? contents.match(/[^\n]*\n|[^\n]+$/g) || [] : [];
+ }
+ 
+ //#endregion
+diff --git a/dist/worker/worker-portable.js b/dist/worker/worker-portable.js
+index 8c08d8a72c09b5a5345c7ee3363d47ad2ee382a0..4bdf0aad175e01454c33f44f1ebf13516c1348dc 100644
+--- a/dist/worker/worker-portable.js
++++ b/dist/worker/worker-portable.js
+@@ -12158,7 +12158,6 @@ const GIT_DIFF_FILE_BREAK_REGEX = /(?=^diff --git)/gm;
+ const UNIFIED_DIFF_FILE_BREAK_REGEX = /(?=^---\s+\S)/gm;
+ const FILE_CONTEXT_BLOB = /(?=^@@ )/gm;
+ const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: (.*))?/m;
+-const SPLIT_WITH_NEWLINES = /(?<=\n)/;
+ const FILENAME_HEADER_REGEX = /^(---|\+\+\+)\s+([^\t\r\n]+)/;
+ const FILENAME_HEADER_REGEX_GIT = /^(---|\+\+\+)\s+[ab]\/([^\t\r\n]+)/;
+ const ALTERNATE_FILE_NAMES_GIT = /^diff --git (?:"a\/(.+?)"|a\/(.+?)) (?:"b\/(.+?)"|b\/(.+?))$/;
+@@ -16983,7 +16982,7 @@ function iterateOverFile({ lines, startingLine = 0, totalLines = Infinity, callb
+ * @returns Array of lines with newlines preserved
+ */
+ function splitFileContents(contents) {
+-	return contents !== "" ? contents.split(SPLIT_WITH_NEWLINES) : [];
++	return contents !== "" ? contents.match(/[^\n]*\n|[^\n]+$/g) || [] : [];
+ }
+ 
+ //#endregion
+diff --git a/dist/worker/worker.js b/dist/worker/worker.js
+index 0bddd5f0746323320499b2a2a229fa7b63602427..407d42276d762a3cd7368df46f3c9fbfecd710ba 100644
+--- a/dist/worker/worker.js
++++ b/dist/worker/worker.js
+@@ -14,7 +14,6 @@ const DIFFS_DEVELOPMENT_BUILD = (() => {
+ 		return false;
+ 	}
+ })();
+-const SPLIT_WITH_NEWLINES = /(?<=\n)/;
+ const DEFAULT_THEMES = {
+ 	dark: "pierre-dark",
+ 	light: "pierre-light"
+@@ -1606,7 +1605,7 @@ function iterateOverFile({ lines, startingLine = 0, totalLines = Infinity, callb
+ * @returns Array of lines with newlines preserved
+ */
+ function splitFileContents(contents) {
+-	return contents !== "" ? contents.split(SPLIT_WITH_NEWLINES) : [];
++	return contents !== "" ? contents.match(/[^\n]*\n|[^\n]+$/g) || [] : [];
+ }
+ 
+ //#endregion
