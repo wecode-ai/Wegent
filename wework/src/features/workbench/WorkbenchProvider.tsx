@@ -11,7 +11,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
@@ -635,7 +635,7 @@ export function WorkbenchProvider({
               : undefined,
           },
         })
-      }, 100)
+      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
     }
     schedule()
     return () => {

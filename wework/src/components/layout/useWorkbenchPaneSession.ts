@@ -6,6 +6,7 @@ import {
   summarizeRuntimePaneMemory,
   summarizeMessages,
   updateRuntimePaneDebugSnapshot,
+  DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
 import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
@@ -2201,7 +2202,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           goal,
           goalDraftActive,
         })
-      }, 100)
+      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
     }
     schedule()
     return () => {
