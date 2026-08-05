@@ -20,8 +20,10 @@ Verified gs:// consumption: ``{"type": "media", "file_uri": "gs://...",
 Verified image consumption: ``image_url`` data URL.
 
 Error classification:
-- 401/403/permission → :class:`PermanentError` (gemini_auth) — bad key, fail fast.
-- 429/quota_exhausted → :class:`PermanentError` (gemini_quota) — retrying wastes money.
+- explicit quota/rate-limit markers → :class:`PermanentError` (gemini_quota) —
+  retrying wastes money.
+- otherwise 401/403/permission → :class:`PermanentError` (gemini_auth) — bad
+  key, fail fast.
 - 5xx/overloaded/timeout → :class:`TransientError` (gemini_server) — Celery retries.
 - empty/blocked response → :class:`PermanentError` (gemini_empty_response).
 """
@@ -54,7 +56,14 @@ _MAX_INLINE_IMAGE_BYTES = 1024 * 1024  # 1 MB after preprocessing
 # Substrings that identify error categories in the SDK's exception text. The
 # google-genai SDK raises generic exceptions whose messages embed the status.
 _AUTH_MARKERS = ("401", "403", "api key", "api_key", "permission", "unauthorized")
-_QUOTA_MARKERS = ("429", "rate limit", "rate_limit", "quota_exhausted", "quota")
+_QUOTA_MARKERS = (
+    "429",
+    "rate limit",
+    "rate_limit",
+    "quota_exhausted",
+    "quota",
+    "额度已用完",
+)
 _TRANSIENT_MARKERS = (
     "500",
     "502",
@@ -244,10 +253,10 @@ class GeminiMultimodalAnalyzer:
     def _classify_error(exc: Exception) -> VideoAnalysisError:
         """Map a raw SDK exception to a Transient/Permanent error."""
         msg_lower = str(exc).lower()
-        if any(k in msg_lower for k in _AUTH_MARKERS):
-            return PermanentError("gemini_auth", f"Gemini auth error: {exc}")
         if any(k in msg_lower for k in _QUOTA_MARKERS):
             return PermanentError("gemini_quota", f"Gemini quota exhausted: {exc}")
+        if any(k in msg_lower for k in _AUTH_MARKERS):
+            return PermanentError("gemini_auth", f"Gemini auth error: {exc}")
         if any(k in msg_lower for k in _TRANSIENT_MARKERS):
             return TransientError("gemini_server", f"Gemini server error: {exc}")
         return PermanentError("gemini_unknown", f"Gemini error: {exc}")
