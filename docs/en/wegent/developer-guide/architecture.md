@@ -337,7 +337,17 @@ EXECUTOR_PORT_RANGE_MIN: 10001      # Port range start
 EXECUTOR_PORT_RANGE_MAX: 10100      # Port range end
 NETWORK: wegent-network              # Docker network
 EXECUTOR_IMAGE: wegent-executor:latest # Executor image
+EXECUTOR_WARMPOOL_ENABLED: false     # Let standard Executors claim warm Pods
+EXECUTOR_WARMPOOL_TEMPLATE_NAME: ""  # Dedicated Executor SandboxTemplate
 ```
+
+#### Kubernetes Executor warm pool
+
+A Kubernetes deployment can provide a dedicated Executor warm pool for standard `online` tasks. It uses a different `SandboxTemplate` and `SandboxWarmPool` from the interactive Sandbox pool so resource shapes, environment variables, and cleanup policies remain independent. Only tasks using the default Executor image without a `base_image`, task-specific volumes, or GitHub repository proxy are eligible; all other tasks continue through direct Pod creation.
+
+A warm Pod starts with static runtime configuration only. It does not contain a task ID, authentication token, skill identity, or task heartbeat ID. After Executor Manager claims the Pod, it applies non-sensitive task labels; the first `/v1/responses` request then binds the logical Executor identity and starts the dynamic task heartbeat. Rollout should create and verify the pool resources before setting `EXECUTOR_WARMPOOL_ENABLED=true` to route traffic.
+
+Warm Executor deletion uses the `SandboxClaim` as the ownership boundary. Explicit deletion, task-ID deletion, and orphan cleanup delete the Claim first so the controller cascades cleanup to the Sandbox, Service, and Pod. Orphan scans exclude `pool-state=standby` capacity and use Claim labels to find bindings whose Pod is already missing. Successful deletion also removes the task heartbeat, RunningTaskTracker state, and Redis executor binding.
 
 ---
 
