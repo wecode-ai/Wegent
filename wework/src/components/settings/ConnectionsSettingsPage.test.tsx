@@ -10,6 +10,8 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
@@ -556,6 +558,37 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('local-model-save-button')).toBeInTheDocument()
     expect(screen.queryByTestId('local-model-catalog-json-input')).not.toBeInTheDocument()
     expect(screen.getAllByTestId('local-model-context-window-input')).toHaveLength(1)
+  })
+
+  test('offers image-capable local models as vision proxies', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision Model',
+      toolProfile: 'custom',
+    })
+    catalogEntry.input_modalities = ['text', 'image']
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision Model',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry,
+      enabled: true,
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'deepseek')
+
+    const visionSelect = screen.getByTestId('local-model-vision-proxy-select')
+    expect(visionSelect).toHaveTextContent('Vision Model')
+    await userEvent.selectOptions(visionSelect, 'vision')
+    expect(visionSelect).toHaveValue('vision')
   })
 
   test('persists custom catalog capabilities and silently restarts Codex when idle', async () => {

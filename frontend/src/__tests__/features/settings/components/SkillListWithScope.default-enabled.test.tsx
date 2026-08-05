@@ -394,6 +394,10 @@ describe('SkillListWithScope default enabled skills', () => {
     expect(within(librarySection).getByText('Default Enabled Skill')).toBeInTheDocument()
     expect(within(librarySection).getByText('Library Skill')).toBeInTheDocument()
     const personalCard = within(librarySection).getByTestId('skill-library-item-1')
+    expect(within(personalCard).getByTestId('resource-icon')).toHaveAttribute(
+      'data-icon-source',
+      'initial'
+    )
     expect(within(personalCard).getByRole('switch', { name: '取消自动启用' })).toBeInTheDocument()
 
     await user.click(within(personalCard).getByTestId('skill-card-more-button-1'))
@@ -528,12 +532,8 @@ describe('SkillListWithScope default enabled skills', () => {
     const [card] = within(list).getAllByTestId(/^skill-library-item-/)
     expect(card).toHaveClass('gap-3')
     expect(card).not.toHaveClass('min-h-[180px]')
-    expect(within(card).getByTestId('resource-card-icon')).toHaveClass(
-      'h-11',
-      'w-11',
-      'rounded-xl',
-      'border'
-    )
+    expect(within(card).getByTestId('resource-icon')).toHaveAttribute('data-icon-source', 'initial')
+    expect(within(card).getByTestId('resource-icon')).toHaveClass('h-11', 'w-11', 'rounded-xl')
     const topActions = within(card).getByTestId('skill-card-top-actions-1')
     const bottomActions = within(card).getByTestId('skill-card-actions-1')
     expect(bottomActions).toHaveClass('mt-auto', 'w-full', 'border-t', 'pt-3')

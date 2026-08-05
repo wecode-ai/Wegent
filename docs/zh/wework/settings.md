@@ -19,6 +19,8 @@ sidebar_position: 9
 ## 查看应用信息
 
 点击 Wework 左下角的账户菜单，选择 **关于**，即可查看当前应用名称、版本号、更新渠道和项目链接。
+关于页面的版本号从运行中的 Tauri 应用包元数据读取，因此会与 macOS 系统菜单
+**关于 Wework** 显示相同的版本。发布构建通过 Tauri 配置注入版本时，两处都会使用该值。
 
 ## 默认快捷键
 
@@ -45,6 +47,8 @@ Windows 和 Linux 使用界面中显示的对应组合键。
 在“设置 → 模型”中点击“添加模型”后，先选择提供商。Wework 内置 Kimi Coding、Kimi 开放平台、DeepSeek 和 GLM profile；填写对应平台的 API Key 后，可以从提供商的 `/models` 接口读取可用模型。连接地址、接口协议、工具模式和已知模型的上下文长度由 profile 自动填写，其中 Kimi 开放平台使用中国区 `api.moonshot.cn` 端点。Kimi Coding 的 K3 会自动使用内置的 Codex Catalog profile，包括 256K 上下文和默认 `low` 推理等级。
 
 DeepSeek profile 使用原生 Responses API，只展示当前可用于 Codex 的 `deepseek-v4-flash`。它使用 1,048,576 tokens 上下文、默认 `high` 推理等级、实时 Web Search 和 freeform `apply_patch`；连接测试也会要求模型真实返回 `apply_patch` custom tool call。旧版由 Wework 管理的 DeepSeek V4-Flash Chat Completions 配置会自动迁移到 Responses API。当前模型目录声明文本输入且关闭图片生成，因此图片生成和图片理解不会在该 profile 下显示为可用能力。
+
+文本模型可以选择另一个已配置、明确声明图片输入能力的本地模型作为“视觉代理模型”。启用后，Wework 在请求主模型前调用视觉模型描述每张图片，再用描述文本替换 `input_image`。DeepSeek V4-Flash 会改用仅内部可见的视觉代理模型目录项，使 Codex 可以接收图片，同时仍不会把原始图片直接发送给 DeepSeek。视觉代理支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 接口；单轮最多处理 8 个不同图片描述，单张图片最大 20 MB，描述失败时会插入明确的错误文本。远程视觉接口必须使用 HTTPS；仅 `localhost` 和回环 IP 可使用 HTTP，且视觉请求不会跟随重定向，避免凭证被发送到未授权的后续地址。
 
 每个自定义模型都可以设置可选的“分组”，模型选择器会使用该名称组织模型。Kimi Coding 默认填写“Kimi”，用户可以修改或清空；未设置分组的模型统一显示在“自定义模型”下。
 

@@ -521,6 +521,81 @@ fn function_tool_profile_enables_responses_tool_conversion() {
 }
 
 #[test]
+fn parses_vision_sidecar_from_model_config() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "proxy": {"url": "http://127.0.0.1:7890"},
+        "vision_sidecar": {
+            "enabled": true,
+            "request_url": "https://vision.example/v1/chat/completions",
+            "api_format": "openai-chat-completions",
+            "api_key": "vision-key",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 4,
+            "timeout_ms": 12_000
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(
+        sidecar.request_url,
+        "https://vision.example/v1/chat/completions"
+    );
+    assert_eq!(sidecar.api_format, "openai-chat-completions");
+    assert_eq!(sidecar.api_key, "vision-key");
+    assert_eq!(sidecar.model_id, "vision-model");
+    assert_eq!(sidecar.max_descriptions_per_turn, 4);
+    assert_eq!(sidecar.timeout, Duration::from_secs(12));
+    assert_eq!(sidecar.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+}
+
+#[test]
+fn vision_sidecar_allows_zero_descriptions_to_disable_calls_fail_closed() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 0
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(sidecar.max_descriptions_per_turn, 0);
+}
+
+#[test]
+fn vision_sidecar_rejects_invalid_configuration_and_honors_disable() {
+    assert!(vision_sidecar_upstream(&json!({
+        "visionSidecar": {
+            "requestUrl": "https://vision.example/v1/responses",
+            "modelId": "vision-model",
+            "apiFormat": "openai-embeddings"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {"model_id": "vision-model"}
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "enabled": false,
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model"
+        }
+    }))
+    .expect("disabled sidecar")
+    .is_none());
+}
+
+#[test]
 fn explicit_upstream_uses_configured_max_output_tokens() {
     let upstream = explicit_codex_upstream(
         &json!({
@@ -607,6 +682,7 @@ fn custom_shell_profile_without_catalog_entry_uses_upstream_id() {
 
 #[test]
 fn internal_catalog_provider_is_never_used_for_thread_inference() {
+    let _lock = crate::test_env::lock();
     let request = ExecutionRequest {
         model_config: json!({
             "model_id": "gpt-5.4",
@@ -1085,6 +1161,108 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
         outcome,
         ExecutionOutcome::Completed {
             content: String::new()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": ""
+                }
+            }
+        }),
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-progress",
+                "delta": "I will inspect."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "phase": "final_answer",
+                "delta": "Final answer."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Final answer.".to_owned()
         }
     );
 }

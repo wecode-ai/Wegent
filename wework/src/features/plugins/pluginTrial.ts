@@ -18,6 +18,10 @@ interface PluginReferenceTrial {
   templates?: PluginPathComponent[]
 }
 
+interface PluginTrialOptions {
+  prompt?: string
+}
+
 function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
   window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
   window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
@@ -68,7 +72,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function pluginTrialInput(plugin: InstalledPlugin): string | null {
+export function pluginTrialInput(
+  plugin: InstalledPlugin,
+  options: PluginTrialOptions = {}
+): string | null {
   const skill = firstPluginSkill(plugin)
   const pluginPath = pluginMentionPath(plugin)
   const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
@@ -79,7 +86,8 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
         ? `[$${skill.name}](${skillFilePath(skill.path)})`
         : null
   if (!reference) return null
-  const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
+  const promptOverride = options.prompt?.trim()
+  const defaultPrompt = promptOverride || firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
   if (!defaultPrompt) return `${reference} `
 
   const skillTokenPattern = skill ? new RegExp(`\\$${escapeRegExp(skill.name)}\\b`, 'g') : null
@@ -90,8 +98,11 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
   return `${reference} ${defaultPrompt}`
 }
 
-export function queuePluginTrial(plugin: InstalledPlugin): boolean {
-  const input = pluginTrialInput(plugin)
+export function queuePluginTrial(
+  plugin: InstalledPlugin,
+  options: PluginTrialOptions = {}
+): boolean {
+  const input = pluginTrialInput(plugin, options)
   if (!input) return false
   return queuePendingPluginTrial({
     input,

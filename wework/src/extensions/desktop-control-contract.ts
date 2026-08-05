@@ -10,6 +10,7 @@ export interface DesktopControlCommand {
   visible?: boolean
   stableMs?: number
   key?: string
+  by?: 'label' | 'value'
   filename?: string
   mimeType?: string
 }

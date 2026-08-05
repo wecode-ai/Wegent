@@ -8,11 +8,12 @@ export function reduceRuntimeTaskLifecycle(
     case 'executor_snapshot_received': {
       const snapshotRunning = typeof event.task.running === 'boolean' ? event.task.running : null
       const expectedRunning = state.expectedExecutorRunning
+      const hasIdentifiedActiveTurn = state.turnPhase === 'streaming' && state.activeTurnId !== null
       const shouldIgnoreStaleSnapshot =
         snapshotRunning !== null &&
         expectedRunning !== null &&
         snapshotRunning !== expectedRunning &&
-        !isTerminalTaskStatus(event.task.status)
+        (!isTerminalTaskStatus(event.task.status) || hasIdentifiedActiveTurn)
       const executionPhase =
         snapshotRunning === null
           ? state.executionPhase
@@ -36,6 +37,7 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
+          !shouldIgnoreStaleSnapshot &&
           snapshotRunning !== null &&
           event.task.optimistic !== true &&
           (snapshotRunning === expectedRunning || isTerminalTaskStatus(event.task.status))
@@ -49,6 +51,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'starting',
         turnPhase: 'submitting',
+        turnOutcome: null,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -58,6 +61,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
+        turnOutcome: null,
         expectedExecutorRunning: true,
       }
 
@@ -90,6 +94,7 @@ export function reduceRuntimeTaskLifecycle(
       return {
         ...state,
         executionPhase: 'running',
+        turnOutcome: null,
         expectedExecutorRunning: true,
         unread: false,
       }
@@ -108,6 +113,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: 'running',
         turnPhase: 'streaming',
+        turnOutcome: null,
         activeTurnId: event.turnId ?? null,
         expectedExecutorRunning: true,
         unread: false,
@@ -121,6 +127,7 @@ export function reduceRuntimeTaskLifecycle(
         ...state,
         executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
         turnPhase: 'idle',
+        turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
         expectedExecutorRunning:
           state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
@@ -133,6 +140,7 @@ export function reduceRuntimeTaskLifecycle(
             ...state,
             executionPhase: 'running',
             turnPhase: 'streaming',
+            turnOutcome: null,
             activeTurnId: event.turnId ?? null,
             expectedExecutorRunning: true,
           }

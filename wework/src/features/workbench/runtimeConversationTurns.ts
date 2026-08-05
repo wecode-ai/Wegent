@@ -141,7 +141,11 @@ export function reduceRuntimeConversationTurns(
       }))
     case 'block_created':
       return updateTurn(turns, action.subtaskId, turn => {
-        const items = upsertBlocks(turn.items, [action.block])
+        const items = replaceAssistantTextWithBlock(
+          turn.items,
+          action.replaceAssistantTextItemId,
+          action.block
+        )
         return {
           ...turn,
           items,
@@ -593,6 +597,23 @@ function upsertBlocks(
     next = index < 0 ? [...next, canonicalItem] : replaceAt(next, index, canonicalItem)
   }
   return next
+}
+
+function replaceAssistantTextWithBlock(
+  items: RuntimeConversationItem[],
+  assistantTextItemId: string | undefined,
+  block: ProcessingBlock
+): RuntimeConversationItem[] {
+  if (!assistantTextItemId) return upsertBlocks(items, [block])
+  const index = items.findIndex(
+    item => item.type === 'assistant_text' && item.id === assistantTextItemId
+  )
+  if (index < 0) return upsertBlocks(items, [block])
+  return replaceAt(items, index, {
+    id: block.id,
+    type: 'block',
+    block,
+  })
 }
 
 function projectRuntimeConversationTurn(turn: RuntimeConversationTurn): WorkbenchMessage[] {

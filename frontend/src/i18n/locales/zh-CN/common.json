@@ -421,6 +421,11 @@
     "public": "公共",
     "icon": "图标",
     "selectIcon": "选择图标",
+    "uploadCustomIcon": "上传自定义图片",
+    "removeCustomIcon": "移除自定义图片",
+    "customIconHint": "支持 PNG、JPEG、WebP，最大 2 MB；上传后自动裁剪为方形。",
+    "customIconInvalid": "请选择 2 MB 以内的 PNG、JPEG 或 WebP 图片",
+    "customIconUploadFailed": "图标上传失败，请重试",
     "api_call": {
       "action": "API 调用",
       "title": "API 调用：{{name}}",

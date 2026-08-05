@@ -35,6 +35,7 @@ class ResourceLibraryListing(BaseModel):
     description: str | None = None
     icon: str | None = None
     tags: list[str] = Field(default_factory=list)
+    feature_tags: list[str] = Field(default_factory=list)
     publisher_user_id: int
     publisher_user_name: str | None = None
     publisher_namespace: str = "default"

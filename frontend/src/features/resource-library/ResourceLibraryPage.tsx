@@ -42,6 +42,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { canEditContent } from '@/types/base-role'
 import { DiscoverResources } from './components/DiscoverResources'
+import { FeaturedScenarios } from './components/FeaturedScenarios'
 import { InstalledResources } from './components/InstalledResources'
 import { MyResources } from './components/MyResources'
 import { PublishedResources } from './components/PublishedResources'
@@ -93,7 +94,9 @@ export function ResourceLibraryPage() {
   const legacyScopeParam = searchParams.get('scope')
   const legacySource =
     legacyScopeParam === 'personal' || legacyScopeParam === 'group' ? legacyScopeParam : null
-  const requestedSource = isLegacyTeamView ? 'group' : sourceParam || legacySource
+  const requestedSource = isLegacyTeamView
+    ? 'group'
+    : sourceParam || legacySource || (isMineView ? 'personal' : null)
   const source = isMineSource(requestedSource) ? requestedSource : 'all'
   const supportsInstalledSource = resourceType === 'agent' || resourceType === 'skill'
   const supportsSystemSource =
@@ -101,7 +104,7 @@ export function ResourceLibraryPage() {
   const isUnsupportedSource =
     (source === 'installed' && !supportsInstalledSource) ||
     (source === 'system' && !supportsSystemSource)
-  const effectiveSource = isUnsupportedSource ? 'all' : source
+  const effectiveSource = isUnsupportedSource ? 'personal' : source
   const keywordParam = searchParams.get('keyword') || ''
   const selectedGroupName = searchParams.get('group')
   const teamGroupState = useTeamCapabilityGroups({
@@ -157,7 +160,7 @@ export function ResourceLibraryPage() {
       if (!sourceParam) updates.source = legacySource
       updates.scope = null
     }
-    if (isUnsupportedSource) updates.source = 'all'
+    if (isUnsupportedSource) updates.source = 'personal'
     if (Object.keys(updates).length > 0) replaceParams(updates)
   }, [
     isLegacyTeamView,
@@ -179,6 +182,7 @@ export function ResourceLibraryPage() {
       id: createRequestId.current,
       type,
       publishAfterCreate: false,
+      marketplaceTags: [],
       target: { scope: 'personal' },
     })
   }
@@ -234,7 +238,7 @@ export function ResourceLibraryPage() {
 
     replaceParams({
       type: nextType,
-      source: shouldResetSource ? 'all' : undefined,
+      source: shouldResetSource ? 'personal' : undefined,
       group: effectiveSource === 'group' ? undefined : null,
       keyword: null,
       sort: null,
@@ -247,7 +251,7 @@ export function ResourceLibraryPage() {
   const handleSourceChange = (nextSource: MineSource) => {
     replaceParams({
       tab: 'mine',
-      source: nextSource === 'all' ? null : nextSource,
+      source: nextSource,
       group: nextSource === 'group' ? undefined : null,
       keyword: null,
       teamAction: null,
@@ -273,7 +277,12 @@ export function ResourceLibraryPage() {
 
   const renderContent = () => {
     if (!isMineView) {
-      return <DiscoverResources resourceType={resourceType} hideSearch />
+      return (
+        <>
+          {resourceType === 'agent' && <FeaturedScenarios />}
+          <DiscoverResources resourceType={resourceType} hideSearch />
+        </>
+      )
     }
     if (isPublishedView) {
       return <PublishedResources key={publishedRevision} resourceType={resourceType} />

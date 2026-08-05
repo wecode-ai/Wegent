@@ -27,7 +27,8 @@ interface TeamBasicInfoFormProps {
   bindMode: TaskType[]
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
-  setIcon?: (icon: string) => void
+  setIcon?: (icon: string | null) => void
+  onUploadIcon?: (file: File) => Promise<string>
   requiresWorkspace?: boolean | null
   setRequiresWorkspace?: (value: boolean | null) => void
 }
@@ -45,6 +46,7 @@ export default function TeamBasicInfoForm({
   setBindMode,
   icon,
   setIcon,
+  onUploadIcon,
   requiresWorkspace,
   setRequiresWorkspace,
 }: TeamBasicInfoFormProps) {
@@ -62,7 +64,9 @@ export default function TeamBasicInfoForm({
             {t('common:team.name')} <span className="text-red-400">*</span>
           </Label>
           <div className="flex items-center gap-2">
-            {setIcon && <TeamIconPicker value={icon} onChange={setIcon} />}
+            {setIcon && (
+              <TeamIconPicker value={icon} onChange={setIcon} onUploadImage={onUploadIcon} />
+            )}
             <Input
               id="teamName"
               value={name}

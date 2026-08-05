@@ -19,6 +19,7 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
+import { installXtermRenderRecovery, refreshXterm } from './xtermRenderRecovery'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -144,9 +145,10 @@ export function EmbeddedLocalTerminal({
     })
 
     const fitAndResize = () => {
-      if (disposed || !container.isConnected) return
+      if (disposed || !activeRef.current || !container.isConnected) return
       try {
         fitAddon.fit()
+        refreshXterm(terminal)
         syncTerminalSize()
       } catch (error) {
         console.error('Failed to resize local terminal:', error)
@@ -165,6 +167,7 @@ export function EmbeddedLocalTerminal({
 
     const resizeObserver = new ResizeObserver(fitAndResize)
     resizeObserver.observe(container)
+    const removeRenderRecovery = installXtermRenderRecovery(fitAndResize)
     requestAnimationFrame(fitAndResize)
 
     void listenLocalTerminalOutput(payload => {
@@ -205,6 +208,7 @@ export function EmbeddedLocalTerminal({
     return () => {
       disposed = true
       unobserveTheme()
+      removeRenderRecovery()
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
@@ -229,6 +233,7 @@ export function EmbeddedLocalTerminal({
       try {
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
         fitAddon.fit()
+        refreshXterm(terminal)
         terminal.focus()
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current

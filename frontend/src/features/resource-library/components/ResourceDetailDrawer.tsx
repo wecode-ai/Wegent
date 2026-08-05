@@ -27,6 +27,7 @@ interface ResourceDetailDrawerProps {
   onOpenChange: (open: boolean) => void
   onInstall: (listing: ResourceLibraryListing) => void
   targetNamespace?: string
+  tagLabels?: Record<string, string>
 }
 
 function getListingTitle(listing: ResourceLibraryListing) {
@@ -41,6 +42,7 @@ export function ResourceDetailDrawer({
   onOpenChange,
   onInstall,
   targetNamespace = 'default',
+  tagLabels = {},
 }: ResourceDetailDrawerProps) {
   const { t } = useTranslation('resource-library')
   const title = listing ? getListingTitle(listing) : ''
@@ -105,13 +107,26 @@ export function ResourceDetailDrawer({
                 {listing.description || listing.name}
               </p>
 
-              {listing.tags.length > 0 && (
+              {(listing.tags.length > 0 || Boolean(listing.feature_tags?.length)) && (
                 <div className="flex flex-wrap gap-2">
-                  {listing.tags.map(tag => (
-                    <Badge key={tag} variant="secondary">
-                      {tag}
-                    </Badge>
-                  ))}
+                  {(listing.tags.length > 0 ? listing.tags : listing.feature_tags || []).map(
+                    tag => {
+                      const usesFeatureTagFallback = listing.tags.length === 0
+                      return (
+                        <Badge
+                          key={tag}
+                          variant="secondary"
+                          title={
+                            usesFeatureTagFallback
+                              ? t('marketplace_tags.skill_keywords_fallback')
+                              : t('marketplace_tags.field_label')
+                          }
+                        >
+                          {usesFeatureTagFallback ? tag : tagLabels[tag] || tag}
+                        </Badge>
+                      )
+                    }
+                  )}
                 </div>
               )}
             </div>

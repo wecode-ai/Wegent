@@ -754,24 +754,36 @@ impl CodexNotificationEventMapper {
                 self.process_text_count
             )
         });
+        let replaces_item_id = item_id
+            .as_ref()
+            .filter(|item_id| self.final_message_id.as_ref() == Some(item_id))
+            .cloned();
+        let reclassified = replaces_item_id.is_some();
+        let mut data = json!({
+            "block": {
+                "id": id,
+                "type": block_type,
+                "process_kind": process_kind,
+                "process_item_id": item_id,
+                "content": text,
+                "status": "done",
+                "timestamp": now_ms(),
+            }
+        });
+        if let Some(replaces_item_id) = replaces_item_id {
+            data["replacesItemId"] = Value::String(replaces_item_id);
+        }
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
             "response.block.created",
             emit_context.local_task_id,
             emit_context.request,
-            json!({
-                "block": {
-                    "id": id,
-                    "type": block_type,
-                    "process_kind": process_kind,
-                    "process_item_id": item_id,
-                    "content": text,
-                    "status": "done",
-                    "timestamp": now_ms(),
-                }
-            }),
+            data,
         );
+        if reclassified {
+            self.reset_final_text();
+        }
     }
 
     fn emit_text_chunk(
@@ -2284,6 +2296,78 @@ mod tests {
             created["payload"]["data"]["block"]["id"]
         );
         assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn reclassifies_streamed_final_text_as_one_commentary_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        for message in [
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-progress",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-progress",
+                    "delta": "I will inspect."
+                }
+            }),
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-progress",
+                        "type": "agentMessage",
+                        "phase": "commentary",
+                        "text": "I will inspect."
+                    }
+                }
+            }),
+        ] {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                message,
+            );
+        }
+
+        let streamed = event_rx
+            .try_recv()
+            .expect("streamed final text should be emitted");
+        let reclassified = event_rx
+            .try_recv()
+            .expect("reclassified commentary block should be emitted");
+
+        assert_eq!(streamed["event"], "response.output_text.delta");
+        assert_eq!(streamed["payload"]["data"]["itemId"], "msg-progress");
+        assert_eq!(reclassified["event"], "response.block.created");
+        assert_eq!(
+            reclassified["payload"]["data"]["replacesItemId"],
+            "msg-progress"
+        );
+        assert_eq!(
+            reclassified["payload"]["data"]["block"]["content"],
+            "I will inspect."
+        );
+        assert_eq!(reclassified["payload"]["data"]["block"]["type"], "text");
         assert!(event_rx.try_recv().is_err());
     }
 

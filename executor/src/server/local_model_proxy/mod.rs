@@ -13,6 +13,7 @@ mod anthropic;
 mod chat;
 mod fork;
 mod history;
+mod vision;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -82,11 +83,25 @@ pub(crate) struct LocalModelProxyUpstream {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct VisionSidecarUpstream {
+    pub request_url: String,
+    pub api_format: String,
+    pub api_key: String,
+    pub default_headers: Vec<(String, String)>,
+    pub proxy_url: Option<String>,
+    pub model_id: String,
+    pub max_descriptions_per_turn: usize,
+    pub timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
 struct RegisteredUpstream {
     upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
     history: std::sync::Arc<history::CodexToolHistory>,
     thread_ids: HashSet<String>,
     last_routed_model: Option<String>,
+    pending_model_switch_cleanup: bool,
     last_used: Instant,
     active_references: usize,
 }
@@ -95,6 +110,7 @@ struct RegisteredUpstream {
 struct ModelRequestRouting {
     model_switched: bool,
     model_to_commit: Option<String>,
+    clear_pending_model_switch: bool,
 }
 
 #[derive(Default)]
@@ -105,7 +121,16 @@ struct LocalModelProxyRegistry {
 
 const REGISTRY_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
 
+#[cfg(test)]
 pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> String {
+    register_with_vision_sidecar(route_scope, upstream, None)
+}
+
+pub(crate) fn register_with_vision_sidecar(
+    route_scope: &str,
+    upstream: LocalModelProxyUpstream,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+) -> String {
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -139,13 +164,19 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
         .routes
         .get(&token)
         .and_then(|registered| registered.last_routed_model.clone());
+    let pending_model_switch_cleanup = registry
+        .routes
+        .get(&token)
+        .is_some_and(|registered| registered.pending_model_switch_cleanup);
     registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
             upstream,
+            vision_sidecar,
             history,
             thread_ids,
             last_routed_model,
+            pending_model_switch_cleanup,
             last_used: Instant::now(),
             active_references,
         },
@@ -159,6 +190,16 @@ pub(crate) fn register(route_scope: &str, upstream: LocalModelProxyUpstream) -> 
         ],
     );
     token
+}
+
+pub(crate) fn mark_model_switch(token: &str) {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    if let Some(registered) = registry.routes.get_mut(token) {
+        registered.pending_model_switch_cleanup = true;
+        registered.last_used = Instant::now();
+    }
 }
 
 pub(crate) fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
@@ -312,7 +353,7 @@ async fn handle_for_token(
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
-    let (upstream, history, model_routing) = {
+    let (upstream, vision_sidecar, history, model_routing) = {
         let mut registry = registry()
             .lock()
             .expect("local model proxy registry should not be poisoned");
@@ -326,6 +367,7 @@ async fn handle_for_token(
         registered.last_used = Instant::now();
         (
             registered.upstream.clone(),
+            registered.vision_sidecar.clone(),
             registered.history.clone(),
             model_routing,
         )
@@ -339,16 +381,19 @@ async fn handle_for_token(
         Some(model_id) => rewrite_request_model(&body, model_id)?,
         None => body.to_vec(),
     };
+    let request_body =
+        prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
+    let request_body =
+        vision::replace_images_with_descriptions(vision_sidecar.as_ref(), &request_body).await?;
     let (request_body, conversion, expanded_browser_tools) = prepare_request_with_history(
         &upstream.api_format,
         upstream.convert_custom_tools,
         upstream.max_output_tokens,
+        upstream.routing_model_id.as_deref(),
         &request_body,
         history.as_ref(),
     )
     .await?;
-    let request_body =
-        prepare_model_switch_request(&upstream, request_body, model_routing.model_switched)?;
     let (request_body, stripped_encrypted_content) =
         prepare_fork_request(request_body, forked_from_thread_id.is_some())?;
     let mut request_log_fields = vec![
@@ -657,15 +702,24 @@ fn begin_model_request(registered: &RegisteredUpstream, body: &[u8]) -> ModelReq
     let Some(current_model) = current_model else {
         return ModelRequestRouting::default();
     };
+    if registered.pending_model_switch_cleanup {
+        return ModelRequestRouting {
+            model_switched: true,
+            model_to_commit: Some(current_model),
+            clear_pending_model_switch: true,
+        };
+    }
     match registered.last_routed_model.as_deref() {
         None => ModelRequestRouting {
             model_switched: false,
             model_to_commit: Some(current_model),
+            clear_pending_model_switch: false,
         },
         Some(previous_model) if previous_model == current_model => ModelRequestRouting::default(),
         Some(_) if request_contains_model_switch_marker(body) => ModelRequestRouting {
             model_switched: true,
             model_to_commit: Some(current_model),
+            clear_pending_model_switch: false,
         },
         Some(_) => ModelRequestRouting::default(),
     }
@@ -688,6 +742,9 @@ fn commit_model_request(token: &str, routing: &ModelRequestRouting) {
         .or(registered.upstream.model_id.as_deref());
     if current_model == Some(model_to_commit) {
         registered.last_routed_model = Some(model_to_commit.to_owned());
+        if routing.clear_pending_model_switch {
+            registered.pending_model_switch_cleanup = false;
+        }
     }
 }
 
@@ -696,29 +753,29 @@ fn prepare_model_switch_request(
     body: Vec<u8>,
     model_switched: bool,
 ) -> Result<Vec<u8>, HttpError> {
-    if upstream.api_format != "openai-responses" || !model_switched {
+    if !model_switched {
         return Ok(body);
     }
     let mut request = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    if !contains_model_switch_marker(&request) {
-        return Ok(body);
-    }
     let Some(object) = request.as_object_mut() else {
         return Ok(body);
     };
-    let Some(items) = object.get_mut("input").and_then(Value::as_array_mut) else {
-        return Ok(body);
-    };
-    let before = items.len();
-    items.retain(|item| !has_encrypted_model_state(item));
-    let removed_items = before.saturating_sub(items.len());
-    if removed_items == 0 {
+    let removed_previous_response_id = object.remove("previous_response_id").is_some();
+    let removed_items = object
+        .get_mut("input")
+        .and_then(Value::as_array_mut)
+        .map(|items| {
+            let before = items.len();
+            items.retain(|item| !has_encrypted_model_state(item));
+            before.saturating_sub(items.len())
+        })
+        .unwrap_or_default();
+    if removed_items == 0 && !removed_previous_response_id {
         return Ok(body);
     }
-    let removed_previous_response_id = object.remove("previous_response_id").is_some();
     log_executor_event(
         "local model proxy removed encrypted history for model switch",
         &[
@@ -779,7 +836,13 @@ fn has_encrypted_model_state(item: &Value) -> bool {
         });
     matches!(
         item_type,
-        Some("reasoning" | "compaction" | "context_compaction" | "agent_message")
+        Some(
+            "reasoning"
+                | "compaction"
+                | "compaction_summary"
+                | "context_compaction"
+                | "agent_message"
+        )
     ) && (direct || nested)
 }
 
@@ -846,6 +909,7 @@ async fn prepare_request_with_history(
     api_format: &str,
     convert_custom_tools: bool,
     max_output_tokens: Option<u64>,
+    model_hint: Option<&str>,
     body: &[u8],
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
@@ -871,7 +935,13 @@ async fn prepare_request_with_history(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: format!("Failed to serialize enriched Codex request: {error}"),
         })?;
-        return prepare_request(api_format, convert_custom_tools, max_output_tokens, &body);
+        return prepare_request_with_model_hint(
+            api_format,
+            convert_custom_tools,
+            max_output_tokens,
+            model_hint,
+            &body,
+        );
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -891,19 +961,38 @@ async fn prepare_request_with_history(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize enriched Codex request: {error}"),
     })?;
-    prepare_request(
+    prepare_request_with_model_hint(
         api_format,
         convert_custom_tools,
         max_output_tokens,
+        model_hint,
         &enriched,
     )
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(test)]
 fn prepare_request(
     api_format: &str,
     convert_custom_tools: bool,
     max_output_tokens: Option<u64>,
+    body: &[u8],
+) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
+    prepare_request_with_model_hint(
+        api_format,
+        convert_custom_tools,
+        max_output_tokens,
+        None,
+        body,
+    )
+}
+
+#[allow(clippy::type_complexity)]
+fn prepare_request_with_model_hint(
+    api_format: &str,
+    convert_custom_tools: bool,
+    max_output_tokens: Option<u64>,
+    model_hint: Option<&str>,
     body: &[u8],
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
@@ -936,8 +1025,10 @@ fn prepare_request(
         return Ok((body, conversion, expanded_browser_tools));
     }
     let (converted, context) = match api_format {
-        "openai-chat-completions" => chat::responses_to_chat(&responses_body)
-            .map(|(body, context)| (body, Conversion::Chat(context))),
+        "openai-chat-completions" => {
+            chat::responses_to_chat_with_model_hint(&responses_body, model_hint)
+                .map(|(body, context)| (body, Conversion::Chat(context)))
+        }
         "anthropic-messages" => anthropic::responses_to_anthropic(&responses_body)
             .map(|(body, context)| (body, Conversion::Anthropic(context))),
         _ => return Ok((body.to_vec(), None, HashSet::new())),
@@ -1058,19 +1149,36 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
-    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(reqwest::Client::new());
-    };
-    reqwest::Client::builder()
-        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
-            status: StatusCode::BAD_GATEWAY,
-            detail: format!("Invalid local model proxy URL: {error}"),
-        })?)
+    proxy_client_builder(proxy_url)?
         .build()
         .map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
             detail: format!("Failed to configure local model proxy client: {error}"),
         })
+}
+
+fn proxy_client_without_redirects(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
+    proxy_client_builder(proxy_url)?
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to configure local model proxy client: {error}"),
+        })
+}
+
+fn proxy_client_builder(proxy_url: Option<&str>) -> Result<reqwest::ClientBuilder, HttpError> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(reqwest::Client::builder());
+    };
+    Ok(
+        reqwest::Client::builder().proxy(reqwest::Proxy::all(proxy_url).map_err(|error| {
+            HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Invalid local model proxy URL: {error}"),
+            }
+        })?),
+    )
 }
 
 async fn send_upstream_request_with_rate_limit_retry(
@@ -1778,6 +1886,179 @@ mod tests {
     }
 
     #[test]
+    fn removes_encrypted_compaction_on_the_first_proxied_request_after_a_model_switch() {
+        let token = register(
+            "first-proxied-request-after-switch",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: true,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("kimi-k3".to_owned()),
+                routing_model_id: Some("wework-kimi-k3".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        mark_model_switch(&token);
+        let body = serde_json::to_vec(&json!({
+            "model": "gpt-5.6-sol",
+            "previous_response_id": "resp_compacted",
+            "input": [
+                {
+                    "type": "context_compaction",
+                    "encrypted_content": "provider-bound-summary"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "continue"}]
+                }
+            ]
+        }))
+        .expect("request body");
+
+        let routing = {
+            let entries = registry().lock().expect("registry lock");
+            begin_model_request(entries.routes.get(&token).expect("registered route"), &body)
+        };
+        assert!(routing.model_switched);
+        assert!(routing.clear_pending_model_switch);
+
+        let prepared = prepare_model_switch_request(
+            &LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-chat-completions".to_owned(),
+                convert_custom_tools: true,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("kimi-k3".to_owned()),
+                routing_model_id: Some("wework-kimi-k3".to_owned()),
+                max_output_tokens: None,
+            },
+            body,
+            routing.model_switched,
+        )
+        .expect("model switch should prepare");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared request");
+
+        assert!(prepared.get("previous_response_id").is_none());
+        assert_eq!(prepared["input"].as_array().unwrap().len(), 1);
+        assert_eq!(prepared["input"][0]["role"], "user");
+
+        let (converted, conversion, _) = prepare_request(
+            "openai-chat-completions",
+            true,
+            None,
+            &prepared.to_string().into_bytes(),
+        )
+        .expect("cleaned request should convert to chat completions");
+        assert!(matches!(conversion, Some(Conversion::Chat(_))));
+        let converted: Value = serde_json::from_slice(&converted).expect("converted chat request");
+        assert!(converted
+            .get("messages")
+            .and_then(Value::as_array)
+            .is_some_and(|messages| messages.iter().all(|message| {
+                !message.to_string().contains("provider-bound-summary")
+                    && !message.to_string().contains("encrypted_content")
+            })));
+
+        commit_model_request(&token, &routing);
+        {
+            let entries = registry().lock().expect("registry lock");
+            assert!(
+                !entries
+                    .routes
+                    .get(&token)
+                    .expect("registered route")
+                    .pending_model_switch_cleanup
+            );
+        }
+        unregister(&token);
+    }
+
+    #[test]
+    fn consumes_pending_model_switch_cleanup_on_the_first_plain_request() {
+        let token = register(
+            "first-plain-request-after-switch",
+            LocalModelProxyUpstream {
+                base_url: "https://example.com".to_owned(),
+                request_url: None,
+                api_format: "openai-responses".to_owned(),
+                convert_custom_tools: false,
+                api_key: "secret".to_owned(),
+                default_headers: Vec::new(),
+                proxy_url: None,
+                model_id: Some("kimi-k3".to_owned()),
+                routing_model_id: Some("wework-kimi-k3".to_owned()),
+                max_output_tokens: None,
+            },
+        );
+        mark_model_switch(&token);
+        let body = br#"{
+            "model":"stale-codex-model",
+            "input":[{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"continue"}]
+            }]
+        }"#;
+
+        let routing = {
+            let entries = registry().lock().expect("registry lock");
+            begin_model_request(entries.routes.get(&token).expect("registered route"), body)
+        };
+        assert!(routing.model_switched);
+        assert!(routing.clear_pending_model_switch);
+
+        commit_model_request(&token, &routing);
+        {
+            let entries = registry().lock().expect("registry lock");
+            let route = entries.routes.get(&token).expect("registered route");
+            assert!(!route.pending_model_switch_cleanup);
+            assert!(!begin_model_request(route, body).model_switched);
+        }
+        unregister(&token);
+    }
+
+    #[test]
+    fn removes_previous_response_id_from_a_switched_request_without_encrypted_items() {
+        let upstream = LocalModelProxyUpstream {
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            convert_custom_tools: false,
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+            model_id: Some("kimi-k3".to_owned()),
+            routing_model_id: Some("wework-kimi-k3".to_owned()),
+            max_output_tokens: None,
+        };
+        let body = serde_json::to_vec(&json!({
+            "model": "stale-codex-model",
+            "previous_response_id": "resp_old_provider",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }]
+        }))
+        .expect("request body");
+
+        let prepared =
+            prepare_model_switch_request(&upstream, body, true).expect("request preparation");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared request");
+
+        assert!(prepared.get("previous_response_id").is_none());
+        assert_eq!(prepared["input"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
     fn preserves_encrypted_history_without_a_model_switch_marker() {
         let upstream = LocalModelProxyUpstream {
             base_url: "https://example.com".to_owned(),
@@ -1911,6 +2192,31 @@ mod tests {
         assert_valid_api_id(call_id);
         assert_ne!(call_id, "functions.exec_command:0");
         assert_eq!(output["tool_call_id"], call["id"]);
+        assert!(matches!(conversion, Some(Conversion::Chat(_))));
+    }
+
+    #[test]
+    fn chat_conversion_uses_the_routing_model_for_kimi_compatibility() {
+        let body = serde_json::to_vec(&json!({
+            "model": "cloud-model-resource-name",
+            "reasoning": {"effort": "low"},
+            "input": "hello"
+        }))
+        .expect("request body");
+
+        let (prepared, conversion, _) = prepare_request_with_model_hint(
+            "openai-chat-completions",
+            false,
+            None,
+            Some("wework-kimi-k3"),
+            &body,
+        )
+        .expect("chat request");
+        let prepared: Value = serde_json::from_slice(&prepared).expect("prepared JSON");
+
+        assert_eq!(prepared["model"], "cloud-model-resource-name");
+        assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
+        assert!(prepared.get("reasoning_effort").is_none());
         assert!(matches!(conversion, Some(Conversion::Chat(_))));
     }
 
@@ -2302,6 +2608,7 @@ mod tests {
             &ModelRequestRouting {
                 model_switched: false,
                 model_to_commit: Some("wework-gpt-5.6-luna".to_owned()),
+                clear_pending_model_switch: false,
             },
         );
         let repeated_token = register(
@@ -2333,6 +2640,7 @@ mod tests {
             &ModelRequestRouting {
                 model_switched: true,
                 model_to_commit: Some("gpt-5.6-sol".to_owned()),
+                clear_pending_model_switch: false,
             },
         );
         {

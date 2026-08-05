@@ -113,5 +113,6 @@ executor/dist/
 executor/target/
 wework/src-tauri/binaries/
 backend/init_data/plugins/wegent-sites/
+backend/init_data/plugins/wegent-mini-program/
 docs/superpowers/
 .worktrees/

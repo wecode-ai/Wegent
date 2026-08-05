@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { HTMLAttributes, ReactNode } from 'react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
@@ -13,7 +13,27 @@ import type { ResourceLibraryListing } from '@/features/resource-library/types'
 const mockToast = jest.fn()
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
+const mockObserve = jest.fn()
+const mockUnobserve = jest.fn()
+const mockDisconnect = jest.fn()
 let mockSearchParams = new URLSearchParams()
+let intersectionObserverCallback: IntersectionObserverCallback
+
+class MockIntersectionObserver {
+  constructor(callback: IntersectionObserverCallback) {
+    intersectionObserverCallback = callback
+  }
+
+  observe = mockObserve
+  unobserve = mockUnobserve
+  disconnect = mockDisconnect
+}
+
+Object.defineProperty(globalThis, 'IntersectionObserver', {
+  configurable: true,
+  writable: true,
+  value: MockIntersectionObserver,
+})
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
@@ -26,6 +46,7 @@ jest.mock('@/apis/resourceLibrary', () => ({
     listListings: jest.fn(),
     getListing: jest.fn(),
     installListing: jest.fn(),
+    getMarketplaceTags: jest.fn(),
   },
 }))
 
@@ -137,6 +158,18 @@ describe('DiscoverResources', () => {
       next_cursor: null,
       limit: 20,
     })
+    mockResourceLibraryApi.getMarketplaceTags.mockResolvedValue({
+      version: 1,
+      items: [
+        {
+          id: 'technical_development',
+          name_zh: '技术开发',
+          name_en: 'Technical Development',
+          sort: 10,
+          enabled: true,
+        },
+      ],
+    })
     mockResourceLibraryApi.getListing.mockResolvedValue(createListing())
     mockResourceLibraryApi.installListing.mockResolvedValue({
       id: 9,
@@ -169,13 +202,12 @@ describe('DiscoverResources', () => {
       'xl:grid-cols-4'
     )
     expect(screen.getByTestId('resource-listing-card-1')).toHaveClass(
-      'min-h-[190px]',
-      'px-4',
-      'pt-4',
-      'pb-4',
+      'h-full',
+      'p-4',
       'gap-3',
       'rounded-xl'
     )
+    expect(screen.getByTestId('resource-listing-card-1')).not.toHaveClass('min-h-[190px]')
     const actionButton = screen.getByRole('button', { name: '添加 Doc Summary' })
     expect(actionButton).toBeEnabled()
     expect(actionButton).toHaveClass(
@@ -192,10 +224,40 @@ describe('DiscoverResources', () => {
     expect(actionButton).not.toHaveTextContent('添加')
     const footer = screen.getByTestId('resource-listing-footer-1')
     expect(footer).toHaveClass('mt-auto')
-    expect(footer).toHaveTextContent('publisher-user')
-    expect(footer).toHaveTextContent('2026-05-27')
+    expect(screen.getByText('publisher-user')).toBeInTheDocument()
+    expect(footer).not.toHaveClass('border-t')
+    expect(footer).not.toHaveTextContent('2026-05-27')
     expect(footer).toHaveTextContent('4 人添加')
-    expect(screen.queryByText('docs')).not.toBeInTheDocument()
+    expect(screen.getByText('docs')).toBeInTheDocument()
+  })
+
+  it('filters marketplace listings by configured tag', async () => {
+    render(<DiscoverResources resourceType="skill" />)
+
+    await screen.findByText('Doc Summary')
+    const allTags = await screen.findByTestId('marketplace-tag-filter-all')
+    const technicalDevelopment = await screen.findByTestId(
+      'marketplace-tag-filter-technical_development'
+    )
+    expect(allTags).toHaveAttribute('aria-pressed', 'true')
+    expect(technicalDevelopment).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(technicalDevelopment)
+
+    await waitFor(() =>
+      expect(mockResourceLibraryApi.listListings).toHaveBeenLastCalledWith({
+        resourceType: 'skill',
+        tags: ['technical_development'],
+        targetNamespace: 'default',
+        cursor: undefined,
+        limit: 20,
+      })
+    )
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tag=technical_development', {
+      scroll: false,
+    })
+    expect(allTags).toHaveAttribute('aria-pressed', 'false')
+    expect(technicalDevelopment).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('omits missing publisher metadata without reserving a placeholder', async () => {
@@ -214,7 +276,7 @@ describe('DiscoverResources', () => {
     render(<DiscoverResources resourceType="skill" />)
 
     const footer = await screen.findByTestId('resource-listing-footer-1')
-    expect(footer).not.toHaveTextContent('publisher-user')
+    expect(screen.queryByText('publisher-user')).not.toBeInTheDocument()
     expect(footer).not.toHaveTextContent('#3')
     expect(footer).toHaveTextContent('4 人添加')
   })
@@ -229,10 +291,41 @@ describe('DiscoverResources', () => {
 
     render(<DiscoverResources resourceType="skill" />)
 
-    const footer = await screen.findByTestId('resource-listing-footer-1')
-    expect(footer).toHaveTextContent('Wegent 官方')
-    expect(footer).toHaveTextContent('2026-05-27')
-    expect(footer).not.toHaveTextContent('人添加')
+    expect(await screen.findByText('Wegent 官方')).toBeInTheDocument()
+    expect(screen.queryByTestId('resource-listing-footer-1')).not.toBeInTheDocument()
+    expect(screen.queryByText('2026-05-27')).not.toBeInTheDocument()
+    expect(screen.queryByText(/人添加/)).not.toBeInTheDocument()
+  })
+
+  it('keeps up to three tags and omits version and duplicate official metadata', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          publisher_user_id: 0,
+          tags: ['technical_development', 'data_analysis', 'daily_work'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="skill" />)
+
+    const card = await screen.findByTestId('resource-listing-card-1')
+    expect(within(card).getByText('技术开发')).toBeInTheDocument()
+    expect(within(card).getByText('data_analysis')).toBeInTheDocument()
+    expect(within(card).getByText('daily_work')).toBeInTheDocument()
+    expect(within(card).queryByText('v1.0.0')).not.toBeInTheDocument()
+    expect(within(card).queryByText('官方')).not.toBeInTheDocument()
+    expect(within(card).getAllByText('Wegent 官方')).toHaveLength(1)
+    expect(within(card).getByTestId('install-resource-1-button')).toHaveClass(
+      'border-primary/20',
+      'bg-primary/[0.04]',
+      'text-primary',
+      'hover:bg-primary/[0.1]',
+      'hover:shadow-md'
+    )
   })
 
   it('uses the same four-column desktop grid for other resource types', async () => {
@@ -283,6 +376,14 @@ describe('DiscoverResources', () => {
     )
   })
 
+  it('left-aligns tag filters when the search field is hidden', async () => {
+    render(<DiscoverResources resourceType="agent" hideSearch />)
+
+    expect(await screen.findByTestId('marketplace-tag-filter-all')).toBeInTheDocument()
+    expect(screen.getByTestId('marketplace-toolbar')).toHaveClass('justify-start')
+    expect(screen.getByTestId('marketplace-toolbar')).not.toHaveClass('justify-end')
+  })
+
   it('persists an applied search in the URL and reloads the marketplace', async () => {
     render(<DiscoverResources resourceType="skill" />)
 
@@ -306,7 +407,7 @@ describe('DiscoverResources', () => {
     })
   })
 
-  it('loads more resources from the discovery cursor', async () => {
+  it('loads more resources when the scroll trigger enters the viewport', async () => {
     mockResourceLibraryApi.listListings
       .mockResolvedValueOnce({
         items: [createListing({ id: 1, display_name: 'First batch' })],
@@ -324,7 +425,14 @@ describe('DiscoverResources', () => {
     render(<DiscoverResources resourceType="skill" />)
 
     expect(await screen.findByText('First batch')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('resource-library-load-more'))
+    const trigger = screen.getByTestId('resource-library-load-more-trigger')
+    expect(screen.queryByTestId('resource-library-load-more')).not.toBeInTheDocument()
+    act(() => {
+      intersectionObserverCallback(
+        [{ isIntersecting: true, target: trigger } as unknown as IntersectionObserverEntry],
+        {} as IntersectionObserver
+      )
+    })
 
     expect(await screen.findByText('Second batch')).toBeInTheDocument()
     expect(screen.getByText('First batch')).toBeInTheDocument()
@@ -383,6 +491,26 @@ describe('DiscoverResources', () => {
     expect(screen.getByRole('button', { name: '已添加 Installed Skill' })).toBeDisabled()
   })
 
+  it('shows skill keywords only when marketplace tags are missing', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          tags: [],
+          feature_tags: ['python', 'excel'],
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+
+    render(<DiscoverResources resourceType="skill" />)
+
+    const keyword = await screen.findByText('python')
+    expect(keyword).toHaveAttribute('title', 'marketplace_tags.skill_keywords_fallback')
+    expect(screen.getByText('excel')).toBeInTheDocument()
+  })
+
   it('uses a system agent directly without installing it', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [
@@ -404,10 +532,10 @@ describe('DiscoverResources', () => {
     fireEvent.click(await screen.findByRole('button', { name: '去对话 Wegent Chat' }))
 
     const officialFooter = screen.getByTestId('resource-listing-footer-81')
-    expect(officialFooter).toHaveTextContent('Wegent 官方')
-    expect(officialFooter).toHaveTextContent('2026-05-27')
-    expect(officialFooter).not.toHaveTextContent('人添加')
-    expect(screen.getByText('官方')).toHaveClass('h-4', 'text-[10px]')
+    expect(screen.getByText('Wegent 官方')).toBeInTheDocument()
+    expect(officialFooter).not.toHaveTextContent('2026-05-27')
+    expect(officialFooter).toHaveTextContent('4 人添加')
+    expect(screen.queryByText('官方')).not.toBeInTheDocument()
     expect(mockPush).toHaveBeenCalledWith('/chat?teamId=81')
     expect(mockResourceLibraryApi.installListing).not.toHaveBeenCalled()
   })
@@ -439,7 +567,7 @@ describe('DiscoverResources', () => {
 
       expect(await screen.findByText(displayName)).toBeVisible()
       expect(screen.queryByTestId(`install-resource-${id}-button`)).not.toBeInTheDocument()
-      expect(screen.getByText('官方')).toBeInTheDocument()
+      expect(screen.getByText('Wegent 官方')).toBeInTheDocument()
 
       fireEvent.click(screen.getByTestId(`view-resource-${id}-button`))
       await screen.findByTestId('resource-detail-dialog')
@@ -647,5 +775,28 @@ describe('DiscoverResources', () => {
     })
     expect(mockToast).toHaveBeenCalledWith({ title: '添加成功' })
     expect(mockResourceLibraryApi.listListings).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not render zero when listing tags are empty', async () => {
+    const listingWithoutTags = createListing({
+      tags: [],
+      feature_tags: [],
+      install_count: 0,
+    })
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [listingWithoutTags],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+    mockResourceLibraryApi.getListing.mockResolvedValue(listingWithoutTags)
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    await screen.findByText('Doc Summary')
+    fireEvent.click(screen.getByRole('button', { name: '详情 Doc Summary' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).queryByText('0')).not.toBeInTheDocument()
   })
 })

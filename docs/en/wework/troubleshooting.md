@@ -38,6 +38,15 @@ For browser failures, include `http://` or `https://`, confirm that local server
 
 Select the cloud status in the sidebar to authorize again. Verify the Backend address with your administrator and confirm that its sign-in page is reachable.
 
+When the network is working but the cloud status occasionally shows unavailable, inspect the Wework frontend log for these entries:
+
+- `[Wework] HTTP ... is still pending after 5000ms.` means that the request has not received a response after five seconds.
+- `[Wework] HTTP ... completed slowly ...` records the total duration, HTTP status, and transport.
+- `[Wework] HTTP ... failed.` means that no HTTP response was received; inspect the error under `phase: "transport"`.
+- `[Wework] HTTP ... returned ...` means that the server returned an HTTP error; inspect the status and error under `phase: "http_error"`.
+
+Every request has a `requestId`. In the desktop client, this value is sent to the Backend as `X-Request-ID`; `backendRequestId` is recorded only when a slow-response or HTTP-error diagnostic event includes the backend's returned request ID. Use these IDs to correlate frontend and Backend logs. The logs do not include Authorization headers, tokens, or request bodies.
+
 ## Getting help
 
 Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation). Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
