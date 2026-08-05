@@ -1686,6 +1686,13 @@ export function WorkbenchProvider({
       if (loadGeneration !== localAppsLoadGenerationRef.current) {
         return apps
       }
+      // Never pin an empty list: install/notify often races ahead of plugin/installed,
+      // and a 30s empty cache keeps the composer picker blank after a successful install.
+      if (apps.length === 0) {
+        localAppsCacheRef.current = null
+        clearComposerAppsSnapshot()
+        return apps
+      }
       localAppsCacheRef.current = {
         expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
         apps,

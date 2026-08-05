@@ -70,29 +70,41 @@ export function PluginPickerMenu({
 
   useEffect(() => {
     let current = true
+    let retryTimer: number | null = null
     if (!onListLocalApps) return
     if (!hasCachedAppsRef.current) setLoading(true)
-    onListLocalApps()
-      .then(items => {
-        if (!current) return
-        const next = enabledComposerApps(items)
-        hasCachedAppsRef.current = next.length > 0
-        setApps(next)
-      })
-      .catch(() => {
-        if (current && !hasCachedAppsRef.current) setApps([])
-      })
-      .finally(() => {
-        if (current) setLoading(false)
-      })
+
+    const load = (attempt: number) => {
+      onListLocalApps()
+        .then(items => {
+          if (!current) return
+          const next = enabledComposerApps(items)
+          hasCachedAppsRef.current = next.length > 0
+          setApps(next)
+          // Install → notify can race ahead of plugin/installed; retry while the
+          // menu is open so a briefly empty response does not stick.
+          if (open && next.length === 0 && attempt < 6) {
+            retryTimer = window.setTimeout(() => load(attempt + 1), 500)
+          }
+        })
+        .catch(() => {
+          if (current && !hasCachedAppsRef.current) setApps([])
+        })
+        .finally(() => {
+          if (current) setLoading(false)
+        })
+    }
+
+    load(0)
     return () => {
       current = false
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
     }
   }, [onListLocalApps, open, reloadToken])
 
   const visibleApps = apps.filter(app => {
     const text =
-      `${app.name} ${app.description ?? ''} ${app.pluginDisplayNames?.join(' ') ?? ''}`.toLowerCase()
+      `${app.id} ${app.name} ${app.description ?? ''} ${app.pluginDisplayNames?.join(' ') ?? ''}`.toLowerCase()
     return text.includes(query.trim().toLowerCase())
   })
 

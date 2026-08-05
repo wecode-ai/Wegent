@@ -2241,6 +2241,8 @@ async function waitForSnapshot(
   const relevantTestIds = (lastSnapshot?.testIds ?? []).filter(
     testId =>
       testId.startsWith('runtime-local-task-') ||
+      testId.startsWith('composer-plugin-') ||
+      testId.startsWith('plugin-trial-') ||
       [
         'goal-status-bar',
         'pause-response-button',
@@ -4847,20 +4849,25 @@ async function verifyMarketplacePluginLifecycle({
   await captureVerificationScreenshot(control, 'marketplace-plugins-04-used-in-chat.png')
 
   await control.command('click', '[data-testid="plugin-trial-template-dismiss"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('plugin-trial-template-strip'),
+    'Dismissing the plugin trial guide did not close the recommendation strip'
+  )
   await control.command('click', '[data-testid="composer-plugin-picker-button"]')
   await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const composerPluginSelector = `[data-testid="composer-plugin-picker-item-plugin:${PLUGIN_NAME}"]`
-  // Search so the plugin is not missed when the menu truncates to the first page.
+  // Prefer display name; also match plugin id now that the picker search includes it.
   await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
-    value: PLUGIN_NAME,
+    value: PLUGIN_DISPLAY_NAME,
   })
   await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
     'The installed plugin did not appear in the composer plugin picker',
-    DEFAULT_STEP_TIMEOUT_MS,
+    WORKBENCH_READY_TIMEOUT_MS,
     '[data-testid="composer-plugin-picker"]'
   )
   await control.command('click', composerPluginSelector)
