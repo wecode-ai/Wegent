@@ -32,7 +32,7 @@ pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 pub(crate) const DEEPSEEK_V4_FLASH_MODEL: &str = "wework-deepseek-v4-flash";
-pub(crate) const DEEPSEEK_V4_FLASH_VISION_MODEL: &str = "wework-deepseek-v4-flash-vision";
+pub(crate) const VISION_SIDECAR_MODEL: &str = "wework-vision-sidecar";
 const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
 const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
 const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
@@ -102,7 +102,7 @@ pub(crate) fn models() -> Vec<Value> {
         kimi_k3_model_entry(),
         kimi_k27_model_entry(),
         deepseek_v4_flash_model_entry(),
-        deepseek_v4_flash_vision_model_entry(),
+        vision_sidecar_model_entry(),
         gpt_56_sol_model_entry(),
         gpt_56_terra_model_entry(),
         gpt_56_luna_model_entry(),
@@ -309,13 +309,10 @@ fn deepseek_v4_flash_model_entry() -> Value {
     entry
 }
 
-fn deepseek_v4_flash_vision_model_entry() -> Value {
-    let mut entry = deepseek_v4_flash_model_entry();
-    entry["slug"] = Value::String(DEEPSEEK_V4_FLASH_VISION_MODEL.to_owned());
-    entry["display_name"] = Value::String("DeepSeek V4 Flash + Vision".to_owned());
+fn vision_sidecar_model_entry() -> Value {
+    let mut entry = model_entry(VISION_SIDECAR_MODEL, "Vision Sidecar", Some("freeform"));
     entry["description"] =
-        Value::String("DeepSeek V4 Flash with a Wework vision sidecar".to_owned());
-    entry["input_modalities"] = json!(["text", "image"]);
+        Value::String("Wework text model routed through a configured vision sidecar".to_owned());
     entry
 }
 
@@ -620,8 +617,8 @@ mod tests {
             .as_array()
             .expect("models array")
             .iter()
-            .find(|model| model["slug"] == DEEPSEEK_V4_FLASH_VISION_MODEL)
-            .expect("DeepSeek V4 Flash vision entry");
+            .find(|model| model["slug"] == VISION_SIDECAR_MODEL)
+            .expect("vision sidecar entry");
         assert_eq!(vision_model["visibility"], "none");
         assert_eq!(vision_model["input_modalities"], json!(["text", "image"]));
     }
@@ -669,7 +666,7 @@ mod tests {
             KIMI_K3_MODEL,
             KIMI_K27_MODEL,
             DEEPSEEK_V4_FLASH_MODEL,
-            DEEPSEEK_V4_FLASH_VISION_MODEL,
+            VISION_SIDECAR_MODEL,
             WEWORK_GPT_56_SOL_MODEL,
             WEWORK_GPT_56_TERRA_MODEL,
             WEWORK_GPT_56_LUNA_MODEL,

@@ -37,6 +37,14 @@ export interface ModelCapabilities {
   supportsVideo?: boolean
 }
 
+export interface VisionSidecarModelRef {
+  modelName: string
+  modelType: ModelTypeEnum
+  namespace: string
+  resourceUserId: number
+  apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
+}
+
 export interface AspectRatioOption {
   label: string
   value: string
@@ -100,6 +108,7 @@ export interface ModelCRD {
       }
       context_window?: number // Maximum context window size in tokens
       max_output_tokens?: number // Maximum output tokens the model can generate per response
+      visionSidecarModel?: VisionSidecarModelRef
     }
     protocol?: string
     apiFormat?: string
@@ -170,7 +179,12 @@ export interface UnifiedModel {
   displayName?: string | null
   provider?: string | null // 'openai' | 'claude'
   modelId?: string | null
+  runtime?: {
+    family?: string | null
+    provider?: string | null
+  } | null
   namespace?: string // Resource namespace (group name or 'default')
+  resourceUserId?: number
   config?: Record<string, unknown>
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
