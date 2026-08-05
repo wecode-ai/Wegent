@@ -435,6 +435,7 @@ function AppShell() {
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {
+    apiBaseUrl: cloudConnection.apiBaseUrl,
     backendUrl: cloudConnection.backendUrl,
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,

@@ -129,6 +129,7 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
 fn normalized_connection(connection: &ConnectionConfig) -> Option<ConnectionConfig> {
     let backend_url = connection.backend_url.trim().trim_end_matches('/');
     let auth_token = connection.auth_token.trim();
+    let runtime_auth_token = connection.runtime_auth_token.trim();
     if backend_url.is_empty() || auth_token.is_empty() {
         return None;
     }
@@ -136,6 +137,7 @@ fn normalized_connection(connection: &ConnectionConfig) -> Option<ConnectionConf
         backend_url: backend_url.to_owned(),
         socket_url: resolved_socket_url(connection),
         auth_token: auth_token.to_owned(),
+        runtime_auth_token: runtime_auth_token.to_owned(),
     })
 }
 
@@ -162,16 +164,21 @@ fn connection_from_params(params: &Value) -> Result<Option<ConnectionConfig>, Ap
     let backend_url = optional_connection_field(params.get("backend_url"), "backend_url")?;
     let socket_url = optional_connection_field(params.get("socket_url"), "socket_url")?;
     let auth_token = optional_connection_field(params.get("auth_token"), "auth_token")?;
-    match (backend_url, socket_url, auth_token) {
-        (None, None, None) => Ok(None),
-        (Some(backend_url), socket_url, Some(auth_token)) => Ok(Some(ConnectionConfig {
-            backend_url: backend_url.trim_end_matches('/').to_owned(),
-            socket_url: socket_url
-                .unwrap_or_else(|| backend_url.clone())
-                .trim_end_matches('/')
-                .to_owned(),
-            auth_token,
-        })),
+    let runtime_auth_token =
+        optional_connection_field(params.get("runtime_auth_token"), "runtime_auth_token")?;
+    match (backend_url, socket_url, auth_token, runtime_auth_token) {
+        (None, None, None, None) => Ok(None),
+        (Some(backend_url), socket_url, Some(auth_token), runtime_auth_token) => {
+            Ok(Some(ConnectionConfig {
+                backend_url: backend_url.trim_end_matches('/').to_owned(),
+                socket_url: socket_url
+                    .unwrap_or_else(|| backend_url.clone())
+                    .trim_end_matches('/')
+                    .to_owned(),
+                auth_token,
+                runtime_auth_token: runtime_auth_token.unwrap_or_default(),
+            }))
+        }
         _ => Err(AppIpcError::new(
             "bad_request",
             "socket_url requires backend_url and auth_token",
@@ -206,6 +213,7 @@ mod tests {
             "backend_url": "https://backend.example.com/",
             "socket_url": "wss://socket.example.com/",
             "auth_token": "wg-token",
+            "runtime_auth_token": "runtime-wg-token",
         }))
         .expect("connection should parse")
         .expect("connection should be configured");
@@ -213,6 +221,7 @@ mod tests {
         assert_eq!(connection.backend_url, "https://backend.example.com");
         assert_eq!(connection.socket_url, "wss://socket.example.com");
         assert_eq!(connection.auth_token, "wg-token");
+        assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
     }
 
     #[test]
@@ -221,11 +230,13 @@ mod tests {
             backend_url: "https://backend.example.com/".to_owned(),
             socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
+            runtime_auth_token: "runtime-wg-token".to_owned(),
         })
         .expect("connection should be configured");
 
         assert_eq!(connection.backend_url, "https://backend.example.com");
         assert_eq!(connection.socket_url, "https://backend.example.com");
+        assert_eq!(connection.runtime_auth_token, "runtime-wg-token");
     }
 
     #[test]

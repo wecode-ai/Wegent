@@ -55,6 +55,7 @@ export interface LocalExecutorBackendConnection {
   backendUrl: string
   socketBaseUrl: string
   authToken: string
+  runtimeAuthToken?: string | null
 }
 
 export interface BundledPluginMarketplace {
@@ -233,6 +234,7 @@ export function connectLocalExecutorToBackend(
     backendUrl: connection.backendUrl,
     socketUrl: connection.socketBaseUrl,
     authToken: connection.authToken,
+    runtimeAuthToken: connection.runtimeAuthToken ?? null,
   })
 }
 

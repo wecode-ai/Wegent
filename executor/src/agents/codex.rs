@@ -4089,6 +4089,24 @@ fn append_thread_launch_params(
     }
 }
 
+fn append_turn_shell_environment_params(
+    params: &mut serde_json::Map<String, Value>,
+    launch_config: &CodexLaunchConfig,
+) {
+    let mut config = serde_json::Map::new();
+    for override_value in &launch_config.config_overrides {
+        let Some((key, value)) = config_override_entry(override_value) else {
+            continue;
+        };
+        if key.starts_with("shell_environment_policy.set.") {
+            config.insert(key, value);
+        }
+    }
+    if !config.is_empty() {
+        params.insert("config".to_owned(), Value::Object(config));
+    }
+}
+
 fn turn_start_params(
     thread_id: &str,
     request: &ExecutionRequest,
@@ -4126,6 +4144,7 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
+    append_turn_shell_environment_params(&mut params, launch_config);
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }
