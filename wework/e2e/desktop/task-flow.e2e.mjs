@@ -4310,29 +4310,35 @@ async function verifyOfficialPluginSource(repositoryRoot) {
   )
 }
 
-async function revealMarketplacePluginActions(control, { pluginId, marketplaceName, displayName }) {
+async function openMarketplacePluginActions(control, { pluginId, marketplaceName, displayName }) {
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const marketplaceTabSelector = `[data-testid="plugins-marketplace-tab-${marketplaceName}"]`
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
-    return actionsSelector
+  if (!snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
+    if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+    } else if (snapshot.testIds.includes('plugins-search-input')) {
+      await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+    }
+    await control.command('waitFor', marketplaceTabSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', marketplaceTabSelector)
+    await control.command('fill', '[data-testid="plugins-search-input"]', {
+      value: displayName,
+    })
+    await control.command('waitFor', actionsSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
   }
-  if (snapshot.testIds.includes('plugins-clear-marketplace-filters')) {
-    await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
-  } else if (snapshot.testIds.includes('plugins-search-input')) {
-    await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
+  const actionsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!actionsSnapshot.testIds.includes(`plugin-marketplace-try-${pluginId}`)) {
+    await control.command('click', actionsSelector)
   }
-  await control.command('waitFor', marketplaceTabSelector, {
+  await control.command('waitFor', trySelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', marketplaceTabSelector)
-  await control.command('fill', '[data-testid="plugins-search-input"]', {
-    value: displayName,
-  })
-  await control.command('waitFor', actionsSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  return actionsSelector
 }
 
 async function installOfficialPluginFixture({
@@ -4349,16 +4355,9 @@ async function installOfficialPluginFixture({
   })
   await verifyOfficialPluginSource(repositoryPath)
 
-  await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.testIds.includes('plugins-search-input') ||
-      snapshot.testIds.includes('plugins-marketplace-tab-default') ||
-      snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
-      snapshot.testIds.includes('plugins-add-marketplace-button') ||
-      snapshot.testIds.includes('plugins-create-button'),
-    'The plugin marketplace controls did not become ready'
-  )
+  await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('fill', '[data-testid="plugins-search-input"]', { value: '' })
 
   const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -4382,22 +4381,12 @@ async function installOfficialPluginFixture({
     value: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
 
-  const marketplaceSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes(OFFICIAL_PLUGIN_DISPLAY_NAME) &&
-      snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
-    'The pinned OpenAI marketplace did not expose the official plugin'
-  )
-  const rowTestIds = marketplaceSnapshot.testIds.filter(testId =>
-    testId.startsWith('plugin-marketplace-row-')
-  )
-  assert.equal(rowTestIds.length, 1, 'The official plugin search did not return exactly one plugin')
-  const [rowTestId] = rowTestIds
-  assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
-  const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
+  const pluginId = `${OFFICIAL_PLUGIN_MARKETPLACE_NAME}:${OFFICIAL_PLUGIN_NAME}@${OFFICIAL_PLUGIN_MARKETPLACE_NAME}`
+  await control.command('waitFor', `[data-testid="plugin-marketplace-row-${pluginId}"]`, {
+    text: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
-  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
 
   await control.command('waitFor', installSelector, {
@@ -4419,16 +4408,12 @@ async function installOfficialPluginFixture({
     'The official plugin was not shown as installed after the real app-server request',
     WORKBENCH_READY_TIMEOUT_MS
   )
-  await revealMarketplacePluginActions(control, {
+  await openMarketplacePluginActions(control, {
     pluginId,
     marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
     displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
-  await control.command('click', actionsSelector)
-  await control.command('waitFor', trySelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
   assert.match(
     await control.command('getText', trySelector),
     /Try in chat|Start chat|在对话中试用|立即对话/,
@@ -4456,14 +4441,13 @@ async function installOfficialPluginFixture({
     'Installing the official plugin discarded the isolated E2E model provider'
   )
 
-  return { actionsSelector, installSelector, pluginId, skillPath }
+  return { installSelector, pluginId, skillPath }
 }
 
 async function openOfficialPluginChat(control, installSelector) {
   const pluginId = installSelector
     .replace(/^\[data-testid="plugin-marketplace-install-/, '')
     .replace(/"\]$/, '')
-  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   const detailTrySelector = `[data-testid="plugin-detail-toggle-${pluginId}"]`
   const installedStripSelector = `[data-testid="plugins-installed-strip-item-${pluginId}"]`
@@ -4484,14 +4468,10 @@ async function openOfficialPluginChat(control, installSelector) {
     )
     await control.command('click', detailTrySelector)
   } else {
-    await revealMarketplacePluginActions(control, {
+    await openMarketplacePluginActions(control, {
       pluginId,
       marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
       displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
-    })
-    await control.command('click', actionsSelector)
-    await control.command('waitFor', trySelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('click', trySelector)
   }
@@ -4650,19 +4630,12 @@ async function verifyMarketplacePluginLifecycle({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const marketplaceSnapshot = await waitForSnapshot(
-    control,
-    snapshot =>
-      snapshot.text.includes(PLUGIN_DISPLAY_NAME) &&
-      snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
-    'The local plugin marketplace did not expose its plugin'
-  )
-  const rowTestId = marketplaceSnapshot.testIds.find(testId =>
-    testId.startsWith('plugin-marketplace-row-')
-  )
-  assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
-  const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
-  const rowSelector = `[data-testid="${rowTestId}"]`
+  const pluginId = `${PLUGIN_MARKETPLACE_NAME}:${PLUGIN_NAME}@${PLUGIN_MARKETPLACE_NAME}`
+  const rowSelector = `[data-testid="plugin-marketplace-row-${pluginId}"]`
+  await control.command('waitFor', rowSelector, {
+    text: PLUGIN_DISPLAY_NAME,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
   const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
   await captureVerificationScreenshot(control, 'marketplace-plugins-01-marketplace.png')
@@ -4997,13 +4970,19 @@ async function uninstallOfficialPlugin(control, fixture) {
   if (pluginsSnapshot.testIds.includes('plugin-detail-back-button')) {
     await control.command('click', '[data-testid="plugin-detail-back-button"]')
   }
-  await revealMarketplacePluginActions(control, {
+  await openMarketplacePluginActions(control, {
     pluginId: fixture.pluginId,
     marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,
     displayName: OFFICIAL_PLUGIN_DISPLAY_NAME,
   })
-  await control.command('click', fixture.actionsSelector)
   await control.command('click', `[data-testid="plugin-marketplace-uninstall-${fixture.pluginId}"]`)
+  await control.command('waitFor', '[data-testid="plugin-uninstall-confirm-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-uninstall-confirm-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${fixture.pluginId}`),
