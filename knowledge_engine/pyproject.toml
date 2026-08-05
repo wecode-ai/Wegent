@@ -15,6 +15,7 @@ dependencies = [
     "llama-index-core>=0.12.0",
     "llama-index-vector-stores-elasticsearch>=0.4.0",
     "llama-index-vector-stores-qdrant>=0.9.0",
+    "qdrant-client<1.19.0",
     "llama-index-vector-stores-milvus>=0.4.0",
     "pymilvus>=2.4.0,<2.6.4",
     "llama-index-embeddings-openai>=0.3.0",
