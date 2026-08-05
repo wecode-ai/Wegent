@@ -50,6 +50,7 @@ import {
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
+import { track } from '@/telemetry/client'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -305,6 +306,14 @@ function createBottomPanelWorkspaceKey({
     workspaceTarget?.path ?? '',
     preferLocalTerminal ? 'local' : executionMode,
   ].join(':')
+}
+
+function rightPanelTabType(
+  tab: RightWorkspacePanelTab
+): 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other' {
+  if (tab.startsWith('chat:')) return 'chat'
+  if (tab === 'review' || tab === 'terminal' || tab === 'browser' || tab === 'files') return tab
+  return 'other'
 }
 
 interface DesktopWorkbenchMainProps {
@@ -1585,6 +1594,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
       if (tab.startsWith('chat:')) {
         temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
       }
@@ -2778,7 +2788,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
           hasActiveTask={Boolean(currentRuntimeTask)}
-          taskId={currentRuntimeTask?.taskId}
           feedbackApi={services?.feedbackApi}
           onClose={() => setFeedbackDialogOpen(false)}
           getTaskContext={async () => {

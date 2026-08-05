@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { telemetryTraceId } from '@/telemetry/traceId'
 
 const posthogMocks = vi.hoisted(() => ({
   capture: vi.fn(),
@@ -23,6 +24,10 @@ vi.mock('posthog-js', () => ({
 }))
 
 vi.mock('@sentry/react', () => sentryMocks)
+
+// track() defers the capture to a microtask, so tests must let the flush run
+// before asserting on the capture mock.
+const flushPostHogCaptures = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 
 describe('telemetry client', () => {
   beforeEach(() => {
@@ -61,6 +66,8 @@ describe('telemetry client', () => {
       prompt: 'must not leave the device',
     } as { execution_target: 'local'; prompt: string })
 
+    await flushPostHogCaptures()
+
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       'task_started',
       expect.objectContaining({
@@ -80,6 +87,8 @@ describe('telemetry client', () => {
       execution_target: '/Users/private/repository' as 'local',
     })
 
+    await flushPostHogCaptures()
+
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       'task_started',
       expect.objectContaining({
@@ -90,17 +99,38 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('execution_target')
   })
 
+  test('drops unrecognized AI model and provider values', async () => {
+    const { installTelemetry, track } = await import('./client')
+    await installTelemetry(true)
+
+    track('$ai_generation', {
+      $ai_generation_id: 'd9222e05-8708-41b8-98ea-d4a21849e761',
+      $ai_trace_id: telemetryTraceId('task-42'),
+      $ai_parent_id: telemetryTraceId('task-42'),
+      $ai_model: '私人 prompt 内容' as never,
+      $ai_provider: 'https://user.example.com/secret?token=abc' as never,
+      $ai_latency: 1.5,
+      result: 'success',
+    })
+
+    await flushPostHogCaptures()
+
+    const call = posthogMocks.capture.mock.calls.find(call => call[0] === '$ai_generation')
+    expect(call?.[1]).not.toHaveProperty('$ai_model')
+    expect(call?.[1]).not.toHaveProperty('$ai_provider')
+  })
+
   test('captures $ai_trace start and end with bounded properties', async () => {
     const { installTelemetry, track } = await import('./client')
     await installTelemetry(true)
 
     track('$ai_trace', {
-      $ai_trace_id: 'task-42',
+      $ai_trace_id: telemetryTraceId('task-42'),
       $ai_trace_phase: 'start',
       execution_target: 'local',
     })
     track('$ai_trace', {
-      $ai_trace_id: 'task-42',
+      $ai_trace_id: telemetryTraceId('task-42'),
       $ai_trace_phase: 'end',
       execution_target: 'cloud',
       duration_ms: 1234,
@@ -117,12 +147,14 @@ describe('telemetry client', () => {
       prompt: string
     })
 
+    await flushPostHogCaptures()
+
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       '$ai_trace',
       expect.objectContaining({
         $geoip_disable: true,
         app_version: __WEWORK_APP_VERSION__,
-        $ai_trace_id: 'task-42',
+        $ai_trace_id: telemetryTraceId('task-42'),
         $ai_trace_phase: 'start',
         execution_target: 'local',
       })
@@ -132,7 +164,7 @@ describe('telemetry client', () => {
       expect.objectContaining({
         $geoip_disable: true,
         app_version: __WEWORK_APP_VERSION__,
-        $ai_trace_id: 'task-42',
+        $ai_trace_id: telemetryTraceId('task-42'),
         $ai_trace_phase: 'end',
         execution_target: 'cloud',
         duration_ms: 1234,
@@ -151,79 +183,42 @@ describe('telemetry client', () => {
     await installTelemetry(true)
 
     track('$ai_generation', {
-      $ai_generation_id: 'gen-1',
-      $ai_parent_id: 'task-42',
+      $ai_generation_id: 'd9222e05-8708-41b8-98ea-d4a21849e761',
+      $ai_trace_id: telemetryTraceId('task-42'),
+      $ai_parent_id: telemetryTraceId('task-42'),
       $ai_model: 'gpt-4o',
       $ai_provider: 'openai',
       $ai_input_tokens: 1000,
       $ai_output_tokens: 500,
       $ai_total_tokens: 1500,
       $ai_latency: 2.5,
-      $ai_latency_ms: 2500,
       $ai_cost: 0.0075,
       result: 'success',
     })
+
+    await flushPostHogCaptures()
 
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       '$ai_generation',
       expect.objectContaining({
         $geoip_disable: true,
         app_version: __WEWORK_APP_VERSION__,
-        $ai_generation_id: 'gen-1',
-        $ai_parent_id: 'task-42',
+        $ai_generation_id: 'd9222e05-8708-41b8-98ea-d4a21849e761',
+        $ai_trace_id: telemetryTraceId('task-42'),
+        $ai_parent_id: telemetryTraceId('task-42'),
         $ai_model: 'gpt-4o',
         $ai_provider: 'openai',
         $ai_input_tokens: 1000,
         $ai_output_tokens: 500,
         $ai_total_tokens: 1500,
         $ai_latency: 2.5,
-        $ai_latency_ms: 2500,
         $ai_cost: 0.0075,
         result: 'success',
       })
     )
   })
 
-  test('captures $ai_feedback with allowed properties and strips task context', async () => {
-    const { installTelemetry, track } = await import('./client')
-    await installTelemetry(true)
-
-    track('$ai_feedback', {
-      $ai_trace_id: 'task-42',
-      $ai_feedback_type: 'positive',
-      source: 'task_dialog',
-      attachment_count: '1',
-      has_comment: true,
-      note: 'must not leave the device',
-      task_title: 'private project',
-    } as {
-      $ai_trace_id: string
-      $ai_feedback_type: 'positive'
-      source: 'task_dialog'
-      attachment_count: '1'
-      has_comment: true
-      note: string
-      task_title: string
-    })
-
-    expect(posthogMocks.capture).toHaveBeenCalledWith(
-      '$ai_feedback',
-      expect.objectContaining({
-        $geoip_disable: true,
-        app_version: __WEWORK_APP_VERSION__,
-        $ai_trace_id: 'task-42',
-        $ai_feedback_type: 'positive',
-        source: 'task_dialog',
-        attachment_count: '1',
-        has_comment: true,
-      })
-    )
-    const feedbackCall = posthogMocks.capture.mock.calls.find(call => call[0] === '$ai_feedback')
-    expect(feedbackCall?.[1]).not.toHaveProperty('note')
-    expect(feedbackCall?.[1]).not.toHaveProperty('task_title')
-  })
-
-  test('uses immediate requests and disables persistence after opt-out', async () => {
+  test('uses batched requests and disables persistence after opt-out', async () => {
     const { installTelemetry } = await import('./client')
     await installTelemetry(true)
 
@@ -231,7 +226,7 @@ describe('telemetry client', () => {
       expect.objectContaining({
         opt_out_persistence_by_default: true,
         person_profiles: 'never',
-        request_batching: false,
+        request_batching: true,
       })
     )
   })
@@ -376,8 +371,8 @@ describe('telemetry client', () => {
     expect(sanitized?.tags).toEqual({
       installation_id: 'anonymous-installation',
     })
-    expect(sanitized?.exception?.values?.[0]?.type).toBe('TypeError')
-    expect(sanitized?.exception?.values?.[0]?.value).toBe('Failed to open <redacted>')
+    expect(sanitized?.exception?.values?.[0]?.type).toBe('Error')
+    expect(sanitized?.exception?.values?.[0]?.value).toBe('Wework error')
     const privateFrame = sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]
     expect(privateFrame).toMatchObject({
       filename: '<redacted>',
@@ -565,7 +560,7 @@ describe('telemetry client', () => {
       description: 'GET /workspace/private-project',
     })
 
-    expect(sanitized?.transaction).toBe('<redacted>')
+    expect(sanitized?.transaction).toBe('Wework transaction')
     expect(sanitized?.request).toBeUndefined()
     expect(sanitized?.user).toBeUndefined()
     expect(sanitized?.contexts).toEqual({
@@ -582,9 +577,9 @@ describe('telemetry client', () => {
       installation_id: 'anonymous-installation',
     })
     expect(sanitized?.spans?.[0]?.data).toEqual({})
-    expect(sanitized?.spans?.[0]?.description).toBe('<redacted>')
+    expect(sanitized?.spans?.[0]?.description).toBeUndefined()
     expect(sanitizedSpan?.data).toEqual({})
-    expect(sanitizedSpan?.description).toBe('<redacted>')
+    expect(sanitizedSpan?.description).toBeUndefined()
     expect(JSON.stringify({ sanitized, sanitizedSpan })).not.toMatch(
       /private|prompt|token|workspace\?/
     )
@@ -604,6 +599,8 @@ describe('telemetry client', () => {
       source: 'cloud',
       item_id: 'secret-item',
     } as { has_parent: true; source: 'cloud'; item_id: string })
+
+    await flushPostHogCaptures()
 
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('plugin_name')
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('marketplace_id')
@@ -625,6 +622,8 @@ describe('telemetry client', () => {
       file_name: string
       project_id: string
     })
+
+    await flushPostHogCaptures()
 
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       'feature_action_completed',
@@ -664,6 +663,7 @@ describe('telemetry client', () => {
     expect(sentryMocks.init).toHaveBeenCalledTimes(1)
 
     track('app_started', { surface: 'main' })
+    await flushPostHogCaptures()
     expect(posthogMocks.capture).toHaveBeenCalledWith(
       'app_started',
       expect.objectContaining({ surface: 'main' })

@@ -16,7 +16,7 @@ Wework 首次启动时会明确询问用户是否允许共享匿名使用情况�
 
 产品分析事件不得包含聊天、提示词、模型回复、代码、文件名、文件路径、仓库名、终端内容、凭据或认证信息。业务代码只能调用 `src/telemetry/client.ts`，不得直接调用 PostHog 或 Sentry SDK。新增事件必须先加入 `AnalyticsEventMap` 和运行时属性白名单。
 
-PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Tauri 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、源码片段、本机文件路径和局部变量，并对异常消息里的路径、邮箱和类 token 字符串进行脱敏。异常类型和受信任的 Wework 栈位置会被保留。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
+PostHog 在发送前会再次按事件级白名单删除 SDK 自动附加的 URL、referrer、用户画像和其他非必要属性；SDK 自动生成且未登记的事件会被直接丢弃。WebView 与 Tauri 原生 Sentry 事件会删除请求、用户、面包屑、附加上下文、原始异常文本、源码片段、本机文件路径和局部变量。WebView 错误栈仅保留 Wework 自身可信应用资源的文件地址、函数、行列号和 Source Map Debug ID；URL 的 query、fragment 与凭证会被删除，用户文件、外部页面和其他不可信路径会显示为 `<redacted>`。桌面 E2E 使用本地接收器验证用户选择前没有请求、明确同意后才发送，并检查真实请求体不含测试工作区路径、认证令牌、模型 Key 或用户邮箱。
 
 Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStorage 中保存的 `installation_id` 标签和每次会话的 `telemetry_session_id`；PostHog 使用 SDK 自生成的 `distinct_id` 和 `$session_id`。这些标识都是匿名的、与登录账户无关，并在用户关闭遥测时旋转，避免重新开启后继续关联关闭前的数据。
 
@@ -28,18 +28,19 @@ Wework 不向 PostHog 或 Sentry 发送账户用户 ID。Sentry 使用 localStor
 | ---------------- | ------------------------------------------------------------------------------------------ |
 | 应用、导航与认证 | `app_started`、`feature_opened`、`authentication_completed`                                |
 | 项目与对话       | `project_opened`、`project_created`、`project_removed`、`conversation_created`             |
-| 任务执行         | `task_started`、`first_response_completed`、`task_completed`                               |
+| 任务执行         | `task_started`、`first_response_completed`、`task_completed`、`task_interrupted`、`task_retried` |
 | 项目空间与看板   | `board_view_opened`、`board_item_created`、`board_item_moved`、`feature_action_completed`  |
 | 插件             | `plugin_center_opened`、`plugin_installed`、`plugin_enabled_changed`、`plugin_uninstalled` |
 | 自动化           | `automation_action_completed`                                                              |
 | 内置浏览器       | `browser_navigation_completed`、`browser_download_completed`                               |
 | 云端、交付与更新 | `cloud_connection_changed`、`delivery_completed`、`app_update_install_started`             |
 | 反馈与应用快照   | `feedback_submitted`、`appshot_received`                                                   |
-| 工作区面板       | `workspace_panel_added`                                                                    |
-| AI 分析          | `$ai_trace`、`$ai_generation`、`$ai_feedback`                                              |
+| 工作区面板       | `workspace_panel_added`、`workspace_panel_removed`                                          |
+| 设置             | `setting_changed`                                                                          |
+| AI 分析          | `$ai_trace`、`$ai_generation`、`ai_output_action_completed`、`generation_regenerated`      |
 | 隐私设置         | `telemetry_preference_changed`，仅在用户重新开启遥测后记录                                 |
 
-跨领域的资源操作统一使用 `feature_action_completed`，其 `domain` 和 `action` 都是受控枚举，覆盖项目空间、任务卡片、任务关联、附件与工作区文件、AI 表格、插件、Skill、MCP、Hooks、Sites、模型、Git、云设备、快捷短语和归档会话。关键业务的已处理失败统一使用 `operation_failed` 和有限的操作类型，不上传异常消息。资源 ID、项目名、插件名、URL、文件路径和用户输入均不属于事件属性。功能代码应在 API 或本机操作确认成功后打点，失败回滚路径不得误报成功。
+跨领域的资源操作统一使用 `feature_action_completed`，其 `domain` 和 `action` 都是受控枚举，覆盖项目空间、任务卡片、任务关联、附件与工作区文件、AI 表格、插件、Skill、MCP、Hooks、Sites、模型、Git、云设备、快捷短语和归档会话。关键业务的已处理失败统一使用 `operation_failed` 和有限的操作类型，不上传异常消息。资源 ID、项目名、插件名、URL、文件路径和用户输入均不属于事件属性；唯一的例外是下文描述的 AI 关联 ID，它们是按运行生成的透明关联 token，而非原始 ID。功能代码应在 API 或本机操作确认成功后打点，失败回滚路径不得误报成功。
 
 ## AI 分析事件
 
@@ -47,11 +48,29 @@ Wework 针对 agent 任务 trace、LLM generation 和用户反馈上报 PostHog 
 
 | 事件              | 用途                                                                 | 关键属性                                                                                                                                                                                                                                                                             |
 | ----------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `$ai_trace`       | 一次完整的 agent 任务 / 对话轮次，在任务开始和结束时各上报一次。     | `$ai_trace_id`（稳定的任务 ID）、`$ai_trace_phase`（`start` 或 `end`）、`execution_target`、`duration_ms`（仅 end）、`result`（`success`、`failure` 或 `cancelled`；仅 end）、`failure_reason`（有限的失败分类；仅 result 为 `failure` 时）。                                         |
-| `$ai_generation`  | 每一次由 LLM 驱动的助手回复，从助手开始生成到生成结束进行测量。      | `$ai_generation_id`、`$ai_parent_id`（父任务 ID）、`$ai_model`、`$ai_provider`、`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`、`$ai_latency`、`$ai_latency_ms`、 `$ai_cost`（识别到模型时的最佳 effort 美元估算）、`result`。                                          |
-| `$ai_feedback`    | 用户在任务反馈弹窗中对 AI 结果给出的“赞/踩”评分。                    | `$ai_trace_id`（有任务 ID 时带上）、`$ai_feedback_type`（`positive` 或 `negative`）、`source`（`task_dialog`）、`attachment_count`（分箱为 `0`、`1`、`2-5` 或 `6+`）、`has_comment`。                                                                                                |
+| `$ai_trace`       | 一次任务运行，在运行开始和结束时各上报一次。                         | `$ai_trace_id`（运行开始时生成的透明 per-run id）、`$ai_trace_phase`（`start` 或 `end`）、`execution_target`、`duration_ms`（仅 end）、`result`（`success`、`failure` 或 `cancelled`；仅 end）、`failure_reason`（有限的失败分类；仅 result 为 `failure` 时）。                                 |
+| `$ai_generation`  | 每一次由 LLM 驱动的助手回复，从助手开始生成到生成结束进行测量。      | `$ai_generation_id`、`$ai_trace_id`（该运行所属的透明 trace id；这是 PostHog 要求并用来把 generation 归入同一 trace 的属性）、`$ai_parent_id`（同一 per-run id，保留用于树状嵌套）、`$ai_model`（运行时目录枚举）、`$ai_provider`（已知提供方的有界枚举）、`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`、`$ai_latency`（秒）、`$ai_cost`（识别到模型时的最佳 effort 美元估算）、`result`。                                           |
 
-`$ai_trace_id` 与 `$ai_parent_id` 复用已有的稳定 `taskId`，无需引入新的关联 ID 即可把 trace、generation 和 feedback 关联起来。`$ai_cost` 目前由客户端通过一张小型已知模型价格表进行最佳 effort 估算，因为后端暂未暴露每次调用的实际成本；后续应在后端提供真实成本后替换为后端值。
+任务是一个可被重复运行的稳定资源，因此 trace 关联必须限定在**单次运行**内，而不是绑定任务 ID。运行开始时，客户端生成一个透明的 `t-<base36>` trace id，本次运行期间发出的每条 `$ai_trace` 和 `$ai_generation` 都共享它；运行结束时该 id 被丢弃，下一次运行会重新生成。如果所有运行都复用同一任务 ID 派生的 trace id，不同运行会被合并进同一条 PostHog trace，导致按运行统计的时长、token、成本全部失真。每条 `$ai_generation` 在助手开始时捕获当前运行的 trace id，因此即使运行与 generation 并发结束，关联也不会丢失。若窗口在运行进行中关闭，会补发一条 `$ai_trace` `end`（`result=cancelled`），避免留下永不闭合的 trace。运行时白名单会强制 `$ai_trace_id`、`$ai_parent_id` 符合哈希后的 `t-<base36>` 格式、`$ai_generation_id` 符合 UUID 格式，因此未经哈希的原始任务 ID 永远不会作为关联属性被上报。
+
+generation 的 token 数（`$ai_input_tokens`、`$ai_output_tokens`、`$ai_total_tokens`）取自该次运行在结束事件中携带的自身 context usage，保证计数归属于它所描述的 generation，而不会串到同一任务的并发运行上；当运行没有上报某轮的 usage 时，这些 token 属性会被省略。
+
+`$ai_trace` `end`、`task_completed` 与 `first_response_completed` 的 `result` 在运行时上报了本轮（generation）结果时，会以该运行最后一次助手回合的实际结果为准：若运行内唯一的 generation 失败或被取消，这些事件会如实上报 `failure` 或 `cancelled`，而不是默认报 `success`；当运行时没有上报任何 generation 结果时，才回退到任务记录的状态。
+
+`$ai_model` 是**动态有界**的枚举，取值来自当前 Wework 模型目录——该目录只由三个模型渠道（Codex 模型、自配提供方 profile、云端模型）提供，因此应用暴露出的任何模型 ID 都是合法枚举值，其余一律归入 `other`；用户自定义的模型显示名绝不发送。`$ai_provider` 是固定的已知提供方有界枚举。`$ai_cost` 目前由客户端通过一张小型已知模型价格表进行最佳 effort 估算，因为后端暂未暴露每次调用的实际成本；它只是客户端侧的估算，PostHog 会根据模型、提供方和 token 数自行计算成本，因此 `$ai_cost` 不应作为成本口径的权威来源；后续应在后端提供真实成本后替换为后端值。
+
+旧版本构建曾以不同的 schema 上报 AI 事件：trace id 为 `runtime-<id>` 且 generation 上不带 `$ai_trace_id`，provider 为 `claude` 等原始字符串，并存在 `$ai_trace_summary` 事件。当前白名单会丢弃上述 schema 之外的事件与属性，因此新构建只会上报本文档描述的格式；但旧版 emitter 产生的历史数据仍可能出现在项目里。
+
+## 体验优化事件
+
+除上述生命周期与 AI 分析事件外，客户端还会上报关于质量闭环与摩擦点的有界元数据，以便在不暴露内容的前提下支撑产品决策：
+
+- `ai_output_action_completed`（`action`：`copy`、`open_file`、`run`、`apply`、`expand`、`accept` 或 `reject`；`source`：`chat`、`workbench` 或 `board`）——用户对 AI 产出执行操作（如复制代码块、打开 agent 动过的文件）时上报。只记录动作类型，绝不包含被复制文本或文件路径。
+- `generation_regenerated` —— 任务在已有一次运行后再次运行时上报，表示用户重新提问/修改了请求。它与 `task_interrupted` 分开统计：重新提问只会排入新的一轮，不会把运行标记为停止。
+- `task_interrupted` —— 仅在用户显式停止当前回复时上报（暂停按钮或"打断并立即发送"）；`after_first_response` 区分在首次回复前还是之后停止。普通的重新提问不会触发该事件。
+- `task_retried` —— 同一任务在上次完成后 60 秒内再次运行时上报（含 `previous_result`），用于识别不耐烦或反复失败的场景。
+- `setting_changed`（`setting`：`appearance_mode`、`accent_color` 或后续新增键；`value`）—— 用户修改关键设置时上报，当前已接入外观主题模式与强调色。
+- `workspace_panel_removed` —— 关闭工作区面板时上报，与 `workspace_panel_added` 互补。
 
 ## 配置
 

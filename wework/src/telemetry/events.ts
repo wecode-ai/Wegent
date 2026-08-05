@@ -1,3 +1,5 @@
+import { KNOWN_AI_PROVIDERS, type KnownAiProvider } from './modelCatalog'
+
 export type ExecutionTarget = 'local' | 'cloud' | 'unknown'
 export type TelemetryResult = 'success' | 'cancelled' | 'failure'
 export type TelemetryFailureReason = 'network_error' | 'model_error' | 'runtime_error' | 'unknown'
@@ -14,23 +16,16 @@ export interface AnalyticsEventMap {
   }
   $ai_generation: {
     $ai_generation_id: string
+    $ai_trace_id: string
     $ai_parent_id: string
     $ai_model: string
-    $ai_provider: string
+    $ai_provider: KnownAiProvider
     $ai_input_tokens?: number
     $ai_output_tokens?: number
     $ai_total_tokens?: number
     $ai_latency: number
-    $ai_latency_ms: number
     $ai_cost?: number
     result: 'success' | 'failure' | 'cancelled'
-  }
-  $ai_feedback: {
-    $ai_trace_id?: string
-    $ai_feedback_type: 'positive' | 'negative'
-    source: 'task_dialog'
-    attachment_count: '0' | '1' | '2-5' | '6+'
-    has_comment: boolean
   }
   app_started: {
     surface: 'main' | 'popout' | 'workspace'
@@ -224,6 +219,38 @@ export interface AnalyticsEventMap {
   workspace_panel_added: {
     panel: 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other'
   }
+  ai_output_action_completed: {
+    action: 'copy' | 'open_file' | 'run' | 'apply' | 'expand' | 'accept' | 'reject'
+    source: 'chat' | 'workbench' | 'board'
+  }
+  generation_regenerated: {
+    execution_target: ExecutionTarget
+    turn_count?: number
+  }
+  task_interrupted: {
+    execution_target: ExecutionTarget
+    after_first_response: boolean
+    duration_ms?: number
+  }
+  task_retried: {
+    execution_target: ExecutionTarget
+    since_last_ms: number
+    previous_result?: TelemetryResult
+  }
+  setting_changed: {
+    setting:
+      | 'appearance_mode'
+      | 'accent_color'
+      | 'font_size'
+      | 'default_model'
+      | 'context_window'
+      | 'runtime'
+      | 'other'
+    value?: string
+  }
+  workspace_panel_removed: {
+    panel: 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other'
+  }
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap
@@ -241,6 +268,7 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   ],
   $ai_generation: [
     '$ai_generation_id',
+    '$ai_trace_id',
     '$ai_parent_id',
     '$ai_model',
     '$ai_provider',
@@ -248,11 +276,9 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
     '$ai_output_tokens',
     '$ai_total_tokens',
     '$ai_latency',
-    '$ai_latency_ms',
     '$ai_cost',
     'result',
   ],
-  $ai_feedback: ['$ai_trace_id', '$ai_feedback_type', 'source', 'attachment_count', 'has_comment'],
   app_started: ['surface'],
   project_opened: ['source'],
   conversation_created: ['execution_target'],
@@ -283,29 +309,49 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   operation_failed: ['operation'],
   feature_action_completed: ['action', 'domain'],
   workspace_panel_added: ['panel'],
+  ai_output_action_completed: ['action', 'source'],
+  generation_regenerated: ['execution_target', 'turn_count'],
+  task_interrupted: ['execution_target', 'after_first_response', 'duration_ms'],
+  task_retried: ['execution_target', 'since_last_ms', 'previous_result'],
+  setting_changed: ['setting', 'value'],
+  workspace_panel_removed: ['panel'],
 }
+
+type PropertyValueConstraint<Property> =
+  | ReadonlyArray<Property>
+  | { enum?: ReadonlyArray<Property>; maxLength?: number; pattern?: RegExp }
+
+const SAFE_LABEL_PATTERN = /^[A-Za-z0-9._+-]+$/
+
+// telemetryTraceId() hashes produce `t-<base36>`; requiring that prefix at the
+// boundary means an un-hashed raw task id can never be transmitted as a trace
+// correlation property.
+const TELEMETRY_TRACE_ID_PATTERN = /^t-[a-z0-9]+$/
+// crypto.randomUUID() values are lowercase UUID v4.
+const TELEMETRY_GENERATION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   [EventName in AnalyticsEventName]?: {
-    [Property in keyof AnalyticsEventMap[EventName]]?: ReadonlyArray<
+    [Property in keyof AnalyticsEventMap[EventName]]?: PropertyValueConstraint<
       AnalyticsEventMap[EventName][Property]
     >
   }
 } = {
   $ai_trace: {
+    $ai_trace_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
     $ai_trace_phase: ['start', 'end'],
     execution_target: ['local', 'cloud', 'unknown'],
     result: ['success', 'cancelled', 'failure'],
     failure_reason: ['network_error', 'model_error', 'runtime_error', 'unknown'],
   },
   $ai_generation: {
+    $ai_generation_id: { maxLength: 128, pattern: TELEMETRY_GENERATION_ID_PATTERN },
+    $ai_trace_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
+    $ai_parent_id: { maxLength: 128, pattern: TELEMETRY_TRACE_ID_PATTERN },
+    $ai_model: { maxLength: 128, pattern: SAFE_LABEL_PATTERN },
+    $ai_provider: KNOWN_AI_PROVIDERS,
     result: ['success', 'failure', 'cancelled'],
-  },
-  $ai_feedback: {
-    $ai_feedback_type: ['positive', 'negative'],
-    source: ['task_dialog'],
-    attachment_count: ['0', '1', '2-5', '6+'],
-    has_comment: [true, false],
   },
   app_started: { surface: ['main', 'popout', 'workspace'] },
   project_opened: { source: ['local', 'cloud', 'unknown'] },
@@ -466,6 +512,35 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
     ],
   },
   workspace_panel_added: {
+    panel: ['review', 'terminal', 'browser', 'chat', 'files', 'desktop', 'other'],
+  },
+  ai_output_action_completed: {
+    action: ['copy', 'open_file', 'run', 'apply', 'expand', 'accept', 'reject'],
+    source: ['chat', 'workbench', 'board'],
+  },
+  generation_regenerated: {
+    execution_target: ['local', 'cloud', 'unknown'],
+  },
+  task_interrupted: {
+    execution_target: ['local', 'cloud', 'unknown'],
+  },
+  task_retried: {
+    execution_target: ['local', 'cloud', 'unknown'],
+    previous_result: ['success', 'cancelled', 'failure'],
+  },
+  setting_changed: {
+    setting: [
+      'appearance_mode',
+      'accent_color',
+      'font_size',
+      'default_model',
+      'context_window',
+      'runtime',
+      'other',
+    ],
+    value: { maxLength: 64 },
+  },
+  workspace_panel_removed: {
     panel: ['review', 'terminal', 'browser', 'chat', 'files', 'desktop', 'other'],
   },
 }

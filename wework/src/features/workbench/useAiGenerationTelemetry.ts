@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { track } from '@/telemetry/client'
+import { activeRuntimeRunTraceId, mintRuntimeRunTraceId } from '@/telemetry/traceId'
+import { toKnownAiModelId, toKnownAiProvider } from '@/telemetry/modelCatalog'
+import { recordGenerationOutcome } from './runtimeGenerationOutcome'
 import { runtimeConversationKey } from './runtimeConversationCache'
 import type { RuntimeContextUsage, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 
 interface UseAiGenerationTelemetryInput {
   resolveModel: (address: RuntimeTaskAddress) => UnifiedModel | null
   contextUsageByRuntimeTask: Record<string, RuntimeContextUsage>
+  knownModelIds: ReadonlySet<string>
 }
 
 interface PendingGeneration {
   generationId: string
   startedAt: number
+  traceId: string
 }
 
 interface ModelPricing {
@@ -34,6 +39,9 @@ const MODEL_PRICING_USD_PER_TOKEN: Record<string, ModelPricing> = {
   'claude-3-7-sonnet': { input: 3.0 / 1e6, output: 15.0 / 1e6 },
   'gemini-1.5-pro': { input: 1.25 / 1e6, output: 5.0 / 1e6 },
   'gemini-1.5-flash': { input: 0.075 / 1e6, output: 0.3 / 1e6 },
+  // Moonshot Kimi coding models (approximate public list pricing).
+  'moonshot-kimi': { input: 1.2 / 1e6, output: 3.0 / 1e6, cached: 0.3 / 1e6 },
+  'wework-kimi': { input: 1.2 / 1e6, output: 3.0 / 1e6, cached: 0.3 / 1e6 },
 }
 
 function resolveModelPricing(model: UnifiedModel): ModelPricing | undefined {
@@ -73,48 +81,58 @@ function estimateGenerationCost(
 export function useAiGenerationTelemetry({
   resolveModel,
   contextUsageByRuntimeTask,
+  knownModelIds,
 }: UseAiGenerationTelemetryInput) {
   const pendingRef = useRef(new Map<string, PendingGeneration>())
   const resolveModelRef = useRef(resolveModel)
   const contextUsageRef = useRef(contextUsageByRuntimeTask)
+  const knownModelIdsRef = useRef(knownModelIds)
 
   useEffect(() => {
     resolveModelRef.current = resolveModel
     contextUsageRef.current = contextUsageByRuntimeTask
-  }, [resolveModel, contextUsageByRuntimeTask])
+    knownModelIdsRef.current = knownModelIds
+  }, [resolveModel, contextUsageByRuntimeTask, knownModelIds])
 
-  const onAssistantStart = useCallback((address: RuntimeTaskAddress) => {
-    pendingRef.current.set(runtimeConversationKey(address), {
+  const onAssistantStart = useCallback((address: RuntimeTaskAddress, subtaskId: string) => {
+    pendingRef.current.set(generationKey(address, subtaskId), {
       generationId: crypto.randomUUID(),
       startedAt: Date.now(),
+      traceId: activeRuntimeRunTraceId(address) ?? mintRuntimeRunTraceId(address),
     })
   }, [])
 
   const onAssistantSettled = useCallback(
-    (address: RuntimeTaskAddress, result: 'success' | 'failure' | 'cancelled') => {
-      const key = runtimeConversationKey(address)
+    (
+      address: RuntimeTaskAddress,
+      subtaskId: string,
+      result: 'success' | 'failure' | 'cancelled',
+      contextUsage?: RuntimeContextUsage
+    ) => {
+      const key = generationKey(address, subtaskId)
       const pending = pendingRef.current.get(key)
       if (!pending) return
       pendingRef.current.delete(key)
+      recordGenerationOutcome(address, result)
 
       const latencyMs = Math.max(0, Date.now() - pending.startedAt)
       const model = resolveModelRef.current(address)
-      const usage = contextUsageRef.current[key]
+      const usage = contextUsage ?? contextUsageRef.current[runtimeConversationKey(address)]
 
       const cost = model ? estimateGenerationCost(model, usage?.last) : undefined
 
       track('$ai_generation', {
         $ai_generation_id: pending.generationId,
-        $ai_parent_id: address.taskId,
-        $ai_model: model?.modelId ?? model?.name ?? 'unknown',
-        $ai_provider: model?.provider ?? 'unknown',
+        $ai_trace_id: pending.traceId,
+        $ai_parent_id: pending.traceId,
+        $ai_model: toKnownAiModelId(model?.modelId, knownModelIdsRef.current),
+        $ai_provider: toKnownAiProvider(model?.provider),
         ...(usage?.last && {
           $ai_input_tokens: usage.last.inputTokens,
           $ai_output_tokens: usage.last.outputTokens,
           $ai_total_tokens: usage.last.totalTokens,
         }),
         $ai_latency: Math.round((latencyMs / 1000) * 1000) / 1000,
-        $ai_latency_ms: latencyMs,
         ...(typeof cost === 'number' && { $ai_cost: cost }),
         result,
       })
@@ -126,4 +144,8 @@ export function useAiGenerationTelemetry({
     () => ({ onAssistantStart, onAssistantSettled }),
     [onAssistantStart, onAssistantSettled]
   )
+}
+
+function generationKey(address: RuntimeTaskAddress, subtaskId: string): string {
+  return `${runtimeConversationKey(address)}:${subtaskId}`
 }

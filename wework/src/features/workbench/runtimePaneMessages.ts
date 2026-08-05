@@ -37,8 +37,12 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
-  onAssistantStart?: () => void
-  onAssistantSettled?: (result: 'success' | 'failure' | 'cancelled') => void
+  onAssistantStart?: (subtaskId: string) => void
+  onAssistantSettled?: (
+    subtaskId: string,
+    result: 'success' | 'failure' | 'cancelled',
+    contextUsage?: RuntimeContextUsage
+  ) => void
   onRefreshWorkLists?: () => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
@@ -52,10 +56,12 @@ export interface RuntimeTaskStreamHandlers {
 
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
-  onAssistantStart?: (address: RuntimeTaskAddress) => void
+  onAssistantStart?: (address: RuntimeTaskAddress, subtaskId: string) => void
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
-    result: 'success' | 'failure' | 'cancelled'
+    subtaskId: string,
+    result: 'success' | 'failure' | 'cancelled',
+    contextUsage?: RuntimeContextUsage
   ) => void
   onRefreshWorkLists?: (address: RuntimeTaskAddress) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
@@ -97,8 +103,9 @@ export function createRuntimeConversationStreamHandlers(
 
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
-      onAssistantStart: () => handlers.onAssistantStart?.(address),
-      onAssistantSettled: result => handlers.onAssistantSettled?.(address, result),
+      onAssistantStart: subtaskId => handlers.onAssistantStart?.(address, subtaskId),
+      onAssistantSettled: (subtaskId, result, contextUsage) =>
+        handlers.onAssistantSettled?.(address, subtaskId, result, contextUsage),
       onRefreshWorkLists: () => handlers.onRefreshWorkLists?.(address),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
@@ -148,7 +155,7 @@ export function createRuntimeTaskStreamHandlers(
         return
       }
       debugRuntimeStreamEvent('chat:start', address, payload, true)
-      handlers.onAssistantStart?.()
+      handlers.onAssistantStart?.(identity.subtaskId)
       handlers.onMessageAction({
         type: 'assistant_started',
         taskId: payload.taskId,
@@ -244,7 +251,7 @@ export function createRuntimeTaskStreamHandlers(
         blocks,
         fileChanges,
       })
-      handlers.onAssistantSettled?.('success')
+      handlers.onAssistantSettled?.(identity.subtaskId, 'success', payload.result.contextUsage)
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
@@ -286,7 +293,10 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      handlers.onAssistantSettled?.(isCancelledRuntimeError(payload) ? 'cancelled' : 'failure')
+      handlers.onAssistantSettled?.(
+        identity.subtaskId,
+        isCancelledRuntimeError(payload) ? 'cancelled' : 'failure'
+      )
       streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
@@ -323,7 +333,7 @@ export function createRuntimeTaskStreamHandlers(
           type: 'assistant_done',
           subtaskId: identity.subtaskId,
         })
-        handlers.onAssistantSettled?.('success')
+        handlers.onAssistantSettled?.(identity.subtaskId, 'success')
         handlers.onRefreshWorkLists?.()
       }
     },

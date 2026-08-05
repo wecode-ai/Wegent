@@ -4,6 +4,7 @@ import {
   ANALYTICS_EVENT_VALUE_CONSTRAINTS,
   type AnalyticsEventMap,
   type AnalyticsEventName,
+  type CommonTelemetryProperties,
   type QueuedAnalyticsEvent,
 } from './events'
 import {
@@ -51,6 +52,9 @@ let initializing: Promise<void> | null = null
 let posthog: PostHog | null = null
 let sentry: SentryModule | null = null
 let queuedEvents: QueuedAnalyticsEvent[] = []
+let pendingCaptures: QueuedAnalyticsEvent[] = []
+let captureFlushScheduled = false
+let cachedCommonProperties: CommonTelemetryProperties | null = null
 
 function installationId(): string {
   const stored = localStorage.getItem(INSTALLATION_ID_KEY)
@@ -58,6 +62,14 @@ function installationId(): string {
   const created = crypto.randomUUID()
   localStorage.setItem(INSTALLATION_ID_KEY, created)
   return created
+}
+
+// Common properties are identical for every event in a session (the session id
+// only changes when telemetry is re-enabled), so derive them once instead of
+// re-reading runtime config and sessionStorage on every track() call.
+function commonTelemetryProperties(): CommonTelemetryProperties {
+  cachedCommonProperties ??= getCommonTelemetryProperties()
+  return cachedCommonProperties
 }
 
 function sanitizePostHogCapture(capture: CaptureResult | null): CaptureResult | null {
@@ -104,7 +116,9 @@ async function initPostHog(): Promise<void> {
     opt_out_persistence_by_default: true,
     persistence: 'localStorage',
     person_profiles: 'never',
-    request_batching: false,
+    // Batch sends so each capture does not immediately run the full
+    // send pipeline (compression, persistence, request) on the caller's stack.
+    request_batching: true,
     before_send: sanitizePostHogCapture,
   })
 }
@@ -121,13 +135,7 @@ const TRUSTED_SENTRY_APP_PATHS = new Set([
   '/index.html',
   '/runtime-config.js',
 ])
-const TRUSTED_SENTRY_APP_PATH_PREFIXES = [
-  '/@id/',
-  '/@vite/',
-  '/assets/',
-  '/node_modules/',
-  '/src/',
-] as const
+const TRUSTED_SENTRY_APP_PATH_PREFIXES = ['/@vite/', '/assets/', '/node_modules/', '/src/'] as const
 
 function isTrustedSentryAppPath(pathname: string): boolean {
   return (
@@ -200,25 +208,9 @@ function sanitizeSentryDebugMeta(debugMeta: SentryEvent['debug_meta']): SentryEv
   return images?.length ? { images } : undefined
 }
 
-const SENSITIVE_PATH_PATTERN =
-  /([A-Za-z]:)?([/\\])(Users|home|tmp|var|private|root|opt|usr|local|Downloads|Documents|Desktop|Library)([/\\][^\s"'<>,]*)?/gi
-const SENSITIVE_EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g
-const SENSITIVE_TOKEN_PATTERN =
-  /\b(token|bearer|api[_-]?key|secret|password)\s*[:=]\s*["']?[^\s"'<>,]+["']?/gi
-
-function redactSensitiveString(value: string | undefined): string | undefined {
-  if (!value) return value
-  return value
-    .replace(SENSITIVE_PATH_PATTERN, '<redacted>')
-    .replace(SENSITIVE_EMAIL_PATTERN, '<redacted>')
-    .replace(SENSITIVE_TOKEN_PATTERN, '$1=<redacted>')
-}
-
 function sanitizeSentrySpan(span: SentrySpan): SentrySpan {
-  const description = sanitizeSentryResourceUrl(span.description) ?? '<redacted>'
   return {
     data: {},
-    description,
     op: span.op,
     origin: span.origin,
     parent_span_id: span.parent_span_id,
@@ -250,8 +242,8 @@ function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
                   frames: value.stacktrace.frames?.map(sanitizeSentryFrame),
                 }
               : undefined,
-            type: value.type,
-            value: redactSensitiveString(value.value) ?? 'Wework error',
+            type: 'Error',
+            value: 'Wework error',
           })),
         }
       : undefined,
@@ -262,15 +254,6 @@ function sanitizeSentryEvent(event: SentryEvent): SentryEvent {
     timestamp: event.timestamp,
     type: undefined,
   }
-}
-
-function sanitizeSentryTransactionName(name: string | undefined): string | undefined {
-  if (!name) return undefined
-  const asUrl = sanitizeSentryResourceUrl(name)
-  if (asUrl) return asUrl
-  // Keep generic, non-path operation names (e.g. http.request, ui.load).
-  if (/^[a-z][a-z0-9_.]*$/i.test(name)) return name
-  return undefined
 }
 
 function sanitizeSentryTransaction(event: SentryTransaction): SentryTransaction {
@@ -296,7 +279,7 @@ function sanitizeSentryTransaction(event: SentryTransaction): SentryTransaction 
     start_timestamp: event.start_timestamp,
     tags: sanitizeSentryTags(event.tags),
     timestamp: event.timestamp,
-    transaction: sanitizeSentryTransactionName(event.transaction) ?? '<redacted>',
+    transaction: 'Wework transaction',
     type: 'transaction',
   }
 }
@@ -332,11 +315,36 @@ async function initialize(): Promise<void> {
   return initializing
 }
 
+function flushPendingCaptures(): void {
+  captureFlushScheduled = false
+  if (!posthog || !enabled) return
+  const pending = pendingCaptures
+  pendingCaptures = []
+  for (const event of pending) posthog.capture(event.name, event.properties)
+}
+
+// Defers the synchronous capture pipeline (before_send sanitization, event
+// compression, localStorage persistence) off the caller's stack so tracking
+// calls made inside stream handlers and React effects do not block rendering
+// and input handling. Events from the same turn are coalesced into one flush.
+function schedulePostHogCapture(event: QueuedAnalyticsEvent): void {
+  pendingCaptures.push(event)
+  if (captureFlushScheduled) return
+  captureFlushScheduled = true
+  queueMicrotask(flushPendingCaptures)
+}
+
 function flushQueuedEvents(): void {
   if (!posthog || !enabled) return
   const pending = queuedEvents
   queuedEvents = []
-  pending.forEach(event => posthog?.capture(event.name, event.properties))
+  for (const event of pending) schedulePostHogCapture(event)
+}
+
+if (typeof window !== 'undefined') {
+  // Send anything still queued when the window closes so a trace is not left
+  // open; deferred microtasks are not guaranteed to run on unload.
+  window.addEventListener('pagehide', flushPendingCaptures)
 }
 
 export function isTelemetryEnabled(): boolean {
@@ -359,18 +367,28 @@ export function track<EventName extends AnalyticsEventName>(
     (acc, key) => {
       const value = properties[key]
       if (value === undefined) return acc
-      const allowedValues = valueConstraints?.[key]
-      if (allowedValues && !allowedValues.includes(value as never)) return acc
+      const constraint = valueConstraints?.[key]
+      if (constraint) {
+        if (Array.isArray(constraint)) {
+          if (!constraint.includes(value as never)) return acc
+        } else if ('pattern' in constraint || 'maxLength' in constraint) {
+          if (constraint.enum && !constraint.enum.includes(value as never)) return acc
+          if (typeof value === 'string') {
+            if (constraint.maxLength != null && value.length > constraint.maxLength) return acc
+            if (constraint.pattern && !constraint.pattern.test(value)) return acc
+          }
+        }
+      }
       return { ...acc, [key]: value }
     },
     {} as AnalyticsEventMap[EventName]
   )
   const event: QueuedAnalyticsEvent<EventName> = {
     name,
-    properties: { ...getCommonTelemetryProperties(), ...allowedProperties },
+    properties: { ...commonTelemetryProperties(), ...allowedProperties },
   }
   if (posthog) {
-    posthog.capture(event.name, event.properties)
+    schedulePostHogCapture(event)
     return
   }
   queuedEvents = [...queuedEvents.slice(-(MAX_QUEUED_EVENTS - 1)), event]
@@ -396,6 +414,9 @@ export async function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
     return
   }
   queuedEvents = []
+  pendingCaptures = []
+  captureFlushScheduled = false
+  cachedCommonProperties = null
   if (initializing) {
     await initializing
     initializing = null
@@ -418,4 +439,7 @@ export function resetTelemetryForTests(): void {
   posthog = null
   sentry = null
   queuedEvents = []
+  pendingCaptures = []
+  captureFlushScheduled = false
+  cachedCommonProperties = null
 }

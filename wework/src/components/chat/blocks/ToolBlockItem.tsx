@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { terminalOutputToText } from '@/lib/terminal-text'
+import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -159,7 +160,10 @@ export function ToolBlockItem({
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
             type="button"
-            onClick={() => onOpenWorkspaceFile(workspaceFilePath)}
+            onClick={() => {
+              onOpenWorkspaceFile(workspaceFilePath)
+              track('ai_output_action_completed', { action: 'open_file', source: 'chat' })
+            }}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
@@ -588,6 +592,7 @@ function InlineDiffPreview({
 
   const handleCopy = async () => {
     await copyCodeText(copyText)
+    track('ai_output_action_completed', { action: 'copy', source: 'chat' })
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
   }

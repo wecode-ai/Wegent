@@ -41,6 +41,8 @@ export function TelemetryBridge() {
   useEffect(() => {
     if (!appPreferences?.loaded || !consentAsked) return
     void setTelemetryEnabled(effectiveTelemetryEnabled).then(() => {
+      // app_started marks the first point in this session where telemetry is
+      // active: either right after app launch or after the user re-enables it.
       if (!effectiveTelemetryEnabled || startedRef.current) return
       startedRef.current = true
       track('app_started', { surface })

@@ -117,6 +117,7 @@ import {
 } from '@/features/workspace-tabs/workspaceTabTransfer'
 import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
+import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -1178,9 +1179,18 @@ export function WorkbenchProvider({
     },
     [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
+  const knownModelIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const model of modelSelection.models) {
+      const id = normalizeAiModelId(model.modelId)
+      if (id) ids.add(id)
+    }
+    return ids
+  }, [modelSelection.models])
   const aiGenerationTelemetry = useAiGenerationTelemetry({
     resolveModel: resolveModelForAddress,
     contextUsageByRuntimeTask,
+    knownModelIds,
   })
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
@@ -1273,15 +1283,15 @@ export function WorkbenchProvider({
         createRuntimeConversationStreamHandlers({
           onMessageAction: applyCanonicalRuntimeAction,
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
-          onAssistantStart: address => {
+          onAssistantStart: (address, subtaskId) => {
             markRuntimeConversationAssistantStarted(address)
             lifecycleStore.turnStarted(address)
-            aiGenerationTelemetry.onAssistantStart(address)
+            aiGenerationTelemetry.onAssistantStart(address, subtaskId)
           },
-          onAssistantSettled: (address, result) => {
+          onAssistantSettled: (address, subtaskId, result, contextUsage) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address)
-            aiGenerationTelemetry.onAssistantSettled(address, result)
+            aiGenerationTelemetry.onAssistantSettled(address, subtaskId, result, contextUsage)
           },
           onContextUsageUpdated: updateCanonicalRuntimeContextUsage,
           onSubagentActivity: applyRuntimeConversationSubagentActivity,
