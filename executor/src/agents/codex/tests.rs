@@ -1041,9 +1041,7 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
 
     assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
     assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
-    assert!(!launch_config
-        .env
-        .contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
+    assert!(!launch_config.env.contains_key("WEGENT_RUNTIME_AUTH_TOKEN"));
     assert!(!launch_config
         .env
         .contains_key("WEGENT_SKILL_IDENTITY_TOKEN"));

@@ -738,7 +738,7 @@ mod tests {
             json!({
                 "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
                 "idempotency_key": "miniapp-submit-123456",
-                "project_url": "https://m.weibo.cn/c/wbox?id=123",
+                "project_url": "https://example.com/miniapp?id=123",
                 "label": "测试体验码 sessionId=abc",
                 "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "source_archive_sha256": archive_digest,
@@ -768,7 +768,7 @@ mod tests {
             json!({
                 "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
                 "idempotency_key": "miniapp-submit-123456",
-                "project_url": "https://m.weibo.cn/c/wbox?id=123",
+                "project_url": "https://example.com/miniapp?id=123",
                 "label": "测试体验码 sessionId=abc",
                 "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "source_archive_sha256": sha256_digest(archive),
@@ -793,7 +793,7 @@ mod tests {
             json!({
                 "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
                 "idempotency_key": "miniapp-submit-123456",
-                "project_url": "https://m.weibo.cn/c/wbox?id=123",
+                "project_url": "https://example.com/miniapp?id=123",
                 "label": "测试体验码 sessionId=abc",
                 "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "source_archive_sha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
