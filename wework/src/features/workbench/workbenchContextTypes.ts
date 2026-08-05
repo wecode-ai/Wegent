@@ -74,6 +74,8 @@ export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
+export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
+
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
@@ -230,7 +232,7 @@ export interface WorkbenchContextValue {
     address: RuntimeTaskAddress
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
-  refreshWorkLists: () => Promise<void>
+  refreshWorkLists: RefreshWorkLists
   refreshDevices: () => Promise<void>
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
