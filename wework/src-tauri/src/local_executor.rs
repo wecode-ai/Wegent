@@ -1149,6 +1149,28 @@ fn write_codex_shell_environment_value(
     read_codex_local_config()
 }
 
+fn snapshot_codex_shell_environment_config() -> Result<(PathBuf, bool, String), String> {
+    let (_, config_path) = wework_codex_config_path()?;
+    let existed = config_path.exists();
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    Ok((config_path, existed, content))
+}
+
+fn restore_codex_shell_environment_config(
+    config_path: &Path,
+    existed: bool,
+    content: &str,
+) -> Result<(), String> {
+    if existed {
+        fs::write(config_path, content)
+            .map_err(|error| format!("failed to restore {}: {error}", config_path.display()))?;
+    } else if config_path.exists() {
+        fs::remove_file(config_path)
+            .map_err(|error| format!("failed to remove {}: {error}", config_path.display()))?;
+    }
+    Ok(())
+}
+
 fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, String> {
     let (codex_home, config_path) = wework_codex_config_path()?;
     fs::create_dir_all(&codex_home)
@@ -2533,15 +2555,16 @@ pub async fn local_executor_connect_backend(
     let socket_url = normalize_command_arg(socket_url, "socket_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
     let runtime_auth_token = normalize_optional_command_arg(runtime_auth_token);
+    let _guard = state.backend_connection_lock.lock().await;
+    let (config_path, config_existed, previous_config) = snapshot_codex_shell_environment_config()?;
     write_codex_shell_environment_value(
         WEGENT_RUNTIME_AUTH_TOKEN_ENV,
         runtime_auth_token.as_deref(),
     )?;
-    let _guard = state.backend_connection_lock.lock().await;
     log::info!(
         "Local executor backend connection update requested: connected=true, backend_url={backend_url}, socket_url={socket_url}"
     );
-    send_executor_request(
+    let configure_result = send_executor_request(
         app.clone(),
         &state,
         LocalExecutorRequest {
@@ -2554,7 +2577,12 @@ pub async fn local_executor_connect_backend(
             }),
         },
     )
-    .await?;
+    .await;
+    if let Err(error) = configure_result {
+        restore_codex_shell_environment_config(&config_path, config_existed, &previous_config)
+            .map_err(|restore_error| format!("{error}; {restore_error}"))?;
+        return Err(error);
+    }
     let changed = {
         let mut inner = state
             .inner
@@ -2581,10 +2609,11 @@ pub async fn local_executor_disconnect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
-    write_codex_shell_environment_value(WEGENT_RUNTIME_AUTH_TOKEN_ENV, None)?;
     let _guard = state.backend_connection_lock.lock().await;
+    let (config_path, config_existed, previous_config) = snapshot_codex_shell_environment_config()?;
+    write_codex_shell_environment_value(WEGENT_RUNTIME_AUTH_TOKEN_ENV, None)?;
     log::info!("Local executor backend connection update requested: connected=false");
-    send_executor_request(
+    let configure_result = send_executor_request(
         app.clone(),
         &state,
         LocalExecutorRequest {
@@ -2595,7 +2624,12 @@ pub async fn local_executor_disconnect_backend(
             }),
         },
     )
-    .await?;
+    .await;
+    if let Err(error) = configure_result {
+        restore_codex_shell_environment_config(&config_path, config_existed, &previous_config)
+            .map_err(|restore_error| format!("{error}; {restore_error}"))?;
+        return Err(error);
+    }
     let changed = {
         let mut inner = state
             .inner

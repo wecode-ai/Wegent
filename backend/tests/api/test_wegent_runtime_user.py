@@ -9,6 +9,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 
 from app.models.user import User
 from app.services.auth import create_task_token
@@ -19,7 +20,7 @@ DEFAULT_RUNTIME_AES_KEY = "12345678901234567890123456789012"
 def test_get_wegent_runtime_user_returns_encrypted_task_user_info(
     test_client: TestClient,
     test_user: User,
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("USER_AES_KEY", DEFAULT_RUNTIME_AES_KEY)
 
@@ -59,7 +60,7 @@ def test_create_wegent_runtime_auth_token_returns_task_token_for_runtime_user(
     test_client: TestClient,
     test_token: str,
     test_user: User,
-    monkeypatch,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("USER_AES_KEY", DEFAULT_RUNTIME_AES_KEY)
 

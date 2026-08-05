@@ -57,6 +57,7 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
+from shared.telemetry.decorators import trace_async
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
@@ -264,9 +265,10 @@ async def read_wegent_runtime_user(
 
 
 @router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
+@trace_async("create_wegent_runtime_auth_token", "users.api")
 async def create_wegent_runtime_auth_token(
     current_user: User = Depends(security.get_current_user),
-):
+) -> WegentRuntimeAuthTokenResponse:
     """Return a task token that WeWork local Skills can use with Wegent runtime APIs."""
 
     expires_delta_minutes = 1440

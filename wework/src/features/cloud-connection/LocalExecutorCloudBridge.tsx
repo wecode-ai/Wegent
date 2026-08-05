@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import {
   issueWegentConnectorToken,
   listWegentInstalledConnectorApps,
@@ -37,15 +37,21 @@ export function LocalExecutorCloudBridge({
   isConnected,
   token,
 }: LocalExecutorCloudBridgeProps) {
+  const connectionGenerationRef = useRef(0)
+
   useEffect(() => {
+    const generation = connectionGenerationRef.current + 1
+    connectionGenerationRef.current = generation
     const backendUrl = isConnected ? configuredBackendUrl : null
     const authToken = isConnected ? token : null
     const connected = Boolean(backendUrl && socketBaseUrl && authToken)
     let cancelled = false
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    const isCurrentConnectionAttempt = () =>
+      !cancelled && connectionGenerationRef.current === generation
 
     const scheduleRefresh = (expiresInSeconds: number) => {
-      if (cancelled) return
+      if (!isCurrentConnectionAttempt()) return
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(
         () => void applyConnection(),
@@ -54,20 +60,24 @@ export function LocalExecutorCloudBridge({
     }
 
     const scheduleRetry = () => {
-      if (cancelled || !connected) return
+      if (!isCurrentConnectionAttempt() || !connected) return
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => void applyConnection(), 30_000)
     }
 
     const applyConnection = async () => {
       try {
-        const result = await applyLocalExecutorCloudConnection({
-          apiBaseUrl,
-          backendUrl: configuredBackendUrl,
-          socketBaseUrl,
-          isConnected,
-          token,
-        })
+        const result = await applyLocalExecutorCloudConnection(
+          {
+            apiBaseUrl,
+            backendUrl: configuredBackendUrl,
+            socketBaseUrl,
+            isConnected,
+            token,
+          },
+          { isCurrent: isCurrentConnectionAttempt }
+        )
+        if (!isCurrentConnectionAttempt()) return
         if (
           result.connected &&
           typeof result.runtimeAuthTokenExpiresIn === 'number' &&
@@ -91,6 +101,7 @@ export function LocalExecutorCloudBridge({
     void applyConnection()
     return () => {
       cancelled = true
+      connectionGenerationRef.current += 1
       if (refreshTimer) clearTimeout(refreshTimer)
     }
   }, [apiBaseUrl, configuredBackendUrl, isConnected, socketBaseUrl, token])

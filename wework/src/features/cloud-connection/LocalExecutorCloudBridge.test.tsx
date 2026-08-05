@@ -82,6 +82,16 @@ describe('LocalExecutorCloudBridge', () => {
     })
   }
 
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+      resolve = promiseResolve
+      reject = promiseReject
+    })
+    return { promise, resolve, reject }
+  }
+
   test('updates backend connection whenever the cloud target changes', async () => {
     const view = render(
       <LocalExecutorCloudBridge
@@ -243,6 +253,76 @@ describe('LocalExecutorCloudBridge', () => {
       view.unmount()
       vi.useRealTimers()
     }
+  })
+
+  test('ignores a stale deferred runtime token after the cloud target changes', async () => {
+    const firstToken = deferred<{
+      auth_token: string
+      token_type: string
+      expires_in: number
+    }>()
+    const secondToken = deferred<{
+      auth_token: string
+      token_type: string
+      expires_in: number
+    }>()
+    mocks.runtimeTokenPost
+      .mockReturnValueOnce(firstToken.promise)
+      .mockReturnValueOnce(secondToken.promise)
+
+    const view = render(
+      <LocalExecutorCloudBridge
+        apiBaseUrl="https://backend-a.example.com/api"
+        backendUrl="https://backend-a.example.com"
+        socketBaseUrl="wss://socket-a.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await waitFor(() => expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <LocalExecutorCloudBridge
+        apiBaseUrl="https://backend-b.example.com/api"
+        backendUrl="https://backend-b.example.com"
+        socketBaseUrl="wss://socket-b.example.com"
+        isConnected
+        token="token-b"
+      />
+    )
+
+    await waitFor(() => expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      firstToken.resolve({
+        auth_token: 'runtime-task-token-a',
+        token_type: 'bearer',
+        expires_in: 86400,
+      })
+      await firstToken.promise
+    })
+
+    await flushAsyncEffects()
+    expect(mocks.connect).not.toHaveBeenCalled()
+
+    await act(async () => {
+      secondToken.resolve({
+        auth_token: 'runtime-task-token-b',
+        token_type: 'bearer',
+        expires_in: 86400,
+      })
+      await secondToken.promise
+    })
+
+    await waitFor(() => {
+      expect(mocks.connect).toHaveBeenCalledWith({
+        backendUrl: 'https://backend-b.example.com',
+        socketBaseUrl: 'wss://socket-b.example.com',
+        authToken: 'token-b',
+        runtimeAuthToken: 'runtime-task-token-b',
+      })
+    })
   })
 
   test('passes only a short-lived scoped token and syncs connected apps', async () => {

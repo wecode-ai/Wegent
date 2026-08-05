@@ -348,26 +348,32 @@ fn prepare_wegent_sites_miniapp_version(
     let archive_path = archive_path
         .canonicalize()
         .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
-    let metadata = fs::metadata(&archive_path)
+    let mut archive_file = fs::File::open(&archive_path)
+        .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
+    let metadata = archive_file
+        .metadata()
         .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
     if !metadata.is_file() {
         return Err("source_archive_path does not exist or is not a regular file.".to_owned());
-    }
-    if metadata.len() > MAX_SOURCE_ARCHIVE_BYTES as u64 {
-        return Err(source_archive_size_error());
     }
 
     let size_bytes = arguments
         .get("size_bytes")
         .and_then(Value::as_u64)
         .ok_or_else(|| "size_bytes is required.".to_owned())?;
-    if size_bytes != metadata.len() {
-        return Err("source_archive_path size does not match size_bytes.".to_owned());
-    }
 
     let expected_archive_digest = string_argument(&arguments, "source_archive_sha256")?;
-    let archive = fs::read(&archive_path)
+    let mut archive = Vec::new();
+    Read::by_ref(&mut archive_file)
+        .take((MAX_SOURCE_ARCHIVE_BYTES + 1) as u64)
+        .read_to_end(&mut archive)
         .map_err(|error| format!("Failed to read source_archive_path: {error}"))?;
+    if archive.len() > MAX_SOURCE_ARCHIVE_BYTES {
+        return Err(source_archive_size_error());
+    }
+    if size_bytes != archive.len() as u64 {
+        return Err("source_archive_path size does not match size_bytes.".to_owned());
+    }
     let actual_archive_digest = sha256_digest(&archive);
     if actual_archive_digest != expected_archive_digest {
         return Err("source_archive_path digest does not match source_archive_sha256.".to_owned());

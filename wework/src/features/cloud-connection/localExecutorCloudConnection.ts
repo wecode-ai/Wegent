@@ -24,6 +24,10 @@ export interface LocalExecutorCloudConnectionResult {
   runtimeAuthTokenExpiresIn?: number
 }
 
+interface LocalExecutorCloudConnectionOptions {
+  isCurrent?: () => boolean
+}
+
 const DEFAULT_RUNTIME_AUTH_TOKEN_EXPIRES_IN_SECONDS = 24 * 60 * 60
 
 function normalizeExpiresIn(value: unknown): number {
@@ -54,20 +58,20 @@ async function issueRuntimeAuthToken(
   }
 }
 
-export async function applyLocalExecutorCloudConnection({
-  apiBaseUrl,
-  backendUrl,
-  socketBaseUrl,
-  isConnected,
-  token,
-}: LocalExecutorCloudConnection): Promise<LocalExecutorCloudConnectionResult> {
+export async function applyLocalExecutorCloudConnection(
+  { apiBaseUrl, backendUrl, socketBaseUrl, isConnected, token }: LocalExecutorCloudConnection,
+  options: LocalExecutorCloudConnectionOptions = {}
+): Promise<LocalExecutorCloudConnectionResult> {
   if (!isCloudConnectionUiAvailable()) return { connected: false }
+  const isCurrent = options.isCurrent ?? (() => true)
+  if (!isCurrent()) return { connected: false }
 
   if (isConnected && backendUrl && socketBaseUrl && token) {
     if (!apiBaseUrl) {
       throw new Error('Cloud Backend API URL is required for Wegent runtime token issuing')
     }
     const runtimeToken = await issueRuntimeAuthToken(apiBaseUrl, token)
+    if (!isCurrent()) return { connected: false }
     await connectLocalExecutorToBackend({
       backendUrl,
       socketBaseUrl,
@@ -80,6 +84,7 @@ export async function applyLocalExecutorCloudConnection({
     }
   }
 
+  if (!isCurrent()) return { connected: false }
   await disconnectLocalExecutorFromBackend()
   return { connected: false }
 }

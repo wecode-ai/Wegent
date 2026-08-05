@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pytest_httpx import HTTPXMock
 
 from app.core.config import settings
 
@@ -109,7 +110,7 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     monkeypatch.setattr(settings, "SITES_API_TOKEN", "platform-token")
@@ -153,15 +154,14 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     assert request.url.params["sitename"] == "product"
 
 
-def test_list_sites_accepts_legacy_site_app_type_and_defaults_missing_network(
+def test_list_sites_accepts_legacy_site_app_type_and_defaults_invalid_network(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
-    project = _project(app_type="site")
-    project.pop("network")
+    project = _project(app_type="site", network=[])
     httpx_mock.add_response(
         method="GET",
         url=(
@@ -188,7 +188,7 @@ def test_list_sites_returns_mini_programs_from_the_shared_endpoint(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -230,7 +230,7 @@ def test_list_sites_accepts_legacy_mini_program_app_type_and_payload_type(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     project = _mini_program(app_type="mini_program")
@@ -273,7 +273,7 @@ def test_list_sites_fetches_until_offset_page_is_resolved(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -322,7 +322,7 @@ def test_list_sites_next_cursor_uses_next_offset(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -357,7 +357,7 @@ def test_publish_site_sets_network_to_outer(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     monkeypatch.setattr(settings, "SITES_API_TOKEN", "platform-token")
@@ -393,7 +393,7 @@ def test_publish_site_returns_scanning_status_without_outer_network(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -418,7 +418,7 @@ def test_update_site_network_proxies_platform_network_update(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -447,7 +447,7 @@ def test_update_site_name_proxies_platform_name_update(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(
@@ -475,7 +475,7 @@ def test_delete_site_removes_owned_platform_project(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
+    httpx_mock: HTTPXMock,
 ) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
     httpx_mock.add_response(

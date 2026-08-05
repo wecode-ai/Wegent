@@ -39,7 +39,11 @@ def normalize_application_type(app_type: Any) -> str:
 
 
 def normalize_site_network(network: Any) -> SiteNetwork:
-    return cast(SiteNetwork, network) if network in {"inner", "outer"} else "inner"
+    return (
+        cast(SiteNetwork, network)
+        if isinstance(network, str) and network in {"inner", "outer"}
+        else "inner"
+    )
 
 
 class ApplicationTypeHandler(ABC):
