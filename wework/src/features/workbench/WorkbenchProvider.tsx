@@ -380,17 +380,16 @@ export function WorkbenchProvider({
     [projectChatScopeKey]
   )
   const dismissTrialGuideForScope = useCallback(() => {
-    if (!trialPluginName.trim()) {
-      setTrialTemplatesByScope(current => {
-        if (!current[projectChatScopeKey]) return current
-        const next = { ...current }
-        delete next[projectChatScopeKey]
-        return next
-      })
-      return
+    if (trialPluginName.trim()) {
+      dismissTrialGuide(trialPluginName, projectChatScopeKey)
     }
-    dismissTrialGuide(trialPluginName, projectChatScopeKey)
     setTrialTemplatesByScope(current => {
+      if (!current[projectChatScopeKey]) return current
+      const next = { ...current }
+      delete next[projectChatScopeKey]
+      return next
+    })
+    setTrialPluginNameByScope(current => {
       if (!current[projectChatScopeKey]) return current
       const next = { ...current }
       delete next[projectChatScopeKey]
