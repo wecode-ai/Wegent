@@ -11,7 +11,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { updateWorkbenchDebugSnapshot, DEBUG_SNAPSHOT_DEBOUNCE_MS } from '@/lib/debugPanel'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
@@ -612,24 +612,37 @@ export function WorkbenchProvider({
   }, [executorClient, localRuntimeStateDeviceId, state.currentProject?.id, state.runtimeWork])
 
   useEffect(() => {
-    updateWorkbenchDebugSnapshot({
-      state,
-      lifecycle: lifecycleSnapshot,
-      cloudWorkStatus,
-      composer: {
-        scopeKey: projectChatScopeKey,
-        standaloneChatKey: state.standaloneChatKey,
-        availableModelNames: modelSelection.models.map(model => model.name),
-        currentInputLength: draftInput.length,
-        scopedInputLengths: Object.fromEntries(
-          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
-        ),
-        attachmentCount: attachmentSelection.attachments.length,
-        contextUsagePercent: currentContextUsage
-          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
-          : undefined,
-      },
-    })
+    let timeout: number | null = null
+    const schedule = () => {
+      if (timeout !== null) return
+      timeout = window.setTimeout(() => {
+        timeout = null
+        updateWorkbenchDebugSnapshot({
+          state,
+          lifecycle: lifecycleSnapshot,
+          cloudWorkStatus,
+          composer: {
+            scopeKey: projectChatScopeKey,
+            standaloneChatKey: state.standaloneChatKey,
+            availableModelNames: modelSelection.models.map(model => model.name),
+            currentInputLength: draftInput.length,
+            scopedInputLengths: Object.fromEntries(
+              Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+            ),
+            attachmentCount: attachmentSelection.attachments.length,
+            contextUsagePercent: currentContextUsage
+              ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+              : undefined,
+          },
+        })
+      }, DEBUG_SNAPSHOT_DEBOUNCE_MS)
+    }
+    schedule()
+    return () => {
+      if (timeout !== null) {
+        clearTimeout(timeout)
+      }
+    }
   }, [
     attachmentSelection.attachments.length,
     cloudWorkStatus,
