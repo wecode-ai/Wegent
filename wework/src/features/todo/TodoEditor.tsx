@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react'
 import {
   ArrowLeft,
+  Bot,
   Calendar,
   ChevronDown,
   ChevronRight,
@@ -32,6 +39,9 @@ import type {
   Delivery,
   DeliveryDetail,
 } from '@/api/deliveries'
+import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
+import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { cn } from '@/lib/utils'
@@ -39,7 +49,9 @@ import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
 import { normalizeTaskDescription } from './taskDescription'
 import { AITableTaskFields } from './AITableTaskFields'
+import { TaskActivityView } from './TaskActivityView'
 import { markdownAttachmentRows } from './attachmentMarkdown'
+import './task-detail-layout.css'
 import {
   columnDotClasses,
   columns,
@@ -121,8 +133,99 @@ function appendAttachmentMarkdown(description: string, markdown: string): string
 }
 
 const propChipClass =
-  'relative inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-2.5 text-xs text-text-primary transition hover:bg-muted'
+  'task-detail-pill relative inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-background px-3 py-1.5 text-xs text-text-primary transition hover:bg-muted'
 const overlayControlClass = 'absolute inset-0 h-full w-full cursor-pointer opacity-0'
+const avatarPalette = [
+  'bg-blue-500',
+  'bg-violet-500',
+  'bg-orange-500',
+  'bg-zinc-600',
+  'bg-rose-500',
+]
+
+function sourceCellText(cells: Record<string, unknown> | undefined, keys: string[]): string | null {
+  if (!cells) return null
+  for (const [key, value] of Object.entries(cells)) {
+    const normalized = key.toLowerCase()
+    if (!keys.some(candidate => normalized.includes(candidate))) continue
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number') return String(value)
+    if (Array.isArray(value)) {
+      const text = value
+        .map(entry => (typeof entry === 'string' || typeof entry === 'number' ? String(entry) : ''))
+        .filter(Boolean)
+        .join('、')
+      if (text) return text
+    }
+  }
+  return null
+}
+
+function tagByPattern(tags: string[], pattern: RegExp): string | null {
+  return tags.find(tag => pattern.test(tag)) ?? null
+}
+
+function formatRailDueDate(dueAt: string | null | undefined, dueDate: string): string | null {
+  if (!dueDate) return null
+  const timeMatch = dueAt?.match(/[T ](\d{2}:\d{2})/)
+  return `${dueDate.slice(5)} ${timeMatch?.[1] ?? '18:00'}`
+}
+
+function AvatarMark({
+  name,
+  index = 0,
+  size = 'md',
+}: {
+  name: string
+  index?: number
+  size?: 'sm' | 'md'
+}) {
+  return (
+    <span
+      className={cn(
+        'flex shrink-0 items-center justify-center rounded-full font-semibold text-background',
+        size === 'md' ? 'h-6 w-6 text-xs' : 'h-6 w-6 text-xs',
+        avatarPalette[index % avatarPalette.length]
+      )}
+    >
+      {name.slice(0, 1).toUpperCase()}
+    </span>
+  )
+}
+
+function RailProp({
+  label,
+  children,
+  control,
+  testId,
+  clickable = Boolean(control),
+}: {
+  label: string
+  children: ReactNode
+  control?: ReactNode
+  testId?: string
+  clickable?: boolean
+}) {
+  return (
+    <span data-testid={testId} className="relative flex min-w-0 items-center gap-2">
+      <span className="w-[52px] shrink-0 text-xs font-medium leading-5 text-text-muted">
+        {label}
+      </span>
+      <span
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm font-medium leading-5 text-text-primary',
+          clickable && 'group relative'
+        )}
+      >
+        {clickable ? (
+          <span className="pointer-events-none absolute -inset-x-1.5 -inset-y-[3px] rounded-md transition group-hover:bg-muted" />
+        ) : null}
+        <span className="relative flex min-w-0 items-center gap-1.5 truncate">{children}</span>
+        {control}
+      </span>
+    </span>
+  )
+}
 
 function TodoAttachmentSection({
   attachments,
@@ -143,7 +246,7 @@ function TodoAttachmentSection({
 }) {
   return (
     <section>
-      <span className="flex select-none items-center gap-2 text-sm text-text-muted">
+      <span className="mb-3 flex select-none items-center gap-2 text-sm font-medium text-text-muted">
         <Paperclip className="h-4 w-4" />
         附件
         <span className="text-xs">{attachments.length}</span>
@@ -154,16 +257,22 @@ function TodoAttachmentSection({
         </p>
       )}
       {attachments.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
           {attachments.map(attachment => (
             <div
               key={attachment.id}
-              className="group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition hover:bg-muted"
+              className="group flex items-center gap-2.5 rounded-lg border border-border px-3 py-2.5 transition hover:bg-muted"
             >
-              <File className="h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0 flex-1 truncate text-sm">{attachment.display_name}</span>
-              <span className="shrink-0 text-xs text-text-muted">
-                {formatAttachmentSize(attachment.size_bytes)}
+              <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600">
+                <File className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {attachment.display_name}
+                </span>
+                <span className="block text-xs text-text-muted">
+                  {formatAttachmentSize(attachment.size_bytes)}
+                </span>
               </span>
               {onOpen && (
                 <button
@@ -193,7 +302,7 @@ function TodoAttachmentSection({
         </div>
       )}
       {editable && (
-        <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border px-4 py-4 text-sm text-text-muted transition hover:bg-muted hover:text-text-secondary">
+        <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-border px-3 py-3 text-sm text-text-muted transition hover:bg-muted hover:text-text-secondary">
           <Upload className="h-4 w-4" />
           {busy ? '上传中…' : '点击上传或拖拽文件到这里'}
           <input
@@ -228,12 +337,14 @@ export interface TodoEditorEditProps {
   onUpdated: (item: CloudLoopItem) => void
   onAddChild: () => void
   onStartConversation: () => void
-  onOpenGroupChat?: () => void
 }
 
 export type TodoEditorProps = {
   api: DeliveryApi
   aitableApi?: AITableApi
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  projectChatClient?: ProjectChatClient
+  currentUserId?: string | number
   allItems: CloudLoopItem[]
   onClose: () => void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
@@ -274,10 +385,15 @@ export function TodoEditor(props: TodoEditorProps) {
     item?.parent_id ?? draft?.parentId ?? createProps?.initialParent?.id ?? ''
   )
   const [dueDate, setDueDate] = useState(item?.due_at?.slice(0, 10) ?? draft?.dueDate ?? '')
-  const [assigneeId, setAssigneeId] = useState(
-    item?.assignee_user_id ? String(item.assignee_user_id) : ''
+  const [assigneeTarget, setAssigneeTarget] = useState(
+    item?.assignee_agent_id
+      ? `agent:${item.assignee_agent_id}`
+      : item?.assignee_user_id
+        ? `user:${item.assignee_user_id}`
+        : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
+  const [tagDraft, setTagDraft] = useState('')
   // Tag autocomplete candidates: the project registry plus tags already used
   // by any item in the project.
   const tagSuggestions = Array.from(
@@ -298,6 +414,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([])
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
+  const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
@@ -327,6 +444,7 @@ export function TodoEditor(props: TodoEditorProps) {
       api.listLoopItemAttachments(editItemId),
       api.listLoopItemCollaborators(editItemId),
       api.listCloudProjectMembers(editProjectId),
+      props.projectChatAgentApi?.list(String(editProjectId)) ?? Promise.resolve([]),
     ]).then(
       ([
         deliveryResponse,
@@ -334,21 +452,29 @@ export function TodoEditor(props: TodoEditorProps) {
         attachmentResponse,
         collaboratorResponse,
         memberResponse,
+        agentResponse,
       ]) => {
         setDeliveries(deliveryResponse.items)
         setTasks(taskResponse)
         setAttachments(attachmentResponse)
         setCollaborators(collaboratorResponse)
         setProjectMembers(memberResponse)
+        setProjectAgents(agentResponse.filter(agent => agent.status === 'active'))
       }
     )
-  }, [api, editItemId, editProjectId])
+  }, [api, editItemId, editProjectId, props.projectChatAgentApi])
 
   // Create mode only needs the member list for the assignee select.
   useEffect(() => {
     if (createProjectId == null) return
-    void api.listCloudProjectMembers(createProjectId).then(setProjectMembers)
-  }, [api, createProjectId])
+    void Promise.all([
+      api.listCloudProjectMembers(createProjectId),
+      props.projectChatAgentApi?.list(String(createProjectId)) ?? Promise.resolve([]),
+    ]).then(([members, agents]) => {
+      setProjectMembers(members)
+      setProjectAgents(agents.filter(agent => agent.status === 'active'))
+    })
+  }, [api, createProjectId, props.projectChatAgentApi])
 
   // Persist the text draft on every edit; a fully cleared form removes it.
   useEffect(() => {
@@ -383,7 +509,12 @@ export function TodoEditor(props: TodoEditorProps) {
       status !== item.status ||
       priority !== item.priority ||
       parentId !== (item.parent_id ?? '') ||
-      assigneeId !== (item.assignee_user_id ? String(item.assignee_user_id) : '') ||
+      assigneeTarget !==
+        (item.assignee_agent_id
+          ? `agent:${item.assignee_agent_id}`
+          : item.assignee_user_id
+            ? `user:${item.assignee_user_id}`
+            : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
       tagsDirty
     : false
@@ -402,7 +533,8 @@ export function TodoEditor(props: TodoEditorProps) {
   }))
   const statusLabel = statusOptions.find(option => option.id === status)?.name ?? '未设置'
   const parentItem = allItems.find(candidate => candidate.id === parentId)
-  const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
+  const assignee = projectMembers.find(member => assigneeTarget === `user:${member.user_id}`)
+  const assigneeAgent = projectAgents.find(agent => assigneeTarget === `agent:${agent.id}`)
   const creator =
     item?.created_by_user_name ||
     (item && item.created_by_user_id === editProps?.project?.current_user_id
@@ -430,10 +562,13 @@ export function TodoEditor(props: TodoEditorProps) {
         ...(creatorName ? { creator_name: creatorName } : {}),
       })
       // createLoopItem does not accept an assignee, so apply it right after.
-      if (assigneeId) {
+      if (assigneeTarget) {
         created = await api.updateLoopItem(created.id, {
           version: created.version,
-          assignee_user_id: Number(assigneeId),
+          assignee_user_id: assigneeTarget.startsWith('user:')
+            ? Number(assigneeTarget.slice(5))
+            : null,
+          assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
         })
       }
       const uploaded = await uploadAttachments(created.id, pendingFiles)
@@ -469,7 +604,10 @@ export function TodoEditor(props: TodoEditorProps) {
           status,
           priority,
           parent_id: parentId || null,
-          assignee_user_id: assigneeId ? Number(assigneeId) : null,
+          assignee_user_id: assigneeTarget.startsWith('user:')
+            ? Number(assigneeTarget.slice(5))
+            : null,
+          assignee_agent_id: assigneeTarget.startsWith('agent:') ? assigneeTarget.slice(6) : null,
           due_at: dueDate || null,
           tags,
         })
@@ -602,6 +740,14 @@ export function TodoEditor(props: TodoEditorProps) {
     else void addAttachments(event.dataTransfer.files)
   }
 
+  function commitTagDraft() {
+    const tag = tagDraft.trim().replace(/,/g, '')
+    if (tag) {
+      setTags(current => (current.includes(tag) ? current : [...current, tag]))
+    }
+    setTagDraft('')
+  }
+
   if (selectedDelivery && item) {
     return (
       <aside className="fixed inset-y-0 right-0 z-modal flex w-full min-w-0 flex-col border-l border-border bg-background shadow-xl md:w-[calc(100%-248px)]">
@@ -639,6 +785,274 @@ export function TodoEditor(props: TodoEditorProps) {
     )
   }
 
+  // The Xiaohongshu-style split: task content on the left, the comment
+  // activity rail on the right. Edit mode with a project always gets this
+  // layout so the task detail shape matches the design even before chat
+  // connectivity is available.
+  const activityView =
+    item && editProps?.project && props.projectChatClient ? (
+      <TaskActivityView
+        key={`${item.id}:${item.assignee_agent_id ?? 'unassigned'}`}
+        client={props.projectChatClient}
+        project={editProps.project}
+        task={item}
+        currentUserId={props.currentUserId}
+        onTaskUpdated={editProps.onUpdated}
+        rail
+      />
+    ) : null
+  const twoColumn = item !== null && editProps?.project !== undefined
+
+  // Property controls, shared by the single-column chip row and the
+  // two-column Xiaohongshu-style rail cells. The overlay select/input keeps
+  // every cell editable in place regardless of where it is rendered.
+  const statusSelect = (
+    <select
+      data-testid={isCreate ? 'cloud-todo-create-status' : 'cloud-todo-detail-status'}
+      aria-label="状态"
+      value={status}
+      onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
+      className={overlayControlClass}
+    >
+      {status === '' ? <option value="">未设置</option> : null}
+      {statusOptions.map(option => (
+        <option key={option.id} value={option.id}>
+          {option.name}
+        </option>
+      ))}
+    </select>
+  )
+  const prioritySelect = (
+    <select
+      data-testid={isCreate ? 'cloud-todo-create-priority' : 'cloud-todo-detail-priority'}
+      aria-label="优先级"
+      value={priority}
+      onChange={event => setPriority(event.target.value as CloudLoopItem['priority'])}
+      className={overlayControlClass}
+    >
+      <option value="none">无</option>
+      <option value="low">低</option>
+      <option value="medium">普通</option>
+      <option value="high">高</option>
+      <option value="urgent">紧急</option>
+    </select>
+  )
+  const assigneeSelect = (
+    <select
+      data-testid={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
+      aria-label="负责人"
+      value={assigneeTarget}
+      onChange={event => setAssigneeTarget(event.target.value)}
+      className={overlayControlClass}
+    >
+      <option value="">添加负责人</option>
+      <optgroup label="成员">
+        {projectMembers.map(member => (
+          <option key={member.user_id} value={`user:${member.user_id}`}>
+            {member.user_name}
+          </option>
+        ))}
+      </optgroup>
+      {projectAgents.length ? (
+        <optgroup label="AI">
+          {projectAgents.map(agent => (
+            <option key={agent.id} value={`agent:${agent.id}`}>
+              {agent.name}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
+    </select>
+  )
+  const parentSelect = (
+    <select
+      data-testid={isCreate ? 'cloud-todo-create-parent' : 'cloud-todo-detail-parent'}
+      aria-label="父任务"
+      value={parentId}
+      onChange={event => setParentId(event.target.value)}
+      className={overlayControlClass}
+    >
+      <option value="">{isCreate ? '顶层任务' : '无父任务'}</option>
+      {parentOptions.map(candidate => (
+        <option key={candidate.id} value={candidate.id}>
+          {candidate.id} · {candidate.title}
+        </option>
+      ))}
+    </select>
+  )
+  const dueInput = (
+    <input
+      data-testid={isCreate ? 'cloud-todo-create-due-date' : 'cloud-todo-detail-due-date'}
+      aria-label="截止时间"
+      type="date"
+      value={dueDate}
+      onChange={event => setDueDate(event.target.value)}
+      className={overlayControlClass}
+    />
+  )
+  const statusValue = (
+    <>
+      <span
+        className={cn('h-2 w-2 shrink-0 rounded-full', columnDotClasses[status] ?? 'bg-zinc-400')}
+      />
+      {statusLabel}
+    </>
+  )
+  const priorityValue = (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full px-1.5 py-px text-xs font-medium',
+        priorityBadgeClasses[priority]
+      )}
+    >
+      {priority === 'none' ? '普通' : priority}
+    </span>
+  )
+  const priorityRailLabels: Record<CloudLoopItem['priority'], string> = {
+    none: '普通',
+    low: 'P3 低',
+    medium: 'P2 中',
+    high: 'P1 高',
+    urgent: 'P0 紧急',
+  }
+  const railAssigneeName = assigneeAgent?.name ?? assignee?.user_name ?? null
+  const iterationText =
+    item && editProps?.project
+      ? (sourceCellText(item.source_cells, ['iteration', 'sprint', '迭代']) ??
+        tagByPattern(tags, /^(sprint|迭代)[\s:_-]*/i) ??
+        null)
+      : null
+  const requirementText =
+    item && editProps?.project
+      ? (sourceCellText(item.source_cells, ['requirement', '需求', 'req']) ??
+        tagByPattern(tags, /^(req|需求)[\s:_-]*/i) ??
+        item.source_record_id ??
+        null)
+      : null
+  const collaboratorPreview = collaborators.slice(0, 2)
+  const railDueDate = formatRailDueDate(item?.due_at, dueDate)
+  const statusChip = (
+    <span className={propChipClass}>
+      <Circle className="h-3.5 w-3.5 text-text-muted" />
+      <span className="text-text-muted">状态</span>
+      {statusValue}
+      <ChevronDown className="h-3 w-3 text-text-muted" />
+      {statusSelect}
+    </span>
+  )
+  const priorityChip = (
+    <span className={propChipClass}>
+      <Flag className="h-3.5 w-3.5 text-text-muted" />
+      <span className="text-text-muted">优先级</span>
+      {priorityValue}
+      <ChevronDown className="h-3 w-3 text-text-muted" />
+      {prioritySelect}
+    </span>
+  )
+  // Single-column layout: all props stay as one wrapping chip row.
+  const propChips = (
+    <>
+      {statusChip}
+      {priorityChip}
+      <span className={cn(propChipClass, !assignee && !assigneeAgent && 'text-text-muted')}>
+        {assigneeAgent ? (
+          <Bot className="h-3.5 w-3.5 text-violet-600" />
+        ) : (
+          <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
+        )}
+        <span className="text-text-muted">负责人</span>
+        {assigneeAgent?.name ?? assignee?.user_name ?? '添加'}
+        <ChevronDown className="h-3 w-3 text-text-muted" />
+        {assigneeSelect}
+      </span>
+      {item && (
+        <span
+          data-testid="cloud-todo-detail-creator"
+          className={cn(propChipClass, 'text-text-muted')}
+        >
+          <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
+          <span className="text-text-muted">创建人</span>
+          <span className="text-text-primary">
+            {creator ?? (item.created_by_user_id > 0 ? `#${item.created_by_user_id}` : '—')}
+          </span>
+        </span>
+      )}
+      <span className={propChipClass}>
+        <ListTodo className="h-3.5 w-3.5 text-text-muted" />
+        <span className="text-text-muted">父任务</span>
+        <span className="max-w-40 truncate">
+          {parentItem
+            ? `${parentItem.id} · ${parentItem.title}`
+            : isCreate
+              ? '顶层任务'
+              : '无父任务'}
+        </span>
+        <ChevronDown className="h-3 w-3 text-text-muted" />
+        {parentSelect}
+      </span>
+      <span className={cn(propChipClass, !dueDate && 'text-text-muted')}>
+        <Calendar className="h-3.5 w-3.5 text-text-muted" />
+        <span className="text-text-muted">截止时间</span>
+        {dueDate ? dueDate.slice(5) : '添加日期'}
+        {dueInput}
+      </span>
+    </>
+  )
+  // Two-column layout: the right rail shows flat label/value cells. 状态 and
+  // 优先级 stay editable through the chips under the title, so their rail
+  // cells are read-only summaries.
+  const railProps = (
+    <>
+      <RailProp label="负责人" control={assigneeSelect}>
+        {railAssigneeName ? (
+          <>
+            <AvatarMark name={railAssigneeName} />
+            <span className="truncate">{railAssigneeName}</span>
+          </>
+        ) : (
+          <span>添加</span>
+        )}
+      </RailProp>
+      <RailProp label="截止日期" control={dueInput}>
+        <span className={cn(railDueDate && 'text-red-500')}>{railDueDate ?? '添加日期'}</span>
+      </RailProp>
+      <RailProp label="优先级" control={prioritySelect}>
+        <span className="flex items-center gap-1.5">
+          <Flag className="h-4 w-4 fill-text-primary text-text-primary" />
+          {priorityRailLabels[priority]}
+        </span>
+      </RailProp>
+      <RailProp label="迭代">
+        <span className={cn(!iterationText && 'text-text-muted')}>
+          {iterationText?.replace(/^(sprint|迭代)[\s:_-]*/i, '') || '未设置'}
+        </span>
+      </RailProp>
+      <RailProp label="协作者">
+        {collaboratorPreview.length > 0 ? (
+          <span className="flex min-w-0 items-center">
+            {collaboratorPreview.map((collaborator, index) => (
+              <span key={collaborator.id} className={cn(index > 0 && '-ml-2')}>
+                <AvatarMark name={collaborator.user_name} index={index + 1} size="sm" />
+              </span>
+            ))}
+            {collaborators.length > collaboratorPreview.length ? (
+              <span className="ml-2">+{collaborators.length - collaboratorPreview.length}</span>
+            ) : null}
+          </span>
+        ) : (
+          <span>暂无</span>
+        )}
+      </RailProp>
+      <RailProp label="关联需求">
+        <span className={cn(requirementText ? 'text-blue-600' : 'text-text-muted')}>
+          {requirementText || '未设置'}
+          {requirementText ? ' ↗' : ''}
+        </span>
+      </RailProp>
+    </>
+  )
+  const completedChildCount = childItems.filter(child => child.status === 'completed').length
+
   return (
     <div
       className={cn(
@@ -654,8 +1068,10 @@ export function TodoEditor(props: TodoEditorProps) {
           fullScreen
             ? 'h-full w-full'
             : cn(
-                'max-h-[88vh] max-w-[calc(100vw-48px)]',
-                isAITableEdit ? 'w-[1080px]' : 'w-[760px]'
+                'max-w-[calc(100vw-48px)]',
+                twoColumn
+                  ? 'h-[88vh] w-[min(1480px,calc(100vw-48px))]'
+                  : cn('max-h-[88vh]', isAITableEdit ? 'w-[1080px]' : 'w-[760px]')
               )
         )}
         onKeyDown={handleKeyDown}
@@ -663,12 +1079,19 @@ export function TodoEditor(props: TodoEditorProps) {
         onDrop={handleDrop}
       >
         <span className="sr-only">{isCreate ? '新建任务' : '任务详情'}</span>
-        <header className="flex shrink-0 items-center px-4 pt-3">
-          <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
+        <header
+          className={cn(
+            'flex shrink-0 items-center',
+            twoColumn ? 'h-12 border-b border-border px-4' : 'px-4 pt-3'
+          )}
+        >
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
             <Folder className="h-3.5 w-3.5" />
-            {item
-              ? item.id
-              : `${createProps?.project.name} · ${createProps?.initialParent ? '新建子任务' : '新建任务'}`}
+            <span className="truncate">
+              {item
+                ? `${editProps?.project?.name ?? '项目空间'} / ${item.id}`
+                : `${createProps?.project.name} · ${createProps?.initialParent ? '新建子任务' : '新建任务'}`}
+            </span>
           </span>
           {item && (
             <button
@@ -682,6 +1105,29 @@ export function TodoEditor(props: TodoEditorProps) {
             </button>
           )}
           <span className="flex-1" />
+          {twoColumn && !isCreate ? (
+            <>
+              <button
+                type="button"
+                data-testid="cloud-todo-start-task"
+                onClick={() => editProps?.onStartConversation()}
+                className="mr-2 h-8 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+              >
+                开始对话
+              </button>
+              {dirty || saving ? (
+                <button
+                  type="button"
+                  data-testid="cloud-todo-save"
+                  disabled={!title.trim() || saving}
+                  onClick={() => void saveDetails()}
+                  className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving ? '保存中…' : '保存'}
+                </button>
+              ) : null}
+            </>
+          ) : null}
           <button
             type="button"
             data-testid={isCreate ? 'cloud-todo-create-fullscreen' : 'cloud-todo-detail-fullscreen'}
@@ -702,430 +1148,459 @@ export function TodoEditor(props: TodoEditorProps) {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-14 pb-6 pt-2.5">
-          <textarea
-            data-testid={isCreate ? 'cloud-todo-title' : 'cloud-todo-detail-title'}
-            aria-label="任务标题"
-            autoFocus={isCreate}
-            value={title}
-            onChange={event => setTitle(event.target.value)}
-            rows={1}
-            maxLength={255}
-            placeholder="目标或事项标题"
-            className="block w-full resize-none overflow-hidden border-0 bg-transparent py-1.5 text-heading-lg font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted"
-          />
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className={propChipClass}>
-              <Circle className="h-3.5 w-3.5 text-text-muted" />
-              <span className="text-text-muted">状态</span>
-              <span
-                className={cn('h-2 w-2 rounded-full', columnDotClasses[status] ?? 'bg-zinc-400')}
-              />
-              {statusLabel}
-              <ChevronDown className="h-3 w-3 text-text-muted" />
-              <select
-                data-testid={isCreate ? 'cloud-todo-create-status' : 'cloud-todo-detail-status'}
-                aria-label="状态"
-                value={status}
-                onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
-                className={overlayControlClass}
-              >
-                {status === '' ? <option value="">未设置</option> : null}
-                {statusOptions.map(option => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </span>
-            <span className={propChipClass}>
-              <Flag className="h-3.5 w-3.5 text-text-muted" />
-              <span className="text-text-muted">优先级</span>
-              <span
+        <div
+          className={cn(
+            'min-h-0 flex-1',
+            twoColumn
+              ? 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_460px] md:overflow-visible'
+              : 'overflow-y-auto'
+          )}
+        >
+          <div className={cn('pb-6 pt-2.5', twoColumn ? 'task-detail-left md:min-h-0' : 'px-14')}>
+            <div className={cn(twoColumn && 'task-detail-left-inner')}>
+              {twoColumn && item ? (
+                <div className="task-detail-id-row">
+                  <span>{item.id}</span>
+                  <span>·</span>
+                  <span>创建于 {item.created_at.slice(5, 10)}</span>
+                </div>
+              ) : null}
+              <textarea
+                data-testid={isCreate ? 'cloud-todo-title' : 'cloud-todo-detail-title'}
+                aria-label="任务标题"
+                autoFocus={isCreate}
+                value={title}
+                onChange={event => setTitle(event.target.value)}
+                rows={1}
+                maxLength={255}
+                placeholder="目标或事项标题"
                 className={cn(
-                  'inline-flex items-center rounded-full px-1.5 py-px text-xs font-medium',
-                  priorityBadgeClasses[priority]
+                  'block w-full resize-none overflow-hidden border-0 bg-transparent font-bold tracking-tight text-text-primary outline-none placeholder:text-text-muted',
+                  twoColumn ? 'task-detail-title' : 'py-1.5 text-heading-lg'
                 )}
-              >
-                {priority === 'none' ? '普通' : priority}
-              </span>
-              <ChevronDown className="h-3 w-3 text-text-muted" />
-              <select
-                data-testid={isCreate ? 'cloud-todo-create-priority' : 'cloud-todo-detail-priority'}
-                aria-label="优先级"
-                value={priority}
-                onChange={event => setPriority(event.target.value as CloudLoopItem['priority'])}
-                className={overlayControlClass}
-              >
-                <option value="none">无</option>
-                <option value="low">低</option>
-                <option value="medium">普通</option>
-                <option value="high">高</option>
-                <option value="urgent">紧急</option>
-              </select>
-            </span>
-            <span className={cn(propChipClass, !assignee && 'text-text-muted')}>
-              <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-              <span className="text-text-muted">负责人</span>
-              {assignee?.user_name ?? '添加'}
-              <ChevronDown className="h-3 w-3 text-text-muted" />
-              <select
-                data-testid={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
-                aria-label="负责人"
-                value={assigneeId}
-                onChange={event => setAssigneeId(event.target.value)}
-                className={overlayControlClass}
-              >
-                <option value="">添加负责人</option>
-                {projectMembers.map(member => (
-                  <option key={member.user_id} value={member.user_id}>
-                    {member.user_name}
-                  </option>
-                ))}
-              </select>
-            </span>
-            {item && (
-              <span
-                data-testid="cloud-todo-detail-creator"
-                className={cn(propChipClass, 'text-text-muted')}
-              >
-                <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-                <span className="text-text-muted">创建人</span>
-                <span className="text-text-primary">
-                  {creator ?? (item.created_by_user_id > 0 ? `#${item.created_by_user_id}` : '—')}
-                </span>
-              </span>
-            )}
-            <span className={propChipClass}>
-              <ListTodo className="h-3.5 w-3.5 text-text-muted" />
-              <span className="text-text-muted">父任务</span>
-              <span className="max-w-40 truncate">
-                {parentItem
-                  ? `${parentItem.id} · ${parentItem.title}`
-                  : isCreate
-                    ? '顶层任务'
-                    : '无父任务'}
-              </span>
-              <ChevronDown className="h-3 w-3 text-text-muted" />
-              <select
-                data-testid={isCreate ? 'cloud-todo-create-parent' : 'cloud-todo-detail-parent'}
-                aria-label="父任务"
-                value={parentId}
-                onChange={event => setParentId(event.target.value)}
-                className={overlayControlClass}
-              >
-                <option value="">{isCreate ? '顶层任务' : '无父任务'}</option>
-                {parentOptions.map(candidate => (
-                  <option key={candidate.id} value={candidate.id}>
-                    {candidate.id} · {candidate.title}
-                  </option>
-                ))}
-              </select>
-            </span>
-            <span className={cn(propChipClass, !dueDate && 'text-text-muted')}>
-              <Calendar className="h-3.5 w-3.5 text-text-muted" />
-              <span className="text-text-muted">截止时间</span>
-              {dueDate ? dueDate.slice(5) : '添加日期'}
-              <input
-                data-testid={isCreate ? 'cloud-todo-create-due-date' : 'cloud-todo-detail-due-date'}
-                aria-label="截止时间"
-                type="date"
-                value={dueDate}
-                onChange={event => setDueDate(event.target.value)}
-                className={overlayControlClass}
               />
-            </span>
-          </div>
 
-          <div className="mt-2.5 flex items-center gap-2">
-            <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-muted">
-              <Tag className="h-3.5 w-3.5" />
-              标签
-            </span>
-            <TagEditor
-              testIdPrefix={isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}
-              tags={tags}
-              onChange={setTags}
-              suggestions={tagSuggestions}
-            />
-          </div>
-
-          {!isAITableEdit ? (
-            <div className="mt-3 min-h-[240px]">
-              <TaskDescriptionEditor
-                value={description}
-                onChange={setDescription}
-                onPasteFiles={pasteAttachments}
-              />
-              <p className="mt-2.5 text-xs text-text-muted">
-                支持 Markdown，可拖拽文件到编辑器添加附件
-              </p>
-            </div>
-          ) : null}
-          {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
-
-          {isAITableEdit && item && editProps?.project && props.aitableApi ? (
-            <AITableTaskFields api={props.aitableApi} project={editProps.project} item={item} />
-          ) : null}
-
-          <div className="mt-5">
-            <TodoAttachmentSection
-              attachments={isCreate ? pendingAttachmentRows : visibleAttachments}
-              busy={attachmentBusy}
-              error={attachmentError}
-              editable
-              onAdd={isCreate ? stageFiles : addAttachments}
-              onOpen={isCreate ? undefined : openAttachment}
-              onRemove={isCreate ? removePendingFile : removeAttachment}
-            />
-          </div>
-
-          {item && (
-            <>
-              <section className="mt-7" data-testid="cloud-todo-children">
-                <div className="flex h-8 items-center">
-                  <h3 className="text-sm font-semibold">子任务</h3>
-                  <span className="ml-2 text-xs font-normal text-text-muted">
-                    {childItems.length}
-                  </span>
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-detail-add-child"
-                    onClick={() => editProps?.onAddChild()}
-                    className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary"
-                  >
-                    <Plus className="h-3 w-3" /> 新建子任务
-                  </button>
-                </div>
-                {childItems.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                    暂无子任务
-                  </p>
-                ) : (
-                  <div className="mt-1">
-                    {childItems.map(child => (
-                      <div
-                        key={child.id}
-                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors hover:bg-muted/60"
-                      >
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 shrink-0 rounded-full',
-                            columnDotClasses[child.status]
-                          )}
-                        />
-                        <span className="shrink-0 font-mono text-xs text-text-muted">
-                          {child.id}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">{child.title}</span>
-                        <span className="shrink-0 text-xs text-text-muted">
-                          {columns.find(column => column.status === child.status)?.label}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+              <div
+                className={cn(
+                  'flex flex-wrap items-center gap-2',
+                  twoColumn ? 'task-detail-pill-row' : 'mt-3'
                 )}
-              </section>
-              <section className="mt-7" data-testid="cloud-todo-collaborators">
-                <div className="flex h-8 items-center">
-                  <h3 className="text-sm font-semibold">参与者</h3>
-                  <span className="ml-2 text-xs font-normal text-text-muted">
-                    {collaborators.length}
-                  </span>
-                  <button
-                    type="button"
-                    data-testid="cloud-todo-add-collaborator"
-                    onClick={() => {
-                      setAddingCollaborator(current => !current)
-                      setCollaboratorError(null)
-                    }}
-                    className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary"
-                  >
-                    <Plus className="h-3 w-3" />
-                    添加参与者
-                  </button>
-                </div>
-                {addingCollaborator && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <select
-                      data-testid="cloud-todo-collaborator-select"
-                      value={selectedCollaboratorId ?? ''}
-                      onChange={event =>
-                        setSelectedCollaboratorId(Number(event.target.value) || null)
-                      }
-                      className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
-                    >
-                      <option value="">选择项目空间成员</option>
-                      {availableCollaborators.map(member => (
-                        <option key={member.user_id} value={member.user_id}>
-                          {member.user_name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      data-testid="cloud-todo-confirm-collaborator"
-                      disabled={!selectedCollaboratorId || collaboratorBusy}
-                      onClick={() => void addCollaborator()}
-                      className="h-9 shrink-0 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
-                    >
-                      添加
-                    </button>
-                  </div>
-                )}
-                {collaborators.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                    暂无参与者
-                  </p>
-                ) : (
-                  <div className="mt-1">
-                    {collaborators.map(collaborator => (
-                      <div
-                        key={collaborator.id}
-                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors hover:bg-muted/60"
+              >
+                {twoColumn ? (
+                  <>
+                    {statusChip}
+                    {priorityChip}
+                    <span className="task-detail-pill">
+                      <Plus className="h-3.5 w-3.5" />
+                      <input
+                        data-testid={
+                          isCreate ? 'cloud-todo-create-tag-input' : 'cloud-todo-detail-tag-input'
+                        }
+                        value={tagDraft}
+                        onChange={event => setTagDraft(event.target.value)}
+                        onBlur={commitTagDraft}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ',') {
+                            event.preventDefault()
+                            commitTagDraft()
+                          }
+                        }}
+                        placeholder="添加标签"
+                      />
+                    </span>
+                    {tags.map(tag => (
+                      <span
+                        key={tag}
+                        data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-${tag}`}
+                        className="task-detail-pill"
                       >
-                        <span
-                          className={cn(
-                            'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
-                            memberAvatarClasses[0]
-                          )}
-                        >
-                          {collaborator.user_name.slice(0, 1).toUpperCase()}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">{collaborator.user_name}</span>
-                        {collaborator.source !== 'manual' && (
-                          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary">
-                            自动加入
-                          </span>
-                        )}
+                        # {tag}
                         <button
                           type="button"
-                          aria-label={`移除参与者 ${collaborator.user_name}`}
-                          disabled={collaboratorBusy}
-                          onClick={() => void removeCollaborator(collaborator)}
-                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary disabled:opacity-40"
+                          aria-label={`移除标签 ${tag}`}
+                          data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-remove-${tag}`}
+                          onClick={() =>
+                            setTags(current => current.filter(candidate => candidate !== tag))
+                          }
+                          className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted transition hover:bg-muted hover:text-text-primary"
                         >
-                          <X className="h-3.5 w-3.5" />
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </>
+                ) : (
+                  propChips
+                )}
+              </div>
+
+              {!twoColumn ? (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <span className="flex shrink-0 select-none items-center gap-1.5 text-xs text-text-muted">
+                    <Tag className="h-3.5 w-3.5" />
+                    标签
+                  </span>
+                  <TagEditor
+                    testIdPrefix={isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}
+                    tags={tags}
+                    onChange={setTags}
+                    suggestions={tagSuggestions}
+                  />
+                </div>
+              ) : null}
+
+              {twoColumn ? (
+                <div className="task-detail-meta-line">
+                  <span className="task-detail-meta-item">
+                    <CircleUserRound className="h-3.5 w-3.5" />
+                    负责人
+                    <span className="text-text-primary">
+                      {assigneeAgent?.name ?? assignee?.user_name ?? '未指派'}
+                    </span>
+                  </span>
+                  <span className="task-detail-meta-item">
+                    <Calendar className="h-3.5 w-3.5" />
+                    截止
+                    <span className="text-text-primary">
+                      {dueDate ? dueDate.slice(5) : '未设置'}
+                    </span>
+                  </span>
+                  {assigneeAgent ? (
+                    <span className="task-detail-meta-item">
+                      <Bot className="h-3.5 w-3.5 text-violet-600" />
+                      协作 Agent
+                      <span className="text-text-primary">{assigneeAgent.name}</span>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!isAITableEdit ? (
+                <div className={cn(twoColumn ? 'min-h-[220px]' : 'mt-3 min-h-[240px]')}>
+                  {twoColumn ? <h3 className="task-detail-section-label">描述</h3> : null}
+                  <div className={cn(twoColumn && 'task-detail-desc')}>
+                    <TaskDescriptionEditor
+                      value={description}
+                      onChange={setDescription}
+                      onPasteFiles={pasteAttachments}
+                    />
+                  </div>
+                  <p className={cn('mt-2.5 text-xs text-text-muted', twoColumn && 'hidden')}>
+                    支持 Markdown，可拖拽文件到编辑器添加附件
+                  </p>
+                </div>
+              ) : null}
+              {saveError && <p className="mt-2 text-xs text-destructive">{saveError}</p>}
+
+              {isAITableEdit && item && editProps?.project && props.aitableApi ? (
+                <AITableTaskFields api={props.aitableApi} project={editProps.project} item={item} />
+              ) : null}
+
+              {twoColumn ? <div className="sr-only">{parentSelect}</div> : null}
+
+              {!twoColumn ? (
+                <div className="mt-5">
+                  <TodoAttachmentSection
+                    attachments={isCreate ? pendingAttachmentRows : visibleAttachments}
+                    busy={attachmentBusy}
+                    error={attachmentError}
+                    editable
+                    onAdd={isCreate ? stageFiles : addAttachments}
+                    onOpen={isCreate ? undefined : openAttachment}
+                    onRemove={isCreate ? removePendingFile : removeAttachment}
+                  />
+                </div>
+              ) : null}
+
+              {item && (
+                <>
+                  <section
+                    className={cn(twoColumn ? 'mt-[30px]' : 'mt-7')}
+                    data-testid="cloud-todo-children"
+                  >
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-muted">
+                      <h3 className="text-sm font-medium text-text-muted">子任务</h3>
+                      <span className="ml-2 text-xs font-normal text-text-muted">
+                        {twoColumn && childItems.length > 0
+                          ? `${completedChildCount}/${childItems.length}`
+                          : childItems.length}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-detail-add-child"
+                        onClick={() => editProps?.onAddChild()}
+                        className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary"
+                      >
+                        <Plus className="h-3 w-3" /> 新建子任务
+                      </button>
+                    </div>
+                    {twoColumn && childItems.length > 0 ? (
+                      <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-text-primary transition-all"
+                          style={{
+                            width: `${(completedChildCount / childItems.length) * 100}%`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    {childItems.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-border px-3 py-3 text-center text-sm text-text-muted">
+                        暂无子任务
+                      </p>
+                    ) : (
+                      <div>
+                        {childItems.map(child => (
+                          <div
+                            key={child.id}
+                            className="mb-2 flex items-center gap-2.5 rounded-lg border border-border px-3 py-2.5 text-sm transition-colors hover:bg-muted"
+                          >
+                            <span
+                              className={cn(
+                                'h-1.5 w-1.5 shrink-0 rounded-full',
+                                columnDotClasses[child.status]
+                              )}
+                            />
+                            <span className="shrink-0 font-mono text-xs text-text-muted">
+                              {child.id}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{child.title}</span>
+                            <span className="shrink-0 text-xs text-text-muted">
+                              {columns.find(column => column.status === child.status)?.label}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                  {twoColumn ? (
+                    <section className="mt-[30px]">
+                      <TodoAttachmentSection
+                        attachments={visibleAttachments}
+                        busy={attachmentBusy}
+                        error={attachmentError}
+                        editable
+                        onAdd={addAttachments}
+                        onOpen={openAttachment}
+                        onRemove={removeAttachment}
+                      />
+                    </section>
+                  ) : null}
+                  <section className="mt-7" data-testid="cloud-todo-collaborators">
+                    <div className="flex h-8 items-center">
+                      <h3 className="text-sm font-semibold">参与者</h3>
+                      <span className="ml-2 text-xs font-normal text-text-muted">
+                        {collaborators.length}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="cloud-todo-add-collaborator"
+                        onClick={() => {
+                          setAddingCollaborator(current => !current)
+                          setCollaboratorError(null)
+                        }}
+                        className="ml-auto flex h-7 items-center gap-1 rounded-md px-2 text-xs text-text-muted transition hover:text-text-primary"
+                      >
+                        <Plus className="h-3 w-3" />
+                        添加参与者
+                      </button>
+                    </div>
+                    {addingCollaborator && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <select
+                          data-testid="cloud-todo-collaborator-select"
+                          value={selectedCollaboratorId ?? ''}
+                          onChange={event =>
+                            setSelectedCollaboratorId(Number(event.target.value) || null)
+                          }
+                          className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
+                        >
+                          <option value="">选择项目空间成员</option>
+                          {availableCollaborators.map(member => (
+                            <option key={member.user_id} value={member.user_id}>
+                              {member.user_name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          data-testid="cloud-todo-confirm-collaborator"
+                          disabled={!selectedCollaboratorId || collaboratorBusy}
+                          onClick={() => void addCollaborator()}
+                          className="h-9 shrink-0 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
+                        >
+                          添加
                         </button>
                       </div>
-                    ))}
-                  </div>
-                )}
-                {collaboratorError && (
-                  <p className="mt-2 text-xs text-destructive">{collaboratorError}</p>
-                )}
-              </section>
-              <section className="mt-7">
-                <h3 className="flex h-8 items-center text-sm font-semibold">本地执行</h3>
-                {tasks.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-                    尚未关联本地任务
-                  </p>
-                ) : (
-                  <div className="mt-1">
-                    {tasks.map(task => (
-                      <div
-                        key={task.id}
-                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-muted/60"
-                      >
-                        <Link2 className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span
-                          className="min-w-0 flex-1 truncate"
-                          title={task.task_title || task.task_id}
-                        >
-                          {task.task_title || task.task_id}
-                        </span>
-                        <span className="shrink-0 text-text-muted">{task.device_id}</span>
+                    )}
+                    {collaborators.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                        暂无参与者
+                      </p>
+                    ) : (
+                      <div className="mt-1">
+                        {collaborators.map(collaborator => (
+                          <div
+                            key={collaborator.id}
+                            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors hover:bg-muted/60"
+                          >
+                            <span
+                              className={cn(
+                                'flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-xs font-semibold text-background',
+                                memberAvatarClasses[0]
+                              )}
+                            >
+                              {collaborator.user_name.slice(0, 1).toUpperCase()}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">
+                              {collaborator.user_name}
+                            </span>
+                            {collaborator.source !== 'manual' && (
+                              <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary">
+                                自动加入
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              aria-label={`移除参与者 ${collaborator.user_name}`}
+                              disabled={collaboratorBusy}
+                              onClick={() => void removeCollaborator(collaborator)}
+                              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition hover:bg-background hover:text-text-primary disabled:opacity-40"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-              <section className="mt-7">
-                <h3 className="flex h-8 items-center text-sm font-semibold">交付</h3>
-                <div className="mt-1 space-y-1">
-                  {deliveries.map(delivery => (
-                    <button
-                      key={delivery.id}
-                      type="button"
-                      onClick={() => void api.getDelivery(delivery.id).then(setSelectedDelivery)}
-                      className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-xs transition-colors hover:bg-muted/60"
-                    >
-                      <FileText className="h-4 w-4 shrink-0 text-text-muted" />
-                      <span>{delivery.assets.length} 个附件</span>
-                      <span className="ml-auto shrink-0 text-text-muted">
-                        {delivery.delivered_at?.slice(0, 10)}
-                      </span>
-                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                    </button>
-                  ))}
+                    )}
+                    {collaboratorError && (
+                      <p className="mt-2 text-xs text-destructive">{collaboratorError}</p>
+                    )}
+                  </section>
+                  <section className="mt-7">
+                    <h3 className="flex h-8 items-center text-sm font-semibold">本地执行</h3>
+                    {tasks.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                        尚未关联本地任务
+                      </p>
+                    ) : (
+                      <div className="mt-1">
+                        {tasks.map(task => (
+                          <div
+                            key={task.id}
+                            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-muted/60"
+                          >
+                            <Link2 className="h-4 w-4 shrink-0 text-text-muted" />
+                            <span
+                              className="min-w-0 flex-1 truncate"
+                              title={task.task_title || task.task_id}
+                            >
+                              {task.task_title || task.task_id}
+                            </span>
+                            <span className="shrink-0 text-text-muted">{task.device_id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                  <section className="mt-7">
+                    <h3 className="flex h-8 items-center text-sm font-semibold">交付</h3>
+                    <div className="mt-1 space-y-1">
+                      {deliveries.map(delivery => (
+                        <button
+                          key={delivery.id}
+                          type="button"
+                          onClick={() =>
+                            void api.getDelivery(delivery.id).then(setSelectedDelivery)
+                          }
+                          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-xs transition-colors hover:bg-muted/60"
+                        >
+                          <FileText className="h-4 w-4 shrink-0 text-text-muted" />
+                          <span>{delivery.assets.length} 个附件</span>
+                          <span className="ml-auto shrink-0 text-text-muted">
+                            {delivery.delivered_at?.slice(0, 10)}
+                          </span>
+                          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+            </div>
+          </div>
+          {twoColumn ? (
+            <aside
+              data-testid="cloud-todo-detail-activity-rail"
+              className="flex min-h-0 flex-col border-t border-border bg-muted/40 md:border-l md:border-t-0"
+            >
+              <div className="shrink-0 border-b border-border bg-background px-[18px] py-[14px]">
+                <div className="grid grid-cols-1 gap-x-[18px] gap-y-[10px] sm:grid-cols-2">
+                  {railProps}
                 </div>
-              </section>
-            </>
-          )}
+              </div>
+              {activityView ?? (
+                <section
+                  data-testid="cloud-todo-detail-activity-rail-empty"
+                  className="flex h-full min-h-0 flex-col bg-muted/40"
+                >
+                  <header className="flex shrink-0 items-center gap-3 px-[18px] pb-[10px] pt-[14px]">
+                    <span className="font-semibold text-text-primary">评论</span>
+                  </header>
+                  <div className="min-h-0 flex-1 px-[18px] pb-4 pt-0.5 text-sm text-text-muted">
+                    评论服务当前不可用
+                  </div>
+                </section>
+              )}
+            </aside>
+          ) : null}
         </div>
 
-        <footer className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
-          <span className="text-xs text-text-muted">
-            {isCreate
-              ? `ESC 关闭 · ⌘↵ 创建${hasDraftContent ? ' · 草稿已保存' : ''}`
-              : 'ESC 关闭 · ⌘↵ 保存'}
-          </span>
-          <span className="flex-1" />
-          {isCreate ? (
-            <>
-              {editProps?.onOpenGroupChat ? (
+        {!twoColumn ? (
+          <footer className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
+            <span className="text-xs text-text-muted">
+              {isCreate
+                ? `ESC 关闭 · ⌘↵ 创建${hasDraftContent ? ' · 草稿已保存' : ''}`
+                : 'ESC 关闭 · ⌘↵ 保存'}
+            </span>
+            <span className="flex-1" />
+            {isCreate ? (
+              <>
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
-                >
-                  取消
-                </button>
-              ) : null}
-              <button
-                type="button"
-                data-testid="cloud-todo-create-confirm"
-                disabled={!title.trim() || saving}
-                onClick={() => void submitCreate()}
-                className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
-              >
-                {saving ? '正在创建…' : '创建任务'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                data-testid="cloud-todo-open-group-chat"
-                onClick={() => editProps?.onOpenGroupChat()}
-                className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
-              >
-                群聊
-              </button>
-              <button
-                type="button"
-                data-testid="cloud-todo-start-task"
-                onClick={() => editProps?.onStartConversation()}
-                className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
-              >
-                开始对话
-              </button>
-              {dirty && (
-                <button
-                  type="button"
-                  data-testid="cloud-todo-save"
+                  data-testid="cloud-todo-create-confirm"
                   disabled={!title.trim() || saving}
-                  onClick={() => void saveDetails()}
+                  onClick={() => void submitCreate()}
                   className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
                 >
-                  {saving ? '正在保存…' : '保存'}
+                  {saving ? '正在创建…' : '创建任务'}
                 </button>
-              )}
-            </>
-          )}
-        </footer>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  data-testid="cloud-todo-start-task"
+                  onClick={() => editProps?.onStartConversation()}
+                  className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
+                >
+                  开始对话
+                </button>
+                {dirty && (
+                  <button
+                    type="button"
+                    data-testid="cloud-todo-save"
+                    disabled={!title.trim() || saving}
+                    onClick={() => void saveDetails()}
+                    className="h-8 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    {saving ? '正在保存…' : '保存'}
+                  </button>
+                )}
+              </>
+            )}
+          </footer>
+        ) : null}
       </section>
     </div>
   )

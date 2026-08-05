@@ -1,17 +1,18 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
-import { ProjectGroupChatView } from './ProjectGroupChatView'
+import { TaskActivityView } from './TaskActivityView'
 
 const createProjectRuntimeTask = vi.fn()
+const sendRuntimePaneMessage = vi.fn()
 const bindTask = vi.fn()
+const updateLoopItem = vi.fn()
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbenchPaneContext: () => ({
     services: {
-      deliveryApi: { bindTask },
+      deliveryApi: { bindTask, updateLoopItem },
       projectChatAgentApi: {
         list: vi.fn(async () => [
           {
@@ -30,6 +31,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       },
     },
     createProjectRuntimeTask,
+    sendRuntimePaneMessage,
   }),
 }))
 
@@ -37,7 +39,7 @@ const userMessage: ProjectChatMessage = {
   sequenceNumber: 1,
   messageId: 'message-1',
   projectId: '11',
-  taskId: null,
+  taskId: 'WEG-1',
   sender: { type: 'user', id: '1', name: 'Ada' },
   type: 'text',
   content: '@Code Reviewer inspect this',
@@ -60,13 +62,22 @@ const agentMessage: ProjectChatMessage = {
   status: 'streaming',
 }
 
-describe('ProjectGroupChatView', () => {
+describe('TaskActivityView', () => {
   beforeEach(() => {
     createProjectRuntimeTask.mockReset()
     bindTask.mockReset()
+    updateLoopItem.mockReset()
+    updateLoopItem.mockImplementation(async (_id, values) => ({
+      id: 'WEG-1',
+      title: 'Inspect changes',
+      description: 'Review the current diff',
+      assignee_agent_id: '12',
+      version: 2,
+      ...values,
+    }))
   })
 
-  it('invokes a configured AI only after selecting its structured mention', async () => {
+  it('automatically starts the assigned AI without an @ mention', async () => {
     const client = {
       subscribe: vi.fn(async () => ({
         snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
@@ -78,14 +89,16 @@ describe('ProjectGroupChatView', () => {
       dispose: vi.fn(),
     } satisfies ProjectChatClient
     createProjectRuntimeTask.mockImplementation(async (_prompt, options) => {
-      await options.onRuntimeTaskOptimisticOpen({
+      const address = {
         deviceId: 'device-1',
         taskId: 'runtime-task-1',
-      })
+      }
+      await options.onRuntimeTaskOptimisticOpen(address)
+      return address
     })
 
     render(
-      <ProjectGroupChatView
+      <TaskActivityView
         client={client}
         currentUserId={1}
         project={
@@ -94,29 +107,30 @@ describe('ProjectGroupChatView', () => {
             name: 'Wework',
           } as never
         }
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
       />
     )
 
-    const composer = await screen.findByTestId('cloud-project-group-chat-composer')
-    await userEvent.type(composer, '@')
-    expect(screen.getAllByRole('listbox')).toHaveLength(1)
-    expect(screen.getByTestId('local-skill-autocomplete')).toBeInTheDocument()
-    expect(screen.getByTestId('mention-files-action')).toBeInTheDocument()
-    expect(screen.getByTestId('cloud-project-chat-mention-agent-12')).toBeInTheDocument()
-    await userEvent.type(composer, 'Code')
-    await userEvent.click(screen.getByTestId('cloud-project-chat-mention-agent-12'))
-    await userEvent.type(composer, 'inspect this')
-    await userEvent.click(screen.getByTestId('cloud-project-group-chat-send'))
-
+    expect(screen.getByTestId('cloud-task-activity-WEG-1')).toHaveTextContent('评论 / 动态')
+    expect(screen.queryByTestId('cloud-task-activity-close')).not.toBeInTheDocument()
     await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
     expect(client.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: '@Code Reviewer inspect this',
+        text: expect.stringContaining('请开始执行任务 WEG-1：Inspect changes'),
         mentions: [expect.objectContaining({ type: 'agent', id: '12' })],
       })
     )
     expect(createProjectRuntimeTask).toHaveBeenCalledWith(
-      '@Code Reviewer inspect this',
+      expect.stringContaining('请开始执行任务 WEG-1：Inspect changes'),
       expect.objectContaining({
         modelId: null,
         cloudProjectId: '11',
@@ -136,7 +150,7 @@ describe('ProjectGroupChatView', () => {
         runtimeTaskId: 'runtime-task-1',
       })
     )
-    expect(screen.getByText('AI 已接收')).toBeInTheDocument()
+    expect(await screen.findByText('AI 已接收')).toBeInTheDocument()
   })
 
   it('places only the current user on the right when an AI has the same id', async () => {
@@ -164,18 +178,27 @@ describe('ProjectGroupChatView', () => {
     } satisfies ProjectChatClient
 
     render(
-      <ProjectGroupChatView
+      <TaskActivityView
         client={client}
         currentUserId={999}
         project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'in_progress',
+            version: 1,
+          } as never
+        }
       />
     )
 
-    expect(await screen.findByTestId('cloud-project-chat-message-message-1')).toHaveAttribute(
+    expect(await screen.findByTestId('cloud-task-activity-message-message-1')).toHaveAttribute(
       'data-side',
       'right'
     )
-    expect(screen.getByTestId('cloud-project-chat-message-message-2')).toHaveAttribute(
+    expect(screen.getByTestId('cloud-task-activity-message-message-2')).toHaveAttribute(
       'data-side',
       'left'
     )

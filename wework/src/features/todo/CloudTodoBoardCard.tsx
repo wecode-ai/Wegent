@@ -1,15 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import {
-  Archive,
-  CalendarDays,
-  ChevronRight,
-  Ellipsis,
-  Flag,
-  ListTodo,
-  MessageCircle,
-  Plus,
-} from 'lucide-react'
+import { Archive, CalendarDays, ChevronRight, Ellipsis, Flag, ListTodo, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
@@ -123,7 +114,7 @@ interface CloudTodoBoardCardProps {
   onAddChild: () => void
   onOpenChildren: () => void
   onArchive: () => void
-  onOpenThread?: () => void
+  onOpenActivity?: () => void
   display: BoardCardDisplaySettings
   dragDisabled?: boolean
   archiveDisabled?: boolean
@@ -136,7 +127,6 @@ export function CloudTodoBoardCard({
   onAddChild,
   onOpenChildren,
   onArchive,
-  onOpenThread,
   display,
   dragDisabled = false,
   archiveDisabled = false,
@@ -218,20 +208,6 @@ export function CloudTodoBoardCard({
       </button>
 
       <div className="relative border-t border-dashed border-text-primary/15 bg-muted/30 px-3.5 py-2 transition-colors hover:bg-muted/50 focus-within:bg-muted/50 before:pointer-events-none before:absolute before:-left-2 before:-top-2 before:z-10 before:h-4 before:w-4 before:rounded-full before:bg-muted after:pointer-events-none after:absolute after:-right-2 after:-top-2 after:z-10 after:h-4 after:w-4 after:rounded-full after:bg-muted">
-        {onOpenThread ? (
-          <button
-            type="button"
-            data-testid={`cloud-todo-card-thread-${item.id}`}
-            onClick={event => {
-              event.stopPropagation()
-              onOpenThread()
-            }}
-            className="mb-1 flex h-7 w-full items-center gap-1.5 rounded-md px-1 text-xs text-text-muted transition hover:bg-muted hover:text-text-primary"
-          >
-            <MessageCircle className="h-3.5 w-3.5" />
-            任务群聊
-          </button>
-        ) : null}
         {childCount > 0 ? (
           <div className="flex items-center gap-3">
             <button

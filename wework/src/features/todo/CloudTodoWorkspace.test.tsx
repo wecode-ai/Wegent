@@ -668,6 +668,7 @@ describe('CloudTodoWorkspace', () => {
         status: item.status,
         parent_id: 'WEG-2',
         assignee_user_id: null,
+        assignee_agent_id: null,
         due_at: null,
         tags: [],
       })
@@ -716,6 +717,23 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByText('Implement cloud delivery')).toBeInTheDocument()
     expect(screen.getAllByText('local').length).toBeGreaterThan(0)
     expect(screen.getByText('自动加入')).toBeInTheDocument()
+  })
+
+  it('hides the board card activity shortcut and shows activity inside task detail', async () => {
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services()}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-todo-card-activity-WEG-1')).not.toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-task-thread-panel')).not.toBeInTheDocument()
   })
 
   it('copies the cloud project ID before or after opening the project', async () => {
@@ -1361,6 +1379,7 @@ describe('CloudTodoWorkspace', () => {
         priority: 'high',
         status: 'in_progress',
         assignee_user_id: null,
+        assignee_agent_id: null,
         due_at: null,
         tags: [],
       })
