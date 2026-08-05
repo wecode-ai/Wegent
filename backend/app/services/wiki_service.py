@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy.sql import func
 
 from app.core.cache import cache_manager
@@ -626,11 +626,18 @@ class WikiService:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
             titles = [section.title for section in payload.sections]
-            # Everything in the generation is loaded, not just the titles being
+            # Every row in the generation is loaded, not just the titles being
             # written: a page whose title changed has to be found by its path.
+            #
+            # Without its body, though. The agent submits one page at a time, so the
+            # Nth submission was reading back the full text of the N-1 pages already
+            # written — quadratic in bytes over a run, and the pages are the largest
+            # thing in the table. Nothing below reads `content`; it is only assigned,
+            # and assigning a deferred column does not fetch the old value first.
             existing_contents = (
                 wiki_db.query(WikiContent)
                 .filter(WikiContent.generation_id == generation.id)
+                .options(defer(WikiContent.content))
                 .with_for_update()
                 .all()
             )
@@ -728,10 +735,14 @@ class WikiService:
             if isinstance(previous_status, WikiGenerationStatus)
             else (str(previous_status) if previous_status is not None else "UNKNOWN")
         )
+        # Counted over the id, not over the entity. Query.count() wraps the whole
+        # entity select in a subquery, so the database was told to materialise every
+        # page's body to arrive at a number.
         content_meta["total_sections"] = (
-            wiki_db.query(WikiContent)
+            wiki_db.query(func.count(WikiContent.id))
             .filter(WikiContent.generation_id == generation.id)
-            .count()
+            .scalar()
+            or 0
         )
 
         if summary:

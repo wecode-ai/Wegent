@@ -1115,7 +1115,9 @@
       "languageZh": "Chinese",
       "languageEn": "English",
       "alreadyBuilt": "{{count}} other wiki(s) already document this repository — you could ask for a share",
-      "ownedBy": "owned by {{owner}} — ask them for a share"
+      "ownedBy": "owned by {{owner}} — ask them for a share",
+      "showGenerationTask": "Show generation runs",
+      "showGenerationTaskHint": "Off by default. A wiki regenerates on its own, so its runs would bury the conversations you started. They stay in the generation history either way, and stay openable by id."
     },
     "reader": {
       "regenerate": "Regenerate",
@@ -1128,7 +1130,31 @@
       "empty": "This wiki has no pages yet",
       "emptyHint": "Generate it to see its documentation here.",
       "generating": "Generating…",
-      "previousRunStalled": "The previous run stalled; you can start another"
+      "previousRunStalled": "The previous run stalled; you can start another",
+      "linkNotFound": "This link points to a page that does not exist",
+      "backToChat": "Back to conversation"
+    },
+    "history": {
+      "title": "Generation history",
+      "never": "Never generated",
+      "running": "Generating",
+      "stalled": "Last run stalled",
+      "lastFailed": "Last run failed",
+      "completed": "Generated",
+      "updated": "Updated {{when}}",
+      "current": "Current",
+      "none": "No runs yet",
+      "mode": {
+        "full": "Full",
+        "incremental": "Incremental",
+        "custom": "Custom"
+      },
+      "commitUnreported": "no commit reported"
+    },
+    "failure": {
+      "task_ended_without_report": "The task ended without reporting a result",
+      "task_not_created": "The generation task could not be created",
+      "worker_abandoned": "The worker stopped reporting and the run was reclaimed"
     }
   }
 }

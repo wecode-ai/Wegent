@@ -26,6 +26,7 @@ import logging
 from app.core.events import TaskCompletedEvent
 from app.db.session import SessionLocal
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
+from app.services.knowledge.code_wiki.generation import FailureCode
 from app.services.knowledge.code_wiki.runner import finish_run
 
 logger = logging.getLogger(__name__)
@@ -71,9 +72,11 @@ async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
             db,
             generation=generation,
             succeeded=False,
-            error_message=(
-                event.error or f"The task ended as {event.status} without reporting"
-            ),
+            # The task's own error is external text and is shown as it stands. What
+            # this server has to say about it is a code, so a reader is not handed an
+            # English sentence beside translated UI.
+            error_message=event.error or "",
+            failure_code=FailureCode.TASK_ENDED_WITHOUT_REPORT,
         )
         db.commit()
         logger.info(

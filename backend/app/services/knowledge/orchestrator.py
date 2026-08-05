@@ -1083,6 +1083,9 @@ class KnowledgeOrchestrator:
         direct_access_requirement: Literal["read", "edit"] = "read",
         kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
         source: Optional[SourceRepository] = None,
+        # Only meaningful for a code wiki: whether its generation runs are listed as
+        # conversations.
+        show_generation_task: bool = False,
         # Only meaningful for a code wiki: what language its pages are generated in.
         # Empty is not "English", it is "fall back to the deployment default", which
         # is also what a wiki created before this field existed does.
@@ -1214,6 +1217,7 @@ class KnowledgeOrchestrator:
             kb_type=KnowledgeBaseType(kb_type),
             source=source.to_spec() if source else None,
             language=language or None,
+            show_generation_task=show_generation_task,
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,

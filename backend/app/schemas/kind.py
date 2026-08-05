@@ -1027,6 +1027,16 @@ class KnowledgeBaseSpec(BaseModel):
             "does not strand wikis created before this field existed."
         ),
     )
+    showGenerationTask: bool = Field(
+        False,
+        description=(
+            "Whether this code wiki's generation runs appear in the owner's "
+            "conversation list. Hidden by default: a wiki regenerates on its own, so "
+            "its runs would otherwise fill the list with conversations nobody "
+            "started. A hidden task stays openable by id, and the wiki's own run "
+            "history links to it, so nothing becomes unreachable."
+        ),
+    )
     publishedGenerationId: int = Field(
         0,
         description=(

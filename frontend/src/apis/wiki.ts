@@ -48,8 +48,10 @@ export async function fetchWikiProjects(page = 1, limit = 100): Promise<WikiProj
  * @param limit Items per page, defaults to 10
  * @returns Wiki generations list response
  *
- * Note: The backend uses system-configured WIKI_DEFAULT_USER_ID to filter generations.
- * This ensures all users see the same wiki content managed by the system user.
+ * The project is required: the backend used to list across every project, narrowed
+ * only by WIKI_DEFAULT_USER_ID — a deployment setting rather than a claim about the
+ * caller — which let any signed-in user read anybody's generations. It now answers
+ * for one project, and only for a caller who may read that project's repository.
  */
 export async function fetchWikiGenerations(
   projectId: number,

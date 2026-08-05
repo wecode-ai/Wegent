@@ -13,7 +13,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
@@ -30,6 +30,7 @@ import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
 import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
+import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
 import { DingtalkDocsPage } from './DingtalkDocs'
@@ -69,7 +70,6 @@ export function KnowledgeDocumentPageDesktop({
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
   const pathname = usePathname()
-  const router = useRouter()
   const parsedKbUrl = useMemo(() => {
     if (!pathname || pathname.startsWith('/knowledge/document/')) {
       return null
@@ -293,13 +293,6 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
-        // A code wiki has no document view to select into: it is read in its own
-        // three-pane reader. Falling through would open the document page for it,
-        // which renders an empty knowledge base with the wrong controls.
-        if (fullKb.kb_type === 'code_wiki') {
-          router.push(`/knowledge/code-wiki/${fullKb.id}`)
-          return
-        }
         const isKbSwitch = fullKb.id !== sidebar.selectedKbId
         // Always update state and URL without causing a page remount to avoid UI flickering.
         // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
@@ -314,7 +307,7 @@ export function KnowledgeDocumentPageDesktop({
         navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
-    [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed, router]
+    [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
   )
 
   const handleSelectAll = useCallback(() => {
@@ -479,6 +472,16 @@ export function KnowledgeDocumentPageDesktop({
     }
 
     if (sidebar.selectedKb) {
+      // A code wiki is a knowledge base like any other and lives at the same URL.
+      // What differs is how it is read: a page tree, a page, and its outline, rather
+      // than a document workspace. Deciding that here rather than on a route of its
+      // own is what keeps one knowledge base from having two addresses — the second
+      // one needed a redirect, and that redirect lost a race with this page's own
+      // history.pushState and rendered the wiki as a notebook anyway.
+      if (sidebar.selectedKb.kb_type === 'code_wiki') {
+        return <CodeWikiReader key={sidebar.selectedKb.id} wiki={sidebar.selectedKb} />
+      }
+
       return (
         <KnowledgeDetailPanel
           key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}

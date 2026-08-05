@@ -361,6 +361,8 @@ export interface KnowledgeBase {
   }
   /** Language a code wiki's pages are generated in. */
   language?: string
+  /** Whether a code wiki's generation runs appear in the conversation list. */
+  show_generation_task?: boolean
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
@@ -449,6 +451,8 @@ export interface KnowledgeBaseUpdate {
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
+  /** Only for a code wiki: whether its generation runs are listed as conversations. */
+  show_generation_task?: boolean
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number

@@ -47,6 +47,7 @@ from app.services.knowledge.code_wiki.run_mode import (
 from app.services.knowledge.code_wiki.version_store import (
     STALE_RUN_AFTER_HOURS,
     _as_naive_utc,
+    apply_retention,
     reclaim_stale_generations,
     seed_from_published,
 )
@@ -54,6 +55,66 @@ from app.services.knowledge.code_wiki.version_store import (
 logger = logging.getLogger(__name__)
 
 SOURCE_COMMIT_KEY = "commit"
+
+# Why a run failed, reached only through the two helpers below.
+#
+# It was previously written as "errorMessage" by both failure paths and read back as
+# "error_message", so every failure reported an empty reason: the reader was told the
+# run had failed and nothing about why, which is the one moment the reason matters.
+# Neither half was wrong on its own, which is why it survived — the fix is not the
+# spelling but having a single place that decides it.
+FAILURE_REASON_EXT_KEY = "errorMessage"
+
+
+# A machine-readable name for the failures this server invents, beside the human
+# text. The text of an invented reason is English written here, and it was being
+# shown straight to readers next to translated UI, which reads as a bug rather than
+# as a diagnostic. A client translates the codes it knows and falls back to the text.
+#
+# Absent means the reason came from outside -- the agent's own message, git's output,
+# an exception -- and there is nothing to translate it into.
+FAILURE_CODE_EXT_KEY = "failureCode"
+
+
+class FailureCode:
+    """Failures this server states in its own words."""
+
+    #: The task reached a terminal state without the agent concluding its run.
+    TASK_ENDED_WITHOUT_REPORT = "task_ended_without_report"
+    #: No task could be created, so nothing was ever going to run.
+    TASK_NOT_CREATED = "task_not_created"
+    #: The worker stopped reporting and the run was reclaimed.
+    WORKER_ABANDONED = "worker_abandoned"
+
+
+def record_failure_reason(
+    generation: WikiGeneration, reason: str, *, code: str = ""
+) -> None:
+    """Store why a run failed, replacing ``ext`` so SQLAlchemy sees the change.
+
+    ``reason`` is detail worth showing verbatim; ``code`` names a failure the server
+    invented and can be translated. A reclaimed run has a code and no detail, which
+    is why an empty reason no longer means nothing is recorded.
+    """
+    if not reason and not code:
+        return
+    ext = dict(generation.ext or {})
+    if reason:
+        ext[FAILURE_REASON_EXT_KEY] = reason
+    if code:
+        ext[FAILURE_CODE_EXT_KEY] = code
+    generation.ext = ext
+
+
+def failure_reason(generation: WikiGeneration) -> str:
+    """Why a run failed, or an empty string when it did not say."""
+    return str((generation.ext or {}).get(FAILURE_REASON_EXT_KEY, "") or "")
+
+
+def failure_code(generation: WikiGeneration) -> str:
+    """Which server-stated failure this was, or empty when the reason came from
+    outside and is only available as text."""
+    return str((generation.ext or {}).get(FAILURE_CODE_EXT_KEY, "") or "")
 
 
 class GenerationInFlight(RuntimeError):
@@ -225,6 +286,7 @@ def finish_generation(
     effects: ProjectionSideEffects,
     succeeded: bool,
     error_message: str = "",
+    failure_code: str = "",
     policy: Optional[PublishPolicy] = None,
     now: Optional[datetime] = None,
 ) -> Optional[PublishResult]:
@@ -242,10 +304,7 @@ def finish_generation(
     if not succeeded:
         generation.status = WikiGenerationStatus.FAILED
         generation.completed_at = finished
-        ext = dict(generation.ext or {})
-        if error_message:
-            ext["errorMessage"] = error_message
-        generation.ext = ext
+        record_failure_reason(generation, error_message, code=failure_code)
         db.commit()
         logger.warning(
             "[code_wiki] generation %s failed for kb %s: %s",
@@ -259,7 +318,7 @@ def finish_generation(
     generation.completed_at = finished
     db.flush()
 
-    return publish_generation(
+    result = publish_generation(
         db,
         knowledge_base=knowledge_base,
         generation=generation,
@@ -267,6 +326,32 @@ def finish_generation(
         effects=effects,
         policy=policy,
     )
+    _collect_old_versions(db, knowledge_base)
+    return result
+
+
+def _collect_old_versions(db: Session, knowledge_base: Kind) -> None:
+    """Drop versions no longer worth keeping, now that a newer one exists.
+
+    Publishing is when a version stops being the one readers see, so it is when the
+    ones behind it become collectable. The policy has always been written; nothing
+    ever called it, so wiki_generations and wiki_contents grew without bound — a
+    wiki regenerating on a schedule keeps every page of every run it has ever made.
+
+    Never raises. Retention is housekeeping: a wiki that has just been published
+    successfully must not be reported as failed because old rows could not be tidied,
+    and the next publish will collect them anyway.
+    """
+    try:
+        apply_retention(
+            db,
+            kind_id=knowledge_base.id,
+            published_generation_id=published_generation_id(knowledge_base),
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.exception(
+            "[code_wiki] could not apply retention to kb %s", knowledge_base.id
+        )
 
 
 def _runs_since_the_last_full(
@@ -324,10 +409,31 @@ class RunState:
     generation_id: int = 0
     started_at: Optional[datetime] = None
     error_message: str = ""
+    failure_code: str = ""
     # A run whose worker has gone quiet for longer than the sweep tolerates. The next
     # trigger reclaims it and starts afresh, so the caller may act on it — which is
     # the whole reason this is reported rather than folded into "running".
     is_stale: bool = False
+
+
+def reader_status(generation: WikiGeneration) -> str:
+    """The stored status as a reader is told it: running, completed or failed.
+
+    Five states are stored and three are reported. PENDING and CANCELLED both collapse
+    into "failed" deliberately: neither produced a version, and a reader deciding
+    whether to regenerate needs to know that, not which internal state stopped it.
+
+    Shared by the status endpoint and the history rather than written out at each,
+    because a reader who sees a run called "failed" in one place and "completed" in
+    the other has no way to tell which to believe.
+    """
+    stored = generation.status
+    value = str(stored.value if hasattr(stored, "value") else stored or "").upper()
+    if value == WikiGenerationStatus.RUNNING.value:
+        return "running"
+    if value == WikiGenerationStatus.COMPLETED.value:
+        return "completed"
+    return "failed"
 
 
 def current_run_state(
@@ -348,7 +454,8 @@ def current_run_state(
     if latest is None:
         return RunState(status="never")
 
-    if latest.status == WikiGenerationStatus.RUNNING:
+    reported = reader_status(latest)
+    if reported == "running":
         moment = _as_naive_utc(now or datetime.now(timezone.utc))
         touched = latest.updated_at or latest.created_at
         stale = bool(
@@ -361,7 +468,7 @@ def current_run_state(
             is_stale=stale,
         )
 
-    if latest.status == WikiGenerationStatus.COMPLETED:
+    if reported == "completed":
         return RunState(
             status="completed", generation_id=latest.id, started_at=latest.created_at
         )
@@ -370,5 +477,75 @@ def current_run_state(
         status="failed",
         generation_id=latest.id,
         started_at=latest.created_at,
-        error_message=str((latest.ext or {}).get("error_message", "") or ""),
+        error_message=failure_reason(latest),
+        failure_code=failure_code(latest),
     )
+
+
+@dataclass(frozen=True)
+class RunRecord:
+    """One past attempt, as a reader troubleshooting the wiki needs to see it."""
+
+    generation_id: int
+    status: str
+    mode: str = ""
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    commit: str = ""
+    error_message: str = ""
+    failure_code: str = ""
+    published: bool = False
+    task_id: int = 0
+
+
+# Enough to cover the run that broke the wiki without turning this into an audit log.
+RUN_HISTORY_LIMIT = 20
+
+
+def run_history(
+    db: Session, knowledge_base: Kind, *, limit: int = RUN_HISTORY_LIMIT
+) -> list[RunRecord]:
+    """This wiki's recent runs, newest first.
+
+    Separate from ``current_run_state`` rather than an extension of it. That one is
+    polled every few seconds while a run is going and must stay a single indexed row;
+    this one is fetched when somebody opens the history and asks what went wrong.
+
+    ``completed_at`` is reported as absent for a run still going, because the column's
+    default is the epoch rather than NULL and a client would otherwise render 1970.
+    """
+    published = published_generation_id(knowledge_base)
+    rows = (
+        db.query(WikiGeneration)
+        .filter(WikiGeneration.kind_id == knowledge_base.id)
+        .order_by(WikiGeneration.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        RunRecord(
+            generation_id=row.id,
+            status=reader_status(row),
+            mode=str(
+                row.generation_type.value
+                if hasattr(row.generation_type, "value")
+                else row.generation_type or ""
+            ),
+            started_at=row.created_at,
+            completed_at=_finished_at(row),
+            commit=str((row.source_snapshot or {}).get(SOURCE_COMMIT_KEY, "") or ""),
+            error_message=failure_reason(row),
+            failure_code=failure_code(row),
+            published=bool(published) and row.id == published,
+            task_id=int(row.task_id or 0),
+        )
+        for row in rows
+    ]
+
+
+def _finished_at(generation: WikiGeneration) -> Optional[datetime]:
+    """When a run ended, or ``None`` while it has not."""
+    finished = generation.completed_at
+    if finished is None or finished.year <= 1970:
+        return None
+    return finished

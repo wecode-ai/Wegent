@@ -113,6 +113,16 @@ def test_a_page_is_asked_for_at_every_section(system_prompt: str):
     assert "section that holds pages needs a page of its own" in system_prompt
 
 
+def test_links_between_pages_are_given_a_form(system_prompt: str):
+    """Left unsaid, an agent that has spent the run reading a repository writes
+    repository-shaped links -- `./architecture/backend.md` -- and the reader resolves
+    them only because it was taught to forgive that. Saying which form is wanted is
+    what keeps that forgiveness from being the mechanism.
+    """
+    assert "[Backend](architecture/backend)" in system_prompt
+    assert "not a URL" in system_prompt
+
+
 def test_the_declared_order_is_explained_as_what_readers_see(system_prompt: str):
     """Otherwise the field looks like bookkeeping and gets filled in arbitrarily."""
     assert "--structure-order" in system_prompt
@@ -124,6 +134,16 @@ def test_the_run_is_required_to_be_finished(system_prompt: str):
     the staleness sweep reclaims it hours later."""
     assert "complete --generation-id" in system_prompt
     assert "fail --generation-id" in system_prompt
+
+
+def test_the_agent_is_told_it_has_no_scratch_space(system_prompt: str):
+    """A real run left behind pages called "Curl Test" and "Test Page With Path" --
+    the agent trying the submit tool out. It was not disobeying anything: nothing
+    said that submitting publishes, so it had no reason to think a trial page was
+    different from a real one.
+    """
+    assert "no scratch space" in system_prompt
+    assert "remove it" in system_prompt
 
 
 def test_the_deletion_rule_is_left_to_the_run(system_prompt: str):

@@ -37,8 +37,10 @@ from app.schemas.knowledge import KnowledgeBaseType
 from app.schemas.task import TaskCreate
 from app.services.knowledge.code_wiki.generation import (
     SOURCE_COMMIT_KEY,
+    FailureCode,
     finish_generation,
     published_commit,
+    record_failure_reason,
     start_generation,
 )
 from app.services.knowledge.code_wiki.prompts import WikiRunContext, build_prompt
@@ -148,14 +150,24 @@ def start_run(
         GenerationInFlight: Propagated from the version store.
     """
     source = source_of(knowledge_base)
-    team, task_user = _resolve_execution_context(db, user)
+    team, task_user = _resolve_execution_context(db, knowledge_base, user)
 
     previous_commit = published_commit(db, knowledge_base)
-    # Nothing published yet means the mode is full whatever the repository says, and
-    # the commit this version documents is reported by the agent when it finishes.
-    # Reading HEAD here would spend a network round trip — up to the whole connect
-    # timeout — on an answer that is discarded.
-    if not head_commit and previous_commit:
+    # Read on every run, including the first.
+    #
+    # This used to be skipped when nothing was published, on the grounds that a first
+    # run rebuilds everything anyway and the agent reports the commit at the end. It
+    # does not always report one — and a version published without a commit leaves the
+    # next run with nothing to compare against, so that one also rebuilds everything
+    # and also publishes without a commit. A wiki that misses it once never does an
+    # incremental run again.
+    #
+    # Pinning it here costs a round trip and cannot fail the run: every read is
+    # best-effort and answers with an empty state, so a slow or unreachable provider
+    # leaves this exactly where the skip left it. The agent may still report a commit
+    # when it finishes, which overwrites this one — it documented what it actually
+    # checked out, and this is what the repository said when the run was created.
+    if not head_commit:
         # Read as the user that will clone the repository, not the one who asked. On
         # a schedule there is no asker, and a token that cannot read the repository
         # would answer for a run that is about to fail at checkout anyway.
@@ -222,6 +234,7 @@ def start_run(
         task_user=task_user,
         prompt=prompt,
         generation=generation,
+        listed=_shows_generation_task(knowledge_base),
     )
 
     generation.task_id = task_id
@@ -246,6 +259,7 @@ def finish_run(
     generation: WikiGeneration,
     succeeded: bool,
     error_message: str = "",
+    failure_code: str = "",
     head_commit: str = "",
 ) -> Optional[PublishResult]:
     """Conclude a run the agent has reported on, and publish it if it succeeded.
@@ -292,6 +306,7 @@ def finish_run(
         ),
         succeeded=succeeded,
         error_message=error_message,
+        failure_code=failure_code,
     )
 
 
@@ -310,12 +325,21 @@ def _knowledge_base_of(db: Session, generation: WikiGeneration) -> Optional[Kind
     return knowledge_base
 
 
-def _resolve_execution_context(db: Session, user: User) -> tuple[Kind, User]:
+def _resolve_execution_context(
+    db: Session, knowledge_base: Kind, user: User
+) -> tuple[Kind, User]:
     """Find the team that runs code wikis, and the user it runs as.
 
-    The run executes as the knowledge base's owner, using their Git credentials to
-    clone. An expired token then fails that owner's own wiki, which is attributable;
-    a shared account's expiry would fail everybody's at once.
+    **The run executes as the knowledge base's owner, not as whoever triggered it.**
+    It said so and did the other thing: it took the caller. Anyone the wiki is shared
+    with who has write access to the repository may trigger a run, and doing so made
+    them the identity that clones it, owns the version, and owns every page projected
+    out of it. A member with no credentials for that host failed at checkout on
+    somebody else's wiki, and the pages a successful run wrote changed hands.
+
+    The owner is the right identity because the wiki is theirs: an expired token
+    fails their own wiki and is attributable to them, where a shared account's expiry
+    would fail everybody's at once.
 
     The team, by contrast, comes from configuration rather than from the request: it
     carries the prompt and the tools the agent gets, so letting the caller choose it
@@ -323,7 +347,7 @@ def _resolve_execution_context(db: Session, user: User) -> tuple[Kind, User]:
     """
     from app.services.adapters.team_kinds import team_kinds_service
 
-    task_user = user
+    task_user = db.get(User, knowledge_base.user_id) or user
     team_name = wiki_settings.CODE_WIKI_TEAM_NAME
     if not team_name:
         raise CodeWikiRunError(
@@ -345,6 +369,26 @@ def _resolve_execution_context(db: Session, user: User) -> tuple[Kind, User]:
     return team, task_user
 
 
+SHOW_GENERATION_TASK_KEY = "showGenerationTask"
+
+# Where a task goes when it should not be listed as a conversation. The listing query
+# excludes this namespace by name; task lookup by id does not, which is what makes a
+# hidden run still reachable from the wiki's history.
+HIDDEN_TASK_NAMESPACE = "system"
+
+
+def _shows_generation_task(knowledge_base: Kind) -> bool:
+    """Whether this wiki's runs belong in the owner's conversation list.
+
+    Off unless asked for. A wiki regenerates on its own, so its runs are work the
+    user did not start a conversation to do, and listing them buries the
+    conversations they did start. The wiki's run history shows them either way and
+    links to the task by id, so hidden is not lost.
+    """
+    spec = (knowledge_base.json or {}).get("spec", {})
+    return bool(spec.get(SHOW_GENERATION_TASK_KEY, False))
+
+
 def _create_task(
     db: Session,
     *,
@@ -353,6 +397,7 @@ def _create_task(
     task_user: User,
     prompt: str,
     generation: WikiGeneration,
+    listed: bool = False,
 ) -> int:
     """Create the task that runs the agent, failing the run if it cannot be."""
     from app.services.adapters.task_kinds import task_kinds_service
@@ -376,6 +421,7 @@ def _create_task(
                 task_type="code",
                 auto_delete_executor="false",
                 source="code_wiki",
+                namespace=("default" if listed else HIDDEN_TASK_NAMESPACE),
             ),
             user=task_user,
             task_id=task_id,
@@ -405,7 +451,5 @@ def _fail_without_a_task(
         return
     live.status = WikiGenerationStatus.FAILED
     live.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    ext = dict(live.ext or {})
-    ext["errorMessage"] = f"task creation failed: {exc}"
-    live.ext = ext
+    record_failure_reason(live, str(exc), code=FailureCode.TASK_NOT_CREATED)
     db.commit()

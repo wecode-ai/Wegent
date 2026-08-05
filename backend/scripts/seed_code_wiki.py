@@ -30,7 +30,6 @@ from app.schemas.wiki import (
     WikiContentWriteRequest,
 )
 from app.services.knowledge.code_wiki.generation import start_generation
-from app.services.knowledge.code_wiki.registry import wiki_owner
 from app.services.wiki_service import WikiService
 
 DEFAULT_PAGES = ["index", "architecture", "architecture/backend", "guides/setup"]
@@ -79,11 +78,13 @@ def main() -> int:
             print(f"No knowledge base {args.kb_id}", file=sys.stderr)
             return 1
 
-        requester = db.get(User, knowledge_base.user_id)
-        if requester is None:
+        # The knowledge base's own owner. A code wiki used to be filed under a
+        # dedicated account, which is what `wiki_owner` resolved; it belongs to
+        # whoever created it now, so there is nothing left to indirect through.
+        owner: User = db.get(User, knowledge_base.user_id)
+        if owner is None:
             print(f"Knowledge base {args.kb_id} has no owner", file=sys.stderr)
             return 1
-        owner: User = wiki_owner(db, requester)
         started = start_generation(
             db,
             knowledge_base=knowledge_base,

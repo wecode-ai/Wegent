@@ -438,9 +438,20 @@ spec:
     Write `index` as the overview page: a short list of links, each with one line
     saying what the page covers and when to read it, followed by the sections.
 
+    **Link to another page by its full path, with no extension**: write
+    `[Backend](architecture/backend)`, not `./architecture/backend.md` and not a URL.
+    These pages are not files and are not served at a path of their own; a link
+    written as though they were points at nothing the reader can open.
+
     The order you list in `--structure-order` when you finish is the order readers see
     the pages in. Put the overview first and arrange sections so the wiki reads front
     to back; anything you leave out of that list is shown after everything you ranked.
+
+    **Anything you submit is in the wiki.** There is no scratch space and no draft:
+    a page written to try the tool out is published alongside the real ones, under
+    whatever name you gave it. If you write one to check a command works, remove it
+    by path before you finish. Better still, try the command on a page you were
+    going to write anyway.
 
     ## Removing
 

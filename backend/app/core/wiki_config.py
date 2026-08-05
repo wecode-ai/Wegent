@@ -26,6 +26,13 @@ class WikiSettings(BaseSettings):
     CODE_WIKI_TEAM_NAME: str = (
         "code-wiki-team"  # Matches init_data/02-public-resources.yaml
     )
+    # Whether new code wikis may be created (env var: WIKI_CODE_WIKI_ENABLED).
+    #
+    # Off by default, so a deployment opts in rather than having to remember to opt
+    # out everywhere but the pilot group. It gates creation only: wikis that already
+    # exist stay readable and stay able to regenerate, because turning a rollout down
+    # should stop it spreading, not break what it already produced.
+    CODE_WIKI_ENABLED: bool = False
     DEFAULT_USER_ID: int = 0  # Default user ID for task creation (0 = use current user)
     DEFAULT_LANGUAGE: str = (
         "en"  # Default language for wiki documentation generation (en/zh)

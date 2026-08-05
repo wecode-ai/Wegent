@@ -59,6 +59,12 @@ DEFAULT_KEEP_SUCCESSFUL = 10
 DEFAULT_MAX_AGE_DAYS = 90
 DEFAULT_FAILED_RETENTION_DAYS = 7
 
+# Kept in step with generation.FailureCode.WORKER_ABANDONED by the test beside it.
+# Not imported from there: that module imports this one, and reaching back would
+# close the cycle.
+FAILURE_CODE_EXT_KEY = "failureCode"
+WORKER_ABANDONED_CODE = "worker_abandoned"
+
 
 def _utcnow() -> datetime:
     """Return a timezone-naive UTC timestamp, matching the wiki tables."""
@@ -243,6 +249,13 @@ def reclaim_stale_generations(
     for generation in stale:
         generation.status = WikiGenerationStatus.FAILED
         generation.completed_at = _as_naive_utc(now)
+        # Recorded, because a reclaimed run left no reason at all: the reader was
+        # told it had failed and given nothing, which is the same as being told
+        # nothing. There is no detail to add -- the worker is gone and never said
+        # why -- so this is exactly the case a code exists for.
+        ext = dict(generation.ext or {})
+        ext.setdefault(FAILURE_CODE_EXT_KEY, WORKER_ABANDONED_CODE)
+        generation.ext = ext
     db.flush()
 
     reclaimed = tuple(generation.id for generation in stale)

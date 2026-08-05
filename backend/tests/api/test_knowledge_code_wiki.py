@@ -4,6 +4,7 @@
 
 """API tests for creating a code wiki."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,19 @@ PAYLOAD = {
     "source_type": "github",
     "source_url": "https://github.com/wecode-ai/Wegent.git",
 }
+
+
+@pytest.fixture(autouse=True)
+def code_wikis_are_enabled(monkeypatch: pytest.MonkeyPatch):
+    """Turn the rollout gate on for everything except the tests about the gate.
+
+    It ships off, so a deployment opts in rather than having to remember to opt out
+    everywhere but the pilot group. These tests are about what creating a wiki does,
+    not about whether it is allowed, so they say so once here.
+    """
+    from app.core.wiki_config import wiki_settings
+
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", True)
 
 
 @pytest.fixture
@@ -986,3 +1000,234 @@ def test_reading_the_status_needs_only_read_access(
 
     # No repository write access is granted anywhere in this test.
     assert test_client.get(_status_url(kb_id), headers=auth_headers).status_code == 200
+
+
+# --- what has been attempted on this wiki -----------------------------------
+
+
+def _history_url(knowledge_base_id: int) -> str:
+    return f"/api/knowledge-bases/{knowledge_base_id}/code-wiki/generations"
+
+
+def _record_a_finished_generation(
+    test_db,
+    kb_id: int,
+    *,
+    status: str,
+    mode: str = "full",
+    commit: str = "",
+    error: str = "",
+    task_id: int = 0,
+):
+    """Record an ended run directly, for the same reason the running one is."""
+    from datetime import datetime
+
+    from app.models.wiki import WikiGeneration
+    from app.services.knowledge.code_wiki.generation import FAILURE_REASON_EXT_KEY
+
+    generation = WikiGeneration(
+        project_id=1,
+        kind_id=kb_id,
+        user_id=1,
+        task_id=task_id,
+        team_id=1,
+        generation_type=mode,
+        source_snapshot={"commit": commit} if commit else {},
+        status=status,
+        ext={FAILURE_REASON_EXT_KEY: error} if error else {},
+        completed_at=datetime(2026, 8, 1, 9, 0, 0),
+    )
+    test_db.add(generation)
+    test_db.commit()
+    return generation
+
+
+def test_the_history_explains_why_a_wiki_has_no_pages(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """The screen this exists for: every run failed, so the reader sees an empty
+    wiki and the only useful answer is in a run that already ended."""
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    _record_a_finished_generation(
+        test_db,
+        kb_id,
+        status="FAILED",
+        error="git clone failed: could not read Username",
+        task_id=99,
+    )
+
+    body = test_client.get(_history_url(kb_id), headers=auth_headers).json()
+
+    assert len(body["runs"]) == 1
+    run = body["runs"][0]
+    assert run["status"] == "failed"
+    assert run["error_message"] == "git clone failed: could not read Username"
+    assert run["task_id"] == 99
+
+
+def test_the_history_is_newest_first(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    first = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
+    second = _record_a_finished_generation(test_db, kb_id, status="FAILED")
+
+    runs = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"]
+
+    assert [run["generation_id"] for run in runs] == [second.id, first.id]
+
+
+def test_the_published_version_is_marked_in_the_history(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """Two runs can both have completed while only one is what readers see. Without
+    this the history says "completed" twice and answers nothing."""
+    from app.models.kind import Kind
+    from app.services.knowledge.code_wiki.publisher import PUBLISHED_GENERATION_KEY
+
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    published = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
+    later = _record_a_finished_generation(test_db, kb_id, status="COMPLETED")
+
+    knowledge_base = test_db.get(Kind, kb_id)
+    payload = dict(knowledge_base.json or {})
+    spec = dict(payload.get("spec", {}))
+    spec[PUBLISHED_GENERATION_KEY] = published.id
+    payload["spec"] = spec
+    knowledge_base.json = payload
+    test_db.commit()
+
+    runs = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"]
+
+    by_id = {run["generation_id"]: run for run in runs}
+    assert by_id[published.id]["published"] is True
+    assert by_id[later.id]["published"] is False
+
+
+def test_a_run_still_going_reports_no_finish_time(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """completed_at defaults to the epoch rather than NULL, so reporting it raw
+    would have every in-flight run claim it finished in 1970."""
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    _record_a_running_generation(test_db, kb_id)
+
+    run = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"][0]
+
+    assert run["status"] == "running"
+    assert run["completed_at"] is None
+
+
+def test_reading_the_history_needs_only_read_access(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    kind_services_use_test_db,
+):
+    """Same reasoning as the status beside it: a reader denied the explanation is
+    left with a broken page and nothing to act on."""
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+
+    assert test_client.get(_history_url(kb_id), headers=auth_headers).status_code == 200
+
+
+# --- the rollout gate --------------------------------------------------------
+
+
+def test_creating_a_code_wiki_is_refused_when_the_rollout_is_off(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind_services_use_test_db,
+):
+    """Enforced on the server, not only in the dialog. Hiding the option keeps the
+    product tidy; it does not stop a direct call, and a gated rollout that a POST
+    walks straight past is not gated.
+    """
+    from app.core.wiki_config import wiki_settings
+
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
+
+    with patch(
+        "app.api.endpoints.knowledge.assert_user_can_read_source",
+        return_value=None,
+    ):
+        response = test_client.post(CREATE_URL, json=PAYLOAD, headers=auth_headers)
+
+    assert response.status_code == 403
+
+
+def test_an_existing_wiki_stays_readable_when_the_rollout_is_off(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind_services_use_test_db,
+):
+    """Turning a rollout down should stop it spreading, not break what it produced.
+    A wiki built while it was on keeps its pages, its status and its history.
+    """
+    from app.core.wiki_config import wiki_settings
+
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
+
+    for url in (
+        f"/api/knowledge-bases/{kb_id}/code-wiki/pages",
+        _status_url(kb_id),
+        _history_url(kb_id),
+    ):
+        assert test_client.get(url, headers=auth_headers).status_code == 200, url
+
+
+def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    kind_services_use_test_db,
+):
+    """A wiki frozen at whatever commit the rollout was paused on is worse than no
+    wiki: it documents a repository that has since moved and says nothing about it.
+    So the gate is on creation, and regenerating is not creation.
+    """
+    from app.core.wiki_config import wiki_settings
+
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_ENABLED", False)
+
+    with (
+        patch(
+            "app.api.endpoints.knowledge.assert_user_can_write_source",
+            return_value=None,
+        ),
+        patch("app.api.endpoints.knowledge.start_run") as start,
+    ):
+        start.return_value = SimpleNamespace(
+            started=False, mode="skip", reason="unchanged", generation=None, task_id=0
+        )
+        response = test_client.post(
+            f"/api/knowledge-bases/{kb_id}/code-wiki/generations",
+            json={},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 202

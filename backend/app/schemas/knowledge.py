@@ -204,6 +204,16 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
             "deployment default rather than meaning English."
         ),
     )
+    show_generation_task: bool = Field(
+        False,
+        description=(
+            "Whether a code wiki's generation runs appear in the creator's "
+            "conversation list. Off by default: a wiki regenerates on its own, so "
+            "its runs are work nobody started a conversation to do. The wiki's run "
+            "history shows them either way and links to the task, so hiding them "
+            "loses nothing. Meaningless for other knowledge base types."
+        ),
+    )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
     )
@@ -283,6 +293,15 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     summary_model_ref: Optional[Dict[str, str]] = Field(
         None,
         description="Model reference for summary generation. Format: {'name': 'model-name', 'namespace': 'default', 'type': 'public|user|group'}",
+    )
+    show_generation_task: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether a code wiki's generation runs appear in the conversation list. "
+            "Editable after creation: it is a display preference, not something the "
+            "wiki was built with, so a reader who wants to watch a run should not "
+            "have to rebuild the wiki to see one."
+        ),
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -465,6 +484,14 @@ class CodeWikiRunStatus(BaseModel):
     generation_id: int = 0
     started_at: Optional[datetime] = None
     error_message: str = Field("", description="Why the last run failed, if it did")
+    failure_code: str = Field(
+        "",
+        description=(
+            "Names a failure this server stated in its own words, for a client to "
+            "translate. Empty means the reason came from outside — the agent, git, "
+            "an exception — and error_message is all there is."
+        ),
+    )
     is_stale: bool = Field(
         False,
         description=(
@@ -510,6 +537,42 @@ class CodeWikiRunResponse(BaseModel):
     reason: str = Field("", description="Why that mode was chosen")
     generation_id: int = Field(0, description="The version being written, when started")
     task_id: int = Field(0, description="Task running the agent, when started")
+
+
+class CodeWikiRunRecord(BaseModel):
+    """One past attempt at generating this wiki.
+
+    Reported per run rather than folded into the wiki's current state because the
+    question a reader brings here is not "is it busy" but "why does it look like
+    this" — and the answer is usually in a run that already ended.
+    """
+
+    generation_id: int
+    status: Literal["running", "failed", "completed"]
+    mode: str = Field("", description="full or incremental")
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    commit: str = Field("", description="Commit the run was documenting")
+    error_message: str = Field("", description="Why it failed, if it did")
+    failure_code: str = Field(
+        "", description="Names a server-stated failure, for a client to translate"
+    )
+    published: bool = Field(
+        False, description="Whether this is the version readers currently see"
+    )
+    task_id: int = Field(
+        0,
+        description=(
+            "Task that ran the agent. Openable by id even when the task is kept out "
+            "of the conversation list, which is what makes hiding it safe."
+        ),
+    )
+
+
+class CodeWikiRunHistory(BaseModel):
+    """Recent runs, newest first."""
+
+    runs: List[CodeWikiRunRecord] = Field(default_factory=list)
 
 
 class CodeWikiExisting(BaseModel):
@@ -587,6 +650,14 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     )
     language: Optional[str] = Field(
         None, description="Language a code wiki's pages are generated in"
+    )
+    show_generation_task: bool = Field(
+        False,
+        description=(
+            "Whether a code wiki's generation runs appear in the conversation list. "
+            "Returned so the edit form can show what is set rather than defaulting "
+            "the switch to off and silently turning it off on the next save."
+        ),
     )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
@@ -690,6 +761,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             kb_type=kb_type,
             source=source,
             language=language,
+            show_generation_task=bool(spec.get("showGenerationTask", False)),
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(
                 spec.get("retrievalConfig"), kind.id

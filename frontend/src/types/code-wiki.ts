@@ -53,6 +53,12 @@ export interface CodeWikiCreateRequest extends Omit<
   source_url: string
   /** Empty falls back to the deployment default rather than meaning English. */
   language?: string
+  /**
+   * Whether generation runs appear in the creator's conversation list. Off by
+   * default: a wiki regenerates on its own, so its runs are work nobody started a
+   * conversation to do. The wiki's own run history shows them either way.
+   */
+  show_generation_task?: boolean
 }
 
 export type CodeWikiSourceType = 'github' | 'gitlab' | 'gitea'
@@ -138,8 +144,14 @@ export interface CodeWikiRunStatus {
   status: 'running' | 'failed' | 'completed' | 'never'
   generation_id: number
   started_at?: string | null
-  /** Why the last run failed, if it did. */
+  /** Why the last run failed, if it did. Verbatim, and possibly not translated. */
   error_message: string
+  /**
+   * Names a failure the server stated in its own words, for translating here. Empty
+   * means the reason came from outside — the agent, git, an exception — and
+   * `error_message` is all there is.
+   */
+  failure_code: string
   /**
    * A run whose worker has gone quiet for longer than the sweep tolerates.
    * Triggering again reclaims it and starts afresh, so this is offered as an action
@@ -148,4 +160,37 @@ export interface CodeWikiRunStatus {
   is_stale: boolean
   last_published_at?: string | null
   last_published_commit: string
+}
+
+/**
+ * One past attempt at generating this wiki.
+ *
+ * Fetched on demand rather than polled alongside the status: the question this
+ * answers is not "is it busy" but "why does it look like this", and the answer is
+ * usually in a run that already ended.
+ */
+export interface CodeWikiRunRecord {
+  generation_id: number
+  status: 'running' | 'failed' | 'completed'
+  /** `full` or `incremental`. */
+  mode: string
+  started_at?: string | null
+  /** Null while the run has not ended. */
+  completed_at?: string | null
+  /** Commit the run was documenting. */
+  commit: string
+  error_message: string
+  /** Names a server-stated failure, for translating here. */
+  failure_code: string
+  /** Whether this is the version readers currently see. */
+  published: boolean
+  /**
+   * Task that ran the agent. Openable by id even when the task is kept out of the
+   * conversation list, which is what makes hiding it safe.
+   */
+  task_id: number
+}
+
+export interface CodeWikiRunHistory {
+  runs: CodeWikiRunRecord[]
 }

@@ -66,6 +66,8 @@ interface KnowledgeBaseFormProps {
   onCallLimitsChange: (limits: { maxCalls: number; exemptCalls: number }) => void
   advancedOpen: boolean
   onAdvancedOpenChange: (open: boolean) => void
+  /** Extra rows for this kind of knowledge base, shown inside advanced settings. */
+  advancedExtras?: React.ReactNode
   retrievalModeSection?: ReactNode
   showRetrievalSection: boolean
   retrievalConfig: RetrievalConfigDraft
@@ -168,6 +170,7 @@ export function KnowledgeBaseForm({
   onCallLimitsChange,
   advancedOpen,
   onAdvancedOpenChange,
+  advancedExtras,
   retrievalModeSection,
   showRetrievalSection,
   retrievalConfig,
@@ -220,6 +223,10 @@ export function KnowledgeBaseForm({
 
   const advancedContent = (
     <SimpleConfigGroup>
+      {/* Rendered first so a code wiki's own settings are not buried under the call
+          limits every knowledge base has. Passed in rather than branched on here:
+          this form knows nothing about repositories and should not start to. */}
+      {advancedExtras}
       <SimpleConfigRow
         label={t('knowledge:document.callLimits.title')}
         description={t('knowledge:document.callLimits.description')}
