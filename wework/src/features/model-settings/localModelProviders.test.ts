@@ -75,13 +75,17 @@ describe('localModelProviders', () => {
         apiFormat: 'openai-responses',
         requestPath: '/responses',
         toolProfile: 'custom',
-        allowedModelIds: ['deepseek-v4-flash'],
+        allowedModelIds: ['deepseek-v4-flash', 'deepseek-v4-pro'],
         contextWindow: 1_048_576,
         webSearchMode: 'live',
         modelDefaults: {
           'deepseek-v4-flash': {
             contextWindow: 1_048_576,
             codexCatalogModelId: 'wework-deepseek-v4-flash',
+          },
+          'deepseek-v4-pro': {
+            contextWindow: 1_048_576,
+            codexCatalogModelId: 'wework-deepseek-v4-pro',
           },
         },
       },
@@ -119,7 +123,10 @@ describe('localModelProviders', () => {
 
     await expect(
       discoverProviderModels(findLocalModelProviderProfile('deepseek'), 'secret-key', { fetcher })
-    ).resolves.toEqual([{ id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' }])
+    ).resolves.toEqual([
+      { id: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
+      { id: 'deepseek-v4-pro', displayName: 'deepseek-v4-pro' },
+    ])
   })
 
   it('recognizes a Kimi Coding K3 model saved with a stale provider profile', () => {
