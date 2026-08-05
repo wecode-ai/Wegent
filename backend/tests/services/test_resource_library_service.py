@@ -291,6 +291,53 @@ def test_active_system_team_and_skill_are_listed_without_backfill(test_db, test_
     assert next(item for item in result.items if item.id == skill.id).bind_modes == []
 
 
+def test_system_only_discovery_excludes_user_publications(test_db, test_user):
+    published_agent = _create_published_agent(test_db)
+    publisher = test_db.get(User, published_agent.user_id)
+    resource_library_service.publish(
+        test_db,
+        request=ResourceLibraryCreateListingRequest(
+            resource_type="agent",
+            source_id=published_agent.id,
+            name=published_agent.name,
+            display_name="Published Agent",
+            tags=["technical_development"],
+            version="1.0.0",
+        ),
+        current_user=publisher,
+    )
+    system_agent = Kind(
+        user_id=0,
+        kind="Team",
+        name="system-only-agent",
+        namespace="default",
+        json={
+            "kind": "Team",
+            "metadata": {
+                "name": "system-only-agent",
+                "displayName": "System Only Agent",
+            },
+            "spec": {"members": [], "collaborationModel": "solo"},
+        },
+        is_active=True,
+    )
+    test_db.add(system_agent)
+    test_db.commit()
+    test_db.refresh(system_agent)
+
+    result = resource_library_service.list_public(
+        test_db,
+        user_id=test_user.id,
+        resource_type="agent",
+        keyword=None,
+        tags=[],
+        limit=20,
+        system_only=True,
+    )
+
+    assert [item.id for item in result.items] == [system_agent.id]
+
+
 def test_discovery_hides_installed_skill_only_without_search_filters(
     test_db, test_user
 ):

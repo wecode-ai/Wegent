@@ -37,13 +37,14 @@ describe('resourceLibraryApi', () => {
     await resourceLibraryApi.listListings({
       resourceType: 'skill',
       keyword: 'summary',
+      systemOnly: true,
       targetNamespace: 'engineering',
       cursor: 'current-page',
       limit: 10,
     })
 
     expect(mockedApiClient.get).toHaveBeenCalledWith(
-      '/resource-library/listings?resource_type=skill&keyword=summary&target_namespace=engineering&cursor=current-page&limit=10'
+      '/resource-library/listings?resource_type=skill&keyword=summary&system_only=true&target_namespace=engineering&cursor=current-page&limit=10'
     )
   })
 

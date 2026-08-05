@@ -2233,6 +2233,11 @@ export interface ModelRuntime {
   provider?: string | null
 }
 
+export interface ModelCapabilities {
+  supportsImage?: boolean
+  supportsVideo?: boolean
+}
+
 export interface UnifiedModel {
   name: string
   type: ModelType
@@ -2241,6 +2246,7 @@ export interface UnifiedModel {
   modelId?: string | null
   contextWindow?: number | null
   maxOutputTokens?: number | null
+  modelCapabilities?: ModelCapabilities | null
   namespace?: string
   resourceUserId?: number
   config?: Record<string, unknown>

@@ -1,4 +1,11 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type { RefObject } from 'react'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
@@ -7,11 +14,14 @@ import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-st
 import { EditorView } from 'prosemirror-view'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
+import { ComposerLinkNodeView } from './ComposerLinkNodeView'
+import type { ComposerLinkPayload } from './composerLinks'
 import {
   composerSchema,
   createComposerDocument,
   OBJECT_REPLACEMENT_CHARACTER,
   serializeComposerDocument,
+  serializeComposerLinkNode,
   serializeComposerSlice,
 } from './composerProseMirrorModel'
 
@@ -38,10 +48,16 @@ interface ComposerProseMirrorEditorProps {
   onKeyUp: (event: KeyboardEvent) => void
   onCompositionStart: () => void
   onCompositionEnd: () => void
+  onBlur?: () => void
   onPaste: (event: ClipboardEvent) => boolean
   onDrop: (event: DragEvent) => boolean
   onOpenMentionFile?: (path: string) => void
   onOpenMentionPlugin?: (reference: PluginReference) => void
+  onEditComposerLink?: (
+    payload: ComposerLinkPayload,
+    anchor?: HTMLElement,
+    range?: { start: number; end: number }
+  ) => void
   onClick: () => void
   onFocus: () => void
   disabled?: boolean
@@ -63,6 +79,7 @@ export const ComposerProseMirrorEditor = forwardRef<
   const textareaRefRef = useRef(props.textareaRef)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
+  const [hasContent, setHasContent] = useState(props.value !== '')
   callbacksRef.current = props
 
   useLayoutEffect(() => {
@@ -133,12 +150,19 @@ export const ComposerProseMirrorEditor = forwardRef<
             reference => callbacksRef.current.onOpenMentionPlugin?.(reference)
           )
         },
+        composer_link(node, view, getPos) {
+          return new ComposerLinkNodeView(node, view, getPos, {
+            onEditLink: (payload, anchor, range) =>
+              callbacksRef.current.onEditComposerLink?.(payload, anchor, range),
+          })
+        },
       },
       dispatchTransaction(transaction) {
         const nextState = view.state.apply(transaction)
         view.updateState(nextState)
         const snapshot = readComposerSnapshot(nextState)
         internalValueRef.current = snapshot.value
+        setHasContent(snapshot.value !== '')
         if (transaction.docChanged && !transaction.getMeta(EXTERNAL_VALUE_META)) {
           callbacksRef.current.onChange(snapshot.value)
         }
@@ -187,6 +211,10 @@ export const ComposerProseMirrorEditor = forwardRef<
         },
         focus() {
           callbacksRef.current.onFocus()
+          return false
+        },
+        blur() {
+          callbacksRef.current.onBlur?.()
           return false
         },
       },
@@ -261,13 +289,14 @@ export const ComposerProseMirrorEditor = forwardRef<
     const view = viewRef.current
     if (!view || props.value === internalValueRef.current) return
     const selectionOffset = view.hasFocus() ? props.value.length : undefined
+    setHasContent(props.value !== '')
     replaceComposerValue(view, props.value, selectionOffset, true)
   }, [props.value])
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <div ref={mountRef} />
-      {!props.value && (
+      {!hasContent && (
         <div
           className={`${props.className} pointer-events-none absolute inset-0 !text-text-muted/55`}
         >
@@ -356,7 +385,10 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
   }
 
   const adjacentNode = event.key === 'ArrowLeft' ? $head.nodeBefore : $head.nodeAfter
-  if (adjacentNode?.type === composerSchema.nodes.composer_mention) {
+  if (
+    adjacentNode?.type === composerSchema.nodes.composer_mention ||
+    adjacentNode?.type === composerSchema.nodes.composer_link
+  ) {
     const nextPosition =
       event.key === 'ArrowLeft'
         ? $head.pos - adjacentNode.nodeSize
@@ -364,18 +396,21 @@ function moveCaretAcrossComposerMention(view: EditorView, event: KeyboardEvent):
     return setComposerSelection(view, event, nextPosition)
   }
 
-  const domMention = findComposerMentionFromDOMSelection(view)
-  if (!domMention) return false
-  const position = view.posAtDOM(domMention, 0)
+  const domAtom = findComposerAtomFromDOMSelection(view)
+  if (!domAtom) return false
+  const position = view.posAtDOM(domAtom, 0)
   return setComposerSelection(view, event, event.key === 'ArrowLeft' ? position : position + 1)
 }
 
-function findComposerMentionFromDOMSelection(view: EditorView): HTMLElement | null {
+function findComposerAtomFromDOMSelection(view: EditorView): HTMLElement | null {
   const anchorNode = view.dom.ownerDocument.getSelection()?.anchorNode
   const anchorElement =
     anchorNode instanceof HTMLElement ? anchorNode : (anchorNode?.parentElement ?? null)
-  const mention = anchorElement?.closest<HTMLElement>('[data-composer-skill-reference]') ?? null
-  return mention && view.dom.contains(mention) ? mention : null
+  const atom =
+    anchorElement?.closest<HTMLElement>(
+      '[data-composer-skill-reference], [data-composer-link-url]'
+    ) ?? null
+  return atom && view.dom.contains(atom) ? atom : null
 }
 
 function setComposerSelection(view: EditorView, event: KeyboardEvent, position: number): boolean {
@@ -464,6 +499,12 @@ function serializedOffsetFromPosition(doc: ProseMirrorNode, position: number): n
       }
       return
     }
+    if (node.type === composerSchema.nodes.composer_link) {
+      if (position >= nodeStart + node.nodeSize) {
+        serializedOffset += serializeComposerLinkNode(node).length
+      }
+      return
+    }
     if (node.type === composerSchema.nodes.hard_break && position >= nodeStart + node.nodeSize) {
       serializedOffset += 1
     }
@@ -496,9 +537,11 @@ function positionFromSerializedOffset(doc: ProseMirrorNode, targetOffset: number
     const serializedLength =
       node.type === composerSchema.nodes.composer_mention
         ? String(node.attrs.reference ?? '').length
-        : node.type === composerSchema.nodes.hard_break
-          ? 1
-          : 0
+        : node.type === composerSchema.nodes.composer_link
+          ? serializeComposerLinkNode(node).length
+          : node.type === composerSchema.nodes.hard_break
+            ? 1
+            : 0
     if (normalizedTarget <= serializedOffset) {
       position = nodeStart
       resolved = true

@@ -1,5 +1,7 @@
 """Tests for user-safe conversion error mapping."""
 
+import pytest
+
 from knowledge_doc_converter.services.error_mapper import (
     map_conversion_failure,
     map_multimodal_failure,
@@ -69,3 +71,44 @@ def test_maps_exhausted_multimodal_server_error_as_retryable() -> None:
 
     assert failure.code == "conversion_service_unavailable"
     assert failure.retryable is True
+
+
+@pytest.mark.parametrize(
+    "error_class",
+    [
+        "staging_proxy_network",
+        "staging_proxy_server",
+        "staging_session_invalid",
+        "staging_resumable_session_lost",
+        "staging_resumable_too_many_failures",
+        "staging_resumable_stalled",
+        "staging_resumable_incomplete",
+        "video_download_url_unavailable",
+        "video_download_url_unresolved",
+    ],
+)
+def test_maps_internal_staging_and_fid_transient_errors_as_unavailable(
+    error_class: str,
+) -> None:
+    failure = map_multimodal_failure(error_class, retryable=True)
+
+    assert failure.code == "conversion_service_unavailable"
+    assert failure.retryable is True
+
+
+@pytest.mark.parametrize(
+    ("error_class", "expected_code"),
+    [
+        ("staging_file_too_large", "multimodal_file_too_large"),
+        ("staging_auth_error", "conversion_configuration_error"),
+        ("staging_invalid_response", "conversion_configuration_error"),
+    ],
+)
+def test_maps_internal_staging_permanent_errors(
+    error_class: str,
+    expected_code: str,
+) -> None:
+    failure = map_multimodal_failure(error_class, retryable=False)
+
+    assert failure.code == expected_code
+    assert failure.retryable is False

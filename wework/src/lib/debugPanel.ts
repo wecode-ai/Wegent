@@ -241,6 +241,7 @@ const MEMORY_ESTIMATE_NODE_LIMIT = 20_000
 const TOP_TOOL_OUTPUT_LIMIT = 8
 const DEBUG_PANEL_ID = 'wework-debug-panel'
 const RUNTIME_MEMORY_DIAGNOSTICS_STORAGE_KEY = 'wework:debug-runtime-memory'
+export const DEBUG_SNAPSHOT_DEBOUNCE_MS = 100
 
 let installed = false
 let debugLogSequence = 0

@@ -21,6 +21,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Group } from '@/types/group'
 import { CapabilityScopeSelector, type CapabilityPublishTarget } from './CapabilityScopeSelector'
+import { MarketplaceTagSelector } from './MarketplaceTagSelector'
 
 interface SkillShareScopeDialogProps {
   skill: UnifiedSkill | null
@@ -40,6 +41,7 @@ export function SkillShareScopeDialog({
   const { t } = useTranslation('resource-library')
   const [target, setTarget] = useState<CapabilityPublishTarget>('personal')
   const [groupNames, setGroupNames] = useState<string[]>([])
+  const [marketplaceTags, setMarketplaceTags] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const onOpenChangeRef = useRef(onOpenChange)
@@ -70,6 +72,7 @@ export function SkillShareScopeDialog({
         if (cancelled) return
         const nextGroupNames = listing.target_groups || []
         setGroupNames(nextGroupNames)
+        setMarketplaceTags(listing.tags || [])
         setTarget(
           listing.status === 'published'
             ? 'marketplace'
@@ -102,6 +105,10 @@ export function SkillShareScopeDialog({
       toast.error(t('new_capability.select_groups'))
       return
     }
+    if (target === 'marketplace' && marketplaceTags.length === 0) {
+      toast.error(t('marketplace_tags.required'))
+      return
+    }
 
     setSaving(true)
     try {
@@ -110,6 +117,7 @@ export function SkillShareScopeDialog({
         target_groups: target === 'team' ? groupNames : [],
         allow_personal_install: target === 'marketplace',
         allow_group_install: target !== 'personal',
+        ...(target === 'marketplace' ? { tags: marketplaceTags } : {}),
       })
       toast.success(t('messages.update_success'))
       onOpenChange(false)
@@ -137,22 +145,33 @@ export function SkillShareScopeDialog({
             {t('messages.publication_loading')}
           </div>
         ) : (
-          <CapabilityScopeSelector
-            value={target}
-            groups={writableGroups}
-            groupName={groupNames[0]}
-            groupNames={groupNames}
-            onChange={(nextTarget, nextGroupName, nextGroupNames) => {
-              setTarget(nextTarget)
-              setGroupNames(
-                nextTarget === 'team'
-                  ? nextGroupNames || (nextGroupName ? [nextGroupName] : [])
-                  : []
-              )
-            }}
-            existingResource
-            multipleGroups
-          />
+          <>
+            <CapabilityScopeSelector
+              value={target}
+              groups={writableGroups}
+              groupName={groupNames[0]}
+              groupNames={groupNames}
+              onChange={(nextTarget, nextGroupName, nextGroupNames) => {
+                setTarget(nextTarget)
+                setGroupNames(
+                  nextTarget === 'team'
+                    ? nextGroupNames || (nextGroupName ? [nextGroupName] : [])
+                    : []
+                )
+              }}
+              existingResource
+              multipleGroups
+            />
+
+            {target === 'marketplace' && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-text-primary">
+                  {t('marketplace_tags.field_label')}
+                </h3>
+                <MarketplaceTagSelector value={marketplaceTags} onChange={setMarketplaceTags} />
+              </div>
+            )}
+          </>
         )}
 
         <DialogFooter>
@@ -162,7 +181,9 @@ export function SkillShareScopeDialog({
           <Button
             type="button"
             variant="primary"
-            disabled={loading || saving}
+            disabled={
+              loading || saving || (target === 'marketplace' && marketplaceTags.length === 0)
+            }
             onClick={handleSave}
             data-testid="skill-share-scope-save"
           >

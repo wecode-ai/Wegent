@@ -14,6 +14,7 @@ import type { Group } from '@/types/group'
 jest.mock('@/apis/resourceLibrary', () => ({
   resourceLibraryApi: {
     getPublication: jest.fn(),
+    getMarketplaceTags: jest.fn(),
     updatePublication: jest.fn(),
   },
 }))
@@ -31,6 +32,7 @@ const mockTranslate = (key: string, options?: { count?: number }) =>
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: mockTranslate,
+    i18n: { language: 'zh-CN' },
   }),
 }))
 
@@ -56,6 +58,19 @@ describe('SkillShareScopeDialog', () => {
       id: 92,
       status: 'archived',
       target_groups: ['team-a'],
+      tags: [],
+    })
+    ;(resourceLibraryApi.getMarketplaceTags as jest.Mock).mockResolvedValue({
+      version: 1,
+      items: [
+        {
+          id: 'technical_development',
+          name_zh: '技术开发',
+          name_en: 'Technical Development',
+          sort: 10,
+          enabled: true,
+        },
+      ],
     })
     ;(resourceLibraryApi.updatePublication as jest.Mock).mockResolvedValue({})
   })
@@ -103,5 +118,31 @@ describe('SkillShareScopeDialog', () => {
 
     expect(screen.getByTestId('capability-scope-group-team-b')).toBeChecked()
     expect(resourceLibraryApi.getPublication).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads and saves marketplace tags for a published skill', async () => {
+    const user = userEvent.setup()
+    ;(resourceLibraryApi.getPublication as jest.Mock).mockResolvedValueOnce({
+      id: 92,
+      status: 'published',
+      target_groups: [],
+      tags: ['technical_development'],
+    })
+
+    render(
+      <SkillShareScopeDialog skill={skill} groups={groups} open onOpenChange={() => undefined} />
+    )
+
+    const tag = await screen.findByTestId('marketplace-tag-option-technical_development')
+    expect(tag).toHaveAttribute('aria-pressed', 'true')
+    await user.click(screen.getByTestId('skill-share-scope-save'))
+
+    expect(resourceLibraryApi.updatePublication).toHaveBeenCalledWith(92, {
+      status: 'published',
+      target_groups: [],
+      allow_personal_install: true,
+      allow_group_install: true,
+      tags: ['technical_development'],
+    })
   })
 })

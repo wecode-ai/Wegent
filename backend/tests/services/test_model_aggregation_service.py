@@ -288,6 +288,13 @@ class TestModelAggregationService:
                     "api_key": "secret",
                 },
                 "protocol": "openai-responses",
+                "visionSidecarModel": {
+                    "modelName": "vision-model",
+                    "modelType": "user",
+                    "namespace": "default",
+                    "resourceUserId": 42,
+                    "apiFormat": "openai-responses",
+                },
                 "modelCapabilities": {
                     "supportsImage": False,
                     "supportsVideo": False,
@@ -323,6 +330,13 @@ class TestModelAggregationService:
         }
         assert full_model_dict["config"] == {
             "protocol": "openai-responses",
+            "visionSidecarModel": {
+                "modelName": "vision-model",
+                "modelType": "user",
+                "namespace": "default",
+                "resourceUserId": 42,
+                "apiFormat": "openai-responses",
+            },
             "modelCapabilities": {
                 "supportsImage": True,
                 "supportsVideo": True,

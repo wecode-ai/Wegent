@@ -78,7 +78,7 @@ export function TeamListWithScope({
 
   // Fetch all groups and build role map
   useEffect(() => {
-    listGroups()
+    listGroups({ page: 1, limit: 100 })
       .then(response => {
         const roleMap = new Map<string, BaseRole>()
         response.items.forEach(group => {

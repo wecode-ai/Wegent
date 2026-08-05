@@ -1,7 +1,7 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 
-const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&scope=personal'
+const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&source=mine'
 
 async function expectAgentResourcePage(page: Page) {
   await expect(page).toHaveURL(/\/resource-library/)
@@ -59,7 +59,7 @@ test.describe('Resource Library - Bot-backed Agent Management', () => {
     })
     await expect(page.locator('[data-testid="resource-library-source-segments"]')).toBeVisible()
     await expect(
-      page.locator('[data-testid="resource-library-source-personal-button"]')
+      page.locator('[data-testid="resource-library-source-mine-button"]')
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
