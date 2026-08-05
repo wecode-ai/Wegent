@@ -178,11 +178,7 @@ fn is_safe_plugin_key(plugin_key: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
-fn push_codex_cache_candidates(
-    cache_root: &Path,
-    plugin_key: &str,
-    candidates: &mut Vec<PathBuf>,
-) {
+fn push_codex_cache_candidates(cache_root: &Path, plugin_key: &str, candidates: &mut Vec<PathBuf>) {
     // Codex materializes installs as:
     //   plugins/cache/{marketplace}/{plugin_key}/{version}/
     // Do not hardcode a single marketplace (e.g. "wegent"); local and official
