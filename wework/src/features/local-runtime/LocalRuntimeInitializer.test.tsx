@@ -12,7 +12,14 @@ import {
 } from '@/tauri/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 
+const runtimeTokenPostMock = vi.hoisted(() => vi.fn())
 const startDragging = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@/api/http', () => ({
+  createHttpClient: vi.fn(() => ({
+    post: runtimeTokenPostMock,
+  })),
+}))
 
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: vi.fn(),
@@ -57,6 +64,12 @@ describe('LocalRuntimeInitializer', () => {
     disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
+    runtimeTokenPostMock.mockReset()
+    runtimeTokenPostMock.mockResolvedValue({
+      auth_token: 'runtime-task-token',
+      token_type: 'bearer',
+      expires_in: 86400,
+    })
     startDragging.mockClear()
   })
 
@@ -90,6 +103,7 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
@@ -106,6 +120,7 @@ describe('LocalRuntimeInitializer', () => {
         backendUrl: 'https://backend.example.com',
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
+        runtimeAuthToken: 'runtime-task-token',
       })
     )
     expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -128,6 +143,7 @@ describe('LocalRuntimeInitializer', () => {
     const { rerender } = render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
           socketBaseUrl: 'https://backend.example.com',
           isConnected: true,
@@ -142,6 +158,7 @@ describe('LocalRuntimeInitializer', () => {
     rerender(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
@@ -160,6 +177,7 @@ describe('LocalRuntimeInitializer', () => {
         backendUrl: 'https://backend.example.com',
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
+        runtimeAuthToken: 'runtime-task-token',
       })
     )
   })
@@ -193,6 +211,7 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
@@ -218,6 +237,7 @@ describe('LocalRuntimeInitializer', () => {
     render(
       <LocalRuntimeInitializer
         initialCloudConnection={{
+          apiBaseUrl: 'https://backend.example.com/api',
           backendUrl: 'https://backend.example.com',
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,

@@ -886,7 +886,7 @@ describe('App plugins route', () => {
             Promise.resolve({
               items: [
                 {
-                  app_type: 'site',
+                  app_type: 'web',
                   siteid: 'site-cloud-1',
                   name: '云端站点',
                   internal_url: 'http://sites.internal/cloud',
@@ -920,7 +920,7 @@ describe('App plugins route', () => {
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/sites?app_type=site&offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?app_type=web&offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -962,7 +962,7 @@ describe('App plugins route', () => {
             Promise.resolve({
               items: [
                 {
-                  app_type: 'site',
+                  app_type: 'web',
                   siteid: 'site-1',
                   name: '产品发布页',
                   internal_url: 'http://sites.internal/product',
@@ -987,7 +987,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/sites?app_type=site&offset=0&limit=20',
+      '/api/sites?app_type=web&offset=0&limit=20',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -1039,7 +1039,7 @@ describe('App plugins route', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-    window.history.pushState({}, '', '/sites?app_type=mini_program')
+    window.history.pushState({}, '', '/sites?app_type=miniapp')
 
     renderApp()
     await screen.findByText('还没有小程序')

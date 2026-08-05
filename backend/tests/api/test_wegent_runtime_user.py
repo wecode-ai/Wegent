@@ -55,6 +55,34 @@ def test_get_wegent_runtime_user_rejects_missing_token(
     assert response.status_code == 401
 
 
+def test_create_wegent_runtime_auth_token_returns_task_token_for_runtime_user(
+    test_client: TestClient,
+    test_token: str,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("USER_AES_KEY", DEFAULT_RUNTIME_AES_KEY)
+
+    token_response = test_client.post(
+        "/api/users/me/wegent-runtime-token",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert token_response.status_code == 200
+    token_payload = token_response.json()
+    assert token_payload["expires_in"] == 86400
+    token = token_payload["auth_token"]
+    response = test_client.get(
+        "/api/users/me/wegent-runtime",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(_decrypt_embedded_iv_payload(response.json()["user"]))
+    assert payload["uid"] == str(test_user.id)
+    assert payload["name"] == test_user.user_name
+
+
 def _decrypt_embedded_iv_payload(encrypted: str) -> str:
     key = _parse_runtime_aes_key(DEFAULT_RUNTIME_AES_KEY)
     raw = base64.b64decode(encrypted)

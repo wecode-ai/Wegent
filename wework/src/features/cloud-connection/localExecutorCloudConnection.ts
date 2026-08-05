@@ -2,7 +2,14 @@ import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
 } from '@/tauri/localExecutor'
+import { createHttpClient } from '@/api/http'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
+
+interface WegentRuntimeAuthTokenResponse {
+  auth_token: string
+  token_type: string
+  expires_in?: number
+}
 
 export interface LocalExecutorCloudConnection {
   apiBaseUrl?: string
@@ -12,22 +19,67 @@ export interface LocalExecutorCloudConnection {
   token: string | null
 }
 
+export interface LocalExecutorCloudConnectionResult {
+  connected: boolean
+  runtimeAuthTokenExpiresIn?: number
+}
+
+const DEFAULT_RUNTIME_AUTH_TOKEN_EXPIRES_IN_SECONDS = 24 * 60 * 60
+
+function normalizeExpiresIn(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_RUNTIME_AUTH_TOKEN_EXPIRES_IN_SECONDS
+}
+
+async function issueRuntimeAuthToken(
+  apiBaseUrl: string,
+  token: string
+): Promise<{ authToken: string; expiresIn: number }> {
+  const client = createHttpClient({
+    baseUrl: apiBaseUrl,
+    getToken: () => token,
+    redirectOnUnauthorized: false,
+  })
+  const response = await client.post<WegentRuntimeAuthTokenResponse>(
+    '/users/me/wegent-runtime-token'
+  )
+  const runtimeAuthToken = response.auth_token.trim()
+  if (!runtimeAuthToken) {
+    throw new Error('Cloud Backend did not return a Wegent runtime token')
+  }
+  return {
+    authToken: runtimeAuthToken,
+    expiresIn: normalizeExpiresIn(response.expires_in),
+  }
+}
+
 export async function applyLocalExecutorCloudConnection({
+  apiBaseUrl,
   backendUrl,
   socketBaseUrl,
   isConnected,
   token,
-}: LocalExecutorCloudConnection): Promise<void> {
-  if (!isCloudConnectionUiAvailable()) return
+}: LocalExecutorCloudConnection): Promise<LocalExecutorCloudConnectionResult> {
+  if (!isCloudConnectionUiAvailable()) return { connected: false }
 
   if (isConnected && backendUrl && socketBaseUrl && token) {
+    if (!apiBaseUrl) {
+      throw new Error('Cloud Backend API URL is required for Wegent runtime token issuing')
+    }
+    const runtimeToken = await issueRuntimeAuthToken(apiBaseUrl, token)
     await connectLocalExecutorToBackend({
       backendUrl,
       socketBaseUrl,
       authToken: token,
+      runtimeAuthToken: runtimeToken.authToken,
     })
-    return
+    return {
+      connected: true,
+      runtimeAuthTokenExpiresIn: runtimeToken.expiresIn,
+    }
   }
 
   await disconnectLocalExecutorFromBackend()
+  return { connected: false }
 }

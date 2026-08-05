@@ -1221,6 +1221,7 @@ fn local_backend_config() -> LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
         socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
+        runtime_auth_token: "runtime-wg-token".to_owned(),
         device_id: "device-1".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),

@@ -4679,7 +4679,7 @@ async function verifySitesPluginAutoInstall(control) {
   await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="applications-tab-mini-program"]')
+  await control.command('click', '[data-testid="applications-tab-miniapp"]')
   await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
     text: 'E2E Mini Program',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -8124,13 +8124,13 @@ class DesktopE2EServer {
       json(response, 200, {
         items: [
           {
-            app_type: 'site',
+            app_type: 'web',
             enabled: true,
             order: 10,
             capabilities: ['create', 'publish', 'delete'],
           },
           {
-            app_type: 'mini_program',
+            app_type: 'miniapp',
             enabled: true,
             order: 20,
             capabilities: ['create', 'open_experience'],
@@ -8141,13 +8141,13 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/sites') {
-      const appType = url.searchParams.get('app_type') || 'site'
+      const appType = url.searchParams.get('app_type') || 'web'
       const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
       const items =
-        appType === 'mini_program'
+        appType === 'miniapp'
           ? [
               {
-                app_type: 'mini_program',
+                app_type: 'miniapp',
                 siteid: 'prj_e2e_mini',
                 taskid: 'prj_e2e_mini',
                 username: 'wework-desktop-e2e-cloud-user',
@@ -8164,7 +8164,7 @@ class DesktopE2EServer {
             ]
           : [
               {
-                app_type: 'site',
+                app_type: 'web',
                 siteid: 'prj_e2e_product',
                 taskid: 'prj_e2e_product',
                 username: 'wework-desktop-e2e-cloud-user',
