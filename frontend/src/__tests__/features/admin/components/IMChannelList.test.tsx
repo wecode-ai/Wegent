@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
+import { teamApis } from '@/apis/team'
 import IMChannelList from '@/features/admin/components/IMChannelList'
 
 const mockToast = jest.fn()
@@ -102,9 +103,7 @@ jest.mock('@/apis/admin', () => ({
   adminApis: {
     getIMChannels: jest.fn(),
     getIMChannelStatus: jest.fn(),
-    getPublicTeams: jest.fn(),
     getPublicModels: jest.fn(),
-    getPublicBots: jest.fn(),
     getUsers: jest.fn(),
     createIMChannel: jest.fn(),
     updateIMChannel: jest.fn(),
@@ -114,31 +113,40 @@ jest.mock('@/apis/admin', () => ({
   },
 }))
 
+jest.mock('@/apis/team', () => ({
+  teamApis: {
+    getTeams: jest.fn(),
+  },
+}))
+
 const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
+const mockedTeamApis = teamApis as jest.Mocked<typeof teamApis>
 
 describe('IMChannelList channel config', () => {
   beforeEach(() => {
     jest.clearAllMocks()
 
     mockedAdminApis.getIMChannels.mockResolvedValue({ total: 0, items: [] })
-    mockedAdminApis.getPublicTeams.mockResolvedValue({
+    mockedTeamApis.getTeams.mockResolvedValue({
       total: 1,
       items: [
         {
           id: 10,
           name: 'agent',
           namespace: 'default',
-          display_name: 'Agent',
-          description: null,
-          json: { spec: { members: [] } },
+          displayName: 'Agent',
+          description: '',
+          bots: [],
+          workflow: {},
           is_active: true,
+          user_id: 1,
           created_at: '',
           updated_at: '',
+          bind_mode: ['chat'],
         },
       ],
     })
     mockedAdminApis.getPublicModels.mockResolvedValue({ total: 0, items: [] })
-    mockedAdminApis.getPublicBots.mockResolvedValue({ total: 0, items: [] })
     mockedAdminApis.getUsers.mockResolvedValue({
       total: 1,
       items: [
@@ -161,9 +169,8 @@ describe('IMChannelList channel config', () => {
 
     await waitFor(() => {
       expect(mockedAdminApis.getIMChannels).toHaveBeenCalled()
-      expect(mockedAdminApis.getPublicTeams).toHaveBeenCalled()
+      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
       expect(mockedAdminApis.getPublicModels).toHaveBeenCalled()
-      expect(mockedAdminApis.getPublicBots).toHaveBeenCalled()
       expect(mockedAdminApis.getUsers).toHaveBeenCalled()
     })
     await screen.findByText('admin:im_channels.no_channels')
@@ -210,12 +217,58 @@ describe('IMChannelList channel config', () => {
     })
   })
 
+  test('shows accessible chat agents and excludes code-only agents', async () => {
+    mockedTeamApis.getTeams.mockResolvedValue({
+      total: 2,
+      items: [
+        {
+          id: 10,
+          name: 'personal-chat-agent',
+          namespace: 'default',
+          displayName: 'Personal Chat Agent',
+          description: '',
+          bots: [],
+          workflow: {},
+          is_active: true,
+          user_id: 1,
+          created_at: '',
+          updated_at: '',
+          bind_mode: ['chat'],
+        },
+        {
+          id: 11,
+          name: 'code-only-agent',
+          namespace: 'default',
+          displayName: 'Code Only Agent',
+          description: '',
+          bots: [],
+          workflow: {},
+          is_active: true,
+          user_id: 1,
+          created_at: '',
+          updated_at: '',
+          bind_mode: ['code'],
+        },
+      ],
+    })
+
+    render(<IMChannelList />)
+
+    await waitFor(() => {
+      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
+    })
+    fireEvent.click(await screen.findByText('admin:im_channels.create_channel'))
+
+    expect(screen.getByRole('option', { name: 'Personal Chat Agent' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Code Only Agent' })).not.toBeInTheDocument()
+  })
+
   test('creates a Weibo channel with Open IM credentials', async () => {
     render(<IMChannelList />)
 
     await waitFor(() => {
       expect(mockedAdminApis.getIMChannels).toHaveBeenCalled()
-      expect(mockedAdminApis.getPublicTeams).toHaveBeenCalled()
+      expect(mockedTeamApis.getTeams).toHaveBeenCalledWith({ page: 1, limit: 100 }, 'all')
       expect(mockedAdminApis.getUsers).toHaveBeenCalled()
     })
     const createButton = await screen.findByText('admin:im_channels.create_channel')
