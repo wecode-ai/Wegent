@@ -78,8 +78,7 @@ const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT: &str =
     "wework:embedded-browser-local-file-preview";
-const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT: &str =
-    "wework:embedded-browser-page-state-change";
+const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT: &str = "wework:embedded-browser-page-state-change";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
 const EMBEDDED_BROWSER_AGENT_STATE_EVENT: &str = "wework:embedded-browser-agent-state";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
@@ -1980,10 +1979,7 @@ pub async fn embedded_browser_close(
     Ok(())
 }
 
-fn close_embedded_browser_entry(
-    state: &EmbeddedBrowserState,
-    label: &str,
-) -> Result<(), String> {
+fn close_embedded_browser_entry(state: &EmbeddedBrowserState, label: &str) -> Result<(), String> {
     let entry = {
         let webviews = state
             .webviews

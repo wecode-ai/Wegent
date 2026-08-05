@@ -309,6 +309,7 @@ fn build_directory_entries(directory: &Path) -> Result<(Vec<DirectoryEntry>, boo
         )
     });
 
+    let truncated = children.len() > EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT;
     for entry in children
         .into_iter()
         .take(EMBEDDED_BROWSER_DIRECTORY_INDEX_LIMIT)
@@ -348,7 +349,6 @@ fn build_directory_entries(directory: &Path) -> Result<(Vec<DirectoryEntry>, boo
         });
     }
 
-    let truncated = directory.read_dir().map(|iter| iter.count()).unwrap_or(0) > entries.len();
     Ok((entries, truncated))
 }
 

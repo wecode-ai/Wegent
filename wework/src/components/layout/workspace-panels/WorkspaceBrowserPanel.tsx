@@ -148,7 +148,9 @@ function getFallbackBrowserTitle(url: string) {
 
 function getFallbackFaviconUrl(url: string) {
   try {
-    return new URL('/favicon.ico', url).toString()
+    const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') return null
+    return new URL('/favicon.ico', parsedUrl).toString()
   } catch {
     return null
   }
