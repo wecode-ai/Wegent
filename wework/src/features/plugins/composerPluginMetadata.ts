@@ -35,14 +35,13 @@ function pluginAliases(plugin: InstalledPlugin): Set<string> {
 
 function pluginAppIds(plugin: InstalledPlugin): Set<string> {
   const components = plugin.spec.components
+  const apps = Array.isArray(components?.apps) ? components.apps : []
+  const commands = Array.isArray(components?.commands) ? components.commands : []
+  const templates = Array.isArray(components?.templates) ? components.templates : commands
   return new Set(
     [
-      ...(components.apps ?? []).flatMap(app => [app.name, app.path]),
-      ...(components.templates ?? components.commands).flatMap(app => [
-        app.name,
-        app.path,
-        ...(app.materializedAppIds ?? []),
-      ]),
+      ...apps.flatMap(app => [app.name, app.path]),
+      ...templates.flatMap(app => [app.name, app.path, ...(app.materializedAppIds ?? [])]),
     ]
       .map(value => normalized(value))
       .filter(Boolean)
@@ -86,14 +85,21 @@ function isComposerVisiblePlugin(plugin: InstalledPlugin): boolean {
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
   const payload = plugin.spec.sourcePayload
   const payloadRecord = payload && typeof payload === 'object' ? payload : {}
+  const metadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null
+  const metadataNamespace =
+    typeof plugin.metadata.namespace === 'string' ? plugin.metadata.namespace : null
   const pluginName =
     (typeof payloadRecord.pluginName === 'string' && payloadRecord.pluginName.trim()) ||
     (typeof payloadRecord.remotePluginId === 'string' && payloadRecord.remotePluginId.trim()) ||
-    plugin.spec.source.pluginKey
+    plugin.spec.source?.pluginKey ||
+    metadataName
   const marketplaceName =
     (typeof payloadRecord.marketplaceName === 'string' && payloadRecord.marketplaceName.trim()) ||
-    plugin.spec.source.marketplace ||
-    plugin.metadata.namespace
+    plugin.spec.source?.marketplace ||
+    // Cloud InstalledPlugin rows use namespace "default"; composer mentions need the
+    // marketplace id (wegent / openai-official / …), not the Kind namespace.
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
+    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
@@ -104,13 +110,24 @@ function skillFilePath(path: string): string {
 }
 
 function installedPluginAsComposerApp(plugin: InstalledPlugin): LocalDeviceApp | null {
-  const displayName = plugin.spec.displayName || plugin.spec.source.pluginKey
-  const pluginKey = plugin.spec.source.pluginKey || plugin.metadata.name
+  const metadataName = typeof plugin.metadata.name === 'string' ? plugin.metadata.name : null
+  const displayName = plugin.spec.displayName || plugin.spec.source?.pluginKey || metadataName
+  const pluginKey = plugin.spec.source?.pluginKey || metadataName
   if (!displayName || !pluginKey) return null
 
   const mentionPath = pluginMentionPath(plugin)
-  const skill = plugin.spec.components.skills.find(item => item.path && item.name)
-  const skillPath = mentionPath ?? (skill ? skillFilePath(skill.path) : null)
+  const skills = Array.isArray(plugin.spec.components?.skills) ? plugin.spec.components.skills : []
+  const skill = skills.find(item => item.path && item.name)
+  const commands = Array.isArray(plugin.spec.components?.commands)
+    ? plugin.spec.components.commands
+    : []
+  const command = commands.find(item => item.path && item.name)
+  // Marketplace mention paths are preferred so cloud plugins stay selectable even
+  // when the local skill file has not been materialized yet.
+  const skillPath =
+    mentionPath ||
+    (skill ? skillFilePath(skill.path) : null) ||
+    (command ? `command://${pluginKey}` : null)
   if (!skillPath) return null
 
   const interfaceData = plugin.spec.interface
@@ -134,28 +151,33 @@ export function enrichComposerApps(
   installedPlugins: InstalledPlugin[]
 ): LocalDeviceApp[] {
   return apps.flatMap(app => {
-    const plugin = bestPluginForApp(app, installedPlugins)
-    // Composer only lists installed plugins. Remote Codex apps and authorized
-    // cloud connectors are not shown unless they match an installed plugin.
-    if (!plugin) return []
-    if (!isComposerVisiblePlugin(plugin)) {
+    try {
+      const plugin = bestPluginForApp(app, installedPlugins)
+      // Composer only lists installed plugins. Remote Codex apps and authorized
+      // cloud connectors are not shown unless they match an installed plugin.
+      if (!plugin) return []
+      if (!isComposerVisiblePlugin(plugin)) {
+        return []
+      }
+
+      const interfaceData = plugin.spec.interface
+      return [
+        {
+          ...app,
+          name: plugin.spec.displayName || app.name,
+          description:
+            interfaceData?.shortDescription || plugin.spec.description || app.description || null,
+          logoUrl: interfaceData?.composerIcon || interfaceData?.logo || app.logoUrl || null,
+          pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
+            (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
+          ),
+          trialTemplates: pluginTrialTemplates(plugin),
+        },
+      ]
+    } catch (error) {
+      console.warn('[Wework] Skipping Codex app for composer menu.', error)
       return []
     }
-
-    const interfaceData = plugin.spec.interface
-    return [
-      {
-        ...app,
-        name: plugin.spec.displayName || app.name,
-        description:
-          interfaceData?.shortDescription || plugin.spec.description || app.description || null,
-        logoUrl: interfaceData?.composerIcon || interfaceData?.logo || app.logoUrl || null,
-        pluginDisplayNames: [plugin.spec.displayName, ...(app.pluginDisplayNames ?? [])].filter(
-          (name, index, names): name is string => Boolean(name) && names.indexOf(name) === index
-        ),
-        trialTemplates: pluginTrialTemplates(plugin),
-      },
-    ]
   })
 }
 
@@ -166,10 +188,14 @@ export function appendInstalledPluginsAsComposerApps(
 ): LocalDeviceApp[] {
   const extras: LocalDeviceApp[] = []
   for (const plugin of installedPlugins) {
-    if (!isComposerVisiblePlugin(plugin)) continue
-    if (apps.some(app => pluginMatchScore(app, plugin) > 0)) continue
-    const entry = installedPluginAsComposerApp(plugin)
-    if (entry) extras.push(entry)
+    try {
+      if (!isComposerVisiblePlugin(plugin)) continue
+      if (apps.some(app => pluginMatchScore(app, plugin) > 0)) continue
+      const entry = installedPluginAsComposerApp(plugin)
+      if (entry) extras.push(entry)
+    } catch (error) {
+      console.warn('[Wework] Skipping installed plugin for composer menu.', error)
+    }
   }
   return extras.length > 0 ? [...apps, ...extras] : apps
 }

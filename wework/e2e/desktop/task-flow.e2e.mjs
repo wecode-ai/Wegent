@@ -2253,6 +2253,102 @@ async function waitForSnapshot(
   throw new Error(`${message}; relevant test IDs: ${JSON.stringify(relevantTestIds)}`)
 }
 
+async function openComposerPluginPicker(control) {
+  const before = JSON.parse(await control.command('snapshot', 'body'))
+  if (before.testIds.includes('composer-plugin-picker')) return
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+async function closeComposerPluginPicker(control) {
+  const open = JSON.parse(await control.command('snapshot', 'body'))
+  if (!open.testIds.includes('composer-plugin-picker')) return
+  await control.command('press', 'body', { key: 'Escape' })
+  const stillOpen = await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
+    'Closing the composer plugin picker did not dismiss the menu',
+    DEFAULT_STEP_TIMEOUT_MS
+  ).catch(() => null)
+  if (stillOpen) return
+  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('composer-plugin-picker'),
+    'Closing the composer plugin picker did not dismiss the menu'
+  )
+}
+
+/**
+ * Install → skills-changed can leave the picker empty briefly while listLocalApps
+ * refreshes. Warm via slash autocomplete, reopen the picker, then search.
+ */
+async function waitForInstalledComposerPlugin(control, { pluginName, pluginDisplayName }) {
+  const itemTestId = `composer-plugin-picker-item-plugin:${pluginName}`
+  const slashOptionSelector = `[data-testid="slash-command-option-app-plugin-${pluginName}"]`
+  const deadline = Date.now() + WORKBENCH_READY_TIMEOUT_MS
+  const attemptBudgetMs = 3_000
+
+  while (Date.now() < deadline) {
+    await openComposerPluginPicker(control)
+
+    // Prefer an already-warmed list before searching (search can hide a late paint).
+    const alreadyVisible = JSON.parse(
+      await control.command('snapshot', '[data-testid="composer-plugin-picker"]')
+    )
+    if (alreadyVisible.testIds.includes(itemTestId)) {
+      return itemTestId
+    }
+
+    await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+      value: pluginDisplayName,
+    })
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    const matched = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes(itemTestId),
+      'waiting for composer plugin picker item',
+      Math.min(attemptBudgetMs, remainingMs),
+      '[data-testid="composer-plugin-picker"]'
+    ).catch(() => null)
+    if (matched) return itemTestId
+
+    await closeComposerPluginPicker(control)
+
+    // Warm listLocalApps through the slash menu, which shares the same apps source.
+    const warmBudget = Math.min(attemptBudgetMs, deadline - Date.now())
+    if (warmBudget > 0) {
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+        value: `/${pluginName.slice(0, 8)}`,
+      })
+      await control
+        .command('waitFor', slashOptionSelector, {
+          timeoutMs: warmBudget,
+        })
+        .catch(() => null)
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '' })
+    }
+
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  }
+
+  await openComposerPluginPicker(control)
+  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
+    value: pluginDisplayName,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(itemTestId),
+    'The installed plugin did not appear in the composer plugin picker',
+    DEFAULT_STEP_TIMEOUT_MS,
+    '[data-testid="composer-plugin-picker"]'
+  )
+  return itemTestId
+}
+
 async function assertMentionRenderedAsToken(
   control,
   { tokenSelector, tokenText, plainTextMention, errorLabel }
@@ -4854,22 +4950,11 @@ async function verifyMarketplacePluginLifecycle({
     snapshot => !snapshot.testIds.includes('plugin-trial-template-strip'),
     'Dismissing the plugin trial guide did not close the recommendation strip'
   )
-  await control.command('click', '[data-testid="composer-plugin-picker-button"]')
-  await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  const composerPluginItemTestId = await waitForInstalledComposerPlugin(control, {
+    pluginName: PLUGIN_NAME,
+    pluginDisplayName: PLUGIN_DISPLAY_NAME,
   })
-  const composerPluginSelector = `[data-testid="composer-plugin-picker-item-plugin:${PLUGIN_NAME}"]`
-  // Prefer display name; also match plugin id now that the picker search includes it.
-  await control.command('fill', '[data-testid="composer-plugin-picker-search"]', {
-    value: PLUGIN_DISPLAY_NAME,
-  })
-  await waitForSnapshot(
-    control,
-    snapshot => snapshot.testIds.includes(`composer-plugin-picker-item-plugin:${PLUGIN_NAME}`),
-    'The installed plugin did not appear in the composer plugin picker',
-    WORKBENCH_READY_TIMEOUT_MS,
-    '[data-testid="composer-plugin-picker"]'
-  )
+  const composerPluginSelector = `[data-testid="${composerPluginItemTestId}"]`
   await control.command('click', composerPluginSelector)
   await waitForSnapshot(
     control,
@@ -4881,7 +4966,7 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: '/desktop' })
   const slashPluginSelector = `[data-testid="slash-command-option-app-plugin-${PLUGIN_NAME}"]`
   await control.command('waitFor', slashPluginSelector, {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('click', slashPluginSelector)
   await waitForSnapshot(

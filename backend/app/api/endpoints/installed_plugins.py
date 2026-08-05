@@ -59,6 +59,11 @@ def list_installed_plugins(
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPluginListResponse:
     """List Claude Code plugins installed by the current user."""
+    # Catalog reimports can leave InstalledPlugin rows pointing at stale
+    # pluginId/releaseId values; repair before listing/syncing.
+    plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
+        db, user_id=current_user.id
+    )
     return plugin_marketplace_service.enrich_installed_list(
         db,
         installed_plugin_service.list_installed_plugins(
@@ -262,7 +267,12 @@ async def install_marketplace_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
-    """Install a marketplace plugin for the current user."""
+    """Install a marketplace plugin for the current user.
+
+    Account Kind creation is authoritative. Global device sync is best-effort:
+    a full replace can fail because of an unrelated plugin while the new install
+    is already desired; do not 502 and leave the marketplace UI stuck.
+    """
     plugin = plugin_marketplace_service.install(
         db,
         user_id=current_user.id,
@@ -277,19 +287,27 @@ async def install_marketplace_plugin(
             installed_kind_id=installed_id,
             desired_release_id=plugin.spec.releaseId,
         )
-    await _sync_global_capabilities(
+    sync = await _sync_global_capabilities(
         db,
         current_user.id,
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
         expect_installed=True,
+        require_device_success=False,
+    )
+    sync = await _ensure_installed_plugin_on_device(
+        db,
+        user_id=current_user.id,
+        device_id=device_id,
+        installed_id=installed_id,
+        previous=sync,
     )
     enriched = plugin_marketplace_service.enrich_installed_list(
         db,
         InstalledPluginListResponse(items=[plugin]),
         device_id=device_id,
     )
-    return PluginMarketplaceInstallResponse(plugin=enriched.items[0])
+    return PluginMarketplaceInstallResponse(plugin=enriched.items[0], sync=sync)
 
 
 @router.post(
@@ -330,6 +348,14 @@ async def ensure_builtin_plugin_installed(
         required_device_id=request.device_id,
         required_installed_kind_id=installed_id,
         expect_installed=True,
+        require_device_success=False,
+    )
+    sync = await _ensure_installed_plugin_on_device(
+        db,
+        user_id=current_user.id,
+        device_id=request.device_id,
+        installed_id=installed_id,
+        previous=sync,
     )
     enriched = plugin_marketplace_service.enrich_installed_list(
         db,
@@ -458,6 +484,13 @@ async def update_installed_plugin(
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
         expect_installed=True,
+        require_device_success=False,
+    )
+    await _ensure_installed_plugin_on_device(
+        db,
+        user_id=current_user.id,
+        device_id=device_id,
+        installed_id=installed_id,
     )
     return plugin_marketplace_service.enrich_installed_list(
         db,
@@ -473,21 +506,32 @@ async def uninstall_installed_plugin(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
-    """Uninstall a user-scoped Claude Code plugin."""
+    """Uninstall a user-scoped Claude Code plugin.
+
+    Account-level uninstall is authoritative. Device sync is best-effort: a
+    rejected or offline device must not leave the marketplace UI stuck on an
+    installed / sync-failed state after the Kind row is already inactive.
+    """
     plugin_device_installation_service.mark_uninstalling(
         db, user_id=current_user.id, installed_kind_id=installed_id
     )
-    installed_plugin_service.uninstall_installed_plugin(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
-    )
+    try:
+        installed_plugin_service.uninstall_installed_plugin(
+            db=db,
+            user_id=current_user.id,
+            installed_id=installed_id,
+        )
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        # Idempotent: Kind may already be inactive after a prior partial uninstall.
     result = await _sync_global_capabilities(
         db,
         current_user.id,
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
         expect_installed=False,
+        require_device_success=False,
     )
     plugin_device_installation_service.record_uninstall_response(
         db,
@@ -495,6 +539,60 @@ async def uninstall_installed_plugin(
         installed_kind_id=installed_id,
         response=result,
     )
+    plugin_device_installation_service.clear_installations(
+        db,
+        user_id=current_user.id,
+        installed_kind_id=installed_id,
+    )
+
+
+async def _ensure_installed_plugin_on_device(
+    db: Session,
+    *,
+    user_id: int,
+    device_id: str | None,
+    installed_id: int,
+    previous: DeviceCapabilitySyncResponse | None = None,
+) -> DeviceCapabilitySyncResponse | None:
+    """Retry a single-plugin merge when the global replace left the device short."""
+    if not device_id:
+        return previous
+    device_row = (
+        db.query(PluginDeviceInstallation)
+        .filter(
+            PluginDeviceInstallation.installed_kind_id == installed_id,
+            PluginDeviceInstallation.device_id == device_id,
+        )
+        .first()
+    )
+    if device_row and device_row.state == "installed":
+        return previous
+    try:
+        merge_sync = (
+            await device_capability_sync_service.sync_installed_plugin_to_device(
+                db,
+                user_id=user_id,
+                device_id=device_id,
+                installed_plugin_id=installed_id,
+            )
+        )
+    except (
+        DeviceCapabilitySyncError,
+        DeviceCapabilityResolutionError,
+        Exception,
+    ) as exc:
+        logger.warning(
+            "Single-plugin device sync failed after install: user_id=%s device_id=%s installed_id=%s error=%s",
+            user_id,
+            device_id,
+            installed_id,
+            exc,
+        )
+        return previous
+    plugin_device_installation_service.record_sync_response(
+        db, user_id=user_id, response=merge_sync
+    )
+    return merge_sync
 
 
 async def _sync_global_capabilities(
@@ -504,6 +602,7 @@ async def _sync_global_capabilities(
     required_device_id: str | None = None,
     required_installed_kind_id: int | None = None,
     expect_installed: bool = True,
+    require_device_success: bool = True,
 ) -> DeviceCapabilitySyncResponse:
     result = await device_capability_sync_service.sync_user_global_capabilities(
         db,
@@ -539,7 +638,9 @@ async def _sync_global_capabilities(
         )
         materialized = bool(device_row and device_row.state == "installed")
         required_materialization_failed = materialized != expect_installed
-    if required_device_failed or required_materialization_failed:
+    if require_device_success and (
+        required_device_failed or required_materialization_failed
+    ):
         raise HTTPException(
             status_code=502,
             detail={
@@ -547,6 +648,15 @@ async def _sync_global_capabilities(
                 "message": "Plugin saved but one or more devices failed to synchronize",
                 "results": [item.model_dump() for item in result.results],
             },
+        )
+    if not require_device_success and (
+        required_device_failed or required_materialization_failed
+    ):
+        logger.warning(
+            "Device sync incomplete after plugin uninstall: user_id=%s device_id=%s installed_kind_id=%s",
+            user_id,
+            required_device_id,
+            required_installed_kind_id,
         )
     return result
 

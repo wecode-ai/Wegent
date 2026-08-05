@@ -39,7 +39,13 @@ import {
 } from '@/lib/native-workspace-path-picker'
 import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
-import { readComposerAppsSnapshot } from './composerAppsSnapshot'
+import {
+  COMPOSER_APPS_REQUEST_SYNC_EVENT,
+  getComposerApps,
+  publishComposerApps,
+  readComposerAppsSnapshot,
+  subscribeComposerApps,
+} from './composerAppsSnapshot'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -169,6 +175,10 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
       onListLocalApps ? readComposerAppsSnapshot() : []
     )
+    const appsRef = useRef(apps)
+    useEffect(() => {
+      appsRef.current = apps
+    }, [apps])
     const [isComposing, setIsComposing] = useState(false)
     const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
     const [selectedIndex, setSelectedIndex] = useState(0)
@@ -559,7 +569,14 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
             if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
             appsLoadedRef.current = true
             setAppsLoadError(false)
-            setApps(nextApps)
+            if (nextApps.length > 0) {
+              // Keep slash + toolbar picker on the same last-known list.
+              publishComposerApps(nextApps)
+              setApps(nextApps)
+              return
+            }
+            const kept = getComposerApps()
+            setApps(kept.length > 0 ? kept : nextApps)
           })
           .catch(() => {
             if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
@@ -586,6 +603,43 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     useEffect(() => {
       loadLocalApps()
     }, [loadLocalApps])
+
+    useEffect(() => {
+      // Publish whatever slash autocomplete is currently showing so the toolbar
+      // plugin picker cannot diverge into an empty “no plugins” state.
+      if (apps.length > 0) publishComposerApps(apps)
+    }, [apps])
+
+    useEffect(() => {
+      // The toolbar picker asks slash to re-publish when Vite HMR has split the
+      // module singleton or the picker opened before the first publish landed.
+      const onRequestSync = () => {
+        if (appsRef.current.length > 0) publishComposerApps(appsRef.current)
+      }
+      window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
+      return () => window.removeEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onRequestSync)
+    }, [])
+
+    useEffect(() => {
+      // Keep slash candidates aligned when the toolbar/workbench refreshes the
+      // shared composer app inventory after install/uninstall.
+      return subscribeComposerApps(() => {
+        const next = getComposerApps()
+        if (next.length === 0) return
+        setApps(current => {
+          if (
+            current.length === next.length &&
+            current.every((app, index) => app.id === next[index]?.id)
+          ) {
+            return current
+          }
+          return next
+        })
+        appsLoadedRef.current = true
+        setAppsLoadError(false)
+        setAppsLoading(false)
+      })
+    }, [])
 
     useEffect(() => {
       const invalidateLocalPluginCandidates = () => {

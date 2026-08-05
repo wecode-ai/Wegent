@@ -452,6 +452,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onQuickPhraseSelect={handleQuickPhraseSelect}
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
+            onListLocalApps={onListLocalApps}
             cloudProjectCandidates={cloudProjectCandidates}
             selectedCloudProjectId={selectedCloudProjectId}
             onSelectCloudProject={onSelectCloudProject}

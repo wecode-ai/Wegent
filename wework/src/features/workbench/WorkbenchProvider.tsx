@@ -31,20 +31,15 @@ import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
-import { mergeInstalledPlugins } from '@/components/plugins/installedPluginMerge'
 import {
-  appendInstalledPluginsAsComposerApps,
-  enrichComposerApps,
-} from '@/features/plugins/composerPluginMetadata'
-import {
-  clearComposerAppsSnapshot,
-  writeComposerAppsSnapshot,
+  getComposerApps,
+  publishComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
+import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
-  InstalledPlugin,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   PluginPathComponent,
@@ -1618,30 +1613,18 @@ export function WorkbenchProvider({
 
     const loadGeneration = localAppsLoadGenerationRef.current
     const loadPromise = (async () => {
-      let apps: LocalDeviceApp[] = []
-      let installedPlugins: InstalledPlugin[] = []
-      try {
-        apps = await localPluginApi.listApps()
-      } catch (error) {
-        console.warn(
-          '[Wework] Failed to load local Codex apps; continuing with skills only.',
-          error
-        )
-      }
-      try {
-        const localState = await localPluginApi.readState()
-        const cloudItems = await cloudPluginApi
-          .listInstalledPlugins(localState.deviceId || undefined)
-          .then(response => response.items)
-          .catch(() => [])
-        installedPlugins = mergeInstalledPlugins(
-          cloudItems,
-          localState.installedPlugins,
-          localState.deviceId
-        )
-      } catch (error) {
-        console.warn('[Wework] Failed to load Codex app plugin metadata.', error)
-      }
+      // Cloud installs must not depend on Codex readState succeeding — that was
+      // wiping the toolbar plugin button whenever local plugin state failed.
+      let apps = await loadComposerPluginApps({
+        listCodexApps: () => localPluginApi.listApps(),
+        readLocalInstalledPlugins: () =>
+          localPluginApi.readState().then(state => state.installedPlugins),
+        // Omit device_id so enrichment does not demote account installs while
+        // device sync is catching up.
+        listCloudInstalledPlugins: () =>
+          cloudPluginApi.listInstalledPlugins().then(response => response.items),
+      })
+
       if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
         try {
           const installedConnectors = await listWegentInstalledConnectorApps(
@@ -1660,44 +1643,44 @@ export function WorkbenchProvider({
             })),
           })
           const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
-          apps.push(
-            ...connectedApps.map(app => ({
-              id: `wegent:${app.slug}`,
-              name: app.runtime_name ?? app.slug,
-              description: app.description ?? '',
-              logoUrl: app.icon_url ?? null,
-              isAccessible: true,
-              isEnabled: true,
-              pluginDisplayNames: ['Wegent Cloud'],
-              source: 'wegent-connector',
-              skillPath: skillPathBySlug.get(app.slug) ?? null,
-            }))
-          )
+          const connectorApps: LocalDeviceApp[] = connectedApps.map(app => ({
+            id: `wegent:${app.slug}`,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            logoUrl: app.icon_url ?? null,
+            isAccessible: true,
+            isEnabled: true,
+            pluginDisplayNames: ['Wegent Cloud'],
+            source: 'wegent-connector',
+            skillPath: skillPathBySlug.get(app.slug) ?? null,
+          }))
+          const existingIds = new Set(apps.map(app => app.id))
+          apps = [...apps, ...connectorApps.filter(app => !existingIds.has(app.id))]
         } catch (error) {
           console.warn('[Wework] Failed to load Wegent connector apps.', error)
         }
       }
-      apps = appendInstalledPluginsAsComposerApps(
-        enrichComposerApps(apps, installedPlugins),
-        installedPlugins
-      )
-      // Ignore completions from loads that started before a skills-changed invalidation.
-      if (loadGeneration !== localAppsLoadGenerationRef.current) {
+
+      const isCurrentGeneration = loadGeneration === localAppsLoadGenerationRef.current
+      // Always publish non-empty results. A skills-changed bump may invalidate cache
+      // ownership mid-flight, but the picker still needs the installed plugin list.
+      if (apps.length > 0) {
+        publishComposerApps(apps)
+        if (isCurrentGeneration) {
+          localAppsCacheRef.current = {
+            expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+            apps,
+          }
+        }
         return apps
       }
-      // Never pin an empty list: install/notify often races ahead of plugin/installed,
-      // and a 30s empty cache keeps the composer picker blank after a successful install.
-      if (apps.length === 0) {
-        localAppsCacheRef.current = null
-        clearComposerAppsSnapshot()
-        return apps
-      }
-      localAppsCacheRef.current = {
-        expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
-        apps,
-      }
-      writeComposerAppsSnapshot(apps)
-      return apps
+
+      // Never pin an empty TTL cache, and never wipe the shared last-known list on a
+      // transient []. Slash keeps React state; returning/keeping getComposerApps()
+      // is what stops the toolbar picker from saying no plugins are installed.
+      localAppsCacheRef.current = null
+      const kept = getComposerApps()
+      return kept.length > 0 ? kept : apps
     })()
 
     localAppsInflightRef.current = loadPromise
@@ -1731,7 +1714,10 @@ export function WorkbenchProvider({
       localAppsCacheRef.current = null
       localAppsInflightRef.current = null
       localAppsLoadGenerationRef.current += 1
-      clearComposerAppsSnapshot()
+      // Keep the composer apps snapshot until a current-generation load replaces
+      // or clears it. Clearing here races install→notify and blanks the picker
+      // while the refresh is still in flight.
+      void listLocalApps()
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {

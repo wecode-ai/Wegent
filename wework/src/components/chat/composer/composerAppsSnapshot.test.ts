@@ -1,9 +1,16 @@
-import { beforeEach, describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceApp } from '@/types/api'
 import {
+  COMPOSER_APPS_REQUEST_SYNC_EVENT,
   COMPOSER_APPS_SNAPSHOT_KEY,
   clearComposerAppsSnapshot,
+  getComposerApps,
+  publishComposerApps,
   readComposerAppsSnapshot,
+  replaceComposerApps,
+  requestComposerAppsSync,
+  resetComposerAppsMemory,
+  subscribeComposerApps,
   writeComposerAppsSnapshot,
 } from './composerAppsSnapshot'
 
@@ -21,6 +28,7 @@ const sampleApps: LocalDeviceApp[] = [
 describe('composerAppsSnapshot', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    resetComposerAppsMemory()
   })
 
   test('round-trips composer apps for instant toolbar paint', () => {
@@ -41,5 +49,39 @@ describe('composerAppsSnapshot', () => {
     writeComposerAppsSnapshot(sampleApps)
     clearComposerAppsSnapshot()
     expect(readComposerAppsSnapshot()).toEqual([])
+  })
+
+  test('keeps an in-memory list that slash and the picker share', () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeComposerApps(listener)
+
+    publishComposerApps(sampleApps)
+    expect(getComposerApps()).toEqual(sampleApps)
+    expect(readComposerAppsSnapshot()).toEqual(sampleApps)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    clearComposerAppsSnapshot()
+    expect(getComposerApps()).toEqual(sampleApps)
+
+    replaceComposerApps([])
+    expect(getComposerApps()).toEqual([])
+    expect(listener).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
+  test('stores composer apps on window so HMR cannot split slash and picker', () => {
+    publishComposerApps(sampleApps)
+    expect(window.__weworkComposerAppsStore?.memoryApps).toEqual(sampleApps)
+
+    // Simulate a fresh module namespace reading the same window store.
+    expect(getComposerApps()).toEqual(sampleApps)
+  })
+
+  test('requestComposerAppsSync notifies slash composers to republish', () => {
+    const onSync = vi.fn()
+    window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onSync)
+    requestComposerAppsSync()
+    expect(onSync).toHaveBeenCalledTimes(1)
+    window.removeEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, onSync)
   })
 })

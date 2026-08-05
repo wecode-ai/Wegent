@@ -1417,6 +1417,7 @@
     "plugins_installing": "正在安装",
     "plugins_uninstalling": "正在卸载",
     "plugins_uninstall_success": "{{name}} 已卸载",
+    "plugins_install_device_sync_retry": "{{name}} 已保存，当前设备同步失败，可稍后重试安装",
     "plugins_finish_connecting_in_browser": "请在浏览器中完成 {{name}} 连接",
     "plugins_dismiss_notice": "关闭提示",
     "plugins_view_more_installed": "查看另外 {{count}} 个已安装插件",

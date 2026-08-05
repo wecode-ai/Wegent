@@ -701,6 +701,52 @@ function toMarketplaceItem(
   }
 }
 
+function installedPluginSummaryIdentity(
+  marketplaceName: string,
+  plugin: CodexPluginSummary
+): string {
+  const pluginKey = String(plugin.name || plugin.id || '')
+    .trim()
+    .toLowerCase()
+  const marketplace = marketplaceName.trim().toLowerCase()
+  return pluginKey && marketplace ? `${pluginKey}@${marketplace}` : ''
+}
+
+function mergeInstalledPluginSummaries(
+  installedMarketplaces: CodexPluginMarketplaceEntry[],
+  availableMarketplaces: CodexPluginMarketplaceEntry[]
+): InstalledPlugin[] {
+  const merged = new Map<string, InstalledPlugin>()
+  const add = (marketplace: CodexPluginMarketplaceEntry, plugin: CodexPluginSummary) => {
+    const normalized: CodexPluginSummary = {
+      ...plugin,
+      id: plugin.id?.trim() || plugin.name,
+      installed: true,
+      // Missing enabled in installed summaries should not hide the plugin from composer.
+      enabled: plugin.enabled !== false,
+    }
+    const identity =
+      installedPluginSummaryIdentity(marketplace.name, normalized) ||
+      `id:${normalized.id || normalized.name}`
+    if (!merged.has(identity)) {
+      merged.set(identity, toInstalledPlugin(marketplace, normalized))
+    }
+  }
+
+  for (const marketplace of installedMarketplaces) {
+    for (const plugin of marketplace.plugins) {
+      add(marketplace, plugin)
+    }
+  }
+  for (const marketplace of availableMarketplaces) {
+    for (const plugin of marketplace.plugins) {
+      if (!plugin.installed) continue
+      add(marketplace, plugin)
+    }
+  }
+  return Array.from(merged.values())
+}
+
 function toInstalledPlugin(
   marketplace: CodexPluginMarketplaceEntry,
   plugin: CodexPluginSummary,
@@ -712,20 +758,21 @@ function toInstalledPlugin(
   const skillStates = Object.fromEntries(
     (detail?.skills ?? []).map(skill => [`skill:${skill.name}`, skill.enabled])
   )
+  const pluginId = plugin.id?.trim() || plugin.name
   return {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
     metadata: {
       name: plugin.name,
       namespace: marketplace.name,
-      labels: { id: plugin.id },
+      labels: { id: pluginId },
     },
     spec: {
       source: {
         type: isCreated ? 'local' : 'marketplace',
         providerKey: marketplace.name,
         pluginKey: plugin.name,
-        catalogItemId: plugin.remotePluginId ?? plugin.id,
+        catalogItemId: plugin.remotePluginId ?? pluginId,
         marketplace: marketplace.name,
       },
       origin: isCreated ? 'created' : 'market',
@@ -737,11 +784,11 @@ function toInstalledPlugin(
       version: plugin.localVersion ?? null,
       author: plugin.interface?.developerName ?? null,
       installState: plugin.installed ? 'installed' : 'not_installed',
-      enabled: plugin.enabled,
+      enabled: plugin.enabled !== false,
       componentStates: skillStates,
       manifest: {
         name: plugin.name,
-        id: plugin.id,
+        id: pluginId,
         source: plugin.source ?? null,
         installPolicy: plugin.installPolicy ?? null,
         authPolicy: plugin.authPolicy ?? null,
@@ -752,10 +799,10 @@ function toInstalledPlugin(
       packageRef: null,
       sourcePayload: {
         ...sourcePayload(marketplace, plugin),
-        localId: isCreated ? plugin.id : null,
+        localId: isCreated ? pluginId : null,
       },
     },
-    status: { state: plugin.enabled ? 'enabled' : 'disabled' },
+    status: { state: plugin.enabled !== false ? 'enabled' : 'disabled' },
   }
 }
 
@@ -877,10 +924,11 @@ async function readState(
     ),
     params.query
   )
+  // plugin/installed is authoritative for membership; summaries sometimes omit
+  // `installed`/`enabled`. Also fold in plugin/list rows marked installed so a
+  // briefly empty installed response cannot hide a just-installed plugin.
   const installedPlugins = preferWeworkPersonalInstalled(
-    installedResponse.marketplaces.flatMap(marketplace =>
-      marketplace.plugins.map(plugin => toInstalledPlugin(marketplace, plugin))
-    )
+    mergeInstalledPluginSummaries(installedResponse.marketplaces, availableMarketplaces)
   )
   const marketplaces = availableMarketplaces.map(marketplaceInfo)
   const state: LocalCodexPluginsState = {

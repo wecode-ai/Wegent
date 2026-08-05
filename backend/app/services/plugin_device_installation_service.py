@@ -92,6 +92,28 @@ class PluginDeviceInstallationService:
             )
             db.commit()
 
+    def clear_installations(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        installed_kind_id: int,
+    ) -> None:
+        """Drop all device rows for an account-level uninstall.
+
+        Account desired state already excludes the plugin; leftover rows only
+        keep the UI stuck on sync-failed / uninstalling banners.
+        """
+        (
+            db.query(PluginDeviceInstallation)
+            .filter(
+                PluginDeviceInstallation.user_id == user_id,
+                PluginDeviceInstallation.installed_kind_id == installed_kind_id,
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+
     def record_sync_response(
         self,
         db: Session,

@@ -73,7 +73,11 @@ export function mergeInstalledPlugins(
   for (const item of localItems) {
     if (item.spec.origin === 'created' || item.spec.source.type === 'local') {
       const id = localPluginId(item)
+      const identity = pluginIdentity(item)
+      // Prefer stable local ids; fall back to plugin@marketplace so installs without
+      // labels.id (common for local Codex marketplace plugins) are not dropped.
       if (id) merged.set(`created:${id}`, item)
+      else if (identity) merged.set(`created:${identity}`, item)
       continue
     }
 
@@ -81,6 +85,7 @@ export function mergeInstalledPlugins(
     if (identity && cloudPluginIdentities.has(identity)) continue
     const id = localPluginId(item)
     if (id) merged.set(`runtime:${id}`, item)
+    else if (identity) merged.set(`runtime:${identity}`, item)
   }
 
   return Array.from(merged.values())

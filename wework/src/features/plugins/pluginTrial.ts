@@ -60,7 +60,8 @@ function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
 }
 
 function firstPluginSkill(plugin: InstalledPlugin) {
-  return plugin.spec.components.skills.find(skill => skill.path && skill.name)
+  const skills = Array.isArray(plugin.spec.components?.skills) ? plugin.spec.components.skills : []
+  return skills.find(skill => skill.path && skill.name)
 }
 
 function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
@@ -70,14 +71,17 @@ function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
 
 function pluginMentionPath(plugin: InstalledPlugin): string | null {
   const payload = sourcePayload(plugin)
+  const metadataNamespace =
+    typeof plugin.metadata.namespace === 'string' ? plugin.metadata.namespace : null
   const pluginName =
     (typeof payload.pluginName === 'string' && payload.pluginName.trim()) ||
     (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
-    plugin.spec.source.pluginKey
+    plugin.spec.source?.pluginKey
   const marketplaceName =
     (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
-    plugin.spec.source.marketplace ||
-    plugin.metadata.namespace
+    plugin.spec.source?.marketplace ||
+    (metadataNamespace && metadataNamespace !== 'default' ? metadataNamespace : null) ||
+    (plugin.spec.source?.providerKey === 'wegent-market' ? 'wegent' : null)
   if (typeof pluginName !== 'string' || !pluginName.trim()) return null
   if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
   return `plugin://${pluginName}@${marketplaceName}`
@@ -138,11 +142,13 @@ export function pluginTrialTemplates(
   plugin: InstalledPlugin,
   selectedPrompt?: string
 ): PluginPathComponent[] {
-  const nativeTemplates = (
-    plugin.spec.components.templates ??
-    plugin.spec.components.commands ??
-    []
-  ).filter(template => !template.unavailableReason)
+  const components = plugin.spec.components
+  const templatesOrCommands = Array.isArray(components?.templates)
+    ? components.templates
+    : Array.isArray(components?.commands)
+      ? components.commands
+      : []
+  const nativeTemplates = templatesOrCommands.filter(template => !template.unavailableReason)
   const templates = nativeTemplates.length > 0 ? nativeTemplates : defaultPromptTemplates(plugin)
   const normalizedSelectedPrompt = selectedPrompt?.trim()
   if (!normalizedSelectedPrompt) return templates

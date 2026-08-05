@@ -10,7 +10,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
-import { readComposerAppsSnapshot } from './composerAppsSnapshot'
+import {
+  getComposerApps,
+  publishComposerApps,
+  requestComposerAppsSync,
+  subscribeComposerApps,
+} from './composerAppsSnapshot'
 import { appReference, displayAppName } from './composerMentionCandidates'
 import { registerComposerMentionIcon } from './composerMentions'
 import {
@@ -32,6 +37,10 @@ function enabledComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
   )
 }
 
+function paintComposerApps(items: LocalDeviceApp[]): LocalDeviceApp[] {
+  return enabledComposerApps(items.length > 0 ? items : getComposerApps())
+}
+
 export function PluginPickerMenu({
   disabled = false,
   iconOnly = false,
@@ -41,12 +50,25 @@ export function PluginPickerMenu({
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [apps, setApps] = useState<LocalDeviceApp[]>(() =>
-    onListLocalApps ? enabledComposerApps(readComposerAppsSnapshot()) : []
-  )
+  const [apps, setApps] = useState<LocalDeviceApp[]>(() => paintComposerApps(getComposerApps()))
   const hasCachedAppsRef = useRef(apps.length > 0)
   const [loading, setLoading] = useState(() => Boolean(onListLocalApps) && apps.length === 0)
   const [reloadToken, setReloadToken] = useState(0)
+
+  const applySharedApps = (items: LocalDeviceApp[] = getComposerApps()) => {
+    const next = paintComposerApps(items)
+    if (next.length === 0) return false
+    hasCachedAppsRef.current = true
+    setApps(next)
+    setLoading(false)
+    return true
+  }
+
+  useEffect(() => {
+    return subscribeComposerApps(() => {
+      applySharedApps()
+    })
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -59,9 +81,10 @@ export function PluginPickerMenu({
 
   useEffect(() => {
     const onSkillsChanged = () => {
-      hasCachedAppsRef.current = false
-      setApps([])
-      setLoading(Boolean(onListLocalApps))
+      // Keep showing the last known plugins while refresh runs; an empty refresh
+      // still falls back to the shared store in load(). Avoid flipping into the
+      // loading placeholder when we already have a usable list.
+      if (!hasCachedAppsRef.current) setLoading(Boolean(onListLocalApps))
       setReloadToken(token => token + 1)
     }
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, onSkillsChanged)
@@ -74,21 +97,39 @@ export function PluginPickerMenu({
     if (!onListLocalApps) return
     if (!hasCachedAppsRef.current) setLoading(true)
 
+    const applySharedOrRetry = (attempt: number) => {
+      requestComposerAppsSync()
+      if (applySharedApps()) return true
+      hasCachedAppsRef.current = false
+      setApps([])
+      // Install → notify can race ahead of plugin/installed. Retry whether the
+      // menu is open or closed so the toolbar does not stay empty after a
+      // transient cloud/list failure on first paint.
+      if (attempt < 30) {
+        retryTimer = window.setTimeout(() => load(attempt + 1), attempt < 6 ? 500 : 1000)
+      }
+      return false
+    }
+
     const load = (attempt: number) => {
+      // Pull slash's live React list into the window store before fetching, so a
+      // stale/empty network result cannot blank a picker that `/` already filled.
+      requestComposerAppsSync()
       onListLocalApps()
         .then(items => {
           if (!current) return
           const next = enabledComposerApps(items)
-          hasCachedAppsRef.current = next.length > 0
-          setApps(next)
-          // Install → notify can race ahead of plugin/installed; retry while the
-          // menu is open so a briefly empty response does not stick.
-          if (open && next.length === 0 && attempt < 6) {
-            retryTimer = window.setTimeout(() => load(attempt + 1), 500)
+          if (next.length > 0) {
+            publishComposerApps(items)
+            hasCachedAppsRef.current = true
+            setApps(next)
+            return
           }
+          applySharedOrRetry(attempt)
         })
         .catch(() => {
-          if (current && !hasCachedAppsRef.current) setApps([])
+          if (!current) return
+          applySharedOrRetry(attempt)
         })
         .finally(() => {
           if (current) setLoading(false)
@@ -122,7 +163,21 @@ export function PluginPickerMenu({
             ? 'h-7 w-7 justify-center rounded-lg px-0'
             : 'h-8 gap-1.5 rounded-xl bg-muted px-2',
         ].join(' ')}
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          if (disabled) return
+          if (!open) {
+            // Ask slash to re-publish first — `/` may already have apps in React
+            // state while this menu's store was emptied by HMR or a failed refresh.
+            requestComposerAppsSync()
+            if (!applySharedApps()) {
+              if (onListLocalApps) {
+                setLoading(true)
+                setReloadToken(token => token + 1)
+              }
+            }
+          }
+          setOpen(!open)
+        }}
       >
         {iconOnly ? (
           <Puzzle className="h-4 w-4" />

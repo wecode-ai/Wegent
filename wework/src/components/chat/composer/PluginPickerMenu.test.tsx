@@ -9,7 +9,12 @@ import {
   SHOW_PLUGIN_TRIAL_GUIDE_EVENT,
 } from '@/features/plugins/pluginTrial'
 import { PluginPickerMenu } from './PluginPickerMenu'
-import { writeComposerAppsSnapshot } from './composerAppsSnapshot'
+import {
+  COMPOSER_APPS_REQUEST_SYNC_EVENT,
+  clearComposerAppsSnapshot,
+  publishComposerApps,
+  resetComposerAppsMemory,
+} from './composerAppsSnapshot'
 import { RECENT_PLUGIN_APPS_KEY } from './composerPluginSort'
 
 const githubApp: LocalDeviceApp = {
@@ -49,6 +54,7 @@ const echoIdApp: LocalDeviceApp = {
 describe('PluginPickerMenu', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    resetComposerAppsMemory()
   })
 
   test('lists installed plugins with capability descriptions and inserts a skill-only plugin', async () => {
@@ -135,7 +141,7 @@ describe('PluginPickerMenu', () => {
   })
 
   test('paints preview icons from the composer apps snapshot before fetch resolves', async () => {
-    writeComposerAppsSnapshot([githubApp, superpowersApp, echoIdApp])
+    publishComposerApps([githubApp, superpowersApp, echoIdApp])
     let resolveApps!: (apps: LocalDeviceApp[]) => void
     const onListLocalApps = vi.fn(
       () =>
@@ -155,8 +161,8 @@ describe('PluginPickerMenu', () => {
     )
   })
 
-  test('removes stale plugin entries immediately when installed plugins change', async () => {
-    writeComposerAppsSnapshot([superpowersApp])
+  test('keeps visible plugins while a skills-changed refresh is in flight', async () => {
+    publishComposerApps([superpowersApp])
     const onListLocalApps = vi.fn().mockResolvedValue([superpowersApp])
 
     render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
@@ -172,10 +178,69 @@ describe('PluginPickerMenu', () => {
     onListLocalApps.mockImplementationOnce(() => refresh)
     act(() => notifyLocalPluginSkillsChanged())
 
-    expect(
-      screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
-    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
 
-    await act(async () => resolveRefresh([]))
+    await act(async () => {
+      resetComposerAppsMemory()
+      clearComposerAppsSnapshot()
+      resolveRefresh([])
+    })
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('composer-plugin-picker-item-plugin:superpowers')
+      ).not.toBeInTheDocument()
+    )
+  })
+
+  test('keeps snapshot plugins visible when a refresh returns empty', async () => {
+    publishComposerApps([superpowersApp])
+    let resolveApps!: (apps: LocalDeviceApp[]) => void
+    const onListLocalApps = vi.fn(
+      () =>
+        new Promise<LocalDeviceApp[]>(resolve => {
+          resolveApps = resolve
+        })
+    )
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(
+      await screen.findByTestId('composer-plugin-picker-item-plugin:superpowers')
+    ).toBeInTheDocument()
+
+    await act(async () => resolveApps([]))
+    expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+  })
+
+  test('shows plugins published by slash autocomplete even when fetch returns empty', async () => {
+    const onListLocalApps = vi.fn().mockResolvedValue([])
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+
+    await waitFor(() => expect(onListLocalApps).toHaveBeenCalled())
+    expect(screen.queryByTestId(/composer-plugin-preview-icon-/)).not.toBeInTheDocument()
+
+    act(() => {
+      publishComposerApps([githubApp, superpowersApp])
+    })
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/composer-plugin-preview-icon-/)).toHaveLength(2)
+    )
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-item-plugin:superpowers')).toBeInTheDocument()
+  })
+
+  test('pulls slash React apps via sync event when the shared store was empty', async () => {
+    const onListLocalApps = vi.fn().mockResolvedValue([])
+    window.addEventListener(COMPOSER_APPS_REQUEST_SYNC_EVENT, () => {
+      publishComposerApps([githubApp, echoIdApp])
+    })
+
+    render(<PluginPickerMenu onListLocalApps={onListLocalApps} />)
+    await userEvent.click(screen.getByTestId('composer-plugin-picker-button'))
+
+    expect(await screen.findByTestId('composer-plugin-picker-item-github')).toBeInTheDocument()
+    expect(screen.getByTestId('composer-plugin-picker-item-echoid')).toBeInTheDocument()
   })
 })

@@ -201,4 +201,99 @@ describe('appendInstalledPluginsAsComposerApps', () => {
     }
     expect(appendInstalledPluginsAsComposerApps([], [disabled])).toEqual([])
   })
+
+  test('includes installed plugins that only have a mention path and no skill files', () => {
+    const mentionOnly = {
+      ...superpowersPlugin,
+      spec: {
+        ...superpowersPlugin.spec,
+        components: {
+          ...superpowersPlugin.spec.components,
+          skills: [],
+        },
+        sourcePayload: {
+          marketplaceName: 'desktop-e2e-marketplace',
+          pluginName: 'desktop-e2e-plugin',
+        },
+        source: {
+          ...superpowersPlugin.spec.source,
+          pluginKey: 'desktop-e2e-plugin',
+          marketplace: 'desktop-e2e-marketplace',
+        },
+        displayName: 'Desktop E2E Plugin',
+      },
+      metadata: {
+        ...superpowersPlugin.metadata,
+        name: 'desktop-e2e-plugin',
+        namespace: 'desktop-e2e-marketplace',
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [mentionOnly])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:desktop-e2e-plugin',
+        name: 'Desktop E2E Plugin',
+        skillPath: 'plugin://desktop-e2e-plugin@desktop-e2e-marketplace',
+      }),
+    ])
+  })
+
+  test('maps cloud wegent installs that use namespace default and incomplete components', () => {
+    const dingtalkCloud: InstalledPlugin = {
+      ...superpowersPlugin,
+      metadata: { name: 'dingtalk-67ace226d5', namespace: 'default', labels: { id: '62' } },
+      spec: {
+        ...superpowersPlugin.spec,
+        displayName: '钉钉',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'dingtalk',
+          catalogItemId: '1',
+          marketplace: 'wegent',
+        },
+        // Local/runtime merges sometimes omit component arrays entirely.
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+        sourcePayload: { releaseId: 1 },
+      },
+    }
+
+    expect(appendInstalledPluginsAsComposerApps([], [dingtalkCloud])).toEqual([
+      expect.objectContaining({
+        id: 'plugin:dingtalk',
+        name: '钉钉',
+        skillPath: 'plugin://dingtalk@wegent',
+        source: 'installed-plugin',
+      }),
+    ])
+  })
+
+  test('keeps composer apps when another installed plugin has broken components', () => {
+    const broken: InstalledPlugin = {
+      ...githubPlugin,
+      metadata: { name: 'broken-plugin', namespace: 'default' },
+      spec: {
+        ...githubPlugin.spec,
+        displayName: 'Broken Plugin',
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'broken-plugin',
+          marketplace: 'wegent',
+        },
+        components: undefined as unknown as InstalledPlugin['spec']['components'],
+      },
+    }
+
+    expect(enrichComposerApps([githubApp], [githubPlugin, broken])).toEqual([
+      expect.objectContaining({ id: 'github', name: 'GitHub' }),
+    ])
+    expect(appendInstalledPluginsAsComposerApps([githubApp], [githubPlugin, broken])).toEqual([
+      githubApp,
+      expect.objectContaining({
+        id: 'plugin:broken-plugin',
+        skillPath: 'plugin://broken-plugin@wegent',
+      }),
+    ])
+  })
 })

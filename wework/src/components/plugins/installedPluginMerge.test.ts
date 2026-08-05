@@ -135,6 +135,38 @@ describe('mergeInstalledPlugins', () => {
     expect(merged).toHaveLength(1)
     expect(merged[0]?.metadata.labels).toMatchObject({ id: 'superpowers-local-id' })
   })
+
+  test('keeps marketplace installs that lack labels.id by plugin@marketplace identity', () => {
+    const withoutLocalId: InstalledPlugin = {
+      ...localCodexPlugin({
+        id: '',
+        name: 'desktop-e2e-plugin',
+        pluginKey: 'desktop-e2e-plugin',
+        marketplace: 'desktop-e2e-marketplace',
+      }),
+      metadata: {
+        name: 'desktop-e2e-plugin',
+        namespace: 'desktop-e2e-marketplace',
+        labels: {},
+      },
+      spec: {
+        ...localCodexPlugin({
+          name: 'desktop-e2e-plugin',
+          pluginKey: 'desktop-e2e-plugin',
+          marketplace: 'desktop-e2e-marketplace',
+        }).spec,
+        sourcePayload: {
+          localId: null,
+          marketplaceName: 'desktop-e2e-marketplace',
+          pluginName: 'desktop-e2e-plugin',
+        },
+      },
+    }
+
+    const merged = mergeInstalledPlugins([], [withoutLocalId], 'current-device')
+    expect(merged).toHaveLength(1)
+    expect(merged[0]?.spec.source.pluginKey).toBe('desktop-e2e-plugin')
+  })
 })
 
 describe('isCloudManagedInstalledPlugin', () => {

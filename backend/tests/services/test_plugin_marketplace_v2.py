@@ -12,7 +12,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 
-from app.api.endpoints.installed_plugins import _can_publish, _sync_global_capabilities
+from app.api.endpoints.installed_plugins import (
+    _can_publish,
+    _sync_global_capabilities,
+    install_marketplace_plugin,
+    uninstall_installed_plugin,
+)
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -38,12 +43,14 @@ from app.schemas.installed_plugin import (
     PluginUpstreamCreateRequest,
 )
 from app.services.device.capability_sync_service import (
+    DeviceCapabilitySyncError,
     DeviceCapabilitySyncService,
     device_capability_sync_service,
 )
 from app.services.official_plugin_publisher import OfficialPluginPublisher
 from app.services.plugin_device_installation_service import (
     PluginDeviceInstallationService,
+    plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_migration_service import (
     PluginMarketplaceMigrationService,
@@ -1453,6 +1460,185 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
     assert row.error_message == "Device response omitted plugin result"
 
 
+@pytest.mark.asyncio
+async def test_install_returns_plugin_when_device_sync_fails(
+    test_db, test_user, monkeypatch
+):
+    plugin = Plugin(
+        slug="soft-install",
+        name="soft-install",
+        display_name="Soft Install",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+        visibility="workspace",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="1.0.0",
+        manifest_json={},
+        interface_json={},
+        storage_key="plugins/soft-install.zip",
+        sha256="f" * 64,
+        size_bytes=10,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": [], "commands": []}},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+    test_db.commit()
+
+    async def sync(*_args, **_kwargs):
+        return DeviceCapabilitySyncResponse(
+            failed=1,
+            synced=0,
+            results=[
+                DeviceCapabilitySyncResult(
+                    device_id="current-device",
+                    success=False,
+                    error="device rejected sync",
+                )
+            ],
+        )
+
+    async def merge_sync(*_args, **_kwargs):
+        raise DeviceCapabilitySyncError("merge also failed")
+
+    async def ensure_pending(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_user_global_capabilities",
+        sync,
+    )
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_installed_plugin_to_device",
+        merge_sync,
+    )
+    monkeypatch.setattr(
+        plugin_device_installation_service,
+        "ensure_pending_for_all_devices",
+        ensure_pending,
+    )
+
+    response = await install_marketplace_plugin(
+        marketplace_id=plugin.id,
+        release_id=None,
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+    assert response.plugin is not None
+    assert response.plugin.spec.pluginId == plugin.id
+    assert response.sync is not None
+    assert response.sync.failed == 1
+    assert (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "InstalledPlugin",
+            Kind.is_active.is_(True),
+        )
+        .count()
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_uninstall_succeeds_when_device_sync_fails(
+    test_db, test_user, monkeypatch
+):
+    installed, release = _device_install(test_db, test_user.id)
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=installed.id,
+            user_id=test_user.id,
+            device_id="current-device",
+            desired_release_id=release.id,
+            actual_release_id=release.id,
+            state="installed",
+        )
+    )
+    test_db.commit()
+
+    async def sync(*_args, **_kwargs):
+        return DeviceCapabilitySyncResponse(
+            failed=1,
+            synced=0,
+            results=[
+                DeviceCapabilitySyncResult(
+                    device_id="current-device",
+                    success=False,
+                    error="device rejected sync",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_user_global_capabilities",
+        sync,
+    )
+
+    await uninstall_installed_plugin(
+        installed_id=installed.id,
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+
+    test_db.refresh(installed)
+    assert installed.is_active is False
+    assert installed.json["spec"]["installState"] == "uninstalled"
+    assert test_db.query(PluginDeviceInstallation).count() == 0
+
+    item = (
+        PluginMarketplaceService()
+        .list_plugins(
+            test_db,
+            user_id=test_user.id,
+            device_id="current-device",
+        )
+        .items[0]
+    )
+    assert item.installed is False
+    assert item.installedPluginId is None
+
+
+@pytest.mark.asyncio
+async def test_uninstall_is_idempotent_for_inactive_kind(
+    test_db, test_user, monkeypatch
+):
+    installed, _release = _device_install(test_db, test_user.id)
+    installed.is_active = False
+    installed.json["spec"]["installState"] = "uninstalled"
+    installed.json["spec"]["enabled"] = False
+    test_db.commit()
+
+    async def sync(*_args, **_kwargs):
+        return DeviceCapabilitySyncResponse(synced=0, results=[])
+
+    monkeypatch.setattr(
+        device_capability_sync_service,
+        "sync_user_global_capabilities",
+        sync,
+    )
+
+    await uninstall_installed_plugin(
+        installed_id=installed.id,
+        device_id="current-device",
+        db=test_db,
+        current_user=test_user,
+    )
+    assert installed.is_active is False
+
+
 def test_reconnect_sync_clears_materialized_uninstall_state(test_db, test_user):
     installed, release = _device_install(test_db, test_user.id)
     installed.is_active = False
@@ -2305,3 +2491,148 @@ def test_personal_to_workspace_upgrade_applies_on_review(
     assert plugin.visibility == "workspace"
     assert plugin.status == "published"
     assert plugin.latest_release_id == second.releaseId
+
+
+def test_reconcile_stale_installed_catalog_refs_after_reimport(test_db, test_user):
+    service = PluginMarketplaceService()
+    plugin = Plugin(
+        slug="weibo-api-wiki",
+        name="weibo-api-wiki",
+        display_name="Weibo API Wiki",
+        keywords_json=[],
+        interface_json={},
+        status="published",
+        visibility="workspace",
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="0.3.2",
+        manifest_json={"name": "weibo-api-wiki"},
+        interface_json={"displayName": "Weibo API Wiki"},
+        storage_key=f"plugins/{plugin.id}/1/deadbeef.zip",
+        sha256="a" * 64,
+        size_bytes=12,
+        status="ready",
+        scan_status="passed",
+        scan_report_json={"components": {"skills": [{"name": "wiki"}]}},
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+
+    stale = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="weibo-api-wiki-old",
+        json={
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "weibo-api-wiki-old", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "providerKey": "wegent-market",
+                    "pluginKey": "weibo-api-wiki",
+                    "catalogItemId": "24",
+                    "marketplace": "wegent",
+                },
+                "origin": "market",
+                "pluginId": 24,
+                "releaseId": 31,
+                "enabled": True,
+                "installState": "installed",
+            },
+        },
+        is_active=True,
+    )
+    duplicate = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="weibo-api-wiki-dup",
+        json={
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "weibo-api-wiki-dup", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "pluginKey": "weibo-api-wiki",
+                    "catalogItemId": "6",
+                    "marketplace": "wegent",
+                },
+                "pluginId": 6,
+                "releaseId": 19,
+                "enabled": False,
+                "installState": "installed",
+            },
+        },
+        is_active=True,
+    )
+    orphan = Kind(
+        user_id=test_user.id,
+        kind="InstalledPlugin",
+        namespace="default",
+        name="dev-tools-full-old",
+        json={
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "dev-tools-full-old", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "pluginKey": "dev-tools-full",
+                    "catalogItemId": "26",
+                    "marketplace": "wegent",
+                },
+                "pluginId": 26,
+                "releaseId": 33,
+                "enabled": True,
+                "installState": "installed",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add_all([stale, duplicate, orphan])
+    test_db.flush()
+    test_db.add(
+        PluginDeviceInstallation(
+            installed_kind_id=duplicate.id,
+            user_id=test_user.id,
+            device_id="local-device",
+            desired_release_id=19,
+            state="failed",
+            error_code="PLUGIN_SYNC_FAILED",
+            error_message="Capability package download failed with HTTP 404 Not Found",
+            attempt_count=9,
+        )
+    )
+    test_db.commit()
+
+    changed = service.reconcile_stale_installed_catalog_refs(
+        test_db, user_id=test_user.id
+    )
+    assert changed >= 2
+
+    test_db.refresh(stale)
+    test_db.refresh(duplicate)
+    test_db.refresh(orphan)
+    active = [row for row in (stale, duplicate) if row.is_active]
+    assert len(active) == 1
+    keeper = active[0]
+    assert keeper.json["spec"]["pluginId"] == plugin.id
+    assert keeper.json["spec"]["releaseId"] == release.id
+    assert keeper.json["spec"]["source"]["catalogItemId"] == str(plugin.id)
+    assert sum(1 for row in (stale, duplicate) if row.is_active) == 1
+    assert orphan.json["spec"].get("pluginId") in (None, 0)
+    assert orphan.json["spec"].get("releaseId") in (None, 0)
+
+    device_row = (
+        test_db.query(PluginDeviceInstallation)
+        .filter(PluginDeviceInstallation.installed_kind_id == keeper.id)
+        .one_or_none()
+    )
+    if device_row is not None:
+        assert device_row.state == "pending"
+        assert device_row.desired_release_id == release.id
+        assert device_row.error_code == ""

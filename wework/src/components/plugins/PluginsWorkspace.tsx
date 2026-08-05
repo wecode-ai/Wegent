@@ -1325,6 +1325,7 @@ export function PluginsWorkspace({
       previous: typeof pluginMarketplaceState
     ): typeof pluginMarketplaceState => ({
       ...previous,
+      error: null,
       items: previous.items.map(item =>
         String(item.installedPluginId) === String(id) ||
         (item.installed && String(item.id) === String(id))
@@ -1338,6 +1339,22 @@ export function PluginsWorkspace({
           : item
       ),
     })
+    const markUninstalledLocally = () => {
+      setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
+      setSelectedPluginId(current => (String(current) === String(id) ? null : current))
+      setPluginMarketplaceState(clearMarketplaceInstall)
+      setLocalConnectorAuthBySlug({})
+      notifyLocalPluginSkillsChanged()
+      setMarketplaceRefreshTick(previous => previous + 1)
+    }
+    const isAccountUninstallSettledError = (error: Error) => {
+      const message = error.message || ''
+      return (
+        /not found/i.test(message) ||
+        /failed to synchronize/i.test(message) ||
+        /PLUGIN_DEVICE_SYNC_FAILED/i.test(message)
+      )
+    }
 
     if (!plugin) {
       // Local Codex marketplace installs are omitted from the merged installed list
@@ -1345,8 +1362,7 @@ export function PluginsWorkspace({
       void localPluginApi
         .uninstallInstalledPlugin(id)
         .then(() => {
-          setPluginMarketplaceState(clearMarketplaceInstall)
-          notifyLocalPluginSkillsChanged()
+          markUninstalledLocally()
           setPluginOperationNotice({
             id: `uninstalled-${id}`,
             kind: 'success',
@@ -1357,6 +1373,18 @@ export function PluginsWorkspace({
           })
         })
         .catch((error: Error) => {
+          if (isAccountUninstallSettledError(error)) {
+            markUninstalledLocally()
+            setPluginOperationNotice({
+              id: `uninstalled-${id}`,
+              kind: 'success',
+              message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+                name: pluginName,
+                defaultValue: `${pluginName} 已卸载`,
+              }),
+            })
+            return
+          }
           setPluginOperationNotice({
             id: `uninstall-error-${id}`,
             kind: 'error',
@@ -1381,11 +1409,7 @@ export function PluginsWorkspace({
           : pluginApi.uninstallInstalledPlugin(id, currentDeviceId)
       )
       .then(() => {
-        setInstalledPlugins(previous => previous.filter(item => String(item.id) !== String(id)))
-        setSelectedPluginId(current => (String(current) === String(id) ? null : current))
-        setPluginMarketplaceState(clearMarketplaceInstall)
-        setLocalConnectorAuthBySlug({})
-        notifyLocalPluginSkillsChanged()
+        markUninstalledLocally()
         setPluginOperationNotice({
           id: `uninstalled-${id}`,
           kind: 'success',
@@ -1396,6 +1420,21 @@ export function PluginsWorkspace({
         })
       })
       .catch((error: Error) => {
+        // Account Kind may already be inactive while device sync previously 502'd;
+        // treat that as settled uninstall so the marketplace is not stuck "installed".
+        if (isCloudManagedInstalledPlugin(plugin.raw) && isAccountUninstallSettledError(error)) {
+          markUninstalledLocally()
+          void localPluginApi.uninstallInstalledPlugin(id).catch(() => undefined)
+          setPluginOperationNotice({
+            id: `uninstalled-${id}`,
+            kind: 'success',
+            message: t('workbench.plugins_uninstall_success', '{{name}} 已卸载', {
+              name: pluginName,
+              defaultValue: `${pluginName} 已卸载`,
+            }),
+          })
+          return
+        }
         setPluginOperationNotice({
           id: `uninstall-error-${id}`,
           kind: 'error',
@@ -1623,8 +1662,20 @@ export function PluginsWorkspace({
         const deviceInstallation = installFromLocal
           ? null
           : currentDeviceInstallation(plugin, currentDeviceId)
+        const deviceState = deviceInstallation?.state
         const installedOnCurrentDevice =
-          installFromLocal || deviceInstallation?.state === 'installed'
+          installFromLocal ||
+          deviceState === 'installed' ||
+          plugin.spec.installState === 'installed' ||
+          plugin.spec.installState === 'update_available'
+        const deviceSyncPending =
+          !installFromLocal &&
+          !installedOnCurrentDevice &&
+          (deviceState === 'pending' ||
+            deviceState === 'downloading' ||
+            deviceState === 'installing' ||
+            deviceState === 'failed' ||
+            !deviceInstallation)
         setInstalledPlugins(previous => [
           installed,
           ...previous.filter(candidate => candidate.id !== installed.id),
@@ -1636,8 +1687,10 @@ export function PluginsWorkspace({
             candidate.id === item.id
               ? {
                   ...candidate,
-                  installed: installedOnCurrentDevice,
-                  enabled: installedOnCurrentDevice && plugin.spec.enabled,
+                  // Account install succeeded; keep the row actionable even when
+                  // the current device acknowledgement is still catching up.
+                  installed: installedOnCurrentDevice || deviceSyncPending,
+                  enabled: Boolean(plugin.spec.enabled),
                   installedPluginId: installed.id,
                   currentDeviceInstallation: deviceInstallation,
                   components: plugin.spec.components,
@@ -1661,13 +1714,24 @@ export function PluginsWorkspace({
           ),
           error: null,
         }))
+        setMarketplaceRefreshTick(previous => previous + 1)
         setPluginOperationNotice({
           id: `installed-${item.id}`,
-          kind: 'success',
-          message: t('workbench.plugins_install_success_title', '{{name}} 已安装', {
-            name: item.displayName || item.name,
-            defaultValue: `${item.displayName || item.name} 已安装`,
-          }),
+          kind: deviceState === 'failed' ? 'error' : 'success',
+          message:
+            deviceState === 'failed'
+              ? t(
+                  'workbench.plugins_install_device_sync_retry',
+                  '{{name}} 已保存，当前设备同步失败，可稍后重试安装',
+                  {
+                    name: item.displayName || item.name,
+                    defaultValue: `${item.displayName || item.name} 已保存，当前设备同步失败，可稍后重试安装`,
+                  }
+                )
+              : t('workbench.plugins_install_success_title', '{{name}} 已安装', {
+                  name: item.displayName || item.name,
+                  defaultValue: `${item.displayName || item.name} 已安装`,
+                }),
         })
         if (promptAfterInstall && queuePluginPromptTrial(installed.raw, promptAfterInstall)) {
           navigateTo('/')
@@ -1681,6 +1745,29 @@ export function PluginsWorkspace({
           installFromLocal,
           error: error.message,
         })
+        const syncSettled =
+          /failed to synchronize/i.test(error.message) ||
+          /PLUGIN_DEVICE_SYNC_FAILED/i.test(error.message)
+        // Older backends 502 after Kind create; refresh so the row can show the
+        // account install instead of leaving a permanent pink sync banner.
+        if (syncSettled) {
+          notifyLocalPluginSkillsChanged()
+          setMarketplaceRefreshTick(previous => previous + 1)
+          setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+          setPluginOperationNotice({
+            id: `install-sync-${item.id}`,
+            kind: 'error',
+            message: t(
+              'workbench.plugins_install_device_sync_retry',
+              '{{name}} 已保存，当前设备同步失败，可稍后重试安装',
+              {
+                name: item.displayName || item.name,
+                defaultValue: `${item.displayName || item.name} 已保存，当前设备同步失败，可稍后重试安装`,
+              }
+            ),
+          })
+          return
+        }
         setPluginMarketplaceState(previous => ({
           ...previous,
           items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
@@ -2701,9 +2788,27 @@ export function PluginsWorkspace({
           }}
           onUninstall={() => {
             const installedPluginId =
-              installedDetail?.id ??
-              selectedMarketplacePlugin.installedPluginId ??
-              selectedMarketplacePlugin.id
+              installedDetail?.id ?? selectedMarketplacePlugin.installedPluginId
+            if (installedPluginId === null || installedPluginId === undefined) {
+              // Stale "installed" UI with no Kind id — reconcile from cloud/local state.
+              setPluginMarketplaceState(previous => ({
+                ...previous,
+                error: null,
+                items: previous.items.map(item =>
+                  item.id === selectedMarketplacePlugin.id
+                    ? {
+                        ...item,
+                        installed: false,
+                        installedPluginId: null,
+                        enabled: false,
+                        currentDeviceInstallation: null,
+                      }
+                    : item
+                ),
+              }))
+              setMarketplaceRefreshTick(previous => previous + 1)
+              return
+            }
             requestUninstallPlugin(
               installedPluginId,
               selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
@@ -3154,11 +3259,32 @@ export function PluginsWorkspace({
                       onTry={() => tryMarketplacePluginInChat(item)}
                       onManage={() => navigateTo('/plugins/manage')}
                       onUninstall={() => {
-                        const uninstallId =
-                          item.installedPluginId !== null && item.installedPluginId !== undefined
-                            ? item.installedPluginId
-                            : item.id
-                        requestUninstallPlugin(uninstallId, item.displayName || item.name)
+                        if (
+                          item.installedPluginId === null ||
+                          item.installedPluginId === undefined
+                        ) {
+                          setPluginMarketplaceState(previous => ({
+                            ...previous,
+                            error: null,
+                            items: previous.items.map(candidate =>
+                              candidate.id === item.id
+                                ? {
+                                    ...candidate,
+                                    installed: false,
+                                    installedPluginId: null,
+                                    enabled: false,
+                                    currentDeviceInstallation: null,
+                                  }
+                                : candidate
+                            ),
+                          }))
+                          setMarketplaceRefreshTick(previous => previous + 1)
+                          return
+                        }
+                        requestUninstallPlugin(
+                          item.installedPluginId,
+                          item.displayName || item.name
+                        )
                       }}
                     />
                   ))}
