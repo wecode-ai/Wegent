@@ -112,7 +112,6 @@ import {
 import {
   buildLocalModelRequestUrl,
   DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
-  ensureLocalModelApiKeysHydrated,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -1930,13 +1929,7 @@ export function createRuntimeWorkApiFromIpc(
   }
 
   const prepareRuntimeModel = async (data: RuntimeModelPrepareRequest): Promise<boolean> => {
-    let selectedModel = findLocalModelConfigByModelName(data.modelId)
-    try {
-      await ensureLocalModelApiKeysHydrated()
-      selectedModel = findLocalModelConfigByModelName(data.modelId)
-    } catch (error) {
-      if (selectedModel?.apiKeyConfigured && !selectedModel.apiKey) throw error
-    }
+    const selectedModel = findLocalModelConfigByModelName(data.modelId)
     if (!options.syncConfiguredModelCatalog) return true
     if (!selectedModel?.catalogEntry) return true
 
