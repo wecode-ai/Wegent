@@ -89,11 +89,13 @@ class PluginMarketplaceMigrationService:
                 name=parsed.name,
                 display_name=str(spec.get("displayName") or parsed.displayName),
                 summary=str(spec.get("description") or parsed.description)[:500],
-                description_md=str(spec.get("description") or parsed.description),
+                description_md=str(spec.get("description") or parsed.description)[
+                    :8192
+                ],
                 listing_type="plugin",
                 source_type="native",
                 source_provider="wework",
-                owner_user_id=spec.get("ownerUserId") or row.user_id or None,
+                owner_user_id=int(spec.get("ownerUserId") or row.user_id or 0),
                 category=(parsed.interface.category if parsed.interface else "") or "",
                 keywords_json=parsed.manifest.get("keywords") or [],
                 interface_json=(
@@ -103,7 +105,9 @@ class PluginMarketplaceMigrationService:
                 ),
                 visibility=self._visibility(spec.get("visibility")),
                 status="published",
-                featured_rank=0 if spec.get("featured") else None,
+                # Legacy Kind used featured_rank=0 as "featured"; new schema uses
+                # non-zero rank for featured and 0 as the unset sentinel.
+                featured_rank=1 if spec.get("featured") else 0,
                 published_at=row.created_at or datetime.now(),
             )
             db.add(plugin)
@@ -130,7 +134,7 @@ class PluginMarketplaceMigrationService:
                 status="processing",
                 scan_status="pending",
                 scan_report_json={"migrationSourceKindId": row.id},
-                created_by_user_id=row.user_id or None,
+                created_by_user_id=row.user_id or 0,
             )
             db.add(release)
             db.flush()

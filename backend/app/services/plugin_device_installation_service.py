@@ -47,8 +47,8 @@ class PluginDeviceInstallationService:
             row.desired_release_id = desired_release_id
             if row.actual_release_id != desired_release_id:
                 row.state = "pending"
-                row.error_code = None
-                row.error_message = None
+                row.error_code = ""
+                row.error_message = ""
         db.commit()
 
     def mark_uninstalling(
@@ -64,8 +64,8 @@ class PluginDeviceInstallationService:
         )
         for row in rows:
             row.state = "uninstalling"
-            row.error_code = None
-            row.error_message = None
+            row.error_code = ""
+            row.error_message = ""
         db.commit()
 
     def record_uninstall_response(
@@ -190,10 +190,10 @@ class PluginDeviceInstallationService:
         if state == "installed":
             row.actual_release_id = release_id
         elif state != "failed":
-            row.actual_release_id = None
+            row.actual_release_id = 0
         row.state = state
-        row.error_code = "PLUGIN_SYNC_FAILED" if state == "failed" else None
-        row.error_message = error_message
+        row.error_code = "PLUGIN_SYNC_FAILED" if state == "failed" else ""
+        row.error_message = error_message or ""
         row.attempt_count = (row.attempt_count or 0) + 1
         row.last_sync_at = datetime.now()
 

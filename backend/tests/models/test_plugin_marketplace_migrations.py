@@ -26,3 +26,8 @@ def test_plugin_marketplace_v2_is_single_revision_on_main_head() -> None:
     assert "allow_copy" in source
     assert "purpose" in source
     assert 'create_table(\n        "plugins"' in source
+    assert "ForeignKey" not in source
+    assert "uniq_plugins_slug" in source
+    assert "comment=" in source
+    assert "COLLATE" not in source
+    assert "1970-01-01 00:00:00.000000" in source

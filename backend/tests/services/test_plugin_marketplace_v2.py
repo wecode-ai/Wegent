@@ -551,7 +551,7 @@ def test_user_submission_cannot_claim_an_official_plugin_slug(test_db, test_user
             display_name="Official Plugin",
             source_type="native",
             source_provider="wework",
-            owner_user_id=None,
+            owner_user_id=0,
             keywords_json=[],
             interface_json={},
             status="published",
@@ -612,7 +612,7 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
     plugin = test_db.get(Plugin, first.release.plugin_id)
     assert plugin.source_type == "native"
     assert plugin.source_provider == "wework"
-    assert plugin.owner_user_id is None
+    assert plugin.owner_user_id == 0
     assert plugin.latest_release_id == first.release.id
     assert first.release.scan_report_json["provenance"] == {
         "kind": "official",
@@ -1292,7 +1292,7 @@ def test_device_sync_requires_a_result_for_each_desired_plugin(test_db, test_use
     row = test_db.query(PluginDeviceInstallation).one()
     assert row.installed_kind_id == installed.id
     assert row.desired_release_id == release.id
-    assert row.actual_release_id is None
+    assert row.actual_release_id == 0
     assert row.state == "failed"
     assert row.error_message == "Device response omitted plugin result"
 
@@ -1931,7 +1931,7 @@ def test_openai_github_upstream_sync_applies_the_reviewed_adapter(test_db, monke
 
     assert result.lastSeenVersion == "0.1.6+wegent.3"
     plugin = test_db.get(Plugin, upstream.pluginId)
-    assert plugin.latest_release_id is None
+    assert plugin.latest_release_id == 0
     release = (
         test_db.query(PluginRelease).filter(PluginRelease.plugin_id == plugin.id).one()
     )
@@ -2093,7 +2093,7 @@ def test_openai_github_pending_release_publishes_after_switching_to_auto(
 
     test_db.refresh(submission)
     assert submission.status == "approved"
-    assert submission.reviewer_user_id is None
+    assert submission.reviewer_user_id == 0
     assert submission.review_note == "Automatically published after scan policy change"
     assert candidate.status == "ready"
     assert test_db.get(Plugin, plugin.id).latest_release_id == candidate.id

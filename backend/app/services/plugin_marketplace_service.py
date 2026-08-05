@@ -33,6 +33,10 @@ from app.models.plugin_marketplace import (
     PluginRelease,
     PluginSubmission,
     PluginUpstream,
+    is_featured_rank,
+    unset_datetime,
+    unset_id,
+    unset_str,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
@@ -130,12 +134,12 @@ class PluginMarketplaceService:
                 PluginDeviceInstallationItem(
                     deviceId=row.device_id,
                     desiredReleaseId=row.desired_release_id,
-                    actualReleaseId=row.actual_release_id,
+                    actualReleaseId=unset_id(row.actual_release_id),
                     state=row.state,
-                    errorCode=row.error_code,
-                    errorMessage=row.error_message,
+                    errorCode=unset_str(row.error_code),
+                    errorMessage=unset_str(row.error_message),
                     attemptCount=row.attempt_count,
-                    lastSyncAt=row.last_sync_at,
+                    lastSyncAt=unset_datetime(row.last_sync_at),
                     updatedAt=row.updated_at,
                 )
             )
@@ -175,12 +179,10 @@ class PluginMarketplaceService:
             db.query(Plugin)
             .filter(
                 Plugin.status == "published",
-                Plugin.latest_release_id.isnot(None),
+                Plugin.latest_release_id != 0,
                 Plugin.visibility.in_(["personal", "workspace", "public"]),
             )
-            .order_by(
-                Plugin.featured_rank.is_(None), Plugin.featured_rank, Plugin.id.desc()
-            )
+            .order_by(Plugin.featured_rank == 0, Plugin.featured_rank, Plugin.id.desc())
             .all()
         )
         normalized_query = (query or "").strip().lower()
@@ -362,7 +364,7 @@ class PluginMarketplaceService:
         if plugin and (
             plugin.source_type != "native"
             or plugin.source_provider != "wework"
-            or plugin.owner_user_id is not None
+            or plugin.owner_user_id != 0
         ):
             raise HTTPException(
                 status_code=409,
@@ -380,7 +382,7 @@ class PluginMarketplaceService:
                 listing_type=listing_type,
                 source_type="native",
                 source_provider="wework",
-                owner_user_id=None,
+                owner_user_id=0,
                 keywords_json=[],
                 interface_json={},
                 visibility=visibility,
@@ -401,7 +403,7 @@ class PluginMarketplaceService:
                 detail="Official plugin version must not be older than latest",
             )
         plugin.visibility = visibility
-        plugin.featured_rank = featured_rank
+        plugin.featured_rank = featured_rank or 0
         try:
             result = self._publish_release(
                 db,
@@ -409,7 +411,7 @@ class PluginMarketplaceService:
                 package=package,
                 parsed=parsed,
                 security_report=security_report,
-                created_by_user_id=created_by_user_id,
+                created_by_user_id=created_by_user_id or 0,
                 provenance={
                     "kind": "official",
                     **(provenance or {}),
@@ -769,7 +771,7 @@ class PluginMarketplaceService:
             failed_release = db.get(PluginRelease, release_id)
             if failed_submission:
                 failed_submission.status = "rejected"
-                failed_submission.review_note = str(exc)[:5000]
+                failed_submission.review_note = str(exc)[:2000]
                 failed_submission.reviewed_at = datetime.now()
             if failed_release:
                 failed_release.status = "rejected"
@@ -830,7 +832,7 @@ class PluginMarketplaceService:
             )
         submission.status = "approved" if approved else "rejected"
         submission.reviewer_user_id = reviewer_user_id
-        submission.review_note = note
+        submission.review_note = (note or "")[:2000]
         submission.reviewed_at = datetime.now()
         if approved:
             requested = self._requested_visibility_for_release(
@@ -874,7 +876,7 @@ class PluginMarketplaceService:
         )
         description = listing.get("descriptionMd") or manifest.get("description") or ""
         plugin.summary = listing.get("summary") or description[:500]
-        plugin.description_md = description
+        plugin.description_md = description[:8192]
         plugin.interface_json = interface
 
     def _should_promote_latest(
@@ -945,7 +947,7 @@ class PluginMarketplaceService:
                 security_report,
                 provenance=provenance,
             ),
-            created_by_user_id=created_by_user_id,
+            created_by_user_id=created_by_user_id or 0,
         )
         db.add(release)
         db.flush()
@@ -978,12 +980,14 @@ class PluginMarketplaceService:
             )
         now = datetime.now()
         release.status = "ready"
-        release.published_at = release.published_at or now
+        if unset_datetime(release.published_at) is None:
+            release.published_at = now
         self._apply_release_listing(plugin, release)
         plugin.status = "published"
         if self._should_promote_latest(db, plugin, release):
             plugin.latest_release_id = release.id
-        plugin.published_at = plugin.published_at or now
+        if unset_datetime(plugin.published_at) is None:
+            plugin.published_at = now
 
     def _analyze_package(
         self, package: bytes
@@ -1113,7 +1117,7 @@ class PluginMarketplaceService:
                 listing_type=listing_type,
                 source_type="mirror",
                 source_provider="wework",
-                owner_user_id=None,
+                owner_user_id=0,
                 keywords_json=[],
                 interface_json={},
                 visibility=visibility,
@@ -1130,7 +1134,7 @@ class PluginMarketplaceService:
                 ("mirror", "codex"),
             }
             if (
-                plugin.owner_user_id is not None
+                plugin.owner_user_id != 0
                 or (plugin.source_type, plugin.source_provider)
                 not in controlled_sources
             ):
@@ -1242,7 +1246,7 @@ class PluginMarketplaceService:
                         adapted=adapted,
                     )
             upstream.last_synced_at = datetime.now()
-            upstream.last_error = None
+            upstream.last_error = ""
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -1527,7 +1531,7 @@ class PluginMarketplaceService:
             version=release.version,
             author=None,
             visibility=plugin.visibility,
-            featured=plugin.featured_rank is not None,
+            featured=is_featured_rank(plugin.featured_rank),
             installed=installed_for_device,
             installedPluginId=(
                 installed.id if installed and installed.is_active else None
@@ -1632,12 +1636,12 @@ class PluginMarketplaceService:
         return PluginDeviceInstallationItem(
             deviceId=row.device_id,
             desiredReleaseId=row.desired_release_id,
-            actualReleaseId=row.actual_release_id,
+            actualReleaseId=unset_id(row.actual_release_id),
             state=row.state,
-            errorCode=row.error_code,
-            errorMessage=row.error_message,
+            errorCode=unset_str(row.error_code),
+            errorMessage=unset_str(row.error_message),
             attemptCount=row.attempt_count,
-            lastSyncAt=row.last_sync_at,
+            lastSyncAt=unset_datetime(row.last_sync_at),
             updatedAt=row.updated_at,
         )
 
@@ -2269,7 +2273,7 @@ class PluginMarketplaceService:
             releaseNotes=release.release_notes,
             checksum=f"sha256:{release.sha256}",
             sizeBytes=release.size_bytes,
-            publishedAt=release.published_at,
+            publishedAt=unset_datetime(release.published_at),
         )
 
     def _submission_item(self, submission):
@@ -2281,7 +2285,7 @@ class PluginMarketplaceService:
             status=submission.status,
             reviewNote=submission.review_note,
             submittedAt=submission.submitted_at,
-            reviewedAt=submission.reviewed_at,
+            reviewedAt=unset_datetime(submission.reviewed_at),
         )
 
     def _upstream_item(self, upstream):
@@ -2295,10 +2299,10 @@ class PluginMarketplaceService:
             licenseInfo=upstream.license_info,
             syncEnabled=upstream.sync_enabled,
             syncPolicy=upstream.sync_policy,
-            lastSeenVersion=upstream.last_seen_version,
-            lastCheckedAt=upstream.last_checked_at,
-            lastSyncedAt=upstream.last_synced_at,
-            lastError=upstream.last_error,
+            lastSeenVersion=unset_str(upstream.last_seen_version),
+            lastCheckedAt=unset_datetime(upstream.last_checked_at),
+            lastSyncedAt=unset_datetime(upstream.last_synced_at),
+            lastError=unset_str(upstream.last_error),
         )
 
     def _source_provider(self, plugin):
@@ -2322,7 +2326,7 @@ class PluginMarketplaceService:
         return normalized in {
             plugin.source_provider.lower(),
             plugin.source_type.lower(),
-            "featured" if plugin.featured_rank is not None else "",
+            "featured" if is_featured_rank(plugin.featured_rank) else "",
         }
 
     def _search_text(self, plugin):
