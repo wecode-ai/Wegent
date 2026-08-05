@@ -979,6 +979,41 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-marketplace-error')).not.toBeInTheDocument()
   })
 
+  test('keeps an installed local marketplace plugin visible under its market tab', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      marketplaces: [
+        {
+          name: 'desktop-e2e-marketplace',
+          displayName: 'Desktop E2E Marketplace',
+          path: '/tmp/desktop-e2e-marketplace',
+        },
+      ],
+    })
+
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(
+      await screen.findByTestId('plugins-marketplace-tab-desktop-e2e-marketplace')
+    )
+    const installId = 'plugin-marketplace-install-desktop-e2e-marketplace:101'
+    expect(await screen.findByTestId(installId)).toBeInTheDocument()
+    await installPluginFromMarketCard(installId)
+
+    expect(
+      await screen.findByTestId('plugin-marketplace-actions-desktop-e2e-marketplace:101')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByTestId('plugin-marketplace-row-desktop-e2e-marketplace:101')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('没有匹配的插件')).not.toBeInTheDocument()
+  })
+
   test('renders provided plugin logos without a second brand-color backdrop', async () => {
     mockSystemSkillsFetch({
       marketplaceLogo: 'data:image/png;base64,cG5n',

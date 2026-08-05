@@ -4734,11 +4734,30 @@ async function verifyMarketplacePluginLifecycle({
   await control.command('waitFor', '[data-testid="local-connector-auth-browser"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await waitForSnapshot(
+  const installedSnapshot = await waitForSnapshot(
     control,
-    snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    snapshot =>
+      snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`) ||
+      snapshot.testIds.some(
+        testId => testId.startsWith('plugins-installed-strip-item-') && testId.includes(PLUGIN_NAME)
+      ),
     'The plugin was not shown as installed after the real app-server request'
   )
+  if (!installedSnapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`)) {
+    // Install succeeded but the active market/distribution filter hid the card.
+    if (installedSnapshot.testIds.includes('plugins-clear-marketplace-filters')) {
+      await control.command('click', '[data-testid="plugins-clear-marketplace-filters"]')
+    }
+    await control.command(
+      'click',
+      `[data-testid="plugins-marketplace-tab-${PLUGIN_MARKETPLACE_NAME}"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+      'The installed plugin card did not reappear under its marketplace tab'
+    )
+  }
   await control.command('click', actionsSelector)
   const trySelector = `[data-testid="plugin-marketplace-try-${pluginId}"]`
   await control.command('waitFor', trySelector, {

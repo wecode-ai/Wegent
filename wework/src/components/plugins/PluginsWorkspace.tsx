@@ -1641,7 +1641,20 @@ export function PluginsWorkspace({
                   installedPluginId: installed.id,
                   currentDeviceInstallation: deviceInstallation,
                   components: plugin.spec.components,
-                  manifest: plugin.spec.manifest,
+                  // Keep marketplaceId from the catalog row. Installed-plugin
+                  // manifests omit it, and local market tabs filter by that field.
+                  manifest: {
+                    ...candidate.manifest,
+                    ...plugin.spec.manifest,
+                    marketplaceId:
+                      (typeof candidate.manifest?.marketplaceId === 'string'
+                        ? candidate.manifest.marketplaceId
+                        : null) ||
+                      (typeof plugin.spec.manifest?.marketplaceId === 'string'
+                        ? plugin.spec.manifest.marketplaceId
+                        : null) ||
+                      localMarketplaceIdFromItem(candidate),
+                  },
                   interface: installFromLocal ? plugin.spec.interface : candidate.interface,
                 }
               : candidate
