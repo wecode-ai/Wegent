@@ -14,8 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.provider_credentials import store_provider_config
-from app.models.cloud_project import CloudProject, CloudProjectLocalBinding
-from app.models.project import Project
+from app.models.cloud_project import CloudProject
+from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
@@ -25,7 +25,7 @@ from app.schemas.cloud_project import (
     CloudProjectMemberCreate,
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
-    LocalBindingCreate,
+    default_board_statuses,
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -74,6 +74,12 @@ class CloudProjectService:
                 "provider_config": provider_config,
                 "visibility": values.visibility,
                 "tags": [],
+                "board_config": {
+                    "group_by": "status",
+                    "statuses": [
+                        item.model_dump() for item in default_board_statuses()
+                    ],
+                },
             },
         )
         db.add(project)
@@ -143,11 +149,51 @@ class CloudProjectService:
         if (
             "tags" in values.model_fields_set
             or "provider_config" in values.model_fields_set
+            or "card_display" in values.model_fields_set
+            or "board_config" in values.model_fields_set
             or "visibility" in values.model_fields_set
         ):
             metadata = dict(project.metadata_json or {})
             if "tags" in values.model_fields_set and values.tags is not None:
                 metadata["tags"] = updates.pop("tags")
+            if (
+                "card_display" in values.model_fields_set
+                and values.card_display is not None
+            ):
+                metadata["card_display"] = values.card_display.model_dump()
+                updates.pop("card_display", None)
+            if (
+                "board_config" in values.model_fields_set
+                and values.board_config is not None
+            ):
+                previous = metadata.get("board_config")
+                previous = previous if isinstance(previous, dict) else {}
+                previous_statuses = previous.get("statuses")
+                previous_statuses = (
+                    previous_statuses if isinstance(previous_statuses, list) else []
+                )
+                previous_ids = {
+                    str(item.get("id"))
+                    for item in previous_statuses
+                    if isinstance(item, dict) and item.get("id")
+                }
+                next_ids = {item.id for item in values.board_config.statuses}
+                removed_ids = previous_ids - next_ids
+                if removed_ids:
+                    db.query(LoopItem).filter(
+                        LoopItem.cloud_project_id == project.id,
+                        LoopItem.status.in_(removed_ids),
+                        loop_datetime_is_unset(LoopItem.deleted_at),
+                    ).update(
+                        {
+                            "status": "",
+                            "completed_at": None,
+                            "version": LoopItem.version + 1,
+                        },
+                        synchronize_session=False,
+                    )
+                metadata["board_config"] = values.board_config.model_dump()
+                updates.pop("board_config", None)
             if (
                 "provider_config" in values.model_fields_set
                 and values.provider_config is not None
@@ -197,63 +243,30 @@ class CloudProjectService:
         db.refresh(project)
         return project
 
-    def add_local_binding(
-        self,
-        db: Session,
-        cloud_project_id: int,
-        user_id: int,
-        values: LocalBindingCreate,
-    ) -> CloudProjectLocalBinding:
-        require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Developer)
-        local_project = (
-            db.query(Project)
-            .filter(
-                Project.id == values.local_project_id,
-                Project.user_id == user_id,
-                Project.is_active.is_(True),
-            )
-            .first()
-        )
-        if local_project is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Local project not found")
-        if values.is_default:
-            db.query(CloudProjectLocalBinding).filter(
-                CloudProjectLocalBinding.cloud_project_id == cloud_project_id,
-                CloudProjectLocalBinding.user_id == user_id,
-                CloudProjectLocalBinding.device_id == values.device_id,
-            ).update({"is_default": False})
-        binding = CloudProjectLocalBinding(
-            cloud_project_id=cloud_project_id,
-            user_id=user_id,
-            **values.model_dump(),
-        )
-        db.add(binding)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Local project is already linked"
-            ) from exc
-        db.refresh(binding)
-        return binding
+    def archive(self, db: Session, project_id: int, user_id: int, version: int) -> None:
+        """Archive a project so it no longer appears in active project lists."""
 
-    def list_local_bindings(
-        self, db: Session, cloud_project_id: int, user_id: int
-    ) -> list[CloudProjectLocalBinding]:
-        require_cloud_project_role(db, cloud_project_id, user_id)
-        return (
-            db.query(CloudProjectLocalBinding)
+        project = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.Maintainer
+        ).project
+        updated = (
+            db.query(CloudProject)
             .filter(
-                CloudProjectLocalBinding.cloud_project_id == cloud_project_id,
-                CloudProjectLocalBinding.user_id == user_id,
+                CloudProject.id == project.id,
+                CloudProject.version == version,
+                CloudProject.status == "active",
             )
-            .order_by(
-                CloudProjectLocalBinding.is_default.desc(),
-                CloudProjectLocalBinding.updated_at.desc(),
+            .update(
+                {
+                    "status": "archived",
+                    "version": CloudProject.version + 1,
+                }
             )
-            .all()
         )
+        if updated != 1:
+            db.rollback()
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cloud project changed")
+        db.commit()
 
     def list_members(
         self, db: Session, cloud_project_id: int, user_id: int

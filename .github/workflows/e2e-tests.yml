@@ -1,8 +1,6 @@
 name: E2E Tests
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review, labeled]
@@ -41,7 +39,7 @@ jobs:
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
           else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" |
+            git diff --name-only "$BASE_SHA...$HEAD_SHA" |
               .github/scripts/classify-ci-changes.sh
           fi
 

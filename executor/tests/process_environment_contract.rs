@@ -72,3 +72,17 @@ fn process_env_normalizes_explicit_path_overrides() {
     assert!(path.contains("/opt/homebrew/bin"));
     assert!(path.contains("/usr/local/bin"));
 }
+
+#[test]
+fn process_env_removes_exported_bash_functions() {
+    let env = process_env(&[
+        ("BASH_FUNC_which%%".to_owned(), "() {".to_owned()),
+        ("APP_BASH_FUNC_SETTING".to_owned(), "preserved".to_owned()),
+    ]);
+
+    assert!(!env.contains_key("BASH_FUNC_which%%"));
+    assert_eq!(
+        env.get("APP_BASH_FUNC_SETTING"),
+        Some(&"preserved".to_owned())
+    );
+}

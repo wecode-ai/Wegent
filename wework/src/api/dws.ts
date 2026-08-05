@@ -13,7 +13,7 @@ type LocalRequest = <T>(method: string, params?: Record<string, unknown>) => Pro
 
 export interface DwsApi {
   authStatus(): Promise<DwsAuthStatus>
-  login(): Promise<DwsAuthStatus>
+  login(): Promise<void>
   logout(): Promise<void>
 }
 

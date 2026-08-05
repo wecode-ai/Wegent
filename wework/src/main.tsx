@@ -21,7 +21,6 @@ if (!isSystemDragPanel) {
   installDebugPanelLogCapture()
   installAppLogging()
   installFrontendRecoveryBridge()
-  installWeworkAutomationBridge()
   installDesktopExtensions()
   if (isTauriRuntime()) {
     installExternalDropGuard()
@@ -32,14 +31,21 @@ if (!isSystemDragPanel) {
 }
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    {performanceDiagnostics ? (
-      <Profiler id="wework-root" onRender={recordReactCommit}>
+function renderApp(): void {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      {performanceDiagnostics ? (
+        <Profiler id="wework-root" onRender={recordReactCommit}>
+          <App />
+        </Profiler>
+      ) : (
         <App />
-      </Profiler>
-    ) : (
-      <App />
-    )}
-  </StrictMode>
-)
+      )}
+    </StrictMode>
+  )
+}
+
+renderApp()
+if (!isSystemDragPanel) {
+  void installWeworkAutomationBridge()
+}

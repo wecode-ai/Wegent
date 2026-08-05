@@ -3,6 +3,7 @@ export type RuntimeMode = 'local-first' | 'backend'
 export interface RuntimeConfig {
   appBasePath: string
   apiBaseUrl: string
+  feedbackUrl: string
   socketBaseUrl: string
   socketPath: string
   wegentBackendUrl: string
@@ -190,6 +191,7 @@ export function getRuntimeConfig(): RuntimeConfig {
   return {
     appBasePath,
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
+    feedbackUrl: trimTrailingSlash(import.meta.env.VITE_WEWORK_FEEDBACK_URL?.trim() || ''),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
     wegentBackendUrl,

@@ -1,7 +1,12 @@
-import type { ComponentType, MouseEvent } from 'react'
+import type {
+  ComponentType,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent,
+  ReactNode,
+} from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MoreHorizontal } from 'lucide-react'
+import { ChevronDown, MoreHorizontal } from 'lucide-react'
 import { KeyboardShortcut } from './KeyboardShortcut'
 
 const MENU_GAP = 8
@@ -42,6 +47,8 @@ interface ActionMenuProps {
   testId: string
   items: ActionMenuItem[]
   icon?: ComponentType<{ className?: string }>
+  triggerLabel?: ReactNode
+  disabled?: boolean
   variant?: 'horizontal' | 'vertical'
   triggerClassName?: string
   placement?: 'side' | 'bottom-end'
@@ -59,6 +66,8 @@ export function ActionMenu({
   testId,
   items,
   icon: Icon = MoreHorizontal,
+  triggerLabel,
+  disabled = false,
   variant = 'horizontal',
   triggerClassName,
   placement = 'side',
@@ -67,25 +76,43 @@ export function ActionMenu({
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const pointerSelectionRef = useRef(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
 
-  const closeMenu = useCallback(() => {
-    setOpen(false)
-    setMenuPosition(null)
-    onContextMenuClose?.()
-  }, [onContextMenuClose])
+  const closeMenu = useCallback(
+    (restoreFocus = false) => {
+      setOpen(false)
+      setMenuPosition(null)
+      onContextMenuClose?.()
+      if (restoreFocus) {
+        window.requestAnimationFrame(() => triggerRef.current?.focus())
+      }
+    },
+    [onContextMenuClose]
+  )
   const menuOpen = open || Boolean(contextMenuPosition)
 
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
+    if (disabled) return
     if (!open) {
       setMenuPosition(null)
     }
     if (menuOpen) {
       closeMenu()
     } else {
+      setOpen(true)
+    }
+  }
+
+  const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (disabled) return
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    if (!menuOpen) {
+      setMenuPosition(null)
       setOpen(true)
     }
   }
@@ -156,6 +183,15 @@ export function ActionMenu({
   useEffect(() => {
     if (!menuOpen) return
 
+    const animationFrame = window.requestAnimationFrame(() => {
+      const items = menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"]:not(:disabled)'
+      )
+      if (!items?.length) return
+      const target = document.activeElement === triggerRef.current ? items[0] : null
+      target?.focus()
+    })
+
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
@@ -163,12 +199,32 @@ export function ActionMenu({
       }
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeMenu(true)
+        return
+      }
+      const menu = menuRef.current
+      if (!menu?.contains(document.activeElement)) return
+      const items = Array.from(
+        menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      )
+      if (items.length === 0) return
+      const currentIndex = items.findIndex(item => item === document.activeElement)
+      let nextIndex: number | null = null
+      if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % items.length
+      if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + items.length) % items.length
+      if (event.key === 'Home') nextIndex = 0
+      if (event.key === 'End') nextIndex = items.length - 1
+      if (nextIndex === null) return
+      event.preventDefault()
+      items[nextIndex]?.focus()
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
     return () => {
+      window.cancelAnimationFrame(animationFrame)
       document.removeEventListener('pointerdown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
@@ -181,9 +237,12 @@ export function ActionMenu({
       onClick={event => event.stopPropagation()}
     >
       <button
+        ref={triggerRef}
         type="button"
         data-testid={testId}
+        disabled={disabled}
         onClick={handleTriggerClick}
+        onKeyDown={handleTriggerKeyDown}
         className={
           triggerClassName ??
           'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
@@ -194,6 +253,8 @@ export function ActionMenu({
         aria-haspopup="menu"
       >
         <Icon className={variant === 'vertical' ? 'h-4 w-4 rotate-90' : 'h-4 w-4'} />
+        {triggerLabel}
+        {triggerLabel ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : null}
       </button>
       {menuOpen &&
         createPortal(
@@ -201,17 +262,20 @@ export function ActionMenu({
             ref={menuRef}
             data-testid={`${testId}-menu`}
             data-embedded-browser-occlusion
+            role="menu"
+            aria-label={ariaLabel}
             style={{
               left: menuPosition?.left ?? 0,
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-[70] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            className="fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
           >
             {items.map(item => (
               <button
                 key={item.testId}
                 type="button"
+                role="menuitem"
                 data-testid={item.testId}
                 disabled={item.disabled}
                 onPointerDown={event => {
@@ -229,8 +293,10 @@ export function ActionMenu({
                   void handleItemSelect(item)
                 }}
                 className={[
-                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
-                  item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
+                  'flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus',
+                  item.danger
+                    ? 'text-danger hover:bg-danger/10 focus-visible:bg-danger/10'
+                    : 'text-text-primary hover:bg-muted focus-visible:bg-muted',
                   item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
                 ].join(' ')}
               >

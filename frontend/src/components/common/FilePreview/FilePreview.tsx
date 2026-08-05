@@ -5,7 +5,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useSyncExternalStore } from 'react'
 import { Loader2, AlertCircle } from 'lucide-react'
 import {
   ImagePreview,
@@ -18,6 +18,11 @@ import {
 } from './preview-renderers'
 import { useFileBlob } from './hooks'
 import { getPreviewType } from './utils'
+import {
+  getKnowledgeDocumentProtectionExtension,
+  isKnowledgeDocumentProtectionRequired,
+  subscribeKnowledgeDocumentProtectionExtension,
+} from '@/features/knowledge/document/document-protection-registry'
 
 const FlyfishOfficePreview = dynamic(
   () =>
@@ -57,6 +62,8 @@ export interface FilePreviewProps {
   htmlIsSourceMode?: boolean
   /** Callback when HTML preview mode changes */
   onHtmlViewModeChange?: (isSourceMode: boolean) => void
+  /** Knowledge base ID when this preview requires an installed protection extension */
+  protectedKnowledgeBaseId?: number
 }
 
 /**
@@ -76,11 +83,17 @@ export function FilePreview({
   showToolbar = true,
   htmlIsSourceMode,
   onHtmlViewModeChange,
+  protectedKnowledgeBaseId,
 }: FilePreviewProps) {
   const [textContent, setTextContent] = useState<string>('')
   const previewType = getPreviewType(mimeType, filename)
 
   const { blob, blobUrl, isLoading, error } = useFileBlob(attachmentId, fileBlob, shareToken)
+  const protectionExtension = useSyncExternalStore(
+    subscribeKnowledgeDocumentProtectionExtension,
+    getKnowledgeDocumentProtectionExtension,
+    getKnowledgeDocumentProtectionExtension
+  )
 
   // Parse text and HTML content when blob is available
   useEffect(() => {
@@ -118,48 +131,78 @@ export function FilePreview({
     )
   }
 
+  if (protectedKnowledgeBaseId && blob && protectionExtension) {
+    return protectionExtension.renderProtectedPreview({
+      knowledgeBaseId: protectedKnowledgeBaseId,
+      file: blob,
+      filename,
+      mimeType,
+      children: renderPreview(),
+      onError,
+    })
+  }
+  if (protectedKnowledgeBaseId && blob && isKnowledgeDocumentProtectionRequired()) {
+    return (
+      <div
+        className="flex h-full min-h-[200px] items-center justify-center text-sm text-red-600"
+        data-testid="protected-document-extension-unavailable"
+      >
+        Protected document viewer is unavailable
+      </div>
+    )
+  }
+
+  return renderPreview()
+
   // Render based on preview type
-  switch (previewType) {
-    case 'image':
-      return blobUrl ? (
-        <ImagePreview
-          url={blobUrl}
-          filename={filename}
-          onDownload={onDownload}
-          onClose={onClose}
-          showToolbar={showToolbar}
-        />
-      ) : null
+  function renderPreview() {
+    switch (previewType) {
+      case 'image':
+        return blobUrl ? (
+          <ImagePreview
+            url={blobUrl}
+            filename={filename}
+            onDownload={onDownload}
+            onClose={onClose}
+            showToolbar={showToolbar}
+          />
+        ) : null
 
-    case 'pdf':
-      return blobUrl ? <PDFPreview url={blobUrl} filename={filename} /> : null
+      case 'pdf':
+        return blobUrl ? <PDFPreview url={blobUrl} filename={filename} /> : null
 
-    case 'text':
-      return <TextPreview content={textContent} filename={filename} />
+      case 'text':
+        return <TextPreview content={textContent} filename={filename} />
 
-    case 'html':
-      return (
-        <HtmlPreview
-          content={textContent}
-          filename={filename}
-          isSourceMode={htmlIsSourceMode}
-          onViewModeChange={onHtmlViewModeChange}
-        />
-      )
+      case 'html':
+        return (
+          <HtmlPreview
+            content={textContent}
+            filename={filename}
+            isSourceMode={htmlIsSourceMode}
+            onViewModeChange={onHtmlViewModeChange}
+          />
+        )
 
-    case 'video':
-      return blobUrl ? <VideoPreview url={blobUrl} /> : null
+      case 'video':
+        return blobUrl ? <VideoPreview url={blobUrl} /> : null
 
-    case 'audio':
-      return blobUrl ? <AudioPreview url={blobUrl} filename={filename} /> : null
+      case 'audio':
+        return blobUrl ? <AudioPreview url={blobUrl} filename={filename} /> : null
 
-    case 'office':
-      return blob ? (
-        <FlyfishOfficePreview blob={blob} filename={filename} onError={onError} />
-      ) : null
+      case 'office':
+        return blob ? (
+          <FlyfishOfficePreview
+            blob={blob}
+            filename={filename}
+            onError={onError}
+            protectedMode={Boolean(protectedKnowledgeBaseId)}
+          />
+        ) : null
 
-    case 'unknown':
-    default:
-      return <UnknownPreview filename={filename} fileSize={fileSize} />
+      case 'unknown':
+      default:
+        return <UnknownPreview filename={filename} fileSize={fileSize} />
+    }
   }
 }

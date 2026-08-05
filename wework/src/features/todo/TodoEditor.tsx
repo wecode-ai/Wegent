@@ -34,6 +34,7 @@ import type {
 } from '@/api/deliveries'
 import type { AITableApi } from '@/api/aitable'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RuntimeTaskAddress } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { TagEditor } from './TagEditor'
@@ -227,7 +228,7 @@ export interface TodoEditorEditProps {
   project?: CloudProject
   onUpdated: (item: CloudLoopItem) => void
   onAddChild: () => void
-  onStart: () => void
+  onStartConversation: () => void
 }
 
 export type TodoEditorProps = {
@@ -235,6 +236,7 @@ export type TodoEditorProps = {
   aitableApi?: AITableApi
   allItems: CloudLoopItem[]
   onClose: () => void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -242,12 +244,16 @@ export type TodoEditorProps = {
 // sections that require an item id (children, collaborators, executions,
 // deliveries) and saves through a versioned update.
 export function TodoEditor(props: TodoEditorProps) {
-  const { api, allItems, onClose } = props
+  const { api, allItems, onClose, onOpenRuntimeTask } = props
   const createProps = props.mode === 'create' ? props : null
   const editProps = props.mode === 'edit' ? props : null
   const isCreate = createProps !== null
   const item = editProps?.item ?? null
   const isAITableEdit = item !== null && editProps?.project?.task_provider === 'dingtalk_aitable'
+  const project = createProps?.project ?? editProps?.project
+  const statusOptions =
+    project?.board_config?.statuses ??
+    columns.map(column => ({ id: column.status, name: column.label, color: 'gray' as const }))
 
   const draftKey = createProps
     ? todoDraftKey(createProps.project.id, createProps.initialStatus)
@@ -395,7 +401,7 @@ export function TodoEditor(props: TodoEditorProps) {
     display_name: file.name,
     size_bytes: file.size,
   }))
-  const statusLabel = columns.find(column => column.status === status)?.label ?? ''
+  const statusLabel = statusOptions.find(option => option.id === status)?.name ?? '未设置'
   const parentItem = allItems.find(candidate => candidate.id === parentId)
   const assignee = projectMembers.find(member => String(member.user_id) === assigneeId)
   const creator =
@@ -714,7 +720,9 @@ export function TodoEditor(props: TodoEditorProps) {
             <span className={propChipClass}>
               <Circle className="h-3.5 w-3.5 text-text-muted" />
               <span className="text-text-muted">状态</span>
-              <span className={cn('h-2 w-2 rounded-full', columnDotClasses[status])} />
+              <span
+                className={cn('h-2 w-2 rounded-full', columnDotClasses[status] ?? 'bg-zinc-400')}
+              />
               {statusLabel}
               <ChevronDown className="h-3 w-3 text-text-muted" />
               <select
@@ -724,9 +732,10 @@ export function TodoEditor(props: TodoEditorProps) {
                 onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
                 className={overlayControlClass}
               >
-                {columns.map(column => (
-                  <option key={column.status} value={column.status}>
-                    {column.label}
+                {status === '' ? <option value="">未设置</option> : null}
+                {statusOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
                   </option>
                 ))}
               </select>
@@ -1017,9 +1026,19 @@ export function TodoEditor(props: TodoEditorProps) {
                 ) : (
                   <div className="mt-1">
                     {tasks.map(task => (
-                      <div
+                      <button
                         key={task.id}
-                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors hover:bg-muted/60"
+                        type="button"
+                        data-testid={`cloud-todo-execution-${task.id}`}
+                        onClick={() =>
+                          void onOpenRuntimeTask?.({
+                            deviceId: task.device_id,
+                            taskId: task.task_id,
+                          })
+                        }
+                        disabled={!onOpenRuntimeTask}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus disabled:cursor-default"
+                        aria-label={`打开本地执行 ${task.task_title || task.task_id}`}
                       >
                         <Link2 className="h-4 w-4 shrink-0 text-text-muted" />
                         <span
@@ -1029,7 +1048,7 @@ export function TodoEditor(props: TodoEditorProps) {
                           {task.task_title || task.task_id}
                         </span>
                         <span className="shrink-0 text-text-muted">{task.device_id}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -1089,10 +1108,10 @@ export function TodoEditor(props: TodoEditorProps) {
               <button
                 type="button"
                 data-testid="cloud-todo-start-task"
-                onClick={() => editProps?.onStart()}
+                onClick={() => editProps?.onStartConversation()}
                 className="h-8 rounded-lg border border-border bg-background px-3.5 text-sm font-medium text-text-primary transition hover:bg-muted"
               >
-                {item?.status === 'completed' ? '开启后续任务' : '开启本地任务'}
+                开始对话
               </button>
               {dirty && (
                 <button

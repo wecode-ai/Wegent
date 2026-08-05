@@ -26,6 +26,9 @@ const CLAUDE_SHELL_NAME = `${TEST_PREFIX}-claude-shell`
 const CLAUDE_EXECUTOR_IMAGE =
   process.env.E2E_CLAUDE_EXECUTOR_IMAGE || 'wegent/e2e-claudecode-executor:latest'
 const RESPONSE_TIMEOUT_MS = 120_000
+// Mock control requests can race with Node closing an idle keep-alive socket.
+// Playwright retries only ECONNRESET here and still surfaces HTTP failures.
+const MOCK_MODEL_CONTROL_REQUEST_OPTIONS = { maxRetries: 3 } as const
 
 type CreatedTeam = {
   name: string
@@ -677,6 +680,7 @@ test.describe('Agent conversation regression', () => {
   ): Promise<void> {
     streamRuleMatchTexts.add(matchText)
     const response = await request.post(`${MOCK_MODEL_SERVER_URL}/stream-rules`, {
+      ...MOCK_MODEL_CONTROL_REQUEST_OPTIONS,
       data: {
         matchText,
         responseContent,
@@ -693,7 +697,8 @@ test.describe('Agent conversation regression', () => {
       rules.map(matchText =>
         request
           .delete(
-            `${MOCK_MODEL_SERVER_URL}/stream-rules?matchText=${encodeURIComponent(matchText)}`
+            `${MOCK_MODEL_SERVER_URL}/stream-rules?matchText=${encodeURIComponent(matchText)}`,
+            MOCK_MODEL_CONTROL_REQUEST_OPTIONS
           )
           .catch(() => null)
       )
@@ -805,7 +810,10 @@ test.describe('Agent conversation regression', () => {
 
     return waitForCapturedRequest<CapturedModelRequest>(
       async () => {
-        const response = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
+        const response = await request.get(
+          `${MOCK_MODEL_SERVER_URL}/captured-requests`,
+          MOCK_MODEL_CONTROL_REQUEST_OPTIONS
+        )
         expect(response.status()).toBe(200)
         return (await response.json()) as CapturedModelRequest[]
       },
@@ -860,12 +868,14 @@ test.describe('Agent conversation regression', () => {
     url: string,
     label: string
   ): Promise<void> {
-    const response = await request.get(url)
+    const response = await request.get(url, MOCK_MODEL_CONTROL_REQUEST_OPTIONS)
     expect(response.status(), `${label} should be healthy`).toBe(200)
   }
 
   async function clearMockModelRequests(request: APIRequestContext): Promise<void> {
-    await request.post(`${MOCK_MODEL_SERVER_URL}/clear-requests`).catch(() => null)
+    await request
+      .post(`${MOCK_MODEL_SERVER_URL}/clear-requests`, MOCK_MODEL_CONTROL_REQUEST_OPTIONS)
+      .catch(() => null)
   }
 
   async function dismissOnboardingTour(page: Page): Promise<void> {

@@ -17,17 +17,20 @@ import { getToken, removeToken } from './user'
 export class ApiError extends Error {
   status: number
   errorCode?: string | number
+  detail?: unknown
 
-  constructor(message: string, status: number, errorCode?: string | number) {
+  constructor(message: string, status: number, errorCode?: string | number, detail?: unknown) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.errorCode = errorCode
+    this.detail = detail
   }
 }
 
 interface RequestOptions {
   redirectOnUnauthorized?: boolean
+  signal?: AbortSignal
 }
 
 // HTTP Client with interceptors
@@ -67,12 +70,14 @@ class APIClient {
   private createApiError(errorText: string, status: number): ApiError {
     let errorMsg = errorText
     let errorCode: string | number | undefined
+    let detail: unknown
     try {
       // Try to parse as JSON and extract detail field
       const json = JSON.parse(errorText)
       if (json && typeof json.detail === 'string') {
         errorMsg = json.detail
       } else if (json && typeof json.detail === 'object' && json.detail !== null) {
+        detail = json.detail
         // StructuredValidationException: detail may include error_code and a display message.
         if (typeof json.detail.message === 'string') {
           errorMsg = json.detail.message
@@ -92,11 +97,16 @@ class APIClient {
         (typeof json.detail.error_code === 'string' || typeof json.detail.error_code === 'number')
       ) {
         errorCode = json.detail.error_code
+      } else if (
+        json?.detail &&
+        (typeof json.detail.code === 'string' || typeof json.detail.code === 'number')
+      ) {
+        errorCode = json.detail.code
       }
     } catch {
       // Not JSON, use original text directly
     }
-    return new ApiError(errorMsg, status, errorCode)
+    return new ApiError(errorMsg, status, errorCode, detail)
   }
 
   private async request<T>(
@@ -106,11 +116,13 @@ class APIClient {
   ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
 
     const config: RequestInit = {
       ...options,
+      signal: requestOptions.signal,
       headers: {
-        'Content-Type': 'application/json',
+        ...(!isFormData && { 'Content-Type': 'application/json' }),
         ...(token && { Authorization: `Bearer ${token}` }),
         ...options.headers,
       },
@@ -182,6 +194,13 @@ class APIClient {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: data ? JSON.stringify(data) : undefined,
+    })
+  }
+
+  async postForm<T>(endpoint: string, data: FormData): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'POST',
+      body: data,
     })
   }
 

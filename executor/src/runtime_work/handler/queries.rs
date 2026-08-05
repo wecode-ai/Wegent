@@ -5,6 +5,20 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn read_codex_thread_with_turns(
+        &self,
+        thread_id: &str,
+    ) -> Result<Value, String> {
+        let response = self
+            .codex_app_server
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": true}),
+            )
+            .await?;
+        Ok(response.get("thread").unwrap_or(&response).clone())
+    }
+
     pub(super) async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
         log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
@@ -209,7 +223,7 @@ impl RuntimeWorkRpcHandler {
             ));
         }
 
-        let Some(thread_id) = session_id else {
+        let Some(mut thread_id) = session_id else {
             let workspace_path = workspace_path(&payload).unwrap_or_default();
             let runtime = string_field(&payload, "runtime").unwrap_or_else(|| "runtime".to_owned());
             log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -236,18 +250,30 @@ impl RuntimeWorkRpcHandler {
                 before_cursor,
                 after_cursor,
                 full_content: include_full_content,
+                turn_item_source: TranscriptTurnItemSource::CachedMessages,
             }));
         };
 
-        let response = self
-            .codex_app_server
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id.clone(), "includeTurns": true}),
-            )
+        if refresh && !local_execution_running {
+            if let Some(link) = local_link.as_ref().filter(|link| !link.ephemeral) {
+                thread_id = self
+                    .resume_codex_thread_for_action(link, &thread_id)
+                    .await
+                    .map_err(|error| AppIpcError::new("codex_error", error))?;
+                log_executor_event(
+                    "runtime work transcript resumed before refresh",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", thread_id.clone()),
+                    ],
+                );
+            }
+        }
+
+        let thread = self
+            .read_codex_thread_with_turns(&thread_id)
             .await
             .map_err(|error| AppIpcError::new("codex_error", error))?;
-        let thread = response.get("thread").unwrap_or(&response).clone();
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
@@ -299,6 +325,7 @@ impl RuntimeWorkRpcHandler {
                 after_cursor
             },
             full_content: include_full_content,
+            turn_item_source: TranscriptTurnItemSource::CodexItems,
         }))
     }
 }

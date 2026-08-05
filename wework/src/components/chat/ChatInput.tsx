@@ -135,6 +135,7 @@ export interface ChatInputProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -145,6 +146,9 @@ export interface ChatInputProps {
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
   onCancelGoalDraft?: () => void
   onEditGoal?: () => void
   onPauseGoal?: () => void
@@ -254,6 +258,7 @@ export function ChatInput({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
@@ -264,6 +269,9 @@ export function ChatInput({
   taskPlan,
   goalDraftActive = false,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
   onCancelGoalDraft,
   onEditGoal,
   onPauseGoal,
@@ -404,6 +412,7 @@ export function ChatInput({
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectCloudProject,
+    selectedCloudProjectId,
   }
   const errorBanner = error ? (
     <div
@@ -491,6 +500,9 @@ export function ChatInput({
           onSetPlanMode={handleSetPlanMode}
           onClearPlanMode={handleClearPlanMode}
           onSetGoal={onSetGoal}
+          onConfigureSupervisor={onConfigureSupervisor}
+          supervisorEnabled={supervisorEnabled}
+          supervisorPending={supervisorPending}
           onCompactContext={handleCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}

@@ -38,15 +38,25 @@ For browser failures, include `http://` or `https://`, confirm that local server
 
 Select the cloud status in the sidebar to authorize again. Verify the Backend address with your administrator and confirm that its sign-in page is reachable.
 
+When the network is working but the cloud status occasionally shows unavailable, inspect the Wework frontend log for these entries:
+
+- `[Wework] HTTP ... is still pending after 5000ms.` means that the request has not received a response after five seconds.
+- `[Wework] HTTP ... completed slowly ...` records the total duration, HTTP status, and transport.
+- `[Wework] HTTP ... failed.` means that no HTTP response was received; inspect the error under `phase: "transport"`.
+- `[Wework] HTTP ... returned ...` means that the server returned an HTTP error; inspect the status and error under `phase: "http_error"`.
+
+Every request has a `requestId`. In the desktop client, this value is sent to the Backend as `X-Request-ID`; `backendRequestId` is recorded only when a slow-response or HTTP-error diagnostic event includes the backend's returned request ID. Use these IDs to correlate frontend and Backend logs. The logs do not include Authorization headers, tokens, or request bodies.
+
 ## Getting help
 
-Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation), choose the information to include, and select **Preview export**. After reviewing, select **Confirm export**. Wework saves the bundle in the system Downloads directory.
+Select **Report a problem** in the upper-right corner of the affected task (or in the toolbar for a new conversation). Start with the required problem description. You can paste screenshots or files into the field, or select **Add attachment** to choose files manually. Select **Review problem** to inspect everything that will be submitted or exported.
 
-The bundle is organized into two groups:
+Optional information behaves as follows:
 
-- **Standard diagnostics** (on by default): Wework and local runtime logs, plus Wework version and system information. No conversation content and low privacy risk.
-- **Full task data** (off by default): Verbatim conversation history and a full window screenshot. May include business discussions, code, or anything visible on screen; review before including.
+- **Diagnostics** (on by default): Wework and local runtime logs, plus Wework version and system information. No conversation content and low privacy risk; turn it off when it is not needed.
+- **Task context** (off by default): Verbatim conversation history and a full window screenshot. May include business discussions, code, or anything visible on screen; review before including.
+- **User attachments**: Only files you pasted or selected yourself; they may contain private information.
 
 If a selected item is unavailable (for example, no task data in a new conversation), it is skipped automatically and noted in the preview.
 
-You can expand any entry to inspect its content before exporting. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.
+Expand any entry to inspect its content before continuing. When a feedback service is configured, select **Submit feedback** to send the problem. Otherwise select **Confirm export** to save the bundle in the system Downloads directory. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.

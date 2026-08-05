@@ -17,6 +17,7 @@ import {
   Download,
   Maximize2,
   Minimize2,
+  CircleAlert,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -47,6 +48,8 @@ import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
+import { getProcessingErrorMessage } from '../utils/processing-error'
 import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
@@ -477,6 +480,29 @@ export function DocumentDetailDialog({
             </DialogHeader>
           )}
 
+          {!isFullscreen && document.processing_error && (
+            <div
+              className="mx-6 mt-4 flex gap-2 rounded-md border border-error/30 bg-error/5 p-3 text-sm"
+              data-testid={`document-processing-error-detail-${document.id}`}
+            >
+              <CircleAlert className="mt-0.5 h-4 w-4 flex-none text-error" />
+              <div className="min-w-0">
+                <p className="font-medium text-error">
+                  {t(`document.document.processingError.stage.${document.processing_error.stage}`)}
+                </p>
+                <p className="mt-1 break-words text-text-secondary">
+                  {getProcessingErrorMessage(document.processing_error, t)}
+                </p>
+                {document.processing_error.model && (
+                  <p className="mt-1 text-xs text-text-muted">
+                    {t('document.document.processingError.model')}:{' '}
+                    {document.processing_error.model}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Content */}
           <div
             className={cn(
@@ -505,9 +531,10 @@ export function DocumentDetailDialog({
               <KnowledgeSourcePreview
                 key={`${document.id}:${document.attachment_id}`}
                 document={document}
-                active={open}
+                active={open && isSourceView}
                 onDownload={handleSourceDownload}
                 allowDownload={allowDownload}
+                protectedKnowledgeBaseId={isOrganization ? knowledgeBaseId : undefined}
                 className={cn(!isSourceView && 'hidden')}
               />
             )}
@@ -701,7 +728,7 @@ export function DocumentDetailDialog({
                                 )}
                               </Button>
                             )}
-                            {fullContent && (
+                            {fullContent && !isOrganization && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -742,20 +769,25 @@ export function DocumentDetailDialog({
                         />
                       </div>
                     ) : (
-                      <DocumentContentViewer
-                        content={fullContent}
-                        document={document}
+                      <DocumentProtectionBoundary
+                        enabled={isOrganization}
                         knowledgeBaseId={knowledgeBaseId}
-                        knowledgeBaseName={knowledgeBaseName}
-                        knowledgeBaseNamespace={knowledgeBaseNamespace}
-                        isOrganization={isOrganization}
-                        viewMode={viewMode}
-                        hasMoreContent={hasMoreContent}
-                        loadingMore={loadingMore}
-                        contentLength={detail?.content_length}
-                        onLoadMore={loadMore}
-                        onOpenChange={onOpenChange}
-                      />
+                      >
+                        <DocumentContentViewer
+                          content={fullContent}
+                          document={document}
+                          knowledgeBaseId={knowledgeBaseId}
+                          knowledgeBaseName={knowledgeBaseName}
+                          knowledgeBaseNamespace={knowledgeBaseNamespace}
+                          isOrganization={isOrganization}
+                          viewMode={viewMode}
+                          hasMoreContent={hasMoreContent}
+                          loadingMore={loadingMore}
+                          contentLength={detail?.content_length}
+                          onLoadMore={loadMore}
+                          onOpenChange={onOpenChange}
+                        />
+                      </DocumentProtectionBoundary>
                     )}
                   </div>
                 )}

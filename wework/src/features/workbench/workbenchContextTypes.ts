@@ -28,9 +28,11 @@ import type {
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
+  RuntimeSupervisorCreateInput,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
   RuntimeProjectTaskReorderRequest,
@@ -75,9 +77,10 @@ export type ArchiveRuntimeTaskResult = {
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
-  clientMessageId?: string
+  clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
@@ -96,13 +99,16 @@ export interface CreateTemporaryRuntimeTaskOptions {
 }
 
 export interface CreateProjectRuntimeTaskOptions {
-  project: ProjectWithTasks
+  project?: ProjectWithTasks | null
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   collaborationMode?: 'default' | 'plan'
   deliveryId?: string
   cloudProjectId?: string
+  additionalContext?: RuntimeAdditionalContext
   onError?: (error: string) => void
+  onRuntimeTaskOptimisticOpen?: SendCurrentInputOptions['onRuntimeTaskOptimisticOpen']
 }
 
 export interface RuntimePaneActionOptions {
@@ -246,6 +252,7 @@ export interface WorkbenchContextValue {
     projectKey: string
     name: string
     roots: string[]
+    defaultProjectSpace: RuntimeProjectSpaceRef | null
   }) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -368,4 +375,5 @@ export interface WorkbenchProviderProps {
   user: User
   services?: WorkbenchServices
   onStartupReadyChange?: (ready: boolean) => void
+  workspaceTabId?: string
 }

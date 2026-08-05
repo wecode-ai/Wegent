@@ -4,6 +4,7 @@ import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
@@ -11,6 +12,7 @@ import {
   notifyWorkbenchCloudSearchResults,
   notifyWorkbenchModelsChanged,
 } from '@/features/workbench/workbenchCloudDataEvents'
+import { requestCloudModelCatalogSync } from '@/features/model-settings/cloudModelCatalogSyncRequest'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import {
@@ -405,6 +407,10 @@ export function createHybridWorkbenchServices(
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
         cloudModelGateway,
         transportLabel: 'Cloud',
+        syncConfiguredModelCatalog: true,
+        requestModelCatalogSync: requestCloudModelCatalogSync,
+        resolveDeviceName: deviceId =>
+          rememberedCloudDevices.find(device => device.device_id === deviceId)?.name,
       }
     ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
     cloudRuntimeApis.set(logicalDeviceId, api)
@@ -416,21 +422,27 @@ export function createHybridWorkbenchServices(
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
 
-  const listLocalDevices = async () => {
-    const devices = await localServices.deviceApi.listDevices()
+  const listLocalDevices = async (signal?: AbortSignal) => {
+    const devices = signal
+      ? await localServices.deviceApi.listDevices({ signal })
+      : await localServices.deviceApi.listDevices()
     rememberLocalDevices(devices)
     return devices
   }
-  const listCloudDevices = async () => {
-    const devices = (await cloudServices.deviceApi.listDevices()).filter(
+  const listCloudDevices = async (signal?: AbortSignal) => {
+    const devices = (
+      signal
+        ? await cloudServices.deviceApi.listDevices({ signal })
+        : await cloudServices.deviceApi.listDevices()
+    ).filter(
       device =>
         (isCloudDevice(device) || isRemoteDevice(device)) && !isAppDeviceRegistration(device)
     )
     rememberCloudDevices(devices)
     return devices
   }
-  const listKnownDevices = async () =>
-    mergeDeviceLists(await listLocalDevices(), rememberedCloudDevices)
+  const listKnownDevices = async (signal?: AbortSignal) =>
+    mergeDeviceLists(await listLocalDevices(signal), rememberedCloudDevices)
   const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
     const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
     if (knownDevice) return knownDevice
@@ -438,27 +450,33 @@ export function createHybridWorkbenchServices(
     const cloudDevices = await listCloudDevices()
     return cloudDevices.find(device => device.device_id === deviceId) ?? null
   }
-  const listLocalRuntimeWork = async () => {
-    const work = await localServices.runtimeWorkApi!.listRuntimeWork()
+  const listLocalRuntimeWork = async (signal?: AbortSignal) => {
+    const work = signal
+      ? await localServices.runtimeWorkApi!.listRuntimeWork({ signal })
+      : await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
     return work
   }
-  const listCloudRuntimeWork = async () => {
-    const localDevices = await listLocalDevices()
+  const listCloudRuntimeWork = async (signal?: AbortSignal) => {
+    const localDevices = await listLocalDevices(signal)
     const localRuntimeIds = new Set([
       ...localRuntimeInstanceIds,
       ...localDevices.flatMap(device =>
         device.runtime_instance_id ? [device.runtime_instance_id] : []
       ),
     ])
-    const devices = await listCloudDevices()
+    const devices = await listCloudDevices(signal)
     const runtimeDevices = devices.filter(
       device =>
         isUsableDevice(device) &&
         !(device.runtime_instance_id && localRuntimeIds.has(device.runtime_instance_id))
     )
     const results = await Promise.allSettled(
-      runtimeDevices.map(device => cloudRuntimeApi(device.device_id).listRuntimeWork())
+      runtimeDevices.map(device =>
+        signal
+          ? cloudRuntimeApi(device.device_id).listRuntimeWork({ signal })
+          : cloudRuntimeApi(device.device_id).listRuntimeWork()
+      )
     )
     const failedResult = results.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected'
@@ -539,8 +557,8 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridDeviceApi: WorkbenchServices['deviceApi'] = {
-    async listDevices() {
-      const devices = await listKnownDevices()
+    async listDevices(requestOptions) {
+      const devices = await listKnownDevices(requestOptions?.signal)
       return devices as Awaited<ReturnType<WorkbenchServices['deviceApi']['listDevices']>>
     },
     getHomeDirectory(deviceId) {
@@ -600,8 +618,11 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
-    async listRuntimeWork() {
-      return listLocalRuntimeWork()
+    prepareRuntimeModel(data) {
+      return runtimeApi(data.deviceId).prepareRuntimeModel(data)
+    },
+    async listRuntimeWork(requestOptions) {
+      return listLocalRuntimeWork(requestOptions?.signal)
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
@@ -673,6 +694,18 @@ export function createHybridWorkbenchServices(
     },
     clearRuntimeGoal(data) {
       return routeByAddress(data.address).clearRuntimeGoal(data)
+    },
+    getRuntimeSupervisor(data) {
+      return routeByAddress(data.address).getRuntimeSupervisor(data)
+    },
+    setRuntimeSupervisor(data) {
+      return routeByAddress(data.address).setRuntimeSupervisor(data)
+    },
+    clearRuntimeSupervisor(data) {
+      return routeByAddress(data.address).clearRuntimeSupervisor(data)
+    },
+    resolveRuntimeSupervisor(data) {
+      return routeByAddress(data.address).resolveRuntimeSupervisor(data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest) {
       return runtimeApi(data.deviceId).openRuntimeWorkspace(data)
@@ -870,8 +903,27 @@ export function createHybridWorkbenchServices(
   })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
-      const cleanupLocal = localServices.chatStream.subscribe(handlers)
-      const cleanupCloudRuntime = cloudRuntimeChatStream.subscribe(handlers)
+      const scopedDeviceId = handlers.scope?.deviceId
+      const cleanupLocal =
+        !scopedDeviceId || isLocalDeviceId(scopedDeviceId)
+          ? localServices.chatStream.subscribe(
+              scopedDeviceId
+                ? handlers
+                : filterRuntimeChatStreamHandlers(handlers, isLocalDeviceId, true)
+            )
+          : () => undefined
+      const cleanupCloudRuntime =
+        !scopedDeviceId || !isLocalDeviceId(scopedDeviceId)
+          ? cloudRuntimeChatStream.subscribe(
+              scopedDeviceId
+                ? handlers
+                : filterRuntimeChatStreamHandlers(
+                    handlers,
+                    deviceId => !isLocalDeviceId(deviceId),
+                    false
+                  )
+            )
+          : () => undefined
       const cleanupCloudDeviceEvents = cloudServices.chatStream.subscribe({
         onDeviceOnline: handlers.onDeviceOnline,
         onDeviceOffline: handlers.onDeviceOffline,
@@ -920,8 +972,8 @@ export function createHybridWorkbenchServices(
     cloudBackgroundApi: {
       listTeams: cloudServices.teamApi.listTeams,
       getDefaultWorkbenchTeam: cloudServices.teamApi.getDefaultWorkbenchTeam,
-      listDevices: listCloudDevices,
-      listRuntimeWork: listCloudRuntimeWork,
+      listDevices: requestOptions => listCloudDevices(requestOptions?.signal),
+      listRuntimeWork: requestOptions => listCloudRuntimeWork(requestOptions?.signal),
     },
     executorClient: createExecutorClientFromApis({
       transportKind: 'backend-relay',
@@ -933,5 +985,37 @@ export function createHybridWorkbenchServices(
       resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
+  }
+}
+
+function filterRuntimeChatStreamHandlers(
+  handlers: ChatStreamHandlers,
+  acceptsDevice: (deviceId?: string | null) => boolean,
+  includeTransportReplacement: boolean
+): ChatStreamHandlers {
+  const route = <Payload extends { deviceId?: string }>(handler?: (payload: Payload) => void) =>
+    handler
+      ? (payload: Payload) => {
+          if (acceptsDevice(payload.deviceId)) handler(payload)
+        }
+      : undefined
+
+  return {
+    onChatStart: route(handlers.onChatStart),
+    onChatChunk: route(handlers.onChatChunk),
+    onChatDone: route(handlers.onChatDone),
+    onChatError: route(handlers.onChatError),
+    onBlockCreated: route(handlers.onBlockCreated),
+    onBlockUpdated: route(handlers.onBlockUpdated),
+    onSubagentActivity: route(handlers.onSubagentActivity),
+    onRuntimeGoalUpdated: route(handlers.onRuntimeGoalUpdated),
+    onRuntimeGoalCleared: route(handlers.onRuntimeGoalCleared),
+    onRuntimeSupervisorUpdated: route(handlers.onRuntimeSupervisorUpdated),
+    onRuntimeGoalContinuation: route(handlers.onRuntimeGoalContinuation),
+    onRuntimePlanUpdated: route(handlers.onRuntimePlanUpdated),
+    onGuidanceApplied: route(handlers.onGuidanceApplied),
+    onRuntimeTransportReplaced: includeTransportReplacement
+      ? handlers.onRuntimeTransportReplaced
+      : undefined,
   }
 }

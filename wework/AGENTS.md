@@ -48,13 +48,20 @@ Any Wework UI, Tauri command, local-runtime, IPC, or desktop integration behavio
 ```bash
 pnpm --filter wework ai:verify start
 pnpm --filter wework ai:verify snapshot --session <session-path>
+pnpm --filter wework ai:verify debug --session <session-path>
 pnpm --filter wework ai:verify click --session <session-path> --selector '[data-testid="..."]'
+pnpm --filter wework ai:verify click-at --session <session-path> --value '{"x":640,"y":360}'
+pnpm --filter wework ai:verify click-then-macrotask --session <session-path> --selector '[data-testid="..."]' --target '[data-testid="..."]'
 pnpm --filter wework ai:verify drag --session <session-path> --selector '[data-testid="..."]' --target '[data-testid="..."]'
 pnpm --filter wework ai:verify fill --session <session-path> --selector '[data-testid="..."]' --value '...'
 pnpm --filter wework ai:verify hover --session <session-path> --selector '[data-testid="..."]'
 pnpm --filter wework ai:verify pointer-move --session <session-path> --selector 'body'
+pnpm --filter wework ai:verify seed-local-project --session <session-path> --value '{"name":"AI Verify","path":"/absolute/workspace/path"}'
+pnpm --filter wework ai:verify reload --session <session-path>
+pnpm --filter wework ai:verify wait-for --session <session-path> --selector 'body' --text '<expected post-reload text>'
 pnpm --filter wework ai:verify wait-for --session <session-path> --selector '[data-testid="..."]' --text '...'
 pnpm --filter wework ai:verify capture --session <session-path> --output <png-path>
+pnpm --filter wework ai:verify request-close --session <session-path>
 pnpm --filter wework ai:verify close-to-tray --session <session-path>
 pnpm --filter wework ai:verify stop --session <session-path>
 ```
@@ -63,8 +70,11 @@ pnpm --filter wework ai:verify stop --session <session-path>
 - Use `start --codex-home-initialization true` to verify the first-run Codex migration flow with a session-local native Codex home and synthetic authentication; it does not read or modify personal Codex credentials.
 - Session files and credentials are secrets: never print their contents. Always stop the session; it removes the auth link and terminates the isolated process group.
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
+- Use `seed-local-project` only to establish an isolated local-project fixture when a native folder picker would block automation. `reload` waits for the new control client to reconnect; always follow it with `wait-for` so the expected post-reload UI state is asserted.
+- Prefer selector-based actions. Use `click-at` only for visible controls that cannot expose a stable selector, including controls inside open shadow roots, and retain a screenshot showing the target coordinates.
 - Execute the complete QA test plan in the isolated Tauri session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.
 - Use `capture` after the final assertion when a visual verification artifact is required. It renders the current WebView without macOS screen-recording permission.
+- Use `request-close` to exercise the native main-window close request and its close-to-tray preference or confirmation flow.
 - Use `close-to-tray` only for window-lifecycle verification. It destroys the controlled WebView while leaving the isolated Tauri process running so native reopen behavior can be tested.
 - On failure, inspect `app.log`, `executor.log`, and Tauri logs under `test-results/ai-verify/`; do not silently downgrade to mocked verification.
 

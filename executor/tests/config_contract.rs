@@ -151,6 +151,7 @@ fn non_docker_mode_is_treated_as_local_runtime_mode() {
 fn environment_overrides_connection_and_device_fields() {
     let _lock = lock_env();
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _socket = EnvGuard::set("WEGENT_SOCKET_URL", "wss://socket.example.com");
     let _token = EnvGuard::set("WEGENT_AUTH_TOKEN", "wg-test");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
     let _device_name = EnvGuard::set("DEVICE_NAME", "Device One");
@@ -159,13 +160,14 @@ fn environment_overrides_connection_and_device_fields() {
     let path = temp_path("env-overrides-config.json");
     fs::write(
         &path,
-        r#"{"connection":{"backend_url":"http://old","auth_token":"old"}}"#,
+        r#"{"connection":{"backend_url":"http://old","socket_url":"ws://old","auth_token":"old"}}"#,
     )
     .unwrap();
 
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
     assert_eq!(config.connection.backend_url, "http://localhost:8000");
+    assert_eq!(config.connection.socket_url, "wss://socket.example.com");
     assert_eq!(config.connection.auth_token, "wg-test");
     assert_eq!(config.device_id, "device-1");
     assert_eq!(config.device_name, "Device One");

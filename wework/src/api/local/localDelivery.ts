@@ -1,16 +1,17 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 
-import type {
-  CloudLoopItemAttachment,
-  CloudLoopItem,
-  CloudProject,
-  CloudProjectFile,
-  CloudProjectId,
-  CloudProjectMember,
-  Delivery,
-  DeliveryAsset,
-  DeliveryCreateInput,
-  DeliveryDetail,
+import {
+  createProjectTaskTrackingSingleFlight,
+  type CloudLoopItemAttachment,
+  type CloudLoopItem,
+  type CloudProject,
+  type CloudProjectFile,
+  type CloudProjectId,
+  type CloudProjectMember,
+  type Delivery,
+  type DeliveryAsset,
+  type DeliveryCreateInput,
+  type DeliveryDetail,
 } from '@/api/deliveries'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
@@ -103,6 +104,18 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       !Array.isArray(record.metadata.provider_config)
         ? (record.metadata.provider_config as CloudProject['provider_config'])
         : {},
+    board_config:
+      record.metadata.board_config &&
+      typeof record.metadata.board_config === 'object' &&
+      !Array.isArray(record.metadata.board_config)
+        ? (record.metadata.board_config as CloudProject['board_config'])
+        : undefined,
+    card_display:
+      record.metadata.card_display &&
+      typeof record.metadata.card_display === 'object' &&
+      !Array.isArray(record.metadata.card_display)
+        ? (record.metadata.card_display as CloudProject['card_display'])
+        : undefined,
     created_by_user_id: 0,
     current_user_id: 0,
     current_user_name: '',
@@ -226,11 +239,15 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     can_view_detail: !isPublicVisitor || ownsTask,
     can_edit: ['Owner', 'Maintainer', 'Developer'].includes(role) || ownsTask,
     assignee_user_id: null,
+    assignee_name:
+      typeof record.metadata.assignee_label === 'string'
+        ? record.metadata.assignee_label || null
+        : null,
     title: record.title ?? '',
     description: record.description,
     status: (record.status ?? 'inbox') as CloudLoopItem['status'],
     priority: (record.priority ?? 'none') as CloudLoopItem['priority'],
-    due_at: null,
+    due_at: typeof record.metadata.due_at === 'string' ? record.metadata.due_at || null : null,
     tags: stringList(record.metadata.tags),
     sort_order: record.sort_order,
     current_delivery_id: record.current_delivery_id,
@@ -240,6 +257,12 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
     completed_at: record.completed_at,
     source_status:
       typeof record.metadata.source_status === 'string' ? record.metadata.source_status : null,
+    source_record_id:
+      typeof record.metadata.record_id === 'string' ? record.metadata.record_id : null,
+    source_cells:
+      typeof record.metadata.source_cells === 'object' && record.metadata.source_cells !== null
+        ? (record.metadata.source_cells as Record<string, unknown>)
+        : {},
   }
 }
 
@@ -282,7 +305,7 @@ export function createLocalDeliveryApi(
   request: LocalRequest
 ): NonNullable<WorkbenchServices['deliveryApi']> {
   const taskProjects = new Map<string, CloudProjectId>()
-
+  const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
   function rememberTasks(projectId: CloudProjectId, records: LocalLoopItemRecord[]) {
     for (const record of records) taskProjects.set(record.id, projectId)
   }
@@ -352,6 +375,8 @@ export function createLocalDeliveryApi(
         name?: string
         description?: string
         tags?: string[]
+        board_config?: CloudProject['board_config']
+        card_display?: CloudProject['card_display']
         version: number
       }
     ) {
@@ -360,6 +385,12 @@ export function createLocalDeliveryApi(
         project: data,
       })
       return localProject(record)
+    },
+    async archiveCloudProject(projectId: CloudProjectId, version: number) {
+      await request('projects.archive', {
+        project_id: projectId,
+        version,
+      })
     },
     async listMyWork() {
       return { items: [] }
@@ -415,6 +446,14 @@ export function createLocalDeliveryApi(
       })
       taskProjects.set(record.id, projectId)
       return localTask(record)
+    },
+    async archiveLoopItem(itemId: string) {
+      const projectId = await resolveProjectId(itemId)
+      await request('todos.archive', {
+        project_id: projectId,
+        task_id: itemId,
+      })
+      taskProjects.delete(itemId)
     },
     async reorderLoopItems(
       projectId: CloudProjectId,
@@ -487,6 +526,59 @@ export function createLocalDeliveryApi(
         task: { ...task, ...(taskTitle ? { taskTitle } : {}) },
       })
     },
+    async trackProjectTask(
+      projectId: CloudProjectId,
+      task: RuntimeTaskAddress,
+      taskTitle: string,
+      description: string
+    ) {
+      return trackProjectTaskOnce(projectId, task, async () => {
+        try {
+          const existing = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+          if (existing.loop_item_id) {
+            return { item: await api.getLoopItem(existing.loop_item_id) }
+          }
+        } catch {
+          // Missing context is the expected first-run path.
+        }
+        const item = await api.createLoopItem(projectId, {
+          title: taskTitle,
+          description,
+          status: 'in_progress',
+        })
+        await api.bindTask(item.id, task, taskTitle)
+        return { item }
+      })
+    },
+    async updateTaskTrackingStatus(
+      task: RuntimeTaskAddress,
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    ) {
+      let binding: LocalTaskBindingRecord
+      try {
+        binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+          device_id: task.deviceId,
+          task_id: task.taskId,
+        })
+      } catch {
+        return null
+      }
+      if (!binding.loop_item_id) return null
+      const item = await api.getLoopItem(binding.loop_item_id)
+      const nextStatus =
+        executionStatus === 'running' &&
+        (item.status === 'inbox' || item.status === 'pending' || item.status === 'in_review')
+          ? 'in_progress'
+          : executionStatus === 'succeeded' && item.status === 'in_progress'
+            ? 'in_review'
+            : null
+      return nextStatus
+        ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
+        : item
+    },
     async unbindCloudContext(task: RuntimeTaskAddress) {
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,
@@ -524,13 +616,11 @@ export function createLocalDeliveryApi(
         loop_item: loopItem,
       }
     },
-    listLocalBindings: async () => [],
     listCloudProjectMembers: async (): Promise<CloudProjectMember[]> => [],
     addCloudProjectMember: async () => unsupported('Project members'),
     updateCloudProjectMember: async () => unsupported('Project members'),
     removeCloudProjectMember: async () => unsupported('Project members'),
     searchCloudProjectUsers: async () => ({ users: [], total: 0 }),
-    addLocalBinding: async () => unsupported('Local bindings'),
     async listCloudFiles(projectId: CloudProjectId) {
       const records = await request<LocalProjectFileRecord[]>('files.list', {
         project_id: projectId,

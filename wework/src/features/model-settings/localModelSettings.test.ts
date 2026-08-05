@@ -65,7 +65,7 @@ describe('localModelSettings', () => {
     ).toThrow('Model ID is required')
   })
 
-  test('saves optional API key without requiring one', () => {
+  test('saves optional API key with a durable browser fallback', () => {
     const withoutKey = saveLocalModelConfig({
       id: 'ollama',
       displayName: 'Ollama GPT',
@@ -97,6 +97,103 @@ describe('localModelSettings', () => {
     expect(withoutKey.apiKey).toBeUndefined()
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
+  })
+
+  test('persists a vision proxy reference and clears it when that model is deleted', () => {
+    const vision = saveLocalModelConfig({
+      id: 'vision',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry: {
+        input_modalities: ['text', 'image'],
+      },
+    })
+    const primary = saveLocalModelConfig({
+      id: 'deepseek',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      visionModelConfigId: vision.id,
+    })
+
+    expect(primary.visionModelConfigId).toBe('vision')
+    expect(deleteLocalModelConfig('vision')).toBe(true)
+    expect(listLocalModelConfigs()).toEqual([
+      expect.not.objectContaining({ visionModelConfigId: 'vision' }),
+    ])
+  })
+
+  test('rejects a missing, disabled, or self-referencing vision proxy', () => {
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'self',
+        modelId: 'self',
+        baseUrl: 'https://models.example/v1',
+        visionModelConfigId: 'self',
+      })
+    ).toThrow('must be different')
+
+    const disabled = saveLocalModelConfig({
+      id: 'disabled-vision',
+      modelId: 'vision',
+      baseUrl: 'https://vision.example/v1',
+      enabled: false,
+    })
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'primary',
+        modelId: 'primary',
+        baseUrl: 'https://models.example/v1',
+        visionModelConfigId: disabled.id,
+      })
+    ).toThrow('missing or disabled')
+  })
+
+  test('rejects disabling a vision proxy that is still referenced', () => {
+    saveLocalModelConfig({
+      id: 'vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+    })
+    saveLocalModelConfig({
+      id: 'primary',
+      modelId: 'primary-model',
+      baseUrl: 'https://models.example/v1',
+      visionModelConfigId: 'vision',
+    })
+
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'vision',
+        modelId: 'vision-model',
+        baseUrl: 'https://vision.example/v1',
+        enabled: false,
+      })
+    ).toThrow('still referenced')
+    expect(listLocalModelConfigs().find(config => config.id === 'vision')?.enabled).toBe(true)
+  })
+
+  test('preserves persisted API keys in local storage', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'legacy-secret',
+          displayName: 'Legacy secret',
+          modelId: 'legacy-model',
+          baseUrl: 'https://models.local/v1',
+          apiKey: 'legacy-api-key',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()[0].apiKey).toBe('legacy-api-key')
+    expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('legacy-api-key')
   })
 
   test('normalizes full responses endpoint to model base URL', () => {
@@ -241,6 +338,42 @@ describe('localModelSettings', () => {
         contextWindow: 262_144,
         codexCatalogModelId: 'wework-kimi-k3',
         catalogReady: true,
+      }),
+    ])
+  })
+
+  test('migrates managed DeepSeek Flash configs to the native Responses API', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-deepseek',
+          providerProfileId: 'deepseek',
+          displayName: 'DeepSeek V4 Flash',
+          modelId: 'deepseek-v4-flash',
+          baseUrl: 'https://api.deepseek.com',
+          apiFormat: 'openai-chat-completions',
+          toolProfile: 'function',
+          requestPath: '/chat/completions',
+          contextWindow: 1_000_000,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-deepseek',
+        apiFormat: 'openai-responses',
+        toolProfile: 'custom',
+        requestPath: '/responses',
+        contextWindow: 1_048_576,
+        codexCatalogModelId: 'wework-deepseek-v4-flash',
+        catalogReady: true,
+        webSearchMode: 'live',
       }),
     ])
   })

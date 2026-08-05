@@ -18,10 +18,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus, DocumentStatus, KnowledgeDocument
+from app.schemas.knowledge import DocumentProcessingError, DocumentProcessingStage
+from app.services.knowledge.processing_errors import generic_processing_error
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_sync
 
 
@@ -198,6 +201,7 @@ def prepare_document_index_enqueue(
         next_generation = (document.index_generation or 0) + 1
         document.index_generation = next_generation
         document.index_status = DocumentIndexStatus.QUEUED
+        document.clear_processing_error_payload()
         db.commit()
         _record_transition(
             "knowledge.index.enqueue.scheduled",
@@ -233,6 +237,7 @@ def prepare_document_index_enqueue(
     next_generation = (document.index_generation or 0) + 1
     document.index_generation = next_generation
     document.index_status = DocumentIndexStatus.QUEUED
+    document.clear_processing_error_payload()
 
     db.commit()
     _record_transition(
@@ -263,36 +268,20 @@ def mark_document_index_enqueue_failed(
     db: Session,
     document_id: int,
     generation: int,
+    *,
+    error: Optional[DocumentProcessingError] = None,
 ) -> bool:
     """Mark a queued generation as failed when broker dispatch fails."""
-    updated = (
-        db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == document_id,
-            KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(
-                [
-                    DocumentIndexStatus.QUEUED,
-                    DocumentIndexStatus.PENDING_CONVERSION,
-                ]
-            ),
-        )
-        .update(
-            {
-                KnowledgeDocument.index_status: DocumentIndexStatus.FAILED,
-                KnowledgeDocument.updated_at: _utcnow(),
-            },
-            synchronize_session=False,
-        )
-    )
-    db.commit()
-    _record_transition(
-        "knowledge.index.enqueue.failed",
+    return mark_document_index_failed(
+        db=db,
         document_id=document_id,
         generation=generation,
-        reason="enqueue_failed" if updated > 0 else "stale_or_missing_generation",
+        error=error
+        or generic_processing_error(
+            generation=generation,
+            stage=DocumentProcessingStage.DISPATCH,
+        ),
     )
-    return updated > 0
 
 
 @trace_sync(
@@ -471,31 +460,57 @@ def mark_document_index_failed(
     db: Session,
     document_id: int,
     generation: int,
+    *,
+    error: Optional[DocumentProcessingError] = None,
 ) -> bool:
     """Persist a failed indexing result for the active generation."""
-    updated = (
+    document = (
         db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == document_id,
-            KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(ACTIVE_INDEX_STATUSES),
-        )
-        .update(
-            {
-                KnowledgeDocument.index_status: DocumentIndexStatus.FAILED,
-                KnowledgeDocument.updated_at: _utcnow(),
-            },
-            synchronize_session=False,
-        )
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
     )
+    if document is None:
+        db.rollback()
+        return False
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        document.index_generation != generation
+        or current_status not in ACTIVE_INDEX_STATUSES
+    ):
+        db.rollback()
+        return False
+
+    candidate = error or generic_processing_error(
+        generation=generation,
+        stage=DocumentProcessingStage.SYSTEM,
+    )
+    try:
+        persisted_error = DocumentProcessingError.model_validate(
+            {
+                **candidate.model_dump(),
+                "generation": generation,
+                "occurred_at": datetime.now(timezone.utc),
+            }
+        )
+    except (AttributeError, TypeError, ValidationError):
+        persisted_error = generic_processing_error(
+            generation=generation,
+            stage=DocumentProcessingStage.SYSTEM,
+        )
+
+    document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
+    document.index_status = DocumentIndexStatus.FAILED
+    document.updated_at = _utcnow()
     db.commit()
     _record_transition(
         "knowledge.index.finalize.failed",
         document_id=document_id,
         generation=generation,
-        reason="finalized" if updated > 0 else "stale_or_already_finalized",
+        reason="finalized",
     )
-    return updated > 0
+    return True
 
 
 @trace_sync(

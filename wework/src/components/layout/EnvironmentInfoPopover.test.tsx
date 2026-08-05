@@ -110,6 +110,34 @@ describe('EnvironmentInfoPopover', () => {
     expect(onDeliver).toHaveBeenCalledOnce()
   })
 
+  test('shows active supervisor status in the task information popover', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+    const onConfigureSupervisor = vi.fn()
+
+    render(
+      <EnvironmentInfoPopover
+        info={{ additions: '', deletions: '', executionTarget: 'local' }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+        supervisor={{
+          mode: 'suggest',
+          status: 'active',
+          instructions: 'Keep the task focused',
+          suggestions: [],
+        }}
+        onConfigureSupervisor={onConfigureSupervisor}
+      />
+    )
+
+    expect(screen.getByTestId('environment-supervisor-section')).toHaveTextContent('监督')
+    expect(screen.getByTestId('task-supervisor-toggle-button')).toHaveTextContent('监督已开启')
+    await userEvent.click(screen.getByTestId('task-supervisor-toggle-button'))
+    expect(onConfigureSupervisor).toHaveBeenCalledOnce()
+  })
+
   test('shows every workspace root for a multi-folder project', () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)

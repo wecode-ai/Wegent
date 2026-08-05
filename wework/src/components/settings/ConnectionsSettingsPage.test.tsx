@@ -10,6 +10,8 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
+import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
@@ -326,12 +328,15 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
+    const personalCategory = screen.getByTestId('settings-category-personal')
     const integrationsCategory = screen.getByTestId('settings-category-integrations')
     const codingCategory = screen.getByTestId('settings-category-coding')
     const archivedCategory = screen.getByTestId('settings-category-archived')
     const pluginsNav = screen.getByTestId('settings-nav-plugins')
     const worktreesNav = screen.getByTestId('settings-nav-worktrees')
 
+    expect(personalCategory).toHaveClass('mt-2')
+    expect(integrationsCategory).toHaveClass('mt-5')
     expect(integrationsCategory).toHaveTextContent('集成')
     expect(codingCategory).toHaveTextContent('编码')
     expect(archivedCategory).toHaveTextContent('已归档')
@@ -354,7 +359,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
   })
 
-  test('adds titlebar clearance for the settings back button in Tauri', () => {
+  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -363,13 +368,11 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[52px]', 'mb-1')
+    expect(screen.getByTestId('settings-sidebar-topbar')).not.toHaveClass('h-[76px]', 'pt-6')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
-    expect(
-      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
-        'macos-titlebar-drag-region'
-      )
-    ).toHaveAttribute('data-tauri-drag-region')
+    expect(screen.queryByTestId('settings-main-titlebar-drag-region')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page').querySelector('main')).toHaveClass('pt-8')
   })
 
   test('opens the add device dialog from the cloud work route query', async () => {
@@ -557,6 +560,37 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getAllByTestId('local-model-context-window-input')).toHaveLength(1)
   })
 
+  test('offers image-capable local models as vision proxies', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision Model',
+      toolProfile: 'custom',
+    })
+    catalogEntry.input_modalities = ['text', 'image']
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision Model',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry,
+      enabled: true,
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.selectOptions(screen.getByTestId('local-model-provider-select'), 'deepseek')
+
+    const visionSelect = screen.getByTestId('local-model-vision-proxy-select')
+    expect(visionSelect).toHaveTextContent('Vision Model')
+    await userEvent.selectOptions(visionSelect, 'vision')
+    expect(visionSelect).toHaveValue('vision')
+  })
+
   test('persists custom catalog capabilities and silently restarts Codex when idle', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     vi.mocked(requestLocalExecutor).mockImplementation(async method =>
@@ -718,7 +752,14 @@ describe('ConnectionsSettingsPage', () => {
       new Response(
         JSON.stringify({
           id: 'resp_1',
-          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+          output: [
+            {
+              type: 'custom_tool_call',
+              name: 'apply_patch',
+              input:
+                '*** Begin Patch\n*** Add File: wework-capability-probe.txt\n+PING\n*** End Patch\n',
+            },
+          ],
         }),
         {
           status: 200,

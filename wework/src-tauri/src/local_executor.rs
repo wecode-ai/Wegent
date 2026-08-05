@@ -96,12 +96,14 @@ struct LocalExecutorInner {
     runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
+    codex_initialize_elapsed_ms: Option<u64>,
     generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalExecutorBackendConnection {
     backend_url: String,
+    socket_url: String,
     auth_token: String,
 }
 
@@ -376,6 +378,8 @@ pub struct LocalExecutorStatus {
     device_id: Option<String>,
     #[serde(rename = "runtimeInstanceId")]
     runtime_instance_id: Option<String>,
+    #[serde(rename = "codexInitializeElapsedMs")]
+    codex_initialize_elapsed_ms: Option<u64>,
     version: Option<String>,
     error: Option<String>,
 }
@@ -396,6 +400,7 @@ pub struct LocalExecutorLog {
     current_dir: String,
     executor_home: String,
     backend_url: Option<String>,
+    socket_url: Option<String>,
     has_backend_auth_token: bool,
     pending_request_count: usize,
     status: LocalExecutorStatus,
@@ -533,7 +538,7 @@ fn local_executor_isolation_enabled() -> Result<bool, String> {
             .unwrap_or(true))
 }
 
-fn local_executor_home_path() -> Result<PathBuf, String> {
+pub(crate) fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -748,6 +753,7 @@ fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
         ready: inner.ready,
         device_id: inner.device_id.clone(),
         runtime_instance_id: inner.runtime_instance_id.clone(),
+        codex_initialize_elapsed_ms: inner.codex_initialize_elapsed_ms,
         version: inner.version.clone(),
         error: inner.error.clone(),
     }
@@ -839,6 +845,10 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         (
             "WEGENT_BACKEND_URL".to_string(),
             connection.backend_url.clone(),
+        ),
+        (
+            "WEGENT_SOCKET_URL".to_string(),
+            connection.socket_url.clone(),
         ),
         (
             "WEGENT_AUTH_TOKEN".to_string(),
@@ -1622,6 +1632,22 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
+            let debug_text_delta = event.event == "response.output_text.delta"
+                && std::env::var_os("WEGENT_CODEX_STREAM_DEBUG").is_some();
+            if debug_text_delta {
+                let data = event.payload.get("data").unwrap_or(&Value::Null);
+                log::info!(
+                    "Forwarding runtime text delta to frontend: task_id={:?}, subtask_id={:?}, item_id={:?}, offset={:?}, delta_len={}",
+                    event.payload.get("taskId"),
+                    event.payload.get("subtaskId"),
+                    data.get("itemId").or_else(|| data.get("item_id")),
+                    data.get("offset"),
+                    data.get("delta")
+                        .and_then(Value::as_str)
+                        .map(str::len)
+                        .unwrap_or_default()
+                );
+            }
             app.state::<crate::system_sleep::SystemSleepState>()
                 .handle_runtime_event(
                     &event.event,
@@ -1693,6 +1719,9 @@ fn handle_executor_line_inner(
                 }
                 return Err(error.to_string());
             }
+            if debug_text_delta {
+                log::info!("Forwarded runtime text delta to frontend event bus");
+            }
             if terminal {
                 log::info!(
                     "Forwarded runtime terminal event to frontend event bus: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
@@ -1749,6 +1778,7 @@ fn register_spawned_child(
     inner.child = Some(child);
     inner.running = true;
     inner.ready = false;
+    inner.codex_initialize_elapsed_ms = None;
     inner.device_id = Some(
         inner
             .device_id
@@ -1827,6 +1857,8 @@ fn spawn_configured_sidecar(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.env_clear();
+    command.envs(process_environment::sanitized_current_environment());
     command.envs(envs.iter().map(|(key, value)| (key, value)));
     configure_managed_process_group(&mut command);
     let mut child = command.spawn().map_err(|error| {
@@ -1892,6 +1924,8 @@ fn spawn_bundled_sidecar(
         .map_err(|error| {
             format!("Failed to resolve local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
         })?
+        .env_clear()
+        .envs(process_environment::sanitized_current_environment())
         .envs(envs.iter().map(|(key, value)| (key, value)));
     let (mut rx, child) = sidecar.spawn().map_err(|error| {
         format!("Failed to start local executor sidecar {LOCAL_EXECUTOR_SIDECAR}: {error}")
@@ -2188,7 +2222,14 @@ pub async fn local_executor_read_log(
         .map(|path| path.display().to_string())
         .unwrap_or_else(|error| format!("unavailable: {error}"));
     let executor_home = path_or_error(local_executor_home_path());
-    let (status, backend_url, has_backend_auth_token, pending_request_count, transport_connected) = {
+    let (
+        status,
+        backend_url,
+        socket_url,
+        has_backend_auth_token,
+        pending_request_count,
+        transport_connected,
+    ) = {
         let inner = state
             .inner
             .lock()
@@ -2197,6 +2238,10 @@ pub async fn local_executor_read_log(
             .backend_connection
             .as_ref()
             .map(|connection| connection.backend_url.clone());
+        let socket_url = inner
+            .backend_connection
+            .as_ref()
+            .map(|connection| connection.socket_url.clone());
         let has_backend_auth_token = inner
             .backend_connection
             .as_ref()
@@ -2205,6 +2250,7 @@ pub async fn local_executor_read_log(
         (
             status_from_inner(&inner),
             backend_url,
+            socket_url,
             has_backend_auth_token,
             inner.pending.len(),
             inner.child.is_some() && inner.running && inner.ready,
@@ -2225,6 +2271,7 @@ pub async fn local_executor_read_log(
         current_dir,
         executor_home,
         backend_url,
+        socket_url,
         has_backend_auth_token,
         pending_request_count,
         status,
@@ -2329,8 +2376,39 @@ pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> 
 pub async fn local_executor_ensure_started(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
+    proxy_url: Option<String>,
 ) -> Result<LocalExecutorStatus, String> {
-    start_executor_if_needed(app, &state).await?;
+    start_executor_if_needed(app.clone(), &state).await?;
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.runtime_config.update".to_string(),
+            params: json!({"proxyUrl": proxy_url}),
+        },
+    )
+    .await?;
+    let startup = send_executor_request(
+        app,
+        &state,
+        LocalExecutorRequest {
+            method: "runtime.codex.ensure_started".to_string(),
+            params: json!({}),
+        },
+    )
+    .await?;
+    if startup
+        .get("started")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let elapsed_ms = startup.get("initializeElapsedMs").and_then(Value::as_u64);
+        state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?
+            .codex_initialize_elapsed_ms = elapsed_ms;
+    }
     status_from_state(&state)
 }
 
@@ -2339,13 +2417,15 @@ pub async fn local_executor_connect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
     backend_url: String,
+    socket_url: String,
     auth_token: String,
 ) -> Result<LocalExecutorStatus, String> {
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
+    let socket_url = normalize_command_arg(socket_url, "socket_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
     let _guard = state.backend_connection_lock.lock().await;
     log::info!(
-        "Local executor backend connection update requested: connected=true, backend_url={backend_url}"
+        "Local executor backend connection update requested: connected=true, backend_url={backend_url}, socket_url={socket_url}"
     );
     send_executor_request(
         app.clone(),
@@ -2354,6 +2434,7 @@ pub async fn local_executor_connect_backend(
             method: "executor.backend.configure".to_string(),
             params: json!({
                 "backend_url": backend_url.clone(),
+                "socket_url": socket_url.clone(),
                 "auth_token": auth_token.clone(),
             }),
         },
@@ -2368,6 +2449,7 @@ pub async fn local_executor_connect_backend(
             &mut inner,
             Some(LocalExecutorBackendConnection {
                 backend_url,
+                socket_url,
                 auth_token,
             }),
         )
@@ -3033,6 +3115,7 @@ command = "example"
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
                 backend_url: "https://cloud.example.com".to_string(),
+                socket_url: "wss://socket.example.com".to_string(),
                 auth_token: "wg-token".to_string(),
             }),
             device_id: Some("local-device-abc".to_string()),
@@ -3052,6 +3135,10 @@ command = "example"
         assert_eq!(
             envs.get("WEGENT_BACKEND_URL").map(String::as_str),
             Some("https://cloud.example.com")
+        );
+        assert_eq!(
+            envs.get("WEGENT_SOCKET_URL").map(String::as_str),
+            Some("wss://socket.example.com")
         );
         assert_eq!(
             envs.get("WEGENT_AUTH_TOKEN").map(String::as_str),
@@ -3117,6 +3204,7 @@ command = "example"
             Some("")
         );
         assert!(!envs.contains_key("WEGENT_BACKEND_URL"));
+        assert!(!envs.contains_key("WEGENT_SOCKET_URL"));
         assert!(!envs.contains_key("WEGENT_AUTH_TOKEN"));
     }
 
@@ -3124,6 +3212,7 @@ command = "example"
     fn replacing_backend_connection_is_idempotent() {
         let connection = LocalExecutorBackendConnection {
             backend_url: "https://cloud.example.com".to_string(),
+            socket_url: "wss://socket.example.com".to_string(),
             auth_token: "wg-token".to_string(),
         };
         let mut inner = LocalExecutorInner::default();

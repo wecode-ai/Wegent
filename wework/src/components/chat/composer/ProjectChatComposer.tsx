@@ -7,7 +7,9 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import { Eye } from 'lucide-react'
 import { useMemo, useState, type DragEventHandler, type ReactNode } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -62,10 +64,14 @@ interface ProjectChatComposerProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
@@ -118,10 +124,14 @@ export function ProjectChatComposer({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
   onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
@@ -136,6 +146,7 @@ export function ProjectChatComposer({
   showWorkspaceMenu,
   toolbarLeadingContext,
 }: ProjectChatComposerProps) {
+  const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   const workspaceMenuProjects = useMemo(
     () => mergePopoutWorkspaceProjects(projectWork.projects, projectWork.runtimeWork),
@@ -273,6 +284,19 @@ export function ProjectChatComposer({
             {disabledReason}
           </div>
         )}
+        {supervisorPending && onConfigureSupervisor ? (
+          <button
+            type="button"
+            data-testid="pending-supervisor-indicator"
+            disabled={disabled}
+            onClick={onConfigureSupervisor}
+            className="mb-1 flex h-7 w-fit items-center gap-1.5 rounded-lg bg-muted/70 px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:opacity-50"
+          >
+            <Eye className="h-3.5 w-3.5 text-text-muted" />
+            <span>{t('workbench.supervisor_pending')}</span>
+            <span className="text-text-muted">· {t('workbench.supervisor_pending_edit')}</span>
+          </button>
+        ) : null}
         <ComposerTextarea
           textareaRef={textareaRef}
           value={value}
@@ -325,6 +349,9 @@ export function ProjectChatComposer({
           onSetPlanMode={onSetPlanMode}
           onClearPlanMode={onClearPlanMode}
           onSetGoal={onSetGoal}
+          onConfigureSupervisor={onConfigureSupervisor}
+          supervisorEnabled={supervisorEnabled}
+          supervisorPending={supervisorPending}
           onCompactContext={onCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}
@@ -351,6 +378,9 @@ export function ProjectChatComposer({
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
           leadingContext={toolbarLeadingContext}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
       </form>
     </div>

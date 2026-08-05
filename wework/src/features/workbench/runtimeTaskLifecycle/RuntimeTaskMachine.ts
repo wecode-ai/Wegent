@@ -15,6 +15,8 @@ export class RuntimeTaskMachine {
       task: null,
       executionPhase: 'unknown',
       turnPhase: 'idle',
+      turnOutcome: null,
+      activeTurnId: null,
       goalStatus: null,
       continuable: false,
       unread,
@@ -33,7 +35,16 @@ export class RuntimeTaskMachine {
   }
 
   getSnapshot(): RuntimeTaskLifecycleSnapshot {
-    const { address, task, executionPhase, turnPhase, goalStatus, continuable, unread } = this.state
+    const {
+      address,
+      task,
+      executionPhase,
+      turnPhase,
+      turnOutcome,
+      goalStatus,
+      continuable,
+      unread,
+    } = this.state
     const executionKnown = executionPhase !== 'unknown'
     const isRunning =
       executionPhase === 'starting' || executionPhase === 'running' || executionPhase === 'stopping'
@@ -53,6 +64,7 @@ export class RuntimeTaskMachine {
       turn: {
         phase: turnPhase,
         active: isTurnActive,
+        outcome: turnOutcome,
       },
       goalStatus,
       continuable,

@@ -535,6 +535,10 @@ class TeamSpec(QuickPhraseMixin):
         "If not set (None), it will be inferred from the underlying shell types. "
         "Set to True to always require workspace, False to never require workspace.",
     )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
+    )
 
     @field_serializer("displayConfig")
     def serialize_display_config(
@@ -913,6 +917,10 @@ class SkillSpec(BaseModel):
         "Tracks where the skill was imported from (upload or git repository). "
         "Used to enable updating skills from their original Git source.",
     )
+    capability: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Capability Center publication metadata.",
+    )
 
     @field_validator("version", mode="before")
     @classmethod
@@ -1264,6 +1272,10 @@ class GitImportRequest(BaseModel):
     overwrite_names: Optional[List[str]] = Field(
         None,
         description="List of skill names that can be overwritten if they already exist",
+    )
+    marketplace_tags: Optional[List[str]] = Field(
+        None,
+        description="Marketplace tags required when importing public skills",
     )
 
 

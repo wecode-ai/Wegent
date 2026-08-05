@@ -1,4 +1,9 @@
 {
+  "documentProtection": {
+    "loadFailed": "保护组件加载失败",
+    "identityIncomplete": "无法获取姓名或工号，请重新登录后重试",
+    "pdfRenderFailed": "PDF 保护预览渲染失败"
+  },
   "cloud_device": {
     "title": "云设备",
     "description": "在云端运行的托管虚拟机，无需安装任何软件，创建后即可使用。",

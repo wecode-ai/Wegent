@@ -13,6 +13,10 @@ export async function loadWecodeKnowledgeExtensions() {
     return
   }
 
+  const { requireKnowledgeDocumentProtectionExtension } =
+    await import('@/features/knowledge/document/document-protection-registry')
+  requireKnowledgeDocumentProtectionExtension()
+
   try {
     await import('@wecode/features/knowledge/external/ap-source-opener')
   } catch (error) {
@@ -29,5 +33,11 @@ export async function loadWecodeKnowledgeExtensions() {
     await import('@wecode/features/knowledge/external/ap-knowledge-source-view')
   } catch (error) {
     console.warn('Failed to load AP knowledge source view', error)
+  }
+
+  try {
+    await import('@wecode/features/knowledge/document-protection')
+  } catch (error) {
+    console.warn('Failed to load knowledge document protection', error)
   }
 }

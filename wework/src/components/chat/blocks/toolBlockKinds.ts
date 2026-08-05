@@ -51,6 +51,15 @@ export function isCommandToolName(name: string): boolean {
   return matchesToolName(name, COMMAND_TOOLS)
 }
 
+export function isNodeReplToolName(name: string): boolean {
+  const normalized = normalizeToolName(name)
+  return (
+    normalized === 'node_repl.js' ||
+    normalized === 'node_repl__js' ||
+    normalized.endsWith('__node_repl__js')
+  )
+}
+
 export function isFileReadToolName(name: string): boolean {
   return matchesToolName(name, FILE_TOOLS)
 }

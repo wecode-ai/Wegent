@@ -34,13 +34,29 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 - `https://proxy.example.com/v1` with Anthropic Messages still resolves to `/v1/messages`, never `/v1/v1/messages`.
 - URLs already ending in `/responses`, `/chat/completions`, or `/v1/messages` do not receive a duplicate endpoint.
 
-When a task runs on a cloud or remote device, the model selector hides custom models configured only on the current desktop. Local custom models can only use the local executor; built-in Codex models and cloud Model CRDs can use either local or cloud execution.
+#### Kimi K3 Chat Completions Compatibility
+
+When a cloud Model CRD uses OpenAI Chat Completions and its provider model name contains the case-insensitive substring `kimi-k3`, such as `moonshot-kimi-k3`, Wework automatically selects the `wework-kimi-k3` Codex model catalog with a 1,048,576-token context window if the Model CRD does not configure `codex_catalog_model_id` or `codexCatalogModelId`. An explicitly configured catalog always takes precedence over automatic Kimi K3 selection. Codex continues to use the Responses protocol internally, while the executor translates requests to Chat Completions at the boundary and applies the following Kimi K3 compatibility behavior:
+
+- It sends Kimi's supported `thinking` field instead of the generic `reasoning_effort` field.
+- It preserves `reasoning_content` across multi-turn messages and tool calls.
+- It preserves namespace tool identity through a reversible mapping so same-named tools still route to the correct executor.
+
+An explicit Anthropic Messages configuration is never overridden. Operators must select OpenAI Chat Completions in the Model CRD through `protocol` or `apiFormat`. Leaving only `env.model=claude` without protocol metadata continues to route requests as Anthropic Messages to `/v1/messages`.
+
+When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
 ### Model Rate-Limit Retries
 
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
 
 If the upstream returns a standard `Retry-After` header, the proxy uses that delay instead, capped at 60 seconds for one wait. Non-429 responses do not activate this policy. After the retry budget is exhausted, the proxy returns the final 429 status and error body to Codex. A stream that has already started is never replayed by this mechanism, preventing duplicate generation or tool execution.
+
+### Anthropic Empty-Output Recovery
+
+Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
+
+This check activates only when no model output has been observed. Responses that already produced text, thinking content, or a tool call are not replayed, and valid connection-prewarm responses with zero `output_tokens` remain unaffected.
 
 ### Namespace Tool Compatibility
 

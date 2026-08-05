@@ -207,6 +207,33 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
+  test('shows pending supervision as task context above the editor', () => {
+    const onConfigureSupervisor = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        onConfigureSupervisor={onConfigureSupervisor}
+        supervisorEnabled
+        supervisorPending
+      />
+    )
+
+    const indicator = screen.getByTestId('pending-supervisor-indicator')
+    fireEvent.click(indicator)
+
+    expect(indicator).toHaveTextContent('workbench.supervisor_pending')
+    expect(indicator).toHaveTextContent('workbench.supervisor_pending_edit')
+    expect(indicator.compareDocumentPosition(screen.getByTestId('chat-message-input'))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.queryByTestId('pending-supervisor-pill')).not.toBeInTheDocument()
+    expect(onConfigureSupervisor).toHaveBeenCalledOnce()
+  })
+
   test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
     const props = {
       value: 'next draft',
@@ -1616,6 +1643,8 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('model-control-speed-standard')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('快速')
+    expect(screen.getByTestId('model-control-speed-fast')).not.toHaveTextContent('⚡')
     expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
 
     const speedMenuItem = screen.getByTestId('model-control-menu-speed')
@@ -1640,6 +1669,50 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
+  test('uses a Codex-style monochrome fast indicator instead of an emoji', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high', speed: 'fast' },
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(trigger).toHaveTextContent('GPT 5.6 Sol High')
+    expect(trigger).not.toHaveTextContent('⚡')
+    expect(trigger).not.toHaveTextContent('快速')
+    expect(screen.getByTestId('model-selector-fast-mode-icon')).toHaveClass('text-text-primary')
+    expect(trigger).toHaveAccessibleName(/快速/)
+
+    await userEvent.click(trigger)
+
+    expect(screen.getByTestId('model-control-menu-speed')).toHaveTextContent('快速')
+    expect(screen.getByTestId('model-control-menu-speed')).not.toHaveTextContent('⚡')
+  })
+
   test('shows an empty state when no desktop models are available', async () => {
     render(
       <ChatInput
@@ -1652,9 +1725,10 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
@@ -2430,77 +2504,6 @@ describe('ChatInput', () => {
       incompatibleModel,
       'Incompatible with the current model protocol'
     )
-  })
-
-  test('shows cross-provider model options as greyed and blocks selection', async () => {
-    const selectedModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      type: 'runtime',
-      displayName: 'GPT 5.6 Sol',
-      config: {
-        weworkModelKind: 'codex-official',
-        ui: {
-          family: 'codex-official',
-          modelLabel: 'GPT 5.6 Sol',
-        },
-      },
-    }
-    const thirdPartyModel: UnifiedModel = {
-      name: 'kimi-k2.5',
-      type: 'runtime',
-      displayName: 'Kimi K2.5',
-      compatibilityDisabled: true,
-      compatibilityDisabledReason: 'provider_boundary_mismatch',
-      config: {
-        weworkModelKind: 'codex-provider',
-        ui: {
-          family: 'codex-provider',
-          modelLabel: 'Kimi K2.5',
-        },
-      },
-    }
-    const setSelectedModel = vi.fn()
-    const onBlockedModelSelect = vi.fn()
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({
-          models: [selectedModel, thirdPartyModel],
-          selectedModel,
-          activeModel: selectedModel,
-          selectedModelOptions: {},
-          setSelectedModel,
-          onBlockedModelSelect,
-        })}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
-
-    const disabledOption = screen.getByTestId('model-option-kimi-k2.5')
-    expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
-    expect(disabledOption).toHaveClass('cursor-not-allowed', 'text-text-muted')
-    expect(disabledOption).toHaveAttribute(
-      'title',
-      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
-    )
-    expect(disabledOption).not.toHaveTextContent(
-      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
-    )
-
-    await userEvent.click(disabledOption)
-
-    expect(setSelectedModel).not.toHaveBeenCalled()
-    expect(onBlockedModelSelect).toHaveBeenCalledWith(
-      thirdPartyModel,
-      'Official Codex and third-party models cannot be switched within one conversation. Start a new conversation and @mention this conversation to continue with its context.'
-    )
-    expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
   })
 
   test('keeps the model menu open after selecting a reasoning option', async () => {

@@ -180,6 +180,7 @@ describe('local delivery API', () => {
       if (method === 'projects.update') {
         return { ...projectRecord, name: 'Renamed board', version: 2 }
       }
+      if (method === 'projects.archive') return {}
       if (method === 'todos.list') return [taskRecord]
       if (method === 'todos.create') return taskRecord
       throw new Error(`Unexpected method: ${method}`)
@@ -212,6 +213,12 @@ describe('local delivery API', () => {
       project_id: 'project-1',
       project: { name: 'Renamed board', version: 1 },
     })
+
+    await api.archiveCloudProject('project-1', 2)
+    expect(request).toHaveBeenCalledWith('projects.archive', {
+      project_id: 'project-1',
+      version: 2,
+    })
   })
 
   test('does not expose cached backend projects as local project spaces', async () => {
@@ -242,6 +249,7 @@ describe('local delivery API', () => {
       if (method === 'todos.list') return [taskRecord]
       if (method === 'todos.update') return updatedRecord
       if (method === 'todos.reorder') return [updatedRecord]
+      if (method === 'todos.archive') return {}
       throw new Error(`Unexpected method: ${method}`)
     })
     const api = createLocalDeliveryApi(request)
@@ -257,6 +265,7 @@ describe('local delivery API', () => {
         item_ids: ['LOCAL-1'],
       })
     ).resolves.toMatchObject({ items: [{ id: 'LOCAL-1' }] })
+    await api.archiveLoopItem('LOCAL-1')
 
     expect(request).toHaveBeenCalledWith('todos.update', {
       project_id: 'project-1',
@@ -270,6 +279,10 @@ describe('local delivery API', () => {
         status: 'inbox',
         item_ids: ['LOCAL-1'],
       },
+    })
+    expect(request).toHaveBeenCalledWith('todos.archive', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
     })
   })
 
@@ -308,6 +321,136 @@ describe('local delivery API', () => {
         taskId: 'runtime-1',
         taskTitle: 'Runtime',
       },
+    })
+  })
+
+  test('tracks concurrent calls for the same runtime task only once', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'todos.create') return trackedTask
+      if (method === 'todos.bind') return { id: 'binding-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const trackProjectTask = api.trackProjectTask
+
+    const first = trackProjectTask(
+      'project-1',
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task',
+      'Track only this explicitly selected task'
+    )
+    const second = trackProjectTask(
+      'project-1',
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task changed during rendering',
+      'Updated description'
+    )
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({ id: 'LOCAL-1', status: 'in_progress' }),
+      }),
+      expect.objectContaining({
+        item: expect.objectContaining({ id: 'LOCAL-1', status: 'in_progress' }),
+      }),
+    ])
+
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenCalledWith('runtime_tasks.context', {
+      device_id: 'local-device',
+      task_id: 'runtime-1',
+    })
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-1',
+      todo: {
+        title: 'Runtime task',
+        description: 'Track only this explicitly selected task',
+        status: 'in_progress',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('todos.bind', {
+      project_id: 'project-1',
+      item_id: 'LOCAL-1',
+      task: {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        taskTitle: 'Runtime task',
+      },
+    })
+  })
+
+  test('allows retrying project tracking after a failed request', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    let createAttempts = 0
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') throw new Error('Task context not found')
+      if (method === 'todos.create') {
+        createAttempts += 1
+        if (createAttempts === 1) throw new Error('Temporary create failure')
+        return trackedTask
+      }
+      if (method === 'todos.bind') return { id: 'binding-1' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.trackProjectTask(
+        'project-1',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Retry tracking'
+      )
+    ).rejects.toThrow('Temporary create failure')
+
+    await expect(
+      api.trackProjectTask(
+        'project-1',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Retry tracking'
+      )
+    ).resolves.toMatchObject({ item: { id: 'LOCAL-1' } })
+  })
+
+  test('updates tracking status when the API method is called without object context', async () => {
+    const trackedTask = { ...taskRecord, status: 'in_progress' }
+    const reviewedTask = { ...trackedTask, status: 'in_review', version: 2 }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.context') {
+        return {
+          id: 'binding-1',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-07-27T00:00:00Z',
+        }
+      }
+      if (method === 'projects.list') return [projectRecord]
+      if (method === 'todos.get') return trackedTask
+      if (method === 'todos.update') return reviewedTask
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+    const updateTaskTrackingStatus = api.updateTaskTrackingStatus
+
+    await expect(
+      updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
+    ).resolves.toMatchObject({ id: 'LOCAL-1', status: 'in_review' })
+
+    expect(request).toHaveBeenCalledWith('todos.update', {
+      project_id: 'project-1',
+      task_id: 'LOCAL-1',
+      todo: { version: 1, status: 'in_review' },
     })
   })
 

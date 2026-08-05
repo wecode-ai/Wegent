@@ -13,6 +13,7 @@ import type {
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeInterruptAndSendRequest,
+  RuntimeModelPrepareRequest,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -20,6 +21,11 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeSupervisorClearRequest,
+  RuntimeSupervisorGetRequest,
+  RuntimeSupervisorResolveRequest,
+  RuntimeSupervisorResponse,
+  RuntimeSupervisorSetRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeIMNotificationSettingsResponse,
@@ -68,13 +74,21 @@ import type {
   RuntimeWorktreeSettings,
   RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
-import type { HttpClient } from './http'
+import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
 
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
-    listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      return client.get('/runtime-work')
+    prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {
+      void data
+      return Promise.resolve(true)
+    },
+    listRuntimeWork(
+      requestOptions?: Pick<HttpRequestOptions, 'signal'>
+    ): Promise<RuntimeWorkListResponse> {
+      return requestOptions
+        ? client.get('/runtime-work', requestOptions)
+        : client.get('/runtime-work')
     },
     getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
       return client.get('/runtime-work/keybindings')
@@ -144,6 +158,22 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     clearRuntimeGoal(data: RuntimeGoalClearRequest): Promise<RuntimeGoalClearResponse> {
       return client.post('/runtime-work/goal/clear', data)
+    },
+    getRuntimeSupervisor(data: RuntimeSupervisorGetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/get', data)
+    },
+    setRuntimeSupervisor(data: RuntimeSupervisorSetRequest): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/set', data)
+    },
+    clearRuntimeSupervisor(
+      data: RuntimeSupervisorClearRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/clear', data)
+    },
+    resolveRuntimeSupervisor(
+      data: RuntimeSupervisorResolveRequest
+    ): Promise<RuntimeSupervisorResponse> {
+      return client.post('/runtime-work/supervisor/resolve', data)
     },
     openRuntimeWorkspace(data: RuntimeWorkspaceOpenRequest): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/open', data)

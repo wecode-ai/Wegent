@@ -46,6 +46,7 @@ function transcript(overrides: Partial<RuntimePaneTranscript> = {}): RuntimePane
   return {
     taskId: address.taskId,
     messages: [],
+    turns: [],
     ...overrides,
   }
 }
@@ -81,9 +82,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.turnStarted(address)
     expect(store.getTask(address)?.turn.phase).toBe('streaming')
 
-    store.turnSettled(address)
+    store.turnSettled(address, null, 'succeeded')
     expect(store.getTask(address)?.turn.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
     expect(store.getTask(address)?.derived.isRunning).toBe(false)
+  })
+
+  test('tracks terminal turn outcome without relying on persisted task status', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ status: 'active' })))
+
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
+
+    expect(store.getTask(address)?.task?.status).toBe('active')
+    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
+
+    store.turnStarted(address, 'turn-2')
+    expect(store.getTask(address)?.turn.outcome).toBeNull()
   })
 
   test('does not regress a stream that starts before the create acknowledgement', () => {
@@ -134,11 +150,10 @@ describe('RuntimeTaskLifecycleStore', () => {
     store.syncTranscript(
       address,
       transcript({
-        messages: [
+        turns: [
           {
-            id: 'historical-assistant',
-            role: 'assistant',
-            content: 'Earlier response',
+            id: 'historical-turn',
+            items: [],
             status: 'done',
           },
         ],
@@ -180,7 +195,7 @@ describe('RuntimeTaskLifecycleStore', () => {
       address,
       transcript({
         running: false,
-        messages: [{ id: 'assistant-1', role: 'assistant', content: '', status: 'streaming' }],
+        turns: [{ id: 'turn-1', items: [], status: 'streaming' }],
       }),
       { preserveActiveTurn: true }
     )
@@ -202,6 +217,24 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(snapshot?.execution.phase).toBe('idle')
     expect(snapshot?.turn.phase).toBe('idle')
     expect(snapshot?.derived.isThinking).toBe(false)
+  })
+
+  test('keeps an identified live turn when the task list still reports prior completion', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    store.turnStarted(address, 'correction-turn')
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'done' })))
+
+    const runningSnapshot = store.getTask(address)
+    expect(runningSnapshot?.execution.phase).toBe('running')
+    expect(runningSnapshot?.turn.phase).toBe('streaming')
+    expect(runningSnapshot?.derived.shouldShowSidebarRunning).toBe(true)
+
+    store.turnSettled(address, 'correction-turn')
+    expect(store.getTask(address)?.execution.phase).toBe('idle')
+    expect(store.getTask(address)?.turn.phase).toBe('idle')
   })
 
   test('keeps task execution running across an active Goal turn gap', () => {
@@ -280,6 +313,32 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     store.syncRuntimeWork(runtimeWork(task({ running: false })))
     expect(store.getTask(address)?.execution.running).toBe(false)
+  })
+
+  test('ignores a settled event from an older turn after a newer turn starts', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.turnStarted(address, 'turn-1')
+    store.turnStarted(address, 'turn-2')
+
+    store.turnSettled(address, 'turn-1')
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+  })
+
+  test('keeps a live stream when an idle executor snapshot lags behind it', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: false })))
+
+    store.turnStarted(address)
+    store.syncRuntimeWork(runtimeWork(task({ running: false, status: 'active' })))
+
+    const snapshot = store.getTask(address)
+    expect(snapshot?.execution.phase).toBe('running')
+    expect(snapshot?.turn.phase).toBe('streaming')
+    expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
   })
 
   test('marks only background non-Goal completion unread and clears it when opened', () => {

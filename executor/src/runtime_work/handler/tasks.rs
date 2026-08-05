@@ -13,6 +13,14 @@ impl RuntimeWorkRpcHandler {
         let source_thread_id = runtime_session_id_from_payload(&payload)
             .or_else(|| runtime_session_id_from_link(&source))
             .ok_or_else(|| AppIpcError::new("bad_request", "source task session is not ready"))?;
+        log_executor_event(
+            "runtime task fork starting",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("source_thread_id", source_thread_id.clone()),
+                ("requested_turn_id", requested_turn_id.clone()),
+            ],
+        );
         let Some(last_turn_id) = resolve_codex_turn_id(&source, &requested_turn_id) else {
             let mapping_keys = source
                 .runtime_handle
@@ -36,6 +44,15 @@ impl RuntimeWorkRpcHandler {
                 "code": "bad_request",
             }));
         };
+        log_executor_event(
+            "runtime task fork turn resolved",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("source_thread_id", source_thread_id.clone()),
+                ("requested_turn_id", requested_turn_id),
+                ("last_turn_id", last_turn_id.clone()),
+            ],
+        );
         let response = match self
             .call_codex_thread_method(
                 "thread/fork",
@@ -49,7 +66,18 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(response) => response,
-            Err(error) => return Ok(task_action_failure(&source, error)),
+            Err(error) => {
+                log_executor_event(
+                    "runtime task fork failed",
+                    &[
+                        ("local_task_id", source.local_task_id.clone()),
+                        ("source_thread_id", source_thread_id),
+                        ("last_turn_id", last_turn_id),
+                        ("error", error.clone()),
+                    ],
+                );
+                return Ok(task_action_failure(&source, error));
+            }
         };
         let thread = response.get("thread").unwrap_or(&response);
         let thread_id = string_field(thread, "id").ok_or_else(|| {
@@ -63,14 +91,17 @@ impl RuntimeWorkRpcHandler {
             title,
         );
         link.thread_id = Some(thread_id);
-        link.running = false;
-        link.status = "active".to_owned();
-        link.thread_status = "idle".to_owned();
-        link.turn_status = Some("completed".to_owned());
         link.parent = Some(
             json!({"taskId": source.local_task_id, "threadId": source_thread_id, "lastTurnId": last_turn_id}),
         );
         self.upsert_local_task(link);
+        log_executor_event(
+            "runtime task fork completed",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("target_task_id", local_task_id.clone()),
+            ],
+        );
         Ok(json!({
             "success": true,
             "accepted": true,
@@ -100,6 +131,7 @@ impl RuntimeWorkRpcHandler {
                     project_key,
                     project_name,
                     &request.runtime_workspace_roots,
+                    None,
                 )
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
             }
@@ -133,6 +165,12 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
+        }
+        if let Some(supervisor) = payload
+            .get("initialSupervisor")
+            .or_else(|| payload.get("initial_supervisor"))
+        {
+            link.supervisor = Some(super::supervisor::configured_supervisor(supervisor, None)?);
         }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
@@ -175,10 +213,12 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(local_task_id, |link| {
             let Some(runtime_handle) = link.runtime_handle.as_object_mut() else {
                 link.runtime_handle = json!({
+                    "lastTurnId": turn_id,
                     "turnIdsBySubtask": {subtask_id: turn_id},
                 });
                 return;
             };
+            runtime_handle.insert("lastTurnId".to_owned(), Value::String(turn_id.to_owned()));
             let mappings = runtime_handle
                 .entry("turnIdsBySubtask")
                 .or_insert_with(|| json!({}));
@@ -201,7 +241,7 @@ impl RuntimeWorkRpcHandler {
         }
         if existing_link
             .as_ref()
-            .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
+            .is_some_and(|link| self.is_active_local_task(&link.local_task_id))
         {
             return Ok(json!({
                 "success": false,
@@ -229,6 +269,9 @@ impl RuntimeWorkRpcHandler {
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        if let Some(link) = existing_link.as_ref() {
+            mark_runtime_model_switch(&mut request, link, &payload);
+        }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
         }
@@ -301,6 +344,7 @@ impl RuntimeWorkRpcHandler {
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
+        let initial_thread_goal = initial_thread_goal_from_payload(&payload);
 
         self.spawn_turn(SpawnTurnRequest {
             local_task_id: local_task_id.clone(),
@@ -310,7 +354,7 @@ impl RuntimeWorkRpcHandler {
             fork_thread_path: None,
             resume_thread_id,
             initial_thread_name: None,
-            initial_thread_goal: None,
+            initial_thread_goal,
         });
 
         Ok(json!({
@@ -344,7 +388,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let existing_link = self.task_link_from_payload(&payload, false).await?;
         let local_task_id = existing_link.local_task_id.clone();
-        if existing_link.running && self.is_active_local_task(&existing_link.local_task_id) {
+        if self.is_active_local_task(&existing_link.local_task_id) {
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -360,6 +404,7 @@ impl RuntimeWorkRpcHandler {
         let workspace_path =
             workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
         apply_runtime_payload_metadata(&mut request, &payload);
+        mark_runtime_model_switch(&mut request, &existing_link, &payload);
         restore_cloud_project_id(&mut request, &existing_link.runtime_handle);
         request.new_session = false;
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
@@ -436,7 +481,22 @@ impl RuntimeWorkRpcHandler {
                 "message or image attachment is required",
             ));
         }
-        let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+        log_executor_event(
+            "runtime guidance requested",
+            &[("local_task_id", local_task_id.clone())],
+        );
+        let Some(mut active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+            log_executor_event(
+                "runtime guidance rejected",
+                &[
+                    ("local_task_id", local_task_id.clone()),
+                    ("code", "no_active_turn".to_owned()),
+                    (
+                        "active_local_task",
+                        self.is_active_local_task(&local_task_id).to_string(),
+                    ),
+                ],
+            );
             return Ok(json!({
                 "success": false,
                 "accepted": false,
@@ -455,36 +515,91 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| payload.get("additional_context"))
             .filter(|value| value.is_object())
             .cloned();
-        match self
+        let steer_result = self
             .codex_app_server
             .steer_turn(
                 &active_turn.thread_id,
                 &active_turn.turn_id,
-                Value::Array(steer_input),
-                additional_context,
+                Some(guidance_id.clone()),
+                Value::Array(steer_input.clone()),
+                additional_context.clone(),
             )
-            .await
-        {
-            Ok(turn_id) => Ok(json!({
-                "success": true,
-                "accepted": true,
-                "guidance_id": guidance_id,
-                "guidanceId": guidance_id,
-                "taskId": local_task_id,
-                "turnId": turn_id,
-                "runtime": "codex",
-            })),
+            .await;
+        let steer_result = match steer_result {
             Err(error) => {
-                let code = codex_guidance_failure_code(&error);
+                let Some(actual_turn_id) = active_turn_id_from_steer_mismatch(&error) else {
+                    return Ok(runtime_guidance_failure(
+                        &local_task_id,
+                        &active_turn,
+                        error,
+                    ));
+                };
+                if actual_turn_id == active_turn.turn_id {
+                    return Ok(runtime_guidance_failure(
+                        &local_task_id,
+                        &active_turn,
+                        error,
+                    ));
+                }
+                log_executor_event(
+                    "runtime guidance active turn corrected",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", active_turn.thread_id.clone()),
+                        ("previous_turn_id", active_turn.turn_id.clone()),
+                        ("turn_id", actual_turn_id.clone()),
+                    ],
+                );
+                self.record_active_codex_turn(
+                    &local_task_id,
+                    active_turn.execution_id,
+                    active_turn.thread_id.clone(),
+                    actual_turn_id.clone(),
+                );
+                active_turn.turn_id = actual_turn_id.clone();
+                self.codex_app_server
+                    .steer_turn(
+                        &active_turn.thread_id,
+                        &actual_turn_id,
+                        Some(guidance_id.clone()),
+                        Value::Array(steer_input),
+                        additional_context,
+                    )
+                    .await
+            }
+            result => result,
+        };
+        match steer_result {
+            Ok(turn_id) => {
+                self.record_active_codex_turn(
+                    &local_task_id,
+                    active_turn.execution_id,
+                    active_turn.thread_id.clone(),
+                    turn_id.clone(),
+                );
+                log_executor_event(
+                    "runtime guidance accepted",
+                    &[
+                        ("local_task_id", local_task_id.clone()),
+                        ("thread_id", active_turn.thread_id.clone()),
+                        ("turn_id", turn_id.clone()),
+                    ],
+                );
                 Ok(json!({
-                    "success": false,
-                    "accepted": false,
-                    "error": error,
-                    "code": code,
+                    "success": true,
+                    "accepted": true,
+                    "guidance_id": guidance_id,
+                    "guidanceId": guidance_id,
                     "taskId": local_task_id,
+                    "turnId": turn_id,
                     "runtime": "codex",
                 }))
             }
+            Err(error) => Ok(runtime_guidance_failure(
+                &local_task_id,
+                &active_turn,
+                error,
+            )),
         }
     }
 
@@ -562,7 +677,8 @@ impl RuntimeWorkRpcHandler {
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
+            .and_then(|requests| requests.get(local_task_id).cloned())
+            .map(|request| request.sender);
         let Some(sender) = sender else {
             return Ok(json!({
                 "success": false,
@@ -596,10 +712,6 @@ impl RuntimeWorkRpcHandler {
         let link = self
             .store
             .update_task(&local_task_id, |link| {
-                link.status = "cancelled".to_owned();
-                link.running = false;
-                link.thread_status = "idle".to_owned();
-                link.turn_status = Some("interrupted".to_owned());
                 link.updated_at = now_ms();
                 link.completed_at = Some(link.updated_at);
             })
@@ -632,7 +744,8 @@ impl RuntimeWorkRpcHandler {
             .active_request_user_inputs
             .lock()
             .ok()
-            .and_then(|requests| requests.get(local_task_id).cloned());
+            .and_then(|requests| requests.get(local_task_id).cloned())
+            .map(|request| request.sender);
         if let Some(sender) = sender {
             let _ = sender.try_send(empty_request_user_input_response());
         }
@@ -657,10 +770,6 @@ impl RuntimeWorkRpcHandler {
                 );
             }
             link.workspace_path = workspace_path.to_owned();
-            link.status = "running".to_owned();
-            link.running = true;
-            link.thread_status = "active".to_owned();
-            link.turn_status = Some("inProgress".to_owned());
             link.ephemeral = link.ephemeral || request.ephemeral;
             if request.runtime_project_key.is_some() {
                 link.runtime_project_key = request.runtime_project_key.clone();
@@ -692,16 +801,75 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-pub(super) fn runtime_turn_id_from_link(
+pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &Value) -> bool {
+    let previous = model_selection_identity(
+        link.runtime_handle
+            .get("modelSelection")
+            .or_else(|| link.runtime_handle.get("model_selection")),
+    );
+    let next = model_selection_identity(
+        payload
+            .get("modelSelection")
+            .or_else(|| payload.get("model_selection")),
+    );
+    previous.is_some() && next.is_some() && previous != next
+}
+
+pub(super) fn mark_runtime_model_switch(
+    request: &mut ExecutionRequest,
     link: &RuntimeTaskLink,
-    subtask_id: &str,
-) -> Option<String> {
-    link.runtime_handle
-        .get("turnIdsBySubtask")
-        .and_then(Value::as_object)
-        .and_then(|mappings| mappings.get(subtask_id))
+    payload: &Value,
+) {
+    if runtime_model_selection_changed(link, payload) {
+        request
+            .extra
+            .insert("wework_model_switched".to_owned(), Value::Bool(true));
+    }
+}
+
+fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option<String>)> {
+    let selection = selection?.as_object()?;
+    let model_name = selection
+        .get("modelName")
+        .or_else(|| selection.get("model_name"))
+        .and_then(Value::as_str)?
+        .trim();
+    if model_name.is_empty() {
+        return None;
+    }
+    let model_type = selection
+        .get("modelType")
+        .or_else(|| selection.get("model_type"))
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Some((model_name.to_owned(), model_type))
+}
+
+fn runtime_guidance_failure(
+    local_task_id: &str,
+    active_turn: &ActiveCodexTurn,
+    error: String,
+) -> Value {
+    let code = codex_guidance_failure_code(&error);
+    log_executor_event(
+        "runtime guidance rejected",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("code", code.to_owned()),
+            ("thread_id", active_turn.thread_id.clone()),
+            ("turn_id", active_turn.turn_id.clone()),
+        ],
+    );
+    json!({
+        "success": false,
+        "accepted": false,
+        "error": error,
+        "code": code,
+        "taskId": local_task_id,
+        "runtime": "codex",
+    })
 }
 
 pub(super) fn resolve_codex_turn_id(

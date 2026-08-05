@@ -74,6 +74,27 @@ work list 刷新也可能立即触发一次已完成 transcript 重载。该 tra
 必须使用不同的消息 `id`，但都保留相同的规范 `turnId`。fork、回滚等 turn 级操作
 只能使用 Codex 持久化的规范 turn ID，不能使用为了界面分段生成的消息 ID。
 
+### Codex Turn 身份与恢复
+
+Codex app-server 的 `turn/start` 返回值是新 turn 身份的权威来源。executor 必须在
+请求成功后立即记录返回的 turn ID；后续 `turn/started` notification 只用于确认或
+纠正，不能作为进入活跃 turn 的必要条件。这样即使实时通知延迟或遗漏，引导和中断
+仍能定位当前 turn。
+
+用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
+`runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
+turn ID 不一致，executor 用返回的实际 ID 更新记录并只重试一次。成功回执中的
+turn ID 可以把乐观消息重新绑定到正确 turn；失败时必须移除乐观消息并保留可重试的
+队列项，不能让 transcript 中出现未被 Codex 接受的引导。
+
+“立即发送”在发起中断请求前先把当前运行 turn 乐观标记为已取消，并移除正在发送的
+乐观引导；中断接口必须把“已经没有活跃 turn”视为幂等成功，然后启动新 turn。请求
+失败时，前端恢复此前的 turn 状态和乐观引导，避免消息丢失。
+
+实时事件只负责增量更新。WebView 或 runtime transport 重建后，恢复路径必须对已持久化
+的 Codex thread 执行 `thread/resume`，再用 `thread/read(includeTurns)` 读取完整快照；
+快照重新建立 turn、消息和运行状态，不能依赖断线前的内存事件缓存继续推断。
+
 首条消息携带 pending Goal seed 时，发送入口和 pane 初始化都必须先把 seed 的状态
 写入 `RuntimeTaskLifecycleStore`。异步 `runtime.goal.get` 在 Goal 尚未持久化时可能返回
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
@@ -179,6 +200,14 @@ Composer 的 `@` 菜单支持显式引用其他 Wework 会话。空查询展示�
 
 该能力是用户授权后的发送前快照注入，不是会话 MCP。模型不能自行列出、搜索或读取未被用户引用的其他会话；菜单搜索也只使用已经加载到 `runtimeWork` 的元数据。修改该路径时，必须同时维护引用解析与上下文构造单元测试、composer/消息渲染测试，以及 `conversation-mention.scenario.mjs` 桌面 E2E 场景。
 
+## 会话切换与 Transcript 恢复
+
+`loadedRuntimeTranscriptKeyRef` 只表示某个任务的 transcript 曾成功加载，不能单独证明当前消息区仍在展示该任务。快速从任务 A 切到仍在加载的任务 B，再切回 A 时，B 的缓存消息可能已经替换消息区，而最后完成加载的 key 仍然是 A。
+
+因此，只有已加载 key 和当前展示的 transcript 身份同时匹配目标任务时，pane 才能跳过恢复。身份不一致时必须重新应用目标任务的缓存消息并启动 transcript 加载；迟到的其他任务响应仍需由 effect cleanup 隔离，不能覆盖当前任务。
+
+这条链路必须同时覆盖组件竞态测试和真实桌面场景：保持一个任务运行，在已完成任务与运行中任务之间快速切换，切回后确认已完成任务的所有历史轮次仍然可见。
+
 ## 长输出内存边界
 
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：
@@ -208,7 +237,7 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 不要把引导成功后的 user message append 到对话底部，也不要等 `runtime.tasks.guidance` 返回后才拆分 assistant；这会让引导请求等待期间产生的 assistant 文本出现在用户引导消息之前，造成流式显示和刷新后 transcript 顺序不一致。
 
-如果引导应用时源 pane 没有挂载，后台订阅者必须从 `queuedMessages` 移除对应条目，并把已确认的 user message 写入 `runtimeConversationCache.messages` 的内存 live projection。用户在 Codex transcript 尚未覆盖当前运行中 turn 时重新打开源对话，必须先看到这条已确认消息；Provider transcript 覆盖同一 turn 后再整体接管内容和顺序。该缓存不得持久化，也不得与 Provider 分页消息做并集合并，因此不会成为第二份持久 transcript 信源。
+如果引导应用时源 pane 没有挂载，后台订阅者必须从 `queuedMessages` 移除对应条目，并把已确认的 user message 写入 `runtimeConversationCache.messages` 的内存 live projection。后台路径必须复用前台的 `AppliedRuntimeGuidanceMessage` 构造和 assistant 拆分入口，禁止直接执行 `[...messages, guidance]`；否则重新打开仍在运行的会话时，user message 会落在整个 assistant 后面。拆分前缀边界必须按 conversation key 共享，使后台拆分后切回前台的 `chat:done` 仍能去掉已展示的 assistant 前缀。用户在 Codex transcript 尚未覆盖当前运行中 turn 时重新打开源对话，必须先看到这条已确认消息；Provider transcript 覆盖同一 turn 后再整体接管内容和顺序。该缓存不得持久化，也不得与 Provider 分页消息做并集合并，因此不会成为第二份持久 transcript 信源。
 
 引导消息插入后，即使用户此前已经向上滚动，消息区域也必须主动滚动到底部并保持一段短暂的稳定跟随，使新插入的 user message 和 assistant continuation 可见。该强制滚动只适用于当前会话中新应用的引导；加载包含旧引导的历史页面时，必须保留用户当前的视口锚点。
 
@@ -234,6 +263,12 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 工作台包含输入草稿、Terminal 会话和内置浏览器等无法可靠序列化的实时状态。用户从工作台切换到插件、应用或 iframe 应用时，`AppRoutes` 必须保持 `WorkbenchProvider` 和 `WorkbenchPage` 挂载，只隐藏工作台表面；返回后继续使用原组件实例。直接打开辅助页面时可以延迟首次挂载工作台，避免创建没有使用过的后台会话。
 
 不要通过路由切换卸载工作台，也不要为 Terminal 或浏览器增加不完整的状态恢复 fallback。新增顶层页面时，应将它纳入辅助页面渲染分支，并保持工作台生命周期不变。
+
+多个顶层文档标签会用 React `Activity` 保持各自的工作台实例。隐藏
+`Activity` 的更新可能延迟提交，但它创建到全局标题栏的 Portal 仍会保留在目标节点中。
+因此所有全局标题栏 Portal 都必须标记所属文档标签，并由 `AppRoutes` 的活动标签状态统一
+控制可见性；不能仅依赖隐藏工作台内部的条件渲染来撤销 Portal。切换标签时只能显示当前
+活动标签的主标题栏、面板操作区、右侧工作区标题和反馈入口。
 
 ## 工作台 pane 缓存
 

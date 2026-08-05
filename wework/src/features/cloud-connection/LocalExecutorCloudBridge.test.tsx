@@ -68,6 +68,7 @@ describe('LocalExecutorCloudBridge', () => {
       <LocalExecutorCloudBridge
         apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
         isConnected
         token="token-a"
       />
@@ -76,6 +77,7 @@ describe('LocalExecutorCloudBridge', () => {
     await waitFor(() => {
       expect(mocks.connect).toHaveBeenCalledWith({
         backendUrl: 'https://backend.example.com',
+        socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
       })
     })
@@ -84,6 +86,7 @@ describe('LocalExecutorCloudBridge', () => {
       <LocalExecutorCloudBridge
         apiBaseUrl="https://next.example.com/api"
         backendUrl="https://next.example.com"
+        socketBaseUrl="wss://next-socket.example.com"
         isConnected
         token="token-b"
       />
@@ -91,6 +94,7 @@ describe('LocalExecutorCloudBridge', () => {
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
     expect(mocks.connect).toHaveBeenLastCalledWith({
       backendUrl: 'https://next.example.com',
+      socketBaseUrl: 'wss://next-socket.example.com',
       authToken: 'token-b',
     })
   })
@@ -100,6 +104,7 @@ describe('LocalExecutorCloudBridge', () => {
       <LocalExecutorCloudBridge
         apiBaseUrl="https://cloud.example.test/api"
         backendUrl="https://cloud.example.test"
+        socketBaseUrl="wss://socket.example.test"
         isConnected
         token="cloud-token"
       />

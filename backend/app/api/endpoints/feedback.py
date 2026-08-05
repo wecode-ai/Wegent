@@ -5,21 +5,35 @@
 
 import json
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
+from app.core.rate_limit import get_limiter
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.feedback import FeedbackCreate, FeedbackResponse
 from app.services.feedback_service import feedback_service
 
 router = APIRouter()
+limiter = get_limiter()
 
 
 @router.post("", response_model=FeedbackResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(settings.WEWORK_FEEDBACK_RATE_LIMIT)
 def submit_feedback(
+    request: Request,
     report_id: str = Form(...),
     title: str = Form(...),
     description: str = Form(""),

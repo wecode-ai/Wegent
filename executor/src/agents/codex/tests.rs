@@ -7,6 +7,26 @@ use serde_json::json;
 use super::*;
 
 #[tokio::test]
+async fn active_thread_tracking_counts_each_thread_independently() {
+    let client = CodexAppServerClient::new("codex-active-thread-test");
+
+    client.mark_thread_active("thread-1").await;
+    client.mark_thread_active("thread-1").await;
+    client.mark_thread_active("thread-2").await;
+    client.mark_thread_idle("thread-1").await;
+
+    {
+        let state = client.state.lock().await;
+        assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+        assert_eq!(state.active_threads.get("thread-2"), Some(&1));
+    }
+
+    client.mark_thread_idle("thread-1").await;
+    client.mark_thread_idle("thread-2").await;
+    assert!(client.state.lock().await.active_threads.is_empty());
+}
+
+#[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
     let router = InteractionAnswerRouter::new(receiver);
@@ -29,11 +49,19 @@ async fn interaction_answer_router_matches_reverse_order_answers() {
         .expect("first answer should be sent");
 
     assert_eq!(
-        first.await.expect("first waiter should join").unwrap()["answers"]["choice"],
+        first
+            .await
+            .expect("first waiter should join")
+            .unwrap()
+            .unwrap()["answers"]["choice"],
         "first"
     );
     assert_eq!(
-        second.await.expect("second waiter should join").unwrap()["answers"]["choice"],
+        second
+            .await
+            .expect("second waiter should join")
+            .unwrap()
+            .unwrap()["answers"]["choice"],
         "second"
     );
 }
@@ -106,12 +134,12 @@ fn streaming_patch_overrides_enable_freeform_apply_patch() {
 }
 
 #[test]
-fn persistent_app_server_enables_deferred_mcp_tool_search() {
+fn persistent_app_server_uses_direct_mcp_tools() {
     let request_config = CodexLaunchConfig::default();
 
     let config = persistent_codex_app_server_launch_config(&request_config);
 
-    assert!(config
+    assert!(!config
         .config_overrides
         .contains(&"features.tool_search=true".to_owned()));
     assert!(!config
@@ -301,9 +329,125 @@ fn prepare_wework_codex_home_migrates_base_instruction_override() {
         .any(|line| line.starts_with("instructions =")));
     assert!(config.contains("developer_instructions"));
     assert!(config.contains("用中文回复"));
-    assert!(config.contains("browser_navigate"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
     assert!(config.contains("personality = \"pragmatic\""));
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_codex_instructions_take_precedence_over_developer_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-instruction-precedence");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        "instructions = \"legacy user instructions\"\n\
+         developer_instructions = \"current user instructions\"\n",
+    )
+    .expect("legacy config should be written");
+
+    assert_eq!(
+        read_wework_codex_user_instructions(&codex_home)
+            .expect("user instructions should be readable"),
+        "legacy user instructions"
+    );
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(!config
+        .lines()
+        .any(|line| line.starts_with("instructions =")));
+    assert!(config.contains("developer_instructions = \"legacy user instructions\""));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn codex_launch_config_error_cleans_generated_files() {
+    let root = unique_test_path("codex-launch-config-cleanup");
+    let generated_file = root.join("generated-image.png");
+    fs::create_dir_all(&root).expect("test directory should be created");
+    fs::write(&generated_file, "generated image").expect("generated file should be written");
+
+    let result = cleanup_generated_files_on_error::<()>(
+        std::slice::from_ref(&generated_file),
+        Err("invalid".to_owned()),
+    );
+
+    assert!(result.is_err());
+    assert!(!generated_file.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_removes_repeated_browser_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-browser-migration");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        r#"developer_instructions = """
+用中文回复
+
+Wework 内置浏览器 routing:
+- prior generated version
+
+Wework 内置浏览器 routing:
+- current generated version
+"""
+"#,
+    )
+    .expect("legacy config should be written");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(config.contains("用中文回复"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
+    assert_eq!(
+        read_wework_codex_user_instructions(&codex_home)
+            .expect("user instructions should be readable"),
+        "用中文回复"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn prepare_wework_codex_home_removes_browser_only_developer_instructions() {
+    let _lock = crate::test_env::lock();
+    let root = unique_test_path("wework-codex-config-browser-only-migration");
+    let codex_home = root.join("codex");
+    fs::create_dir_all(&codex_home).expect("Codex home should be created");
+    fs::write(
+        codex_home.join("config.toml"),
+        format!(
+            "developer_instructions = {instructions:?}\n",
+            instructions = WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS
+        ),
+    )
+    .expect("legacy config should be written");
+
+    prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+    let config = fs::read_to_string(codex_home.join("config.toml"))
+        .expect("normalized config should be readable");
+    assert!(!config.contains("developer_instructions"));
+    assert!(!config.contains("Wework 内置浏览器 routing:"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn strip_wework_browser_instructions_removes_all_generated_versions() {
+    let instructions = "用中文回复\n\nWework 内置浏览器 routing:\n- prior generated version\
+        \n\nWework 内置浏览器 routing:\n- current generated version";
+
+    assert_eq!(
+        strip_wework_browser_instructions(instructions),
+        "用中文回复"
+    );
 }
 
 #[test]
@@ -316,7 +460,8 @@ fn codex_launch_config_enables_streaming_patch_updates() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert!(launch_config
         .config_overrides
@@ -373,6 +518,81 @@ fn function_tool_profile_enables_responses_tool_conversion() {
     );
 
     assert!(upstream.convert_custom_tools);
+}
+
+#[test]
+fn parses_vision_sidecar_from_model_config() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "proxy": {"url": "http://127.0.0.1:7890"},
+        "vision_sidecar": {
+            "enabled": true,
+            "request_url": "https://vision.example/v1/chat/completions",
+            "api_format": "openai-chat-completions",
+            "api_key": "vision-key",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 4,
+            "timeout_ms": 12_000
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(
+        sidecar.request_url,
+        "https://vision.example/v1/chat/completions"
+    );
+    assert_eq!(sidecar.api_format, "openai-chat-completions");
+    assert_eq!(sidecar.api_key, "vision-key");
+    assert_eq!(sidecar.model_id, "vision-model");
+    assert_eq!(sidecar.max_descriptions_per_turn, 4);
+    assert_eq!(sidecar.timeout, Duration::from_secs(12));
+    assert_eq!(sidecar.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+}
+
+#[test]
+fn vision_sidecar_allows_zero_descriptions_to_disable_calls_fail_closed() {
+    let sidecar = vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model",
+            "max_descriptions_per_turn": 0
+        }
+    }))
+    .expect("valid vision sidecar")
+    .expect("configured vision sidecar");
+
+    assert_eq!(sidecar.max_descriptions_per_turn, 0);
+}
+
+#[test]
+fn vision_sidecar_rejects_invalid_configuration_and_honors_disable() {
+    assert!(vision_sidecar_upstream(&json!({
+        "visionSidecar": {
+            "requestUrl": "https://vision.example/v1/responses",
+            "modelId": "vision-model",
+            "apiFormat": "openai-embeddings"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {"model_id": "vision-model"}
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "request_url": "https://vision.example/v1/responses"
+        }
+    }))
+    .is_err());
+    assert!(vision_sidecar_upstream(&json!({
+        "vision_sidecar": {
+            "enabled": false,
+            "request_url": "https://vision.example/v1/responses",
+            "model_id": "vision-model"
+        }
+    }))
+    .expect("disabled sidecar")
+    .is_none());
 }
 
 #[test]
@@ -462,6 +682,7 @@ fn custom_shell_profile_without_catalog_entry_uses_upstream_id() {
 
 #[test]
 fn internal_catalog_provider_is_never_used_for_thread_inference() {
+    let _lock = crate::test_env::lock();
     let request = ExecutionRequest {
         model_config: json!({
             "model_id": "gpt-5.4",
@@ -469,7 +690,8 @@ fn internal_catalog_provider_is_never_used_for_thread_inference() {
         }),
         ..ExecutionRequest::default()
     };
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
     for params in [
@@ -527,7 +749,8 @@ fn user_configured_provider_routes_inference_through_the_local_router() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.model_provider.as_deref(),
@@ -632,7 +855,8 @@ fn codex_launch_config_forwards_web_search_mode() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -654,7 +878,8 @@ fn codex_launch_config_defaults_context_window_to_256k() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -678,7 +903,8 @@ fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.model_provider.as_deref(),
@@ -720,8 +946,10 @@ fn codex_launch_config_keeps_one_proxy_address_when_a_task_changes_models() {
         ..ExecutionRequest::default()
     };
 
-    let luna_config = build_codex_launch_config(&luna_request);
-    let sol_config = build_codex_launch_config(&sol_request);
+    let luna_config =
+        build_codex_launch_config(&luna_request).expect("Luna launch config should be built");
+    let sol_config =
+        build_codex_launch_config(&sol_request).expect("Sol launch config should be built");
     let proxy_url = |config: &CodexLaunchConfig| {
         config
             .config_overrides
@@ -758,7 +986,8 @@ fn codex_launch_config_forwards_runtime_proxy_env() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
 
     assert_eq!(
         launch_config.env.get("HTTP_PROXY").map(String::as_str),
@@ -801,7 +1030,8 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -936,6 +1166,108 @@ fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
 }
 
 #[test]
+fn codex_run_state_removes_streamed_final_text_reclassified_as_commentary() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "final_answer",
+                    "text": ""
+                }
+            }
+        }),
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "itemId": "msg-progress",
+                "delta": "I will inspect."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "msg-progress",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: String::new()
+        }
+    );
+}
+
+#[test]
+fn codex_run_state_does_not_reclassify_messages_without_item_ids() {
+    let mut state = CodexRunState::default();
+
+    for message in [
+        json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "phase": "final_answer",
+                "delta": "Final answer."
+            }
+        }),
+        json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "I will inspect."
+                }
+            }
+        }),
+    ] {
+        assert!(state.handle_message(&message).is_none());
+    }
+
+    let outcome = state
+        .handle_message(&json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": "completed"
+                }
+            }
+        }))
+        .expect("turn completion should produce an outcome");
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "Final answer.".to_owned()
+        }
+    );
+}
+
+#[test]
 fn goal_created_during_turn_keeps_notification_reader_alive() {
     let mut state = CodexRunState::default();
 
@@ -959,6 +1291,74 @@ fn goal_created_during_turn_keeps_notification_reader_alive() {
         .expect("turn completion should produce an outcome");
 
     assert!(should_wait_for_goal_continuation(&outcome, &state));
+}
+
+#[test]
+fn turn_started_sets_or_replaces_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "turn/started",
+        "params": {
+            "threadId": "thread-1",
+            "turn": { "id": "turn-2", "status": "inProgress" }
+        }
+    });
+
+    assert_eq!(
+        started_active_turn_id(None, &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        started_active_turn_id(Some("turn-1"), &notification, &state),
+        Some("turn-2".to_owned())
+    );
+    assert_eq!(
+        started_active_turn_id(Some("turn-2"), &notification, &state),
+        None
+    );
+}
+
+#[test]
+fn turn_start_response_resolves_the_active_turn_without_a_started_notification() {
+    assert_eq!(
+        turn_start_response_id(&json!({
+            "turn": {
+                "id": "turn-1",
+                "status": "inProgress"
+            }
+        }))
+        .as_deref(),
+        Some("turn-1")
+    );
+    assert_eq!(
+        turn_start_response_id(&json!({
+            "turnId": "turn-2"
+        }))
+        .as_deref(),
+        Some("turn-2")
+    );
+}
+
+#[test]
+fn item_notification_cannot_replace_the_active_turn() {
+    let state = CodexRunState::default();
+    let notification = json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-2",
+            "item": {
+                "id": "message-1",
+                "type": "agentMessage",
+                "text": "done"
+            }
+        }
+    });
+
+    assert_eq!(
+        started_active_turn_id(Some("turn-1"), &notification, &state),
+        None
+    );
 }
 
 #[test]
@@ -1317,6 +1717,64 @@ fn turn_start_params_includes_client_user_message_id() {
 }
 
 #[test]
+fn turn_start_params_includes_output_schema() {
+    let mut request = ExecutionRequest::default();
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "accepted": {"type": "boolean"}
+        },
+        "required": ["accepted"],
+        "additionalProperties": false
+    });
+    request
+        .extra
+        .insert("output_schema".to_owned(), schema.clone());
+
+    let params = turn_start_params(
+        "thread-1",
+        &request,
+        &CodexLaunchConfig::default(),
+        Vec::new(),
+    );
+
+    assert_eq!(params["outputSchema"], schema);
+}
+
+#[test]
+fn thread_start_uses_codex_default_history_mode() {
+    let params = thread_start_params(&ExecutionRequest::default(), &CodexLaunchConfig::default());
+
+    assert!(params.get("historyMode").is_none());
+}
+
+#[test]
+fn thread_launch_params_include_execution_system_prompt_as_developer_instructions() {
+    let request = ExecutionRequest {
+        system_prompt: "Judge the supplied content without answering it.".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config = CodexLaunchConfig {
+        user_developer_instructions: "用中文回复".to_owned(),
+        ..CodexLaunchConfig::default()
+    };
+
+    let thread_start = thread_start_params(&request, &launch_config);
+    let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+    let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+
+    for params in [thread_start, thread_fork, thread_resume] {
+        let instructions = params["developerInstructions"]
+            .as_str()
+            .expect("developer instructions should be a string");
+        assert!(instructions
+            .starts_with("用中文回复\n\nJudge the supplied content without answering it."));
+        assert!(instructions.contains("Wework 内置浏览器 routing:"));
+        assert!(instructions.contains("browser_open"));
+    }
+}
+
+#[test]
 fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
     let request = ExecutionRequest::default();
     let launch_config = CodexLaunchConfig::default();
@@ -1333,6 +1791,26 @@ fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
         assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
         assert!(params.get("sandboxPolicy").is_none());
         assert!(params.get("sandbox").is_none());
+    }
+}
+
+#[test]
+fn codex_read_only_permission_profile_is_applied_to_supervisor_requests() {
+    let mut request = ExecutionRequest::default();
+    request.extra.insert(
+        "runtime_permission_profile".to_owned(),
+        Value::String(CODEX_READ_ONLY_PERMISSION_PROFILE.to_owned()),
+    );
+    let launch_config = CodexLaunchConfig::default();
+
+    for params in [
+        thread_start_params(&request, &launch_config),
+        thread_resume_params("thread-1", &request, &launch_config),
+        thread_fork_params("thread-1", None, &request, &launch_config),
+        turn_start_params("thread-1", &request, &launch_config, Vec::new()),
+    ] {
+        assert_eq!(params["permissions"], CODEX_READ_ONLY_PERMISSION_PROFILE);
+        assert_eq!(params["approvalPolicy"], codex_runtime_approval_policy());
     }
 }
 
@@ -1379,30 +1857,6 @@ fn codex_runtime_workspace_roots_are_applied_to_thread_and_turn_requests() {
             json!(["/workspace/web", "/workspace/api"])
         );
     }
-}
-
-#[test]
-fn codex_permission_profile_validation_rejects_effective_downgrade() {
-    let response = json!({
-        "activePermissionProfile": {"id": ":workspace"},
-        "sandbox": {"type": "workspaceWrite", "networkAccess": false},
-    });
-
-    let error = validate_codex_permission_profile("thread/resume", &response)
-        .expect_err("workspace-write must not be accepted");
-
-    assert!(error.contains("active_profile=:workspace"));
-    assert!(error.contains("sandbox=workspaceWrite"));
-}
-
-#[test]
-fn codex_permission_profile_validation_accepts_effective_full_access() {
-    let response = json!({
-        "activePermissionProfile": {"id": ":danger-full-access"},
-        "sandbox": {"type": "dangerFullAccess"},
-    });
-
-    validate_codex_permission_profile("thread/resume", &response).unwrap();
 }
 
 #[test]
@@ -1543,14 +1997,20 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
     let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
     let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    let old_bridge_token = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
     env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
+    env::set_var(
+        WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+        "bridge-test-token",
+    );
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
     };
 
-    let launch_config = build_codex_launch_config(&request);
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
     let params = thread_start_params(&request, &launch_config);
     let config = params
         .get("config")
@@ -1597,6 +2057,10 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
         "workspace-browser-task-123"
     );
+    assert_eq!(
+        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"],
+        "bridge-test-token"
+    );
 
     if let Some(old_home) = old_home {
         env::set_var("WEGENT_EXECUTOR_HOME", old_home);
@@ -1607,6 +2071,11 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
     } else {
         env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    }
+    if let Some(old_bridge_token) = old_bridge_token {
+        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, old_bridge_token);
+    } else {
+        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
     }
 }
 
@@ -1676,7 +2145,7 @@ fn thread_goal_set_params_rejects_empty_objective() {
 }
 
 #[test]
-fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+fn root_turn_notification_uses_protocol_turn_id_and_ignores_child_turns() {
     let mut state = CodexRunState::default();
     state.set_root_thread_id("thread-root");
 
@@ -1689,7 +2158,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(
-        active_root_turn_notification_id(&active_item, &state).as_deref(),
+        root_turn_notification_id(&active_item, &state).as_deref(),
         Some("turn-current")
     );
 
@@ -1701,8 +2170,8 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
         }
     });
     assert_eq!(
-        active_root_turn_notification_id(&completed_turn, &state),
-        None
+        root_turn_notification_id(&completed_turn, &state).as_deref(),
+        Some("turn-current")
     );
 
     let child_item = json!({
@@ -1714,7 +2183,7 @@ fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_chil
             "item": { "type": "reasoning" }
         }
     });
-    assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
+    assert_eq!(root_turn_notification_id(&child_item, &state), None);
 }
 
 #[test]

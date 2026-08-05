@@ -24,6 +24,7 @@ export interface QuickLaunchFunctionConfig {
   title: string
   description?: string | null
   icon?: string | null
+  cover?: string | null
   team_id: number
   enabled: boolean
   order: number

@@ -283,8 +283,8 @@ export interface RuntimeMessagePresentationReference {
 
 export interface NormalizedRuntimeMessage {
   id: string
-  clientMessageId?: string | null
-  client_message_id?: string | null
+  clientUserMessageId?: string | null
+  client_user_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
   presentationReferences?: RuntimeMessagePresentationReference[] | null
@@ -381,6 +381,32 @@ export interface RuntimeTaskSummary {
   modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
+  supervisor?: RuntimeSupervisorState | null
+}
+
+export type RuntimeSupervisorMode = 'suggest' | 'auto'
+export type RuntimeSupervisorStatus = 'active' | 'checking' | 'error' | 'disabled'
+export type RuntimeSupervisorSuggestionStatus = 'pending' | 'accepted' | 'dismissed'
+
+export interface RuntimeSupervisorSuggestion {
+  id: string
+  message: string
+  rationale: string
+  status: RuntimeSupervisorSuggestionStatus
+  createdAt: number
+  resolvedAt?: number | null
+  sourceTurnId?: string | null
+}
+
+export interface RuntimeSupervisorState {
+  mode: RuntimeSupervisorMode
+  status: RuntimeSupervisorStatus
+  instructions: string
+  modelId?: string | null
+  intervalSeconds?: number
+  lastEvaluatedAt?: number | null
+  lastError?: string | null
+  suggestions: RuntimeSupervisorSuggestion[]
 }
 
 export interface DeviceWorkspaceUpsert {
@@ -444,6 +470,12 @@ export interface RuntimeProjectRef {
   pinnedOrder?: number | null
   active?: boolean
   appearance?: RuntimeProjectAppearance | null
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
+}
+
+export interface RuntimeProjectSpaceRef {
+  projectStore: 'local' | 'backend'
+  projectId: string
 }
 
 export interface RuntimeProjectRoot {
@@ -552,6 +584,7 @@ export interface RuntimeTranscriptResponse {
   running?: boolean
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  turns: RuntimeTranscriptTurn[]
   contextUsage?: RuntimeContextUsage | null
   fullContent?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
@@ -564,6 +597,39 @@ export interface RuntimeTranscriptResponse {
   parseError?: string | null
 }
 
+export interface RuntimeTranscriptTurn {
+  id: string
+  items: RuntimeTranscriptTurnItem[]
+  messageIndex?: number | null
+  status?: string
+  runtimeStatus?: string | null
+  completedAt?: string | number | null
+  error?: string | null
+  errorType?: string | null
+  stoppedNotice?: boolean | null
+  fileChanges?: TurnFileChangesSummary | null
+  references?: CodexReference[] | null
+  memoryCitations?: CodexMemoryCitation[] | null
+}
+
+export type RuntimeTranscriptTurnItem =
+  | {
+      id: string
+      type: 'user_message'
+      message: NormalizedRuntimeMessage
+    }
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+      createdAt?: string | number | null
+    }
+  | {
+      id: string
+      type: 'block'
+      block: ChatBlock
+    }
+
 export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   limit?: number
   beforeCursor?: string | null
@@ -575,7 +641,8 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
-  clientMessageId?: string
+  clientUserMessageId?: string
+  initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -703,6 +770,43 @@ export interface RuntimeGoalClearResponse {
   error?: string | null
 }
 
+export interface RuntimeSupervisorGetRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorSetRequest {
+  address: RuntimeTaskAddress
+  mode: RuntimeSupervisorMode
+  instructions?: string
+  modelId?: string | null
+  intervalSeconds: number
+}
+
+export type RuntimeSupervisorCreateInput = Omit<RuntimeSupervisorSetRequest, 'address'>
+
+export interface RuntimeSupervisorClearRequest {
+  address: RuntimeTaskAddress
+}
+
+export interface RuntimeSupervisorResolveRequest {
+  address: RuntimeTaskAddress
+  suggestionId: string
+  status: 'accepted' | 'dismissed'
+}
+
+export interface RuntimeSupervisorResponse {
+  accepted: boolean
+  taskId: string
+  supervisor: RuntimeSupervisorState | null
+  error?: string | null
+}
+
+export interface RuntimeSupervisorEventPayload {
+  deviceId?: string
+  taskId?: string
+  supervisor: RuntimeSupervisorState | null
+}
+
 export interface RuntimeWorkspaceOpenRequest {
   deviceId: string
   workspacePath: string
@@ -715,6 +819,7 @@ export interface RuntimeLocalProjectUpsertRequest {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
 }
 
@@ -724,6 +829,7 @@ export interface RuntimeLocalProjectUpsertResponse {
   projectKey: string
   name: string
   roots: string[]
+  defaultProjectSpace?: RuntimeProjectSpaceRef | null
   runtime: 'codex'
   error?: string | null
 }
@@ -1056,7 +1162,7 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
-  clientMessageId?: string
+  clientUserMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null
@@ -1067,6 +1173,7 @@ export interface RuntimeTaskCreateRequest {
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
   initialGoal?: RuntimeGoalCreateInput | null
+  initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
   deliveryId?: string
@@ -1082,6 +1189,11 @@ export interface RuntimeTaskCreateResponse {
   runtime: RuntimeName
   runtimeHandle?: Record<string, unknown> | null
   error?: string | null
+}
+
+export interface RuntimeModelPrepareRequest {
+  deviceId: string
+  modelId?: string
 }
 
 export interface RuntimeTaskForkTarget {
@@ -1443,6 +1555,13 @@ export interface ChatCancelAck {
 export interface ChatStartPayload {
   taskId?: string
   subtaskId?: string
+  clientUserMessageId?: string
+  runtimeGeneratedUserMessage?: {
+    id: string
+    message: string
+    createdAt: number
+    source: Record<string, unknown>
+  }
   bot_name?: string
   shellType?: string
   deviceId?: string
@@ -1474,7 +1593,9 @@ export type ChatResultPayload = Record<string, unknown> & {
 export interface ChatChunkPayload {
   taskId?: string
   subtaskId?: string
+  itemId?: string
   content: string
+  contentMode?: 'delta' | 'snapshot'
   offset?: number
   result?: ChatResultPayload
   deviceId?: string
@@ -1494,6 +1615,7 @@ export interface ChatErrorPayload {
   error: string
   type?: string
   deviceId?: string
+  shellType?: string
 }
 
 export interface ChatMessagePayload {
@@ -1991,6 +2113,7 @@ export interface ChatBlockCreatedPayload {
   subtaskId?: string
   block: ChatBlock
   deviceId?: string
+  replacesItemId?: string
 }
 
 export interface ChatBlockUpdatedPayload {
@@ -2066,6 +2189,7 @@ export interface RuntimeGuidanceAppliedPayload {
   subtaskId?: string
   deviceId?: string
   guidanceId: string
+  clientGuidanceId?: string
   message: string
   appliedAtMs: number
 }
@@ -2102,7 +2226,6 @@ export type ModelCompatibilityDisabledReason =
   | 'missing_current_runtime_family'
   | 'missing_target_runtime_family'
   | 'unavailable'
-  | 'provider_boundary_mismatch'
   | 'runtime_family_mismatch'
 
 export interface ModelRuntime {

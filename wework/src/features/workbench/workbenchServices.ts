@@ -21,17 +21,12 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
+import { getRuntimeConfig } from '@/config/runtime'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import type {
-  Attachment,
-  DeviceInfo,
-  ProjectDeviceSessionResponse,
-  RuntimeWorkListResponse,
-  User,
-} from '@/types/api'
+import type { Attachment, ProjectDeviceSessionResponse, User } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type {
   Automation,
@@ -128,8 +123,8 @@ export interface WorkbenchServices {
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']
     getDefaultWorkbenchTeam?: ReturnType<typeof createTeamApi>['getDefaultWorkbenchTeam']
-    listDevices?: () => Promise<DeviceInfo[]>
-    listRuntimeWork?: () => Promise<RuntimeWorkListResponse>
+    listDevices?: ReturnType<typeof createDeviceApi>['listDevices']
+    listRuntimeWork?: ReturnType<typeof createRuntimeWorkApi>['listRuntimeWork']
   }
 }
 
@@ -141,6 +136,16 @@ interface CloudConnectionServicesSnapshot {
   socketPath?: string
   token: string | null
   user?: User
+}
+
+function withConfiguredFeedbackApi(
+  services: WorkbenchServices,
+  getToken: () => string | null
+): WorkbenchServices {
+  const feedbackUrl = getRuntimeConfig().feedbackUrl
+  return feedbackUrl
+    ? { ...services, feedbackApi: createFeedbackApi(feedbackUrl, getToken) }
+    : services
 }
 
 export function createExecutorClientForWorkbenchServices(
@@ -175,16 +180,22 @@ export function createDefaultWorkbenchServices(
       cloudConnection.socketPath &&
       cloudConnection.token
     ) {
-      return createHybridWorkbenchServices({
-        backendUrl: cloudConnection.backendUrl,
-        apiBaseUrl: cloudConnection.apiBaseUrl,
-        socketBaseUrl: cloudConnection.socketBaseUrl,
-        socketPath: cloudConnection.socketPath,
-        token: cloudConnection.token,
-        user: cloudConnection.user,
-      })
+      return withConfiguredFeedbackApi(
+        createHybridWorkbenchServices({
+          backendUrl: cloudConnection.backendUrl,
+          apiBaseUrl: cloudConnection.apiBaseUrl,
+          socketBaseUrl: cloudConnection.socketBaseUrl,
+          socketPath: cloudConnection.socketPath,
+          token: cloudConnection.token,
+          user: cloudConnection.user,
+        }),
+        () => cloudConnection.token
+      )
     }
-    return createLocalAppServices({ user: cloudConnection?.user })
+    return withConfiguredFeedbackApi(
+      createLocalAppServices({ user: cloudConnection?.user }),
+      () => cloudConnection?.token ?? null
+    )
   }
 
   const cloudServices = createBackendWorkbenchServices()

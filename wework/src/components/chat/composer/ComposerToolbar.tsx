@@ -1,10 +1,12 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
+import type { ComposerCloudMentionCandidate } from './composerMentionCandidates'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
@@ -32,6 +34,9 @@ interface ComposerToolbarProps {
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onConfigureSupervisor?: () => void
+  supervisorEnabled?: boolean
+  supervisorPending?: boolean
   onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
@@ -42,6 +47,9 @@ interface ComposerToolbarProps {
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
   leadingContext?: ReactNode
+  cloudProjectCandidates?: ComposerCloudMentionCandidate[]
+  selectedCloudProjectId?: CloudProject['id']
+  onSelectCloudProject?: (project: CloudProject) => void
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -67,6 +75,9 @@ export function ComposerToolbar({
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onConfigureSupervisor,
+  supervisorEnabled = false,
+  supervisorPending = false,
   onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
@@ -77,6 +88,9 @@ export function ComposerToolbar({
   onQuickPhraseSelect,
   onSubmit,
   leadingContext,
+  cloudProjectCandidates,
+  selectedCloudProjectId,
+  onSelectCloudProject,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -117,6 +131,12 @@ export function ComposerToolbar({
           onFileSelect={onFileSelect}
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
+          onConfigureSupervisor={onConfigureSupervisor}
+          supervisorEnabled={supervisorEnabled}
+          supervisorPending={supervisorPending}
+          cloudProjectCandidates={cloudProjectCandidates}
+          selectedCloudProjectId={selectedCloudProjectId}
+          onSelectCloudProject={onSelectCloudProject}
         />
         <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         {leadingContext}

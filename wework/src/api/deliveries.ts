@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { HttpClient } from './http'
 import type { RuntimeTaskAddress } from '@/types/api'
+
 import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
@@ -50,9 +51,10 @@ export interface CloudLoopItem {
   can_view_detail?: boolean
   can_edit?: boolean
   assignee_user_id: number | null
+  assignee_name?: string | null
   title: string
   description: string
-  status: 'inbox' | 'pending' | 'in_progress' | 'in_review' | 'completed'
+  status: string
   priority: 'none' | 'low' | 'medium' | 'high' | 'urgent'
   due_at: string | null
   tags: string[]
@@ -63,6 +65,8 @@ export interface CloudLoopItem {
   updated_at: string
   completed_at: string | null
   source_status?: string | null
+  source_record_id?: string | null
+  source_cells?: Record<string, unknown>
 }
 
 export interface CloudLoopItemAttachment {
@@ -101,6 +105,20 @@ export interface CloudProject {
     status_mode?: 'mapped' | 'custom'
     status_mapping?: Record<string, CloudLoopItem['status']>
     custom_statuses?: string[]
+  }
+  card_display?: {
+    show_assignee: boolean
+    show_priority: boolean
+    show_tags: boolean
+    show_date: boolean
+  }
+  board_config?: {
+    group_by: 'status' | 'priority' | 'assignee' | 'tag'
+    statuses: Array<{
+      id: string
+      name: string
+      color: 'gray' | 'blue' | 'orange' | 'purple' | 'green' | 'red'
+    }>
   }
   created_by_user_id: number
   current_user_id?: number
@@ -157,17 +175,6 @@ export interface ProjectDeliveryFile {
   delivered_at: string
 }
 
-export interface CloudProjectLocalBinding {
-  id: string
-  cloud_project_id: CloudProjectId
-  local_project_id: number
-  user_id: number
-  device_id: string | null
-  is_default: boolean
-  created_at: string
-  updated_at: string
-}
-
 export interface CloudProjectMember {
   id: number
   user_id: number
@@ -199,7 +206,31 @@ export interface CloudMyWorkItem extends CloudLoopItem {
   has_active_task: boolean
 }
 
+export function createProjectTaskTrackingSingleFlight() {
+  const requests = new Map<string, Promise<{ item: CloudLoopItem }>>()
+
+  return (
+    projectId: CloudProjectIdInput,
+    task: RuntimeTaskAddress,
+    create: () => Promise<{ item: CloudLoopItem }>
+  ): Promise<{ item: CloudLoopItem }> => {
+    const key = `${projectId}:${task.deviceId}:${task.taskId}`
+    const existing = requests.get(key)
+    if (existing) return existing
+
+    const request = create()
+    requests.set(key, request)
+    const clear = () => {
+      if (requests.get(key) === request) requests.delete(key)
+    }
+    void request.then(clear, clear)
+    return request
+  }
+}
+
 export function createDeliveryApi(client: HttpClient) {
+  const trackProjectTaskOnce = createProjectTaskTrackingSingleFlight()
+
   return {
     listCloudProjects(): Promise<{ items: CloudProject[] }> {
       return client.get('/v1/cloud-projects')
@@ -235,6 +266,8 @@ export function createDeliveryApi(client: HttpClient) {
         description?: string
         tags?: string[]
         visibility?: 'private' | 'public'
+        card_display?: CloudProject['card_display']
+        board_config?: CloudProject['board_config']
         provider_config?: {
           repository?: string
           domain?: string
@@ -254,6 +287,9 @@ export function createDeliveryApi(client: HttpClient) {
       }
     ): Promise<CloudProject> {
       return client.patch(`/v1/cloud-projects/${projectId}`, data)
+    },
+    archiveCloudProject(projectId: CloudProjectIdInput, version: number): Promise<void> {
+      return client.delete(`/v1/cloud-projects/${projectId}?version=${version}`)
     },
     listMyWork(): Promise<{ items: CloudMyWorkItem[] }> {
       return client.get('/v1/cloud-work-items/my-work')
@@ -306,11 +342,14 @@ export function createDeliveryApi(client: HttpClient) {
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
     },
+    archiveLoopItem(itemId: string): Promise<void> {
+      return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
     reorderLoopItems(
       projectId: CloudProjectIdInput,
       data: {
         parent_id: string | null
-        status: CloudLoopItem['status']
+        status: string
         item_ids: string[]
       }
     ): Promise<{ items: CloudLoopItem[] }> {
@@ -394,14 +433,34 @@ export function createDeliveryApi(client: HttpClient) {
         ...(taskTitle ? { taskTitle } : {}),
       })
     },
+    trackProjectTask(
+      projectId: CloudProjectIdInput,
+      task: RuntimeTaskAddress,
+      taskTitle: string,
+      description: string
+    ): Promise<{ item: CloudLoopItem }> {
+      return trackProjectTaskOnce(projectId, task, () =>
+        client.post(`/v1/cloud-projects/${projectId}/tasks/track`, {
+          ...task,
+          taskTitle,
+          description,
+        })
+      )
+    },
+    updateTaskTrackingStatus(
+      task: RuntimeTaskAddress,
+      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled'
+    ): Promise<CloudLoopItem | null> {
+      return client.patch('/v1/runtime-tasks/cloud-context/tracking-status', {
+        ...task,
+        executionStatus,
+      })
+    },
     unbindCloudContext(task: RuntimeTaskAddress): Promise<void> {
       return client.delete('/v1/runtime-tasks/cloud-context', task)
     },
     unbindTask(itemId: string, task: RuntimeTaskAddress): Promise<void> {
       return client.delete(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, task)
-    },
-    listLocalBindings(projectId: CloudProjectIdInput): Promise<CloudProjectLocalBinding[]> {
-      return client.get(`/v1/cloud-projects/${projectId}/local-bindings`)
     },
     listCloudProjectMembers(projectId: CloudProjectIdInput): Promise<CloudProjectMember[]> {
       return client.get(`/v1/cloud-projects/${projectId}/members`)
@@ -430,12 +489,6 @@ export function createDeliveryApi(client: HttpClient) {
       query: string
     ): Promise<{ users: CloudUserSearchItem[]; total: number }> {
       return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
-    },
-    addLocalBinding(
-      projectId: CloudProjectIdInput,
-      data: { local_project_id: number; device_id?: string; is_default?: boolean }
-    ): Promise<CloudProjectLocalBinding> {
-      return client.post(`/v1/cloud-projects/${projectId}/local-bindings`, data)
     },
     listCloudFiles(projectId: CloudProjectIdInput): Promise<{ items: CloudProjectFile[] }> {
       return client.get(`/v1/cloud-projects/${projectId}/files`)

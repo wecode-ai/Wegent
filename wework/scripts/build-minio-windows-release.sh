@@ -17,6 +17,8 @@ EXPLICIT_VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL+x}"
 EXPLICIT_VITE_WEGENT_BACKEND_URL_VALUE="${VITE_WEGENT_BACKEND_URL:-}"
 EXPLICIT_VITE_WEGENT_SOCKET_URL="${VITE_WEGENT_SOCKET_URL+x}"
 EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE="${VITE_WEGENT_SOCKET_URL:-}"
+EXPLICIT_VITE_WEWORK_FEEDBACK_URL="${VITE_WEWORK_FEEDBACK_URL+x}"
+EXPLICIT_VITE_WEWORK_FEEDBACK_URL_VALUE="${VITE_WEWORK_FEEDBACK_URL:-}"
 
 for ENV_FILE in "$PROJECT_DIR/.env" "$WEWORK_DIR/.env.production"; do
   if [ -f "$ENV_FILE" ]; then
@@ -40,8 +42,14 @@ fi
 if [ -n "$EXPLICIT_VITE_WEGENT_SOCKET_URL" ]; then
   export VITE_WEGENT_SOCKET_URL="$EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE"
 fi
+if [ -n "$EXPLICIT_VITE_WEWORK_FEEDBACK_URL" ]; then
+  export VITE_WEWORK_FEEDBACK_URL="$EXPLICIT_VITE_WEWORK_FEEDBACK_URL_VALUE"
+else
+  export VITE_WEWORK_FEEDBACK_URL="https://wegent.intra.weibo.com/api/v1/feedback"
+fi
 
 VERSION=""
+CHANNEL="stable"
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
@@ -64,6 +72,8 @@ optionally upload it to the internal MinIO release path.
 
 Options:
   --version <version>       Release version, for example 0.1.17. Required.
+  --channel <stable|beta>   Update channel. Default: stable.
+  --beta                    Shorthand for --channel beta.
   --notes <text>            Release notes. Default: "Wework <version>".
   --endpoint <url>          S3 API endpoint. Defaults to ATTACHMENT_S3_ENDPOINT.
   --bucket <name>           S3 bucket. Defaults to ATTACHMENT_S3_BUCKET.
@@ -85,10 +95,12 @@ Environment:
   WEWORK_WINDOWS_RELEASE_S3_PREFIX, WEWORK_WINDOWS_RELEASE_OUTPUT_DIR
   WEWORK_WINDOWS_CARGO_TARGET_DIR, WEWORK_UPDATER_KEY_PATH,
   WEWORK_BRAND_CONFIG, VITE_API_BASE_URL, VITE_WEGENT_BACKEND_URL,
-  VITE_WEGENT_SOCKET_URL
+  VITE_WEGENT_SOCKET_URL, VITE_WEWORK_FEEDBACK_URL
 
 Example:
   bash wework/scripts/build-minio-windows-release.sh --version 0.1.17 --upload
+  bash wework/scripts/build-minio-windows-release.sh \
+    --version 0.1.18-beta.1 --channel beta --upload
 EOF
 }
 
@@ -120,7 +132,7 @@ normalize_prefix() {
 create_release_config() {
   CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.windows-release.json.XXXXXX")"
   VERSION="$VERSION" \
-  UPDATER_ENDPOINT="$UPDATE_BASE_URL/latest.json" \
+  UPDATER_ENDPOINT="$UPDATE_BASE_URL/{{target}}-{{arch}}.json" \
   UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
   CONFIG_OVERRIDE="$CONFIG_OVERRIDE" \
     uv run --project "$PROJECT_DIR/backend" python - <<'PY'
@@ -223,6 +235,15 @@ PY
   echo "Published updater manifest: $OUTPUT_DIR/latest.json"
 }
 
+generate_channel_manifests() {
+  node "$SCRIPT_DIR/update-channel-manifests.mjs" \
+    generate-platform "$OUTPUT_DIR/latest.json" "$OUTPUT_DIR" "$CHANNEL" windows-x86_64
+  if [ "$CHANNEL" = "stable" ]; then
+    node "$SCRIPT_DIR/update-channel-manifests.mjs" \
+      generate-platform "$OUTPUT_DIR/latest.json" "$OUTPUT_DIR" beta windows-x86_64
+  fi
+}
+
 upload_artifacts() {
   require_env ATTACHMENT_S3_ACCESS_KEY
   require_env ATTACHMENT_S3_SECRET_KEY
@@ -231,6 +252,7 @@ upload_artifacts() {
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
   RELEASE_VERSION="$VERSION" \
+  RELEASE_CHANNEL="$CHANNEL" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
     uv run --project "$PROJECT_DIR/backend" \
       python "$SCRIPT_DIR/upload-windows-release-to-s3.py"
@@ -239,15 +261,22 @@ upload_artifacts() {
 verify_uploaded_artifacts() {
   local installer_url="$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe"
   local latest_installer_url="$UPDATE_BASE_URL/WeWork_latest_windows-x64-setup.exe"
+  local channel_manifest_url="$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"
 
-  if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/latest.json" || \
-    ! curl -fsSI -o /dev/null "$installer_url" || \
-    ! curl -fsSI -o /dev/null "$latest_installer_url"; then
+  if ! curl -fsSI -o /dev/null "$installer_url" || \
+    ! curl -fsSI -o /dev/null "$channel_manifest_url"; then
     echo "MinIO upload succeeded, but Windows release files are not publicly readable." >&2
     echo "Allow unauthenticated GET access to: $UPDATE_BASE_URL" >&2
     exit 1
   fi
-  echo "Latest Windows installer: $latest_installer_url"
+  if [ "$CHANNEL" = "stable" ]; then
+    if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/latest.json" || \
+      ! curl -fsSI -o /dev/null "$latest_installer_url"; then
+      echo "Stable compatibility files are not publicly readable." >&2
+      exit 1
+    fi
+    echo "Latest Windows installer: $latest_installer_url"
+  fi
 }
 
 cleanup() {
@@ -262,6 +291,18 @@ while [ "$#" -gt 0 ]; do
     --version)
       VERSION="$2"
       shift 2
+      ;;
+    --channel)
+      CHANNEL="$2"
+      shift 2
+      ;;
+    beta|--beta)
+      CHANNEL="beta"
+      shift
+      ;;
+    stable|--stable)
+      CHANNEL="stable"
+      shift
       ;;
     --notes)
       RELEASE_NOTES="$2"
@@ -321,8 +362,16 @@ if [ -z "$VERSION" ]; then
   usage >&2
   exit 1
 fi
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "--version must use MAJOR.MINOR.PATCH format. Got: $VERSION" >&2
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
+  echo "--version must use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N format. Got: $VERSION" >&2
+  exit 1
+fi
+if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
+  echo "--channel must be 'stable' or 'beta'. Got: $CHANNEL" >&2
+  exit 1
+fi
+if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
+  echo "A Beta version must be published with --channel beta. Got: $VERSION" >&2
   exit 1
 fi
 if [ "$WINDOWS_BUILD_TARGET" != "x86_64-pc-windows-msvc" ]; then
@@ -378,6 +427,7 @@ create_release_config
 
 echo "Building Wework Windows MinIO release"
 echo "  VERSION=$VERSION"
+echo "  CHANNEL=$CHANNEL"
 echo "  WINDOWS_BUILD_TARGET=$WINDOWS_BUILD_TARGET"
 echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
@@ -385,6 +435,7 @@ echo "  OUTPUT_DIR=$OUTPUT_DIR"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "  VITE_WEWORK_FEEDBACK_URL=$VITE_WEWORK_FEEDBACK_URL"
 echo "  UPLOAD=$UPLOAD"
 
 BUILD_ARGS=(
@@ -413,11 +464,12 @@ if [ -z "$installer_path" ] || [ ! -f "$installer_path" ]; then
 fi
 sign_updater_installer "$installer_path"
 collect_release_artifacts "$installer_path"
+generate_channel_manifests
 
 if [ "$UPLOAD" = "true" ]; then
   upload_artifacts
   verify_uploaded_artifacts
-  echo "Uploaded updater manifest: $UPDATE_BASE_URL/latest.json"
+  echo "Uploaded $CHANNEL updater manifest to: $UPDATE_BASE_URL"
 else
   echo "Artifacts are ready in: $OUTPUT_DIR"
 fi

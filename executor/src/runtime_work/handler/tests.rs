@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::tasks::{mark_runtime_model_switch, runtime_model_selection_changed};
 use super::*;
+
+fn start_test_execution(handler: &RuntimeWorkRpcHandler, local_task_id: &str) -> u64 {
+    let (cancel, _cancelled) = oneshot::channel();
+    let (_stopped, stopped) = oneshot::channel();
+    handler.start_local_task_execution(local_task_id.to_owned(), cancel, stopped)
+}
 
 #[tokio::test]
 async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
@@ -21,7 +28,7 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
         link.running = persisted_running;
         handler.upsert_local_task(link);
         if active_in_memory {
-            handler.mark_active_local_task("task-1");
+            start_test_execution(&handler, "task-1");
         }
 
         let response = handler
@@ -41,7 +48,7 @@ async fn fork_resolves_the_requested_turn_even_when_the_source_is_running() {
 }
 
 #[test]
-fn finishing_an_active_goal_keeps_the_task_idle() {
+fn finishing_an_active_goal_updates_metadata_without_persisting_execution_state() {
     let index_path = temp_runtime_work_index_path("finish-active-goal");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     handler.store = RuntimeWorkStore::new(index_path.clone());
@@ -53,14 +60,17 @@ fn finishing_an_active_goal_keeps_the_task_idle() {
     link.goal_status = Some("active".to_owned());
     handler.upsert_local_task(link);
 
-    handler.finish_local_task("task-1", Some("thread-1".to_owned()), "done");
+    let execution_id = start_test_execution(&handler, "task-1");
+    handler.finish_local_task("task-1", execution_id, Some("thread-1".to_owned()), "done");
 
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.thread_id.as_deref(), Some("thread-1"));
+    assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
 }
@@ -77,11 +87,17 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     );
     link.goal_status = Some("active".to_owned());
     handler.upsert_local_task(link);
-    handler.mark_active_local_task("task-1");
+    let execution_id = start_test_execution(&handler, "task-1");
 
     handler.handle_turn_result(
         "task-1",
+        execution_id,
         &ExecutionRequest::default(),
+        Some(&ActiveCodexTurn {
+            execution_id,
+            thread_id: "thread-1".to_owned(),
+            turn_id: "turn-1".to_owned(),
+        }),
         Ok(crate::agents::CodexAppServerTurn {
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
@@ -95,10 +111,55 @@ fn turn_result_persists_observed_goal_status_before_settling_task() {
     let task = handler
         .local_task_link("task-1")
         .expect("task should remain stored");
-    assert_eq!(task.status, "done");
+    assert_eq!(task.status, "active");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("complete"));
     assert!(!handler.is_active_local_task("task-1"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn stale_execution_cannot_finish_its_replacement() {
+    let index_path = temp_runtime_work_index_path("stale-execution-finish");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    handler.upsert_local_task(RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    ));
+
+    let stale_execution_id = start_test_execution(&handler, "task-1");
+    let current_execution_id = start_test_execution(&handler, "task-1");
+
+    handler.finish_local_task(
+        "task-1",
+        stale_execution_id,
+        Some("stale-thread".to_owned()),
+        "done",
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert!(handler.is_active_local_task("task-1"));
+    assert_eq!(task.thread_id, None);
+    assert_eq!(task.completed_at, None);
+
+    handler.finish_local_task(
+        "task-1",
+        current_execution_id,
+        Some("current-thread".to_owned()),
+        "done",
+    );
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert!(!handler.is_active_local_task("task-1"));
+    assert_eq!(task.thread_id.as_deref(), Some("current-thread"));
+    assert!(task.completed_at.is_some());
 
     let _ = fs::remove_file(index_path);
 }
@@ -152,7 +213,7 @@ fn recording_provider_thread_removes_cached_messages_but_keeps_presentations() {
     append_runtime_handle_user_message_presentation(
         &mut link.runtime_handle,
         json!({
-            "clientMessageId": "runtime-local-pane-1",
+            "clientUserMessageId": "runtime-local-pane-1",
             "references": [{
                 "token": "$plugin:skill",
                 "href": "/tmp/plugin/skill/SKILL.md"
@@ -226,6 +287,80 @@ fn syncing_an_active_goal_does_not_start_an_idle_task() {
     assert_eq!(task.status, "done");
     assert!(!task.running);
     assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn hydrating_goal_status_does_not_update_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("hydrate-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.hydrate_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn hydrating_unchanged_goal_status_does_not_update_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("hydrate-unchanged-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("active".to_owned());
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.hydrate_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert_eq!(task.updated_at, 1_780_000_000_000);
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
+fn syncing_changed_goal_status_updates_task_activity_time() {
+    let index_path = temp_runtime_work_index_path("sync-changed-goal");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.goal_status = Some("pending".to_owned());
+    link.updated_at = 1_780_000_000_000;
+    handler.upsert_local_task(link);
+
+    handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+    let task = handler
+        .local_task_link("task-1")
+        .expect("task should remain stored");
+    assert_eq!(task.goal_status.as_deref(), Some("active"));
+    assert!(task.updated_at > 1_780_000_000_000);
 
     let _ = fs::remove_file(index_path);
 }
@@ -328,7 +463,7 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
         .local_task_link("task-1")
         .expect("task should exist");
     assert_eq!(
-        tasks::runtime_turn_id_from_link(&link, "subtask-1").as_deref(),
+        link.runtime_handle["lastTurnId"].as_str(),
         Some(codex_turn_id)
     );
     assert_eq!(
@@ -349,7 +484,7 @@ fn runtime_turn_ids_are_persisted_by_subtask() {
 }
 
 #[test]
-fn completed_responses_include_the_persisted_runtime_turn_id() {
+fn completed_responses_use_the_active_codex_turn_id() {
     for (case, outcome) in [
         (
             "completed",
@@ -380,11 +515,16 @@ fn completed_responses_include_the_persisted_runtime_turn_id() {
             "/tmp/project".to_owned(),
             "Task".to_owned(),
         ));
-        handler.record_runtime_turn_id(&local_task_id, &request.subtask_id, "turn-1");
-
+        let execution_id = start_test_execution(&handler, &local_task_id);
         handler.handle_turn_result(
             &local_task_id,
+            execution_id,
             &request,
+            Some(&ActiveCodexTurn {
+                execution_id,
+                thread_id: format!("thread-{case}"),
+                turn_id: "turn-1".to_owned(),
+            }),
             Ok(crate::agents::CodexAppServerTurn {
                 thread_id: format!("thread-{case}"),
                 outcome,
@@ -397,6 +537,7 @@ fn completed_responses_include_the_persisted_runtime_turn_id() {
             .try_recv()
             .expect("completed response should be emitted");
         assert_eq!(event["event"], "response.completed", "{case}");
+        assert_eq!(event["payload"]["subtaskId"], "turn-1", "{case}");
         assert_eq!(event["payload"]["data"]["turnId"], "turn-1", "{case}");
 
         let _ = fs::remove_file(index_path);
@@ -468,13 +609,13 @@ fn cached_user_message_uses_explicit_payload_text() {
         &request,
         &json!({
             "message": "visible user text",
-            "clientMessageId": "runtime-local-pane-1"
+            "clientUserMessageId": "runtime-local-pane-1"
         }),
     )
     .expect("payload message should create a cached user message");
 
     assert_eq!(message["content"], "visible user text");
-    assert_eq!(message["clientMessageId"], "runtime-local-pane-1");
+    assert_eq!(message["clientUserMessageId"], "runtime-local-pane-1");
 
     let content_message = cached_user_message(
         "local-task",
@@ -502,12 +643,12 @@ fn cached_user_message_does_not_fallback_to_prompt() {
 #[test]
 fn user_message_presentation_stores_only_reference_descriptors() {
     let presentation = user_message_presentation(&json!({
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md) with [$OpenAI Developers](plugin://openai-developers@openai-curated)"
     }))
     .expect("rich references should produce presentation metadata");
 
-    assert_eq!(presentation["clientMessageId"], "runtime-local-pane-1");
+    assert_eq!(presentation["clientUserMessageId"], "runtime-local-pane-1");
     assert_eq!(
         presentation["references"],
         json!([
@@ -525,7 +666,7 @@ fn user_message_presentation_stores_only_reference_descriptors() {
 }
 
 #[test]
-fn user_message_presentation_requires_a_stable_client_message_id() {
+fn user_message_presentation_requires_a_stable_client_user_message_id() {
     assert!(user_message_presentation(&json!({
         "message": "Use [$plugin:skill](/tmp/plugin/skill/SKILL.md)"
     }))
@@ -533,15 +674,15 @@ fn user_message_presentation_requires_a_stable_client_message_id() {
 }
 
 #[test]
-fn transcript_combines_provider_content_with_local_presentations_by_client_message_id() {
+fn transcript_combines_provider_content_with_local_presentations_by_client_user_message_id() {
     let mut provider_messages = vec![json!({
         "id": "provider-user",
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "role": "user",
         "content": "请用 $plugin:skill 和 @OpenAI Developers 制作教程"
     })];
     let presentations = vec![json!({
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "references": [
             {
                 "token": "$plugin:skill",
@@ -578,15 +719,15 @@ fn transcript_combines_provider_content_with_local_presentations_by_client_messa
 }
 
 #[test]
-fn transcript_does_not_attach_presentation_to_an_unmatched_client_message_id() {
+fn transcript_does_not_attach_presentation_to_an_unmatched_client_user_message_id() {
     let mut provider_messages = vec![json!({
         "id": "provider-user",
-        "clientMessageId": "provider-client-id",
+        "clientUserMessageId": "provider-client-id",
         "role": "user",
         "content": "$plugin:skill"
     })];
     let presentations = vec![json!({
-        "clientMessageId": "cached-client-id",
+        "clientUserMessageId": "cached-client-id",
         "references": [{
             "token": "$plugin:skill",
             "href": "/tmp/plugin/skill/SKILL.md"
@@ -599,16 +740,43 @@ fn transcript_does_not_attach_presentation_to_an_unmatched_client_message_id() {
 }
 
 #[test]
+fn transcript_restores_a_missing_supervisor_generated_user_message() {
+    let mut provider_messages = vec![json!({
+        "id": "assistant-1",
+        "role": "assistant",
+        "content": "Corrected",
+        "createdAt": 200
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "supervisor-correction-1",
+        "content": "Use Japanese",
+        "createdAt": 100,
+        "ensureVisible": true,
+        "references": [],
+        "source": {
+            "source": "supervisor",
+            "channel_type": "task_supervisor"
+        }
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["content"], "Use Japanese");
+    assert_eq!(provider_messages[1]["role"], "assistant");
+}
+
+#[test]
 fn transcript_only_adds_presentations_missing_from_provider_content() {
     let provider_content = "[$first](/tmp/first/SKILL.md) and $second";
     let mut provider_messages = vec![json!({
         "id": "provider-user",
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "role": "user",
         "content": provider_content
     })];
     let presentations = vec![json!({
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "references": [
             {
                 "token": "$first",
@@ -641,12 +809,12 @@ fn transcript_presentation_matches_a_complete_reference_token() {
     let provider_content = "Use $skill-advanced before $skill.";
     let mut provider_messages = vec![json!({
         "id": "provider-user",
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "role": "user",
         "content": provider_content
     })];
     let presentations = vec![json!({
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "references": [{
             "token": "$skill",
             "href": "/tmp/skill/SKILL.md"
@@ -669,10 +837,10 @@ fn transcript_presentation_matches_a_complete_reference_token() {
 }
 
 #[test]
-fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
+fn transcript_navigation_uses_client_user_message_id_for_live_message_matching() {
     let navigation = transcript_turn_navigation(&[json!({
         "id": "provider-user",
-        "clientMessageId": "runtime-local-pane-1",
+        "clientUserMessageId": "runtime-local-pane-1",
         "role": "user",
         "content": "# Files mentioned by the user:\n\n## image.png: /tmp/image.png\n\n## My request for Codex:\n<application_context>\n[wework.terminal.current]\nterminal state\n</application_context>\n\nFix the sidebar"
     })]);
@@ -680,6 +848,153 @@ fn transcript_navigation_uses_client_message_id_for_live_message_matching() {
     assert_eq!(navigation.len(), 1);
     assert_eq!(navigation[0]["id"], "runtime-local-pane-1");
     assert_eq!(navigation[0]["promptPreview"], "Fix the sidebar");
+}
+
+#[test]
+fn transcript_canonical_turns_preserve_provider_turn_and_item_order() {
+    let turns = transcript_canonical_turns(
+        &[
+            json!({
+                "id": "provider-user-1",
+                "messageIndex": 8,
+                "turnId": "turn-1",
+                "clientUserMessageId": "client-user-1",
+                "role": "user",
+                "content": "First prompt"
+            }),
+            json!({
+                "id": "provider-assistant-1",
+                "messageIndex": 9,
+                "turnId": "turn-1",
+                "role": "assistant",
+                "content": "First response",
+                "blocks": [{
+                    "id": "tool-call-1",
+                    "type": "tool",
+                    "title": "Read file"
+                }],
+                "runtimeItems": [
+                    {
+                        "id": "assistant-item-1",
+                        "type": "assistant_text",
+                        "content": "First response"
+                    },
+                    {
+                        "id": "tool-call-1",
+                        "type": "block",
+                        "block": {
+                            "id": "tool-call-1",
+                            "type": "tool",
+                            "title": "Read file"
+                        }
+                    }
+                ],
+                "status": "done"
+            }),
+            json!({
+                "id": "provider-user-2",
+                "messageIndex": 10,
+                "turnId": "turn-2",
+                "clientUserMessageId": "client-user-2",
+                "role": "user",
+                "content": "Second prompt"
+            }),
+        ],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0]["id"], "turn-1");
+    assert_eq!(turns[1]["id"], "turn-2");
+    assert_eq!(turns[0]["messageIndex"], 8);
+    assert_eq!(turns[1]["messageIndex"], 10);
+    assert_eq!(turns[0]["items"][0]["id"], "client-user-1");
+    assert_eq!(turns[0]["items"][1]["id"], "assistant-item-1");
+    assert_eq!(turns[0]["items"][2]["id"], "tool-call-1");
+    assert_eq!(turns[1]["items"][0]["id"], "client-user-2");
+}
+
+#[test]
+fn transcript_canonical_turns_accept_snake_case_message_indexes() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "message_index": 8,
+            "turn_id": "turn-1",
+            "client_user_message_id": "client-user-1",
+            "role": "user",
+            "content": "First prompt"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["messageIndex"], 8);
+}
+
+#[test]
+fn transcript_canonical_turns_preserve_status_from_user_only_turns() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-user-1",
+            "turnId": "turn-1",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Pending prompt",
+            "status": "streaming",
+            "runtimeStatus": "running"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns[0]["status"], "streaming");
+    assert_eq!(turns[0]["runtimeStatus"], "running");
+}
+
+#[test]
+fn transcript_canonical_turns_do_not_infer_missing_provider_items() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "provider-assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Not a provider item",
+            "blocks": [{
+                "id": "tool-call-1",
+                "type": "tool",
+                "title": "Not a provider item"
+            }],
+            "status": "done"
+        })],
+        TranscriptTurnItemSource::CodexItems,
+    );
+
+    assert_eq!(turns[0]["items"], json!([]));
+}
+
+#[test]
+fn transcript_canonical_turns_convert_runtime_messages_deterministically() {
+    let turns = transcript_canonical_turns(
+        &[json!({
+            "id": "assistant-1",
+            "turnId": "turn-1",
+            "role": "assistant",
+            "content": "Completed",
+            "createdAt": "2026-07-30T00:00:00.000Z",
+            "blocks": [
+                {"id": "tool-later", "createdAt": 2000},
+                {"id": "tool-earlier", "createdAt": 1000}
+            ],
+            "status": "done"
+        })],
+        TranscriptTurnItemSource::CachedMessages,
+    );
+
+    assert_eq!(turns[0]["items"][0]["id"], "assistant-1");
+    assert_eq!(turns[0]["items"][0]["type"], "assistant_text");
+    assert_eq!(turns[0]["items"][0]["content"], "Completed");
+    assert_eq!(turns[0]["items"][1]["id"], "tool-earlier");
+    assert_eq!(turns[0]["items"][2]["id"], "tool-later");
 }
 
 #[tokio::test]
@@ -733,6 +1048,7 @@ async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
         .insert(
             "thread-1".to_owned(),
             ActiveCodexTurn {
+                execution_id: 1,
                 thread_id: "thread-1".to_owned(),
                 turn_id: "turn-1".to_owned(),
             },
@@ -779,16 +1095,6 @@ async fn codex_personality_write_rejects_unsupported_value() {
 
     let error = result.expect_err("unsupported personality should be rejected");
     assert_eq!(error.code, "invalid_request");
-}
-
-#[test]
-fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
-    let combined = combined_codex_developer_instructions("用中文回复");
-
-    assert!(combined.contains("用中文回复"));
-    assert!(combined.contains("browser_navigate"));
-    assert!(combined.contains("Wework built-in browser"));
-    assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
 }
 
 #[tokio::test]
@@ -915,6 +1221,12 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
                         "reasoningEffort": "high"
                     }
                 },
+                "initialSupervisor": {
+                    "mode": "auto",
+                    "instructions": "Keep the task focused",
+                    "modelId": "supervisor-model",
+                    "intervalSeconds": 10
+                },
                 "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
             }
         }))
@@ -946,6 +1258,15 @@ async fn create_task_stores_model_selection_in_runtime_handle() {
             }
         })
     );
+    let supervisor = link
+        .supervisor
+        .expect("initial supervisor should be stored with the task");
+    assert_eq!(supervisor.mode, "auto");
+    assert_eq!(supervisor.instructions, "Keep the task focused");
+    assert_eq!(supervisor.model_id.as_deref(), Some("supervisor-model"));
+    assert_eq!(supervisor.interval_seconds, 10);
+    assert_eq!(supervisor.status, "active");
+    assert!(supervisor.last_error.is_none());
 
     let _ = fs::remove_file(index_path);
 }
@@ -970,6 +1291,88 @@ fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
             "modelType": "runtime",
             "options": {"reasoningEffort": "medium"}
         })
+    );
+}
+
+#[test]
+fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle["modelSelection"] = json!({
+        "modelName": "gpt-5.6-sol",
+        "modelType": "runtime",
+        "options": {"reasoningEffort": "high"}
+    });
+
+    assert!(!runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "public",
+                "options": {}
+            }
+        })
+    ));
+    assert!(runtime_model_selection_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "kimi-k3",
+                "modelType": "runtime",
+                "options": {}
+            }
+        })
+    ));
+}
+
+#[test]
+fn runtime_model_switch_marker_is_only_added_when_the_selection_changes() {
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.runtime_handle = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let unchanged_payload = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-luna",
+            "modelType": "codex"
+        }
+    });
+    let switched_payload = json!({
+        "modelSelection": {
+            "modelName": "kimi-k3",
+            "modelType": "custom"
+        }
+    });
+    let mut request = ExecutionRequest::default();
+
+    mark_runtime_model_switch(&mut request, &link, &unchanged_payload);
+    assert!(request.extra.get("wework_model_switched").is_none());
+
+    mark_runtime_model_switch(&mut request, &link, &switched_payload);
+    assert_eq!(
+        request.extra.get("wework_model_switched"),
+        Some(&Value::Bool(true))
     );
 }
 
@@ -1002,7 +1405,7 @@ fn task_list_running_state_comes_from_executor_memory() {
     assert_eq!(idle_link.thread_status, "idle");
     assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
 
-    handler.mark_active_local_task("task-1");
+    start_test_execution(&handler, "task-1");
 
     let running_link = handler
         .link_from_thread(&thread)
@@ -1017,7 +1420,7 @@ fn task_list_running_state_comes_from_executor_memory() {
 }
 
 #[test]
-fn active_local_task_skips_global_notification_route() {
+fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-local-task-route");
     let mut handler = RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
@@ -1036,8 +1439,14 @@ fn active_local_task_skips_global_notification_route() {
     link.thread_id = Some("thread-1".to_owned());
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
-    handler.mark_active_local_task(local_task_id);
+    let execution_id = start_test_execution(&handler, local_task_id);
     handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+    handler.record_active_codex_turn(
+        local_task_id,
+        execution_id,
+        "thread-1".to_owned(),
+        "turn-current".to_owned(),
+    );
 
     assert_eq!(
         handler
@@ -1054,31 +1463,34 @@ fn active_local_task_skips_global_notification_route() {
             "delta": "Hi",
             "itemId": "msg-1",
             "threadId": "thread-1",
-            "turnId": "turn-1"
+            "turnId": "turn-current"
         }
     }));
 
     assert!(event_rx.try_recv().is_err());
 
-    handler.unmark_active_local_task(local_task_id);
     handler.route_codex_notification(json!({
         "method": "item/agentMessage/delta",
         "params": {
-            "delta": "Hi",
-            "itemId": "msg-1",
+            "delta": "Earlier",
+            "itemId": "msg-earlier",
             "threadId": "thread-1",
-            "turnId": "turn-1"
+            "turnId": "turn-earlier"
         }
     }));
 
     let event = event_rx
         .try_recv()
-        .expect("idle route should emit notification");
+        .expect("a non-active turn should still be routed by its own identity");
     assert_eq!(event["event"], "response.block.created");
     assert_eq!(event["payload"]["taskId"], local_task_id);
-    assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
+    assert_eq!(event["payload"]["subtaskId"], "turn-earlier");
     assert_eq!(event["payload"]["data"]["block"]["type"], "text");
-    assert_eq!(event["payload"]["data"]["block"]["content"], "Hi");
+    assert_eq!(event["payload"]["data"]["block"]["content"], "Earlier");
+    assert_eq!(
+        event["payload"]["data"]["block"]["process_item_id"],
+        "msg-earlier"
+    );
 
     let _ = fs::remove_file(index_path);
 }
@@ -1189,6 +1601,20 @@ fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
     assert_eq!(
         codex_guidance_failure_code("turn/steer response missing turnId"),
         "guidance_failed"
+    );
+}
+
+#[test]
+fn codex_guidance_turn_mismatch_exposes_the_actual_turn_id() {
+    assert_eq!(
+        active_turn_id_from_steer_mismatch(
+            "expected active turn id `turn-expected` but found `turn-actual`"
+        ),
+        Some("turn-actual".to_owned())
+    );
+    assert_eq!(
+        active_turn_id_from_steer_mismatch("no active turn to steer"),
+        None
     );
 }
 

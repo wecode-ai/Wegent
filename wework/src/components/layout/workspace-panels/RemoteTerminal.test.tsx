@@ -19,6 +19,7 @@ const testState = vi.hoisted(() => ({
     open: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
     focus: ReturnType<typeof vi.fn>
+    refresh: ReturnType<typeof vi.fn>
     options: { theme?: unknown }
   }>,
   webLinksAddonInstances: [] as Array<{
@@ -74,6 +75,7 @@ vi.mock('@xterm/xterm', () => ({
       open: vi.fn(),
       dispose: vi.fn(),
       focus: vi.fn(),
+      refresh: vi.fn(),
       options: {},
     }
     testState.terminalInstances.push(terminal)
@@ -270,6 +272,25 @@ describe('RemoteTerminal', () => {
     )
 
     expect(client.resize).toHaveBeenCalledTimes(1)
+  })
+
+  test('refreshes buffered rows when activated and when the window regains focus', () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
+    const terminal = testState.terminalInstances[0]
+
+    expect(terminal.refresh).toHaveBeenCalledWith(0, 23)
+
+    terminal.refresh.mockClear()
+    window.dispatchEvent(new Event('focus'))
+
+    expect(terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
   test('catches rejected active terminal size syncs', async () => {

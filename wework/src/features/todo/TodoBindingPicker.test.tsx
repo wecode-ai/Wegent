@@ -5,13 +5,17 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { TodoBindingPicker } from './TodoBindingPicker'
 
 const project = {
-  id: 1,
+  id: '1',
   public_id: 'project-1',
   project_key: 'WEG',
   name: 'Wegent',
   description: '',
+  project_store: 'backend' as const,
+  task_provider: 'local',
+  provider_config: {},
   created_by_user_id: 1,
   status: 'active',
+  tags: [],
   version: 1,
   created_at: '2026-07-22T00:00:00Z',
   updated_at: '2026-07-22T00:00:00Z',
@@ -19,8 +23,9 @@ const project = {
 
 const item = {
   id: 'WEG-1',
-  cloud_project_id: 1,
+  cloud_project_id: '1',
   sequence_number: 1,
+  parent_id: null,
   created_by_user_id: 1,
   assignee_user_id: null,
   title: 'Cloud TODO',
@@ -28,6 +33,7 @@ const item = {
   status: 'inbox' as const,
   priority: 'none' as const,
   due_at: null,
+  tags: [],
   sort_order: 0,
   current_delivery_id: null,
   version: 1,
@@ -54,7 +60,7 @@ describe('TodoBindingPicker', () => {
     const onBound = vi.fn()
     render(
       <TodoBindingPicker
-        api={deliveryApi}
+        apis={[deliveryApi]}
         runtimeTask={{ deviceId: 'local-device', taskId: 'task-1' }}
         currentProject={null}
         currentItem={null}
@@ -79,7 +85,7 @@ describe('TodoBindingPicker', () => {
     const onBound = vi.fn()
     render(
       <TodoBindingPicker
-        api={deliveryApi}
+        apis={[deliveryApi]}
         runtimeTask={{ deviceId: 'local-device', taskId: 'task-1' }}
         currentProject={project}
         currentItem={item}
@@ -102,7 +108,7 @@ describe('TodoBindingPicker', () => {
     const onBound = vi.fn()
     const view = render(
       <TodoBindingPicker
-        api={deliveryApi}
+        apis={[deliveryApi]}
         currentProject={null}
         currentItem={null}
         onClose={vi.fn()}
@@ -117,7 +123,7 @@ describe('TodoBindingPicker', () => {
 
     view.rerender(
       <TodoBindingPicker
-        api={deliveryApi}
+        apis={[deliveryApi]}
         currentProject={project}
         currentItem={item}
         onClose={vi.fn()}
@@ -135,7 +141,7 @@ describe('TodoBindingPicker', () => {
     const onBound = vi.fn()
     render(
       <TodoBindingPicker
-        api={deliveryApi}
+        apis={[deliveryApi]}
         runtimeTask={{ deviceId: 'local-device', taskId: 'task-1' }}
         currentProject={null}
         currentItem={null}
@@ -152,5 +158,86 @@ describe('TodoBindingPicker', () => {
       undefined
     )
     expect(onBound).toHaveBeenCalledWith(project, null)
+  })
+
+  it('lists local and cloud project spaces and binds through the selected local API', async () => {
+    const cloudApi = api()
+    const localProject = {
+      ...project,
+      id: 'local-project',
+      public_id: 'local-project-public',
+      project_key: 'LOCAL',
+      name: 'Local Project Space',
+      project_store: 'local' as const,
+    }
+    const localItem = {
+      ...item,
+      id: 'LOCAL-1',
+      cloud_project_id: localProject.id,
+      title: 'Local TODO',
+    }
+    const localApi = {
+      ...api(),
+      listCloudProjects: vi.fn(async () => ({ items: [localProject] })),
+      listLoopItems: vi.fn(async () => ({ items: [localItem] })),
+    }
+    const onBound = vi.fn()
+
+    render(
+      <TodoBindingPicker
+        apis={[localApi, cloudApi]}
+        runtimeTask={{ deviceId: 'local-device', taskId: 'task-1' }}
+        currentProject={null}
+        currentItem={null}
+        onClose={vi.fn()}
+        onBound={onBound}
+      />
+    )
+
+    const select = await screen.findByTestId('todo-binding-project')
+    expect(select).toHaveTextContent('Local Project Space')
+    expect(select).toHaveTextContent('Wegent')
+    await userEvent.selectOptions(select, 'local:local-project')
+    await userEvent.click(screen.getByTestId('todo-binding-project-only'))
+
+    expect(localApi.bindProjectTask).toHaveBeenCalledWith(
+      localProject.id,
+      { deviceId: 'local-device', taskId: 'task-1' },
+      undefined
+    )
+    expect(cloudApi.bindProjectTask).not.toHaveBeenCalled()
+    expect(onBound).toHaveBeenCalledWith(localProject, null)
+  })
+
+  it('keeps local project spaces visible when loading their tasks fails', async () => {
+    const localProject = {
+      ...project,
+      id: 'local-project',
+      public_id: 'local-project-public',
+      project_key: 'LOCAL',
+      name: 'Local Project Space',
+      project_store: 'local' as const,
+    }
+    const localApi = {
+      ...api(),
+      listCloudProjects: vi.fn(async () => ({ items: [localProject] })),
+      listLoopItems: vi.fn(async () => {
+        throw new Error('Local task list unavailable')
+      }),
+    }
+
+    render(
+      <TodoBindingPicker
+        apis={[localApi]}
+        currentProject={null}
+        currentItem={null}
+        onClose={vi.fn()}
+        onBound={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('todo-binding-project')).toHaveTextContent(
+      'Local Project Space'
+    )
   })
 })

@@ -1,8 +1,11 @@
 import { ApiError, createHttpClient } from './http'
 
 export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'failed'
+export type SiteAppType = 'site' | 'mini_program'
+export type ApplicationCapability = 'create' | 'publish' | 'delete' | 'open_experience'
 
 export interface Site {
+  app_type: 'site'
   siteid: string
   taskid: string
   username: string
@@ -18,20 +21,51 @@ export interface Site {
   published_at?: string | null
 }
 
+export interface MiniProgram {
+  app_type: 'mini_program'
+  siteid: string
+  taskid: string
+  username: string
+  name: string
+  slug: string
+  app_id: string
+  status: string
+  version?: string | null
+  experience_url?: string | null
+  thumbnail_url?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type SiteListItem = Site | MiniProgram
+
 export interface SiteListResponse {
-  items: Site[]
+  items: SiteListItem[]
   total: number
   offset: number
   limit: number
 }
 
+export interface ApplicationTypeDescriptor {
+  app_type: string
+  enabled: boolean
+  order: number
+  capabilities: ApplicationCapability[]
+}
+
+export interface ApplicationTypeListResponse {
+  items: ApplicationTypeDescriptor[]
+}
+
 export interface ListSitesInput {
+  appType: SiteAppType
   q?: string
   offset: number
   limit: number
 }
 
 export interface SitesApi {
+  listApplicationTypes(): Promise<ApplicationTypeListResponse>
   listSites(input: ListSitesInput): Promise<SiteListResponse>
   publishSite(siteid: string): Promise<Site>
   deleteSite(siteid: string): Promise<void>
@@ -50,12 +84,16 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
   })
 
   return {
+    listApplicationTypes() {
+      return client.get('/sites/app-types')
+    },
     listSites(input) {
       const params = new URLSearchParams()
       const query = input.q?.trim()
       if (query) {
         params.set('q', query)
       }
+      params.set('app_type', input.appType)
       params.set('offset', String(input.offset))
       params.set('limit', String(input.limit))
 
@@ -75,6 +113,7 @@ export function createUnavailableSitesApi(): SitesApi {
     Promise.reject(new ApiError('Sites is not available yet', 503, 'sites_not_available'))
 
   return {
+    listApplicationTypes: unavailable,
     listSites: unavailable,
     publishSite: unavailable,
     deleteSite: unavailable,

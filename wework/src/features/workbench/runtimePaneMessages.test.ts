@@ -2,11 +2,95 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
+  runtimeTranscriptTurnsToConversationTurns,
 } from './runtimePaneMessages'
 import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('runtime transcript status', () => {
+  test('preserves the first transcript message index for turn ordering', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        messageIndex: 42,
+        items: [],
+        status: 'done',
+      },
+    ])
+
+    expect(turn.runtimeMessageIndex).toBe(42)
+  })
+
+  test('keeps valid canonical items when a transcript turn contains a malformed item', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: '',
+            type: 'assistant_text',
+            content: 'invalid',
+          },
+          {
+            id: 'assistant-item-1',
+            type: 'assistant_text',
+            content: 'valid',
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toEqual([
+      expect.objectContaining({
+        id: 'assistant-item-1',
+        type: 'assistant_text',
+        content: 'valid',
+      }),
+    ])
+  })
+
+  test('uses the turn timestamp for restored blocks without their own timestamp', () => {
+    const [turn] = runtimeTranscriptTurnsToConversationTurns([
+      {
+        id: 'turn-1',
+        status: 'completed',
+        items: [
+          {
+            id: 'user-item-1',
+            type: 'user_message',
+            message: {
+              id: 'user-message-1',
+              role: 'user',
+              content: 'run it',
+              createdAt: '2026-07-30T08:00:00.000Z',
+            },
+          },
+          {
+            id: 'block-item-1',
+            type: 'block',
+            block: {
+              id: 'tool-1',
+              type: 'tool',
+              toolName: 'exec_command',
+              status: 'done',
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(turn.items).toContainEqual(
+      expect.objectContaining({
+        id: 'block-item-1',
+        type: 'block',
+        block: expect.objectContaining({
+          createdAt: Date.parse('2026-07-30T08:00:00.000Z'),
+        }),
+      })
+    )
+  })
+
   test('does not infer streaming from an active conversation status', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
@@ -74,6 +158,153 @@ describe('createRuntimeTaskStreamHandlers', () => {
       offset: 0,
     })
     expect('messageId' in actions[0]).toBe(false)
+  })
+
+  test('inserts an idle supervisor correction before its assistant turn starts', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      clientUserMessageId: 'supervisor-correction-1',
+      runtimeGeneratedUserMessage: {
+        id: 'supervisor-correction-1',
+        message: 'Return to scope.',
+        createdAt: 1_700_000_000_000,
+        source: { source: 'supervisor' },
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'user_added',
+        message: expect.objectContaining({
+          id: 'supervisor-correction-1',
+          content: 'Return to scope.',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_started',
+        subtaskId: 'turn-1',
+        clientUserMessageId: 'supervisor-correction-1',
+      }),
+    ])
+  })
+
+  test('preserves completed item snapshot semantics', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      itemId: 'message-1',
+      content: 'Complete answer',
+      contentMode: 'snapshot',
+      result: {},
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        itemId: 'message-1',
+        content: 'Complete answer',
+        contentMode: 'snapshot',
+      }),
+    ])
+  })
+
+  test('forwards the client user message id when the runtime turn starts', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatStart?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      clientUserMessageId: 'client-user-1',
+    })
+
+    expect(actions).toEqual([
+      {
+        type: 'assistant_started',
+        taskId: 'runtime-task-1',
+        subtaskId: 'codex-turn-9',
+        clientUserMessageId: 'client-user-1',
+        shellType: undefined,
+      },
+    ])
+  })
+
+  test('commits the turn terminal action before settling the task lifecycle', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const calls: string[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => calls.push(action.type),
+      onAssistantSettled: () => calls.push('lifecycle_settled'),
+    })
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      result: {},
+    })
+
+    expect(calls).toEqual(['assistant_done', 'lifecycle_settled'])
+  })
+
+  test('maps a Codex failure to an identified canonical error item action', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatError?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'codex-turn-9',
+      deviceId: 'device-1',
+      shellType: 'codex',
+      error: 'Context window exceeded',
+      type: 'response.failed',
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_error',
+      subtaskId: 'codex-turn-9',
+      error: 'Context window exceeded',
+      errorType: 'response.failed',
+    })
   })
 
   test('forwards structured task-plan updates for the active runtime task', () => {
@@ -286,10 +517,47 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions[1]).toMatchObject({
       type: 'assistant_done',
       subtaskId: 'runtime-task-1-context-compact',
-      content: '',
     })
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
     expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
+  })
+
+  test('passes reclassified assistant text identity to the conversation reducer', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'turn-1',
+      deviceId: 'device-1',
+      replacesItemId: 'msg-progress',
+      block: {
+        id: 'msg-progress',
+        type: 'text',
+        content: 'I will inspect.',
+        status: 'done',
+        timestamp: 1770000000000,
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        replaceAssistantTextItemId: 'msg-progress',
+        block: expect.objectContaining({
+          id: 'msg-progress',
+          type: 'text',
+          content: 'I will inspect.',
+        }),
+      }),
+    ])
   })
 
   test('does not finish an active assistant turn for automatic context compaction', () => {
@@ -411,7 +679,6 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_done',
       subtaskId: 'subtask-9',
       turnId: 'turn-9',
-      content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
     expect(info).toHaveBeenCalledWith(
       '[Wework] Runtime terminal event accepted',
@@ -477,6 +744,31 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(
       (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
     ).toBeUndefined()
+  })
+
+  test('uses completed runtime content as the authoritative final answer', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: '最终回答。',
+      },
+    })
+
+    expect(actions).toEqual([
+      expect.objectContaining({
+        type: 'assistant_done',
+        subtaskId: 'subtask-9',
+        content: '最终回答。',
+      }),
+    ])
   })
 
   test('builds the completed turn file changes summary from streamed blocks', () => {
@@ -726,7 +1018,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: 'hello',
         status: 'done',
@@ -745,7 +1037,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: '请用 $plugin:skill explain the sidebar',
         presentationReferences: [
@@ -771,7 +1063,7 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     const [message] = runtimeMessagesToWorkbenchMessages([
       {
         id: 'codex-user-item-1',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         role: 'user',
         content: '@OpenAI Developers Create an API key',
         presentationReferences: [
@@ -791,140 +1083,6 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
       role: 'user',
       content: '[@OpenAI Developers](plugin://openai-developers@openai-curated) Create an API key',
     })
-  })
-
-  test('replaces a failed attempt when the same user message is retried successfully', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-        createdAt: '2026-07-17T00:00:00.000Z',
-      },
-      {
-        id: 'assistant-failed',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'request failed',
-        createdAt: '2026-07-17T00:00:01.000Z',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-        createdAt: '2026-07-17T00:00:02.000Z',
-      },
-      {
-        id: 'assistant-success',
-        role: 'assistant',
-        content: 'fixed',
-        status: 'done',
-        subtaskId: 'turn-2',
-        createdAt: '2026-07-17T00:00:03.000Z',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-success',
-    ])
-    expect(messages.some(message => message.status === 'failed')).toBe(false)
-  })
-
-  test('keeps the latest failure when repeated retries continue to fail', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-1',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'first failure',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'fix the failure',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-2',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-2',
-        error: 'second failure',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-failed-2',
-    ])
-    expect(messages[1]).toMatchObject({ error: 'second failure' })
-  })
-
-  test('does not collapse an older failed turn across a newer user message', () => {
-    const messages = runtimeMessagesToWorkbenchMessages([
-      {
-        id: 'provider-user-1',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'first request',
-        status: 'done',
-      },
-      {
-        id: 'assistant-failed-1',
-        role: 'assistant',
-        content: '',
-        status: 'failed',
-        subtaskId: 'turn-1',
-        error: 'first failure',
-      },
-      {
-        id: 'provider-user-2',
-        clientMessageId: 'runtime-local-pane-2',
-        role: 'user',
-        content: 'second request',
-        status: 'done',
-      },
-      {
-        id: 'assistant-success-2',
-        role: 'assistant',
-        content: 'second response',
-        status: 'done',
-        subtaskId: 'turn-2',
-      },
-      {
-        id: 'provider-user-1-retry',
-        clientMessageId: 'runtime-local-pane-1',
-        role: 'user',
-        content: 'first request',
-        status: 'done',
-      },
-    ])
-
-    expect(messages.map(message => message.id)).toEqual([
-      'runtime-local-pane-1',
-      'assistant-failed-1',
-      'runtime-local-pane-2',
-      'assistant-success-2',
-      'runtime-local-pane-1',
-    ])
   })
 })
 

@@ -18,12 +18,17 @@ from app.schemas.conversion_callback import (
     ConversionStatusRequest,
     ConversionStatusResponse,
 )
+from app.schemas.knowledge import DocumentProcessingStage
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.context.context_service import context_service
 from app.services.knowledge.index_state_machine import (
     mark_document_conversion_started,
     mark_document_conversion_succeeded,
     mark_document_index_failed,
+)
+from app.services.knowledge.processing_errors import (
+    build_conversion_callback_error,
+    build_processing_error,
 )
 from app.tasks.knowledge_tasks import index_document_task
 from shared.telemetry.decorators import trace_sync
@@ -72,10 +77,21 @@ def conversion_status_callback(
             .first()
         )
         if doc:
+            error = build_conversion_callback_error(
+                error_code=request.error_code,
+                user_message=request.user_message,
+                retryable=request.retryable,
+                generation=request.generation,
+                error_message=request.error_message,
+                provider=request.provider,
+                model=request.model,
+                request_id=request.request_id,
+            )
             mark_document_index_failed(
                 db=db,
                 document_id=request.document_id,
                 generation=request.generation,
+                error=error,
             )
         return ConversionStatusResponse(ok=True, document_exists=doc is not None)
 
@@ -311,6 +327,15 @@ def conversion_completed_callback(
             db=db,
             document_id=request.document_id,
             generation=request.generation,
+            error=build_processing_error(
+                stage=DocumentProcessingStage.DISPATCH,
+                code="index_dispatch_failed",
+                message=(
+                    "The indexing task could not be submitted. Please retry later."
+                ),
+                retryable=True,
+                generation=request.generation,
+            ),
         )
         raise
 

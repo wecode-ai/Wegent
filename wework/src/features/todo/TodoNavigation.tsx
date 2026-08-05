@@ -13,12 +13,10 @@ import {
   Settings2,
   UserRound,
 } from 'lucide-react'
-import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { navigateTo, resolveDesktopAppRoute } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks, RuntimeDeviceWorkspace, User as UserProfile } from '@/types/api'
 import type { TodoDetailItem } from './TodoDetailPanel'
@@ -292,22 +290,12 @@ export function TodoSidebar({
         <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
         <div
           data-testid="todo-sidebar-chrome-controls"
-          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-7"
+          className="absolute inset-x-0 top-0 z-10 flex h-[38px] items-center justify-between px-2 pl-[92px]"
         >
           <DesktopWindowControls
             sidebarCollapsed={false}
             onToggleSidebar={onToggleCollapsed}
             className="gap-1"
-          />
-          <DesktopAppSwitcher
-            activeApp="todo"
-            onNavigate={app => navigateTo(resolveDesktopAppRoute(app))}
-            testIds={{
-              wework: 'todo-app-wework',
-              todo: 'todo-app-current',
-              apps: 'todo-app-apps',
-              wegent: 'todo-app-wegent',
-            }}
           />
         </div>
 

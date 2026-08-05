@@ -51,6 +51,7 @@ Environment:
   WEWORK_TAURI_CONFIG       Default additional Tauri JSON config path.
   WEWORK_SKIP_ENV_FILE      Set to 1 when the caller already loaded environment files.
   WEWORK_BRAND_CONFIG       Default brand identity JSON.
+  VITE_WEWORK_FEEDBACK_URL  Optional feedback submission endpoint. Disabled when empty.
 
 Examples:
   bash wework/scripts/build-windows-app.sh --profile dev
@@ -196,6 +197,7 @@ echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "  VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
@@ -256,7 +258,7 @@ if [ -n "$TAURI_BUNDLES" ]; then
 fi
 
 wework_build_windows_code_statistics_hook "$WEWORK_DIR" "$WINDOWS_BUILD_TARGET"
-WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:codex
 WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" pnpm run prepare:dws
 pnpm exec tauri "${TAURI_ARGS[@]}"
 

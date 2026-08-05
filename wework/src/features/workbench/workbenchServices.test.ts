@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const project = {
@@ -57,6 +57,14 @@ const mocks = vi.hoisted(() => {
       deliveryApi: localDeliveryApi,
       externalIssueApi,
     },
+    hybridServices: {
+      deliveryApi: backendDeliveryApi,
+      projectSpaceApis: {
+        local: localDeliveryApi,
+        cloud: backendDeliveryApi,
+        defaultLocation: 'cloud' as const,
+      },
+    },
   }
 })
 
@@ -68,6 +76,10 @@ vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(() => mocks.localServices),
 }))
 
+vi.mock('@/api/hybrid/hybridServices', () => ({
+  createHybridWorkbenchServices: vi.fn(() => mocks.hybridServices),
+}))
+
 vi.mock('@/lib/runtime-mode', () => ({
   isLocalFirstAppRuntime: vi.fn(() => false),
 }))
@@ -77,10 +89,16 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 import { createDefaultWorkbenchServices } from './workbenchServices'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 
 describe('default workbench project-space services', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(false)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
   })
 
   test('keeps cloud GitLab tasks on the backend in backend desktop mode', async () => {
@@ -102,5 +120,46 @@ describe('default workbench project-space services', () => {
     expect(mocks.externalIssueApi.configureProject).not.toHaveBeenCalled()
     expect(mocks.externalIssueApi.createLoopItem).not.toHaveBeenCalled()
     expect(services.projectSpaceApis?.local).toBe(mocks.localDeliveryApi)
+  })
+
+  test('adds build-time feedback submission to an offline local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
+
+    const services = createDefaultWorkbenchServices()
+
+    expect(services.feedbackApi).toBeDefined()
+  })
+
+  test('adds build-time feedback submission to a connected local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', 'https://feedback.example.com/v1/reports')
+
+    const services = createDefaultWorkbenchServices({
+      isConnected: true,
+      backendUrl: 'https://backend.example.com',
+      apiBaseUrl: 'https://backend.example.com/api',
+      socketBaseUrl: 'https://backend.example.com',
+      socketPath: '/socket.io',
+      token: 'token',
+    })
+
+    expect(services.feedbackApi).toBeDefined()
+  })
+
+  test('hides feedback submission in an unconfigured connected local workbench', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+    vi.stubEnv('VITE_WEWORK_FEEDBACK_URL', '')
+
+    const services = createDefaultWorkbenchServices({
+      isConnected: true,
+      backendUrl: 'https://backend.example.com',
+      apiBaseUrl: 'https://backend.example.com/api',
+      socketBaseUrl: 'https://backend.example.com',
+      socketPath: '/socket.io',
+      token: 'token',
+    })
+
+    expect(services.feedbackApi).toBeUndefined()
   })
 })

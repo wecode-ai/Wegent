@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalUser, LOCAL_USER } from './localSession'
-import { createLocalAppServices } from './localServices'
+import { createLocalAppServices, createRuntimeWorkApiFromIpc } from './localServices'
 import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
@@ -45,6 +45,14 @@ describe('createLocalAppServices', () => {
       catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: true },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -268,8 +276,16 @@ describe('createLocalAppServices', () => {
     await Promise.all([firstDevices, secondDevices])
   })
 
-  test('returns Codex provider models in local model list', async () => {
+  test('hides official Codex models without auth while keeping provider models', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'device.execute_command') {
+        return {
+          success: true,
+          stdout: { exists: false },
+          stderr: '',
+          error: null,
+        }
+      }
       if (method === 'runtime.codex.models.list') {
         return {
           providers: [
@@ -280,7 +296,7 @@ describe('createLocalAppServices', () => {
               current: false,
               available: true,
               error: null,
-              data: [],
+              data: OFFICIAL_CODEX_MODELS,
             },
             {
               id: 'wecode-openai',
@@ -323,7 +339,9 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'Doubao-Seed-2.0-pro-260215',
@@ -342,6 +360,9 @@ describe('createLocalAppServices', () => {
         }),
       ]),
     })
+    expect(models.data.some(model => model.config?.weworkModelKind === 'codex-official')).toBe(
+      false
+    )
   })
 
   test('normalizes runtime handles returned by local executor task lists', async () => {
@@ -584,6 +605,7 @@ describe('createLocalAppServices', () => {
         model_config: expect.objectContaining({
           model: 'openai',
           model_id: 'gpt-5',
+          wework_model_kind: 'codex-official',
           api_format: 'responses',
           protocol: 'openai-responses',
           runtime_config: {
@@ -845,7 +867,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
-      clientMessageId: 'runtime-local-pane-1',
+      clientUserMessageId: 'runtime-local-pane-1',
       modelId: 'gpt-5.4',
       modelOptions: {
         collaborationMode: 'default',
@@ -879,7 +901,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'continue',
-        clientMessageId: 'runtime-local-pane-1',
+        clientUserMessageId: 'runtime-local-pane-1',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -976,7 +998,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'stop and use this direction',
-      clientMessageId: 'runtime-interrupt-1',
+      clientUserMessageId: 'runtime-interrupt-1',
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
@@ -997,7 +1019,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'stop and use this direction',
-        clientMessageId: 'runtime-interrupt-1',
+        clientUserMessageId: 'runtime-interrupt-1',
         executionRequest: expect.objectContaining({
           prompt: 'stop and use this direction',
           client_user_message_id: 'runtime-interrupt-1',
@@ -1012,6 +1034,8 @@ describe('createLocalAppServices', () => {
               'X-Wegent-Model-Namespace': 'default',
               'X-Wegent-Model-User-Id': '42',
               'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
+              'X-Wegent-Upstream-Header-Wecode-Executor': 'codex',
+              'X-Wegent-Upstream-Header-Wecode-Source': 'wegent-local',
             },
           }),
         }),
@@ -1207,6 +1231,390 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('sends configured model settings to a cloud device executor', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-ollama',
+      displayName: 'Cloud Ollama',
+      modelId: 'qwen3-coder',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: 'cloud-device-key',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') {
+        return { data: [{ id: 'wework-custom-cloud-ollama' }] }
+      }
+      return { accepted: true }
+    })
+    const requestModelCatalogSync = vi.fn(async ({ sync }: { sync: () => Promise<void> }) => {
+      await sync()
+      return true
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+      resolveDeviceName: () => 'Cloud Executor',
+    })
+
+    await runtimeApi.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'cloud-device',
+      workspacePath: '/workspace/project',
+      taskId: 'cloud-task',
+      runtime: 'codex',
+      message: 'hello from cloud',
+      modelId: 'local-model:cloud-ollama',
+    })
+    await runtimeApi.sendRuntimeMessage({
+      address: {
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/project',
+        taskId: 'cloud-task',
+      },
+      message: 'continue from cloud',
+      modelId: 'local-model:cloud-ollama',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    const expectedModelConfig = expect.objectContaining({
+      model_id: 'qwen3-coder',
+      base_url: 'http://localhost:11434/v1',
+      responses_url: 'http://localhost:11434/v1/responses',
+      api_key: 'cloud-device-key',
+      codex_responses_compat_proxy: true,
+    })
+
+    expect(createPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(sendPayload.executionRequest.model_config).toEqual(expectedModelConfig)
+    expect(requestModelCatalogSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'cloud-device',
+        deviceName: 'Cloud Executor',
+        modelName: 'Cloud Ollama',
+      })
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.catalog.custom.write',
+      {
+        models: [
+          expect.objectContaining({
+            slug: 'wework-custom-cloud-ollama',
+          }),
+        ],
+      },
+      'cloud-device'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.restart',
+      { ifIdle: true },
+      'cloud-device'
+    )
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.models.list',
+      { includeHidden: true },
+      'cloud-device'
+    )
+    expect(request).toHaveBeenCalledWith('runtime.tasks.create', expect.any(Object), 'cloud-device')
+    expect(request).toHaveBeenCalledWith('runtime.tasks.send', expect.any(Object), 'cloud-device')
+    expect(requestModelCatalogSync).toHaveBeenCalledTimes(1)
+  })
+
+  test('synchronizes the same configured catalog independently for each cloud device', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-multi-device',
+      displayName: 'Cloud multi-device',
+      modelId: 'multi-device-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') {
+        return { data: [{ id: 'wework-custom-cloud-multi-device' }] }
+      }
+      return { saved: true }
+    })
+    const requestModelCatalogSync = vi.fn(async ({ sync }: { sync: () => Promise<void> }) => {
+      await sync()
+      return true
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'device-a', {
+      resolveDeviceId: async data => String(data.deviceId),
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+    })
+
+    await runtimeApi.prepareRuntimeModel({
+      deviceId: 'device-a',
+      modelId: 'local-model:cloud-multi-device',
+    })
+    await runtimeApi.prepareRuntimeModel({
+      deviceId: 'device-b',
+      modelId: 'local-model:cloud-multi-device',
+    })
+
+    expect(requestModelCatalogSync).toHaveBeenCalledTimes(2)
+    expect(
+      request.mock.calls.filter(([method]) => method === 'runtime.codex.catalog.custom.write')
+    ).toEqual([
+      expect.arrayContaining([
+        'runtime.codex.catalog.custom.write',
+        expect.any(Object),
+        'device-a',
+      ]),
+      expect.arrayContaining([
+        'runtime.codex.catalog.custom.write',
+        expect.any(Object),
+        'device-b',
+      ]),
+    ])
+    expect(request.mock.calls.filter(([method]) => method === 'runtime.codex.models.list')).toEqual(
+      [
+        ['runtime.codex.models.list', { includeHidden: true }, 'device-a'],
+        ['runtime.codex.models.list', { includeHidden: true }, 'device-b'],
+      ]
+    )
+  })
+
+  test('does not send when cloud model catalog synchronization is cancelled', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-cancelled',
+      displayName: 'Cloud Cancelled',
+      modelId: 'cancelled-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn()
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: vi.fn().mockResolvedValue(false),
+    })
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-cancelled',
+      })
+    ).resolves.toBe(false)
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  test('does not reuse an in-flight catalog confirmation after the catalog changes', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-changing',
+      displayName: 'Cloud Changing',
+      modelId: 'changing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const confirmations: Array<(confirmed: boolean) => void> = []
+    const requestModelCatalogSync = vi.fn(
+      () =>
+        new Promise<boolean>(resolve => {
+          confirmations.push(resolve)
+        })
+    )
+    const runtimeApi = createRuntimeWorkApiFromIpc(vi.fn(), async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+    })
+
+    const firstPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-changing',
+    })
+    await vi.waitFor(() => expect(requestModelCatalogSync).toHaveBeenCalledTimes(1))
+
+    saveLocalModelConfig({
+      id: 'cloud-changing',
+      displayName: 'Cloud Changing v2',
+      modelId: 'changing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const secondPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-changing',
+    })
+    await vi.waitFor(() => expect(requestModelCatalogSync).toHaveBeenCalledTimes(2))
+
+    confirmations[0](false)
+    confirmations[1](false)
+    await expect(firstPrepare).resolves.toBe(false)
+    await expect(secondPrepare).resolves.toBe(false)
+  })
+
+  test('serializes catalog writes per device and applies only the latest configuration', async () => {
+    const firstConfig = saveLocalModelConfig({
+      id: 'cloud-serialized',
+      displayName: 'Cloud Serialized v1',
+      modelId: 'serialized-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const syncRequests: Array<{
+      sync: () => Promise<void>
+      resolve: (confirmed: boolean) => void
+    }> = []
+    const requestModelCatalogSync = vi.fn(
+      ({ sync }: { sync: () => Promise<void> }) =>
+        new Promise<boolean>(resolve => {
+          syncRequests.push({ sync, resolve })
+        })
+    )
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') {
+        return { data: [{ id: 'wework-custom-cloud-serialized' }] }
+      }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync,
+    })
+
+    const firstPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-serialized',
+    })
+    await vi.waitFor(() => expect(syncRequests).toHaveLength(1))
+    saveLocalModelConfig({
+      id: 'cloud-serialized',
+      displayName: 'Cloud Serialized v2',
+      modelId: 'serialized-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry: {
+        ...firstConfig.catalogEntry,
+        display_name: 'Cloud Serialized v2',
+      },
+      catalogReady: true,
+    })
+    const secondPrepare = runtimeApi.prepareRuntimeModel({
+      deviceId: 'cloud-device',
+      modelId: 'local-model:cloud-serialized',
+    })
+    await vi.waitFor(() => expect(syncRequests).toHaveLength(2))
+
+    await syncRequests[1].sync()
+    syncRequests[1].resolve(true)
+    await expect(secondPrepare).resolves.toBe(true)
+    await syncRequests[0].sync()
+    syncRequests[0].resolve(true)
+    await expect(firstPrepare).resolves.toBe(true)
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-serialized',
+      })
+    ).resolves.toBe(true)
+    expect(requestModelCatalogSync).toHaveBeenCalledTimes(2)
+    const catalogWrites = request.mock.calls.filter(
+      ([method]) => method === 'runtime.codex.catalog.custom.write'
+    )
+    expect(catalogWrites).toHaveLength(1)
+    expect(catalogWrites[0][1]).toEqual({
+      models: [
+        expect.objectContaining({
+          slug: 'wework-custom-cloud-serialized',
+          display_name: 'Cloud Serialized v2',
+        }),
+      ],
+    })
+  })
+
+  test('reports a busy cloud Codex without forcing a restart', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-busy',
+      displayName: 'Cloud Busy',
+      modelId: 'busy-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') {
+        return { restarted: false, requiresConfirmation: true }
+      }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+
+    await expect(
+      runtimeApi.prepareRuntimeModel({
+        deviceId: 'cloud-device',
+        modelId: 'local-model:cloud-busy',
+      })
+    ).rejects.toThrow('正在运行')
+    expect(request).toHaveBeenCalledWith(
+      'runtime.codex.app_server.restart',
+      { ifIdle: true },
+      'cloud-device'
+    )
+  })
+
+  test('rejects the send when the restarted cloud Codex does not list the selected model', async () => {
+    saveLocalModelConfig({
+      id: 'cloud-missing',
+      displayName: 'Cloud Missing',
+      modelId: 'missing-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
+    })
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
+      if (method === 'runtime.codex.models.list') return { data: [{ id: 'another-model' }] }
+      return { saved: true }
+    })
+    const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
+      resolveDeviceId: async () => 'cloud-device',
+      transportLabel: 'Cloud',
+      syncConfiguredModelCatalog: true,
+      requestModelCatalogSync: async ({ sync }) => {
+        await sync()
+        return true
+      },
+    })
+
+    await expect(
+      runtimeApi.sendRuntimeMessage({
+        address: {
+          deviceId: 'cloud-device',
+          workspacePath: '/workspace/project',
+          taskId: 'cloud-task',
+        },
+        message: 'must not send',
+        modelId: 'local-model:cloud-missing',
+      })
+    ).rejects.toThrow('重启后未加载目标模型')
+    expect(request).not.toHaveBeenCalledWith(
+      'runtime.tasks.send',
+      expect.anything(),
+      'cloud-device'
+    )
+  })
+
   test('uses the built-in K3 catalog profile with 256K context and low reasoning', async () => {
     saveLocalModelConfig({
       id: 'kimi-k3',
@@ -1246,6 +1654,118 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('uses the native DeepSeek Responses profile with high reasoning', async () => {
+    saveLocalModelConfig({
+      id: 'deepseek-v4-flash',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek V4 Flash',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai-responses',
+      toolProfile: 'custom',
+      requestPath: '/responses',
+      apiKey: 'deepseek-key',
+      contextWindow: 1_048_576,
+      codexCatalogModelId: 'wework-deepseek-v4-flash',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-deepseek',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'DeepSeek',
+      modelId: 'local-model:deepseek-v4-flash',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model_id: 'deepseek-v4-flash',
+        base_url: 'https://api.deepseek.com',
+        responses_url: 'https://api.deepseek.com/responses',
+        upstream_api_format: 'openai-responses',
+        tool_profile: 'custom',
+        codex_catalog_model_id: 'wework-deepseek-v4-flash',
+        model_context_window: 1_048_576,
+        reasoning: { effort: 'high' },
+      })
+    )
+  })
+
+  test('routes DeepSeek images through a configured vision proxy model', async () => {
+    const visionCatalog = createDefaultLocalModelCatalogEntry({
+      id: 'vision',
+      displayName: 'Vision',
+      toolProfile: 'custom',
+    })
+    visionCatalog.input_modalities = ['text', 'image']
+    saveLocalModelConfig({
+      id: 'vision',
+      providerProfileId: 'custom',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      apiFormat: 'openai-responses',
+      requestPath: '/responses',
+      apiKey: 'vision-key',
+      catalogEntry: visionCatalog,
+    })
+    saveLocalModelConfig({
+      id: 'deepseek-vision',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek V4 Flash',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      apiFormat: 'openai-responses',
+      requestPath: '/responses',
+      apiKey: 'deepseek-key',
+      codexCatalogModelId: 'wework-deepseek-v4-flash',
+      visionModelConfigId: 'vision',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-deepseek-vision',
+      runtime: 'codex',
+      message: 'inspect the screenshot',
+      title: 'DeepSeek Vision',
+      modelId: 'local-model:deepseek-vision',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        codex_catalog_model_id: 'wework-deepseek-v4-flash-vision',
+        vision_sidecar: {
+          enabled: true,
+          request_url: 'https://vision.example/v1/responses',
+          api_format: 'openai-responses',
+          api_key: 'vision-key',
+          model_id: 'vision-model',
+          max_descriptions_per_turn: 8,
+          timeout_ms: 45_000,
+        },
+      })
+    )
+  })
+
   test('uses selected Codex provider for local runtime execution requests', async () => {
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -1265,6 +1785,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
     await services.runtimeWorkApi?.sendRuntimeMessage({
@@ -1278,6 +1799,7 @@ describe('createLocalAppServices', () => {
       modelOptions: {
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+        codexProviderType: 'provider',
       },
     })
 
@@ -1290,6 +1812,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'Doubao-Seed-2.0-pro-260215',
+        wework_model_kind: 'codex-provider',
         api_format: 'responses',
         protocol: 'openai-responses',
         model_provider: 'wecode-openai',
@@ -1305,6 +1828,41 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('keeps official Codex classification when OpenAI provider metadata is present', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'gpt-5.5',
+      modelOptions: {
+        codexProviderId: 'openai',
+        codexProviderName: 'OpenAI',
+        codexProviderType: 'official',
+      },
+    })
+
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+
+    expect(sendPayload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'gpt-5.5',
+        wework_model_kind: 'codex-official',
+        model_provider: 'openai',
+        provider_name: 'OpenAI',
+      })
     )
   })
 
@@ -1357,6 +1915,8 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
           'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
+          'X-Wegent-Upstream-Header-Wecode-Executor': 'codex',
+          'X-Wegent-Upstream-Header-Wecode-Source': 'wegent-local',
         },
         runtime_config: {
           codex: {
@@ -1402,6 +1962,7 @@ describe('createLocalAppServices', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelUpstreamApiFormat: 'openai-chat-completions',
+        weworkCloudModelCodexCatalogModelId: 'wework-kimi-k3',
       },
     })
 
@@ -1410,6 +1971,7 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         model: 'openai',
         model_id: 'shared-model',
+        codex_catalog_model_id: 'wework-kimi-k3',
         api_format: 'responses',
         upstream_api_format: 'openai-chat-completions',
         tool_profile: 'custom',
@@ -1421,6 +1983,8 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
           'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
+          'X-Wegent-Upstream-Header-Wecode-Executor': 'codex',
+          'X-Wegent-Upstream-Header-Wecode-Source': 'wegent-local',
         },
         runtime_config: {
           codex: {
@@ -1475,6 +2039,35 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.prompt).toContain('这个 TODO 里有啥？')
     expect(sendPayload.message).toBe('这个云项目是解决什么问题？')
     expect(sendPayload.executionRequest.prompt).toContain('Current TODO: WEG-1')
+  })
+
+  test('automatically deploys and emphasizes dws for a DingTalk AI Table project', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-dingtalk',
+      runtime: 'codex',
+      message: '把任务状态改成进行中',
+      additionalContext: {
+        dingtalkAITableProject: {
+          kind: 'application',
+          value: 'Base ID: base-1\nTable ID: table-1',
+        },
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.skill_names).toEqual(['dws'])
+    expect(payload.executionRequest.preload_skills).toEqual(['dws'])
+    expect(payload.executionRequest.user_selected_skills).toEqual(['dws'])
   })
 
   test('activates project-space capabilities for a generic cloud reference', async () => {
@@ -1653,6 +2246,39 @@ describe('createLocalAppServices', () => {
       objective: '实现 plan 里的功能',
       status: 'active',
       tokenBudget: null,
+    })
+  })
+
+  test('normalizes local task supervisor requests before IPC', async () => {
+    const request = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'task-1',
+      supervisor: {
+        mode: 'suggest',
+        status: 'active',
+        instructions: 'Keep scope focused',
+        suggestions: [],
+      },
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: { deviceId: 'local-device', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
+    })
+    expect(request).toHaveBeenCalledWith('runtime.tasks.supervisor.set', {
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      mode: 'suggest',
+      instructions: 'Keep scope focused',
+      modelId: 'gpt-5.6-luna',
+      intervalSeconds: 60,
     })
   })
 

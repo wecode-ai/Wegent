@@ -210,6 +210,38 @@ describe('DocumentDetailDialog permissions', () => {
   })
 })
 
+describe('DocumentDetailDialog processing errors', () => {
+  it('renders the localized message for a known public error code', () => {
+    const failedDocument: KnowledgeDocument = {
+      ...baseDocument,
+      index_status: 'failed',
+      processing_error: {
+        stage: 'conversion',
+        code: 'model_quota_exhausted',
+        message: 'English fallback.',
+        retryable: false,
+        generation: 1,
+        occurred_at: '2026-04-02T00:01:00Z',
+      },
+    }
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={failedDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByTestId('document-processing-error-detail-11')).toBeInTheDocument()
+    expect(
+      screen.getByText('knowledge:document.document.processingError.codes.modelQuotaExhausted')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('English fallback.')).not.toBeInTheDocument()
+  })
+})
+
 describe('DocumentDetailDialog original file preview', () => {
   const officeDocument: KnowledgeDocument = {
     ...baseDocument,
@@ -255,7 +287,7 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveClass('hidden')
     expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
       'data-active',
-      'true'
+      'false'
     )
     expect(sourceActions).toHaveClass('invisible', 'pointer-events-none')
     expect(sourceActions).toHaveAttribute('aria-hidden', 'true')
@@ -264,6 +296,10 @@ describe('DocumentDetailDialog original file preview', () => {
 
     await user.click(screen.getByTestId('knowledge-document-source-tab'))
     expect(screen.getByTestId('mock-knowledge-source-preview')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
     expect(sourceActions).not.toHaveClass('invisible')
   })
 
@@ -284,6 +320,33 @@ describe('DocumentDetailDialog original file preview', () => {
       'data-allow-download',
       'false'
     )
+  })
+
+  it('shows derived summaries while protecting organization document content', async () => {
+    const user = userEvent.setup()
+    mockDocumentSummary = {
+      status: 'completed',
+      short_summary: 'Organization document summary',
+    }
+
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+        isOrganization={true}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-document-summary-toggle')).toBeInTheDocument()
+    expect(screen.getByText('document.document.detail.statusValues.completed')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+
+    expect(screen.getByText('Organization document summary')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.detail.copy')).not.toBeInTheDocument()
   })
 
   it('hides the source preview tab for non-file documents', () => {

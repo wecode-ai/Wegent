@@ -51,7 +51,7 @@ describe('FlyfishOfficePreview', () => {
     expect(props.className).toContain('overflow-auto')
     expect(options.styleIsolation).toBe('scoped')
     expect(options).not.toHaveProperty('pdf')
-    const assetBase = `/file-viewer/${fileViewerPackage.version}-office-v2/`
+    const assetBase = `/file-viewer/${fileViewerPackage.version}-protected-docs-v1/`
     expect(options.docx.workerUrl).toBe(`${assetBase}vendor/docx/docx.worker.js`)
     expect(options.docx.workerJsZipUrl).toBe(`${assetBase}vendor/docx/jszip.min.js`)
     expect(options.spreadsheet.workerUrl).toBe(`${assetBase}vendor/xlsx/sheet.worker.js`)
@@ -90,7 +90,7 @@ describe('FlyfishOfficePreview', () => {
     }
   )
 
-  it('keeps spreadsheets isolated in Shadow DOM without an outer scroll container', () => {
+  it('keeps spreadsheet DOM overlays in the scoped style surface', () => {
     render(
       <FlyfishOfficePreview
         blob={new Blob(['spreadsheet'], { type: 'application/octet-stream' })}
@@ -100,6 +100,6 @@ describe('FlyfishOfficePreview', () => {
 
     const props = mockFileViewer.mock.calls[0][0]
     expect(props.className).not.toContain('overflow-auto')
-    expect((props.options as { styleIsolation: string }).styleIsolation).toBe('shadow')
+    expect((props.options as { styleIsolation: string }).styleIsolation).toBe('scoped')
   })
 })

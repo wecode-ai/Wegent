@@ -423,6 +423,112 @@ describe('reduceWorkbenchMessages', () => {
       { type: 'thinking', status: 'done' },
       { type: 'tool', toolName: 'bash', status: 'pending' }
     ])
+    expect(withTool[0].streamingThinkingContent).toBe('Running a command')
+  })
+
+  test('clears the active thinking summary when assistant text starts streaming', () => {
+    const withReasoning = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '',
+      reasoningChunk: 'Inspecting the current state'
+    })
+
+    expect(withReasoning[0].streamingThinkingContent).toBe(
+      'Inspecting the current state'
+    )
+
+    const withText = reduceWorkbenchMessages(withReasoning, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: 'I found the issue.'
+    })
+
+    expect(withText[0].streamingThinkingContent).toBeUndefined()
+  })
+
+  test('restores the latest thinking summary when a tool starts after process text', () => {
+    const withReasoning = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '',
+      reasoningChunk: 'Preparing to inspect the files'
+    })
+    const withProcessText = reduceWorkbenchMessages(withReasoning, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: 'I will inspect the current implementation.'
+    })
+    const withTool = reduceWorkbenchMessages(withProcessText, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'call_1',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolInput: { command: 'pwd' },
+        status: 'pending',
+        createdAt: 1770000000000
+      }
+    })
+
+    expect(withProcessText[0].streamingThinkingContent).toBeUndefined()
+    expect(withTool[0].streamingThinkingContent).toBe(
+      'Preparing to inspect the files'
+    )
+  })
+
+  test('restores the latest thinking summary when a tool arrives in a stream chunk', () => {
+    const withReasoning = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '',
+      reasoningChunk: 'Preparing to inspect the files'
+    })
+    const withProcessText = reduceWorkbenchMessages(withReasoning, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: 'I will inspect the current implementation.'
+    })
+    const withTool = reduceWorkbenchMessages(withProcessText, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '',
+      blocks: [
+        {
+          id: 'call_1',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'pwd' },
+          status: 'pending',
+          createdAt: 1770000000000
+        }
+      ]
+    })
+
+    expect(withTool[0].streamingThinkingContent).toBe(
+      'Preparing to inspect the files'
+    )
+  })
+
+  test('keeps the active thinking summary when a tool continuation starts', () => {
+    const withReasoning = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '',
+      reasoningChunk: 'Preparing the next step'
+    })
+    const continued = reduceWorkbenchMessages(withReasoning, {
+      type: 'assistant_started',
+      taskId: '1',
+      subtaskId: '9'
+    })
+
+    expect(continued[0].streamingThinkingContent).toBe(
+      'Preparing the next step'
+    )
   })
 
   test('orders tool blocks by creation time when create events arrive out of order', () => {

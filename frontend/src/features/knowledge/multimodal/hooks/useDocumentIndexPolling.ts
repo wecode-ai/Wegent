@@ -17,6 +17,10 @@ const ACTIVE_INDEX_STATUSES = new Set<DocumentIndexStatus>([
   'indexing',
 ])
 
+export function isDocumentIndexActive(document: KnowledgeDocument): boolean {
+  return ACTIVE_INDEX_STATUSES.has(document.index_status)
+}
+
 /**
  * Poll `refresh` while any document is in an active indexing state, stopping
  * once all documents reach a terminal state.
@@ -37,7 +41,7 @@ export function useDocumentIndexPolling(
   refresh: () => void | Promise<void>,
   intervalMs = 5000
 ): void {
-  const hasActiveIndexing = documents.some(d => ACTIVE_INDEX_STATUSES.has(d.index_status))
+  const hasActiveIndexing = documents.some(isDocumentIndexActive)
   useEffect(() => {
     if (!hasActiveIndexing) return
     const interval = setInterval(() => {

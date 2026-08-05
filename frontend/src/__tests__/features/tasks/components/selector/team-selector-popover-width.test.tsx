@@ -28,6 +28,8 @@ jest.mock('@/apis/user', () => ({
     getCurrentUser: jest.fn(),
     updateUser: jest.fn(),
     getQuickAccess: jest.fn(),
+    getRecentTeams: jest.fn(),
+    getQuickLaunch: jest.fn(),
   },
 }))
 
@@ -100,6 +102,11 @@ describe('team selector popover width', () => {
       system_team_ids: [],
       teams: [],
     })
+    ;(userApis.getQuickLaunch as jest.Mock).mockResolvedValue({
+      system_functions: [],
+      favorite_agents: [],
+    })
+    ;(userApis.getRecentTeams as jest.Mock).mockResolvedValue([])
   })
 
   it('uses a wider popover for the input toolbar agent list', async () => {

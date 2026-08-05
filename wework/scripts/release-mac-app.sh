@@ -25,6 +25,7 @@ LOCAL_PROJECT_DIR="${LOCAL_PROJECT_DIR:-$WEWORK_DIR/src-tauri/target/release/loc
 LOCAL_DIST_DIR="${LOCAL_DIST_DIR:-$LOCAL_PROJECT_DIR/dist/wework}"
 LOCAL_DOWNLOAD_BASE_URL="${LOCAL_DOWNLOAD_BASE_URL:-http://127.0.0.1:8787/dist/wework}"
 PROD_UPDATE_BASE_URL="${WEWORK_UPDATE_BASE_URL:-}"
+UPDATER_ENDPOINT_OVERRIDE="${WEWORK_UPDATER_ENDPOINT:-}"
 SIGNING_PRIVATE_KEY_PATH="${TAURI_SIGNING_PRIVATE_KEY_PATH:-$HOME/.tauri/wework-updater.key}"
 UPDATER_PUBKEY="${TAURI_UPDATER_PUBKEY:-}"
 NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
@@ -48,6 +49,7 @@ Options:
   --local-dist-dir <path>    Local dist dir. Default: <local-project-dir>/dist/wework
   --local-base-url <url>     Local download base URL.
   --update-base-url <url>    Production update service base URL. Overrides WEWORK_UPDATE_BASE_URL.
+  --updater-endpoint <url>   Updater manifest endpoint. Defaults to <download-base-url>/latest.json.
   --signing-key-path <path>  Tauri updater private key path.
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
@@ -59,12 +61,13 @@ Options:
 
 Environment overrides:
   RELEASE_NOTES, LOCAL_PROJECT_DIR, LOCAL_DIST_DIR, LOCAL_DOWNLOAD_BASE_URL,
-  WEWORK_UPDATE_BASE_URL, WEWORK_UPDATE_PUBLISH_TOKEN, TAURI_SIGNING_PRIVATE_KEY,
+  WEWORK_UPDATE_BASE_URL, WEWORK_UPDATER_ENDPOINT, WEWORK_UPDATE_PUBLISH_TOKEN,
+  TAURI_SIGNING_PRIVATE_KEY,
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
   MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, WEWORK_BRAND_CONFIG,
-  VITE_WEGENT_BACKEND_URL, VITE_WEGENT_SOCKET_URL,
+  VITE_WEGENT_BACKEND_URL, VITE_WEGENT_SOCKET_URL, VITE_WEWORK_FEEDBACK_URL,
   WEWORK_NOTARIZATION_POLL_INTERVAL_SECONDS (default: 15)
 EOF
 }
@@ -551,6 +554,10 @@ while [ $# -gt 0 ]; do
       PROD_UPDATE_BASE_URL="$2"
       shift 2
       ;;
+    --updater-endpoint)
+      UPDATER_ENDPOINT_OVERRIDE="$2"
+      shift 2
+      ;;
     --signing-key-path)
       SIGNING_PRIVATE_KEY_PATH="$2"
       shift 2
@@ -662,6 +669,7 @@ if [ "$TARGET" = "prod" ]; then
   rm -rf "$dist_dir"
 fi
 mkdir -p "$dist_dir"
+updater_endpoint="${UPDATER_ENDPOINT_OVERRIDE:-${download_base_url%/}/latest.json}"
 
 resource_config="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.resources.json.XXXXXX")"
 release_config="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.base.json.XXXXXX")"
@@ -701,7 +709,7 @@ with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
 PY
 
 VERSION="$next_version" \
-UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
+UPDATER_ENDPOINT="$updater_endpoint" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
@@ -741,6 +749,7 @@ elif [ "$TARGET" = "local" ]; then
 fi
 echo "VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
+echo "VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 
 cd "$WEWORK_DIR"
 detach_stale_bundle_disk_images
@@ -760,7 +769,7 @@ wework_build_macos_executor_sidecar \
   release
 wework_build_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET"
 wework_sign_code_statistics_hook "$WEWORK_DIR" "$MACOS_BUILD_TARGET" "$app_sign_identity"
-WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+WEWORK_CODEX_MATERIALIZE=1 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 WEWORK_DWS_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:dws
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \

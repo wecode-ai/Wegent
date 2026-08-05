@@ -44,6 +44,12 @@ Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制
 5. Backend 做轻量聚合后返回给 Wework，不再读取或匹配 Backend `projects` 表。
 6. Wework 根据 runtime work 响应展示 Project 和 Conversation；每个 LocalTask 的打开和通知身份仍是 `deviceId + localTaskId`。
 
+选择或打开 LocalTask 是只读操作。为恢复 pane 状态而调用
+`runtime.tasks.transcript`、`runtime.tasks.goal.get` 等读取接口时，executor
+可以水合本地缓存字段，但不能修改 LocalTask 的 `updatedAt`。只有发送消息、
+重命名、goal 状态真实变化等任务内容或生命周期发生变化的操作，才可以推进任务
+活动时间；否则单纯查看任务会改变列表排序和“更新时间”展示。
+
 `runtime.tasks.list` 的响应有两层工作区语义。外层 workspace 表示侧栏 Project 分组，Codex git worktree 任务应归并到共同的仓库根目录；内层 LocalTask 表示任务实际运行目录，必须保留自己的 `workspacePath`。如果该目录是 git worktree，LocalTask 需要携带 `workspaceKind: worktree` 和 `worktreeId`，侧栏 worktree 图标、底部终端 cwd 和右侧工具目录都只从 LocalTask 字段判断。不能因为某个 LocalTask 是 worktree 就把父 workspace 标记为 worktree，也不能把 LocalTask 路径覆盖成父 workspace 路径。
 
 executor 不主动向 Backend 轮询或推送任务列表。离线设备不会贡献 LocalTask；Wework 可以显示映射目录离线，但不会从中心库缓存本地任务。
@@ -201,9 +207,9 @@ executor 从原生 Codex session 发现用户消息时，会把 `local_images`�
 
 原生 Codex 任务有一个额外约束：刷新 transcript 时只信任 Codex 本身的会话记录。fork 包或 executor JSON 索引中携带的 `runtimeHandle.messages` 只是导入瞬间的快照，不能作为原生 Codex transcript 的回退来源，否则 Wework 刷新后会显示旧消息或丢失用户追问。非 SDK 原生任务仍可以使用 executor JSON 索引中的本地 transcript。
 
-Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientMessageId` 和附件元数据。发言导航的 id 优先使用 `clientMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
+Codex transcript 中同一轮用户输入可能同时包含附件包装、应用上下文和用户消息事件。executor 必须先提取用户可见请求文本，再用该文本合并同轮重复消息，同时保留 `clientUserMessageId` 和附件元数据。发言导航的 id 优先使用 `clientUserMessageId`；已加载回合的预览必须从同一份用户可见文本生成，不能展示 `# Files mentioned by the user` 或 `<application_context>` 等运行时注入内容。
 
-Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。为了保持 Codex transcript 的单一信源，Wework 只在 LocalTask 的 `runtimeHandle.userMessagePresentations` 中按 `clientMessageId` 持久化引用 token 与目标，不保存第二份用户正文。executor 读取 provider transcript 后，以 provider 的 `content` 作为唯一正文，仅为相同 `clientMessageId` 的消息补充 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回；没有稳定客户端消息 id 时不做推测匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
+Wework 发送的富文本引用（例如技能或插件标签）可能在 Codex provider transcript 中被规范化为纯文本。为了保持 Codex transcript 的单一信源，Wework 只在 LocalTask 的 `runtimeHandle.userMessagePresentations` 中按 `clientUserMessageId` 持久化引用 token 与目标，不保存第二份用户正文。executor 读取 provider transcript 后，以 provider 的 `content` 作为唯一正文，仅为相同 `clientUserMessageId` 的消息补充 transcript 无法表达的引用位置与目标，作为不含重复正文的 `presentationReferences` 返回；没有稳定客户端消息 id 时不做推测匹配。该组合适用于运行中、成功和失败的任务；Wework 在渲染边界组合正文与展示引用，使任务完成后重新打开仍能把技能和插件引用渲染为标签，而不会退化成裸 `$plugin:skill` 或 `@Plugin` 文本。
 
 runtime transcript 中的 assistant 消息可以携带 `fileChanges` 摘要。Rust executor 的 Codex app-server 路径以 app-server 通知流作为本轮事件来源；如果后续接入 diff 通知，`runtime.tasks.create`、`runtime.tasks.send` 和 `runtime.tasks.transcript` 必须把它规范化为消息上的 `fileChanges`。这样前端无需等待下一次列表刷新，就能在当前 assistant 消息下显示本轮文件变更卡片。
 

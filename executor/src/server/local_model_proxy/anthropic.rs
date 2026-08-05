@@ -18,7 +18,7 @@ use super::{
 };
 
 pub(super) fn responses_to_anthropic(body: &Value) -> Result<(Value, ToolContext), String> {
-    let (chat_body, context) = chat::responses_to_chat(body)?;
+    let (chat_body, context) = chat::responses_to_chat_for_anthropic(body)?;
     let mut result = Map::new();
     if let Some(model) = chat_body.get("model") {
         result.insert("model".to_owned(), model.clone());
@@ -193,7 +193,10 @@ struct AnthropicStreamState<S> {
     response_id: String,
     model: String,
     input_tokens: u64,
+    cached_input_tokens: u64,
+    cache_creation_input_tokens: u64,
     output_tokens: u64,
+    output_observed: bool,
 }
 
 pub(super) fn anthropic_sse_to_responses<S, E>(
@@ -212,7 +215,10 @@ where
         response_id: "msg_wework_anthropic".to_owned(),
         model: String::new(),
         input_tokens: 0,
+        cached_input_tokens: 0,
+        cache_creation_input_tokens: 0,
         output_tokens: 0,
+        output_observed: false,
     };
     chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
 }
@@ -259,6 +265,7 @@ pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
         .get("stop_reason")
         .and_then(Value::as_str)
         .unwrap_or("end_turn");
+    let usage = anthropic_usage_to_chat(response.get("usage"));
     json!({
         "id": response.get("id").cloned().unwrap_or_else(|| json!("msg_wework_anthropic")),
         "model": response.get("model").cloned().unwrap_or(Value::Null),
@@ -266,10 +273,35 @@ pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
             "message": message,
             "finish_reason": if stop_reason == "max_tokens" { "length" } else if stop_reason == "tool_use" { "tool_calls" } else { "stop" }
         }],
-        "usage": {
-            "prompt_tokens": response.pointer("/usage/input_tokens").cloned().unwrap_or_else(|| json!(0)),
-            "completion_tokens": response.pointer("/usage/output_tokens").cloned().unwrap_or_else(|| json!(0))
-        }
+        "usage": usage
+    })
+}
+
+fn anthropic_usage_to_chat(usage: Option<&Value>) -> Value {
+    let input_tokens = usage
+        .and_then(|value| value.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cached_input_tokens = usage
+        .and_then(|value| value.get("cache_read_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation_input_tokens = usage
+        .and_then(|value| value.get("cache_creation_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .and_then(|value| value.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let prompt_tokens = input_tokens
+        .saturating_add(cached_input_tokens)
+        .saturating_add(cache_creation_input_tokens);
+
+    json!({
+        "prompt_tokens": prompt_tokens,
+        "prompt_tokens_details": {"cached_tokens": cached_input_tokens},
+        "completion_tokens": output_tokens
     })
 }
 
@@ -340,6 +372,14 @@ impl<S> AnthropicStreamState<S> {
                     .pointer("/usage/input_tokens")
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
+                self.cached_input_tokens = message
+                    .pointer("/usage/cache_read_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                self.cache_creation_input_tokens = message
+                    .pointer("/usage/cache_creation_input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 self.emit(json!({"choices": [{"delta": {}}]}));
             }
             Some("content_block_start") => self.start_content_block(event),
@@ -350,6 +390,22 @@ impl<S> AnthropicStreamState<S> {
                     .and_then(Value::as_u64)
                     .unwrap_or(self.output_tokens);
                 let upstream_stop = event.pointer("/delta/stop_reason").and_then(Value::as_str);
+                if upstream_stop.is_some() && self.output_tokens > 0 && !self.output_observed {
+                    log_executor_event(
+                        "local model proxy anthropic empty response",
+                        &[
+                            ("output_tokens", self.output_tokens.to_string()),
+                            ("stop_reason", upstream_stop.unwrap_or_default().to_owned()),
+                        ],
+                    );
+                    self.emit(json!({
+                        "error": {
+                            "type": "upstream_empty_response",
+                            "message": "Anthropic upstream reported output tokens without returning content"
+                        }
+                    }));
+                    return;
+                }
                 let stop = upstream_stop.map(anthropic_finish_reason);
                 if let Some(upstream_stop) = upstream_stop {
                     log_executor_event(
@@ -364,9 +420,17 @@ impl<S> AnthropicStreamState<S> {
                         ],
                     );
                 }
+                let prompt_tokens = self
+                    .input_tokens
+                    .saturating_add(self.cached_input_tokens)
+                    .saturating_add(self.cache_creation_input_tokens);
                 self.emit(json!({
                     "choices": [{"delta": {}, "finish_reason": stop}],
-                    "usage": {"prompt_tokens": self.input_tokens, "completion_tokens": self.output_tokens}
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "prompt_tokens_details": {"cached_tokens": self.cached_input_tokens},
+                        "completion_tokens": self.output_tokens
+                    }
                 }));
             }
             Some("error") => self.emit(json!({"error": event.get("error")})),
@@ -378,6 +442,7 @@ impl<S> AnthropicStreamState<S> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
         let block = event.get("content_block").unwrap_or(&Value::Null);
         if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+            self.output_observed = true;
             log_executor_event(
                 "local model proxy anthropic tool use",
                 &[
@@ -405,12 +470,27 @@ impl<S> AnthropicStreamState<S> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
         let delta = event.get("delta").unwrap_or(&Value::Null);
         let chat_delta = match delta.get("type").and_then(Value::as_str) {
-            Some("text_delta") => json!({"content": delta.get("text")}),
-            Some("thinking_delta") => json!({"reasoning_content": delta.get("thinking")}),
-            Some("input_json_delta") => json!({"tool_calls": [{
-                "index": index,
-                "function": {"arguments": delta.get("partial_json")}
-            }]}),
+            Some("text_delta") => {
+                self.output_observed |= delta
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty());
+                json!({"content": delta.get("text")})
+            }
+            Some("thinking_delta") => {
+                self.output_observed |= delta
+                    .get("thinking")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.is_empty());
+                json!({"reasoning_content": delta.get("thinking")})
+            }
+            Some("input_json_delta") => {
+                self.output_observed = true;
+                json!({"tool_calls": [{
+                    "index": index,
+                    "function": {"arguments": delta.get("partial_json")}
+                }]})
+            }
             _ => return,
         };
         self.emit(json!({"choices": [{"delta": chat_delta}]}));
@@ -555,10 +635,39 @@ mod tests {
         assert!(output.contains("call `apply_patch` again"));
     }
 
+    #[test]
+    fn converts_anthropic_cached_usage_to_full_chat_prompt_usage() {
+        let response = json!({
+            "id": "msg_1",
+            "model": "kimi-for-coding",
+            "content": [{"type": "text", "text": "Done"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 90,
+                "cache_creation_input_tokens": 20,
+                "output_tokens": 7
+            }
+        });
+
+        let converted = anthropic_response_to_chat(&response);
+
+        assert_eq!(converted["usage"]["prompt_tokens"], json!(120));
+        assert_eq!(
+            converted["usage"]["prompt_tokens_details"]["cached_tokens"],
+            json!(90)
+        );
+        assert_eq!(converted["usage"]["completion_tokens"], json!(7));
+    }
+
     #[tokio::test]
     async fn converts_anthropic_text_and_tool_stream() {
         let events = [
-            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":10}}}),
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{
+                "input_tokens":10,
+                "cache_read_input_tokens":90,
+                "cache_creation_input_tokens":20
+            }}}),
             json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Plan"}}),
             json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}}),
             json!({"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tool_1","name":"apply_patch","input":{}}}),
@@ -572,7 +681,7 @@ mod tests {
         );
         let output = anthropic_sse_to_responses(source, {
             let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
-            chat::responses_to_chat(&input)
+            chat::responses_to_chat_for_anthropic(&input)
                 .expect("context should build")
                 .1
         })
@@ -585,7 +694,8 @@ mod tests {
         assert!(output.contains("response.reasoning_summary_text.delta"));
         assert!(output.contains("response.output_text.delta"));
         assert!(output.contains("response.custom_tool_call_input.done"));
-        assert!(output.contains("\"input_tokens\":10"));
+        assert!(output.contains("\"input_tokens\":120"));
+        assert!(output.contains("\"cached_tokens\":90"));
     }
 
     #[tokio::test]
@@ -631,6 +741,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fails_when_anthropic_reports_tokens_without_output() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-k2.5","usage":{"input_tokens":1}}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":157}}),
+            json!({"type":"message_stop"}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("reported output tokens without returning content"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn completes_zero_token_anthropic_response_without_output() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-k2.5","usage":{"input_tokens":1}}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}),
+            json!({"type":"message_stop"}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+
+        let output = anthropic_sse_to_responses(source, ToolContext::default())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+    }
+
+    #[tokio::test]
     async fn restores_namespace_on_anthropic_tool_calls() {
         let events = [
             json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
@@ -654,7 +815,7 @@ mod tests {
                 }]
             }]
         });
-        let context = chat::responses_to_chat(&input)
+        let context = chat::responses_to_chat_for_anthropic(&input)
             .expect("context should build")
             .1;
         let output = anthropic_sse_to_responses(source, context)
@@ -691,7 +852,9 @@ mod tests {
         );
         let output = anthropic_sse_to_responses(source, {
             let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
-            chat::responses_to_chat(&input).expect("context").1
+            chat::responses_to_chat_for_anthropic(&input)
+                .expect("context")
+                .1
         })
         .collect::<Vec<_>>()
         .await

@@ -26,7 +26,7 @@ import {
 } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
-import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
@@ -60,6 +60,8 @@ interface WorkspacePanelActionsProps {
   onDeliver?: () => void
   todoLabel?: string
   onManageTodo?: () => void
+  supervisor?: RuntimeSupervisorState | null
+  onConfigureSupervisor?: () => void
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   bottomPanelOpen: boolean
@@ -92,6 +94,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onDeliver,
   todoLabel,
   onManageTodo,
+  supervisor,
+  onConfigureSupervisor,
   rightPanelOpen,
   rightPanelExpanded,
   bottomPanelOpen,
@@ -238,6 +242,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onDeliver={onDeliver}
           todoLabel={todoLabel}
           onManageTodo={onManageTodo}
+          supervisor={supervisor}
+          onConfigureSupervisor={onConfigureSupervisor}
         />
       )}
       {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (

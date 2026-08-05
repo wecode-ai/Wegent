@@ -9,24 +9,44 @@ import type { Team } from '@/types/api'
 import { userApis } from '@/apis/user'
 
 const mockRefresh = jest.fn()
+const mockPush = jest.fn()
 let mockQuickAccessTeams: number[] = []
 let mockQuickAccessVersion: number | undefined = 7
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
-    push: jest.fn(),
+    push: mockPush,
   }),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : _key,
+    t: (key: string, fallback?: string | Record<string, unknown>) =>
+      key === 'common:teams.use_more_agents'
+        ? '查看全部智能体'
+        : typeof fallback === 'string'
+          ? fallback
+          : key,
   }),
 }))
 
 jest.mock('@/components/ui/popover', () => ({
-  Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Popover: ({
+    children,
+    onOpenChange,
+  }: {
+    children: React.ReactNode
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <div>
+      <button
+        type="button"
+        data-testid="open-team-selector-popover"
+        onClick={() => onOpenChange?.(true)}
+      />
+      {children}
+    </div>
+  ),
   PopoverTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
@@ -48,6 +68,7 @@ jest.mock('@/apis/user', () => ({
     getCurrentUser: jest.fn(),
     updateUser: jest.fn(),
     getQuickAccess: jest.fn(),
+    getRecentTeams: jest.fn(),
   },
 }))
 
@@ -105,12 +126,13 @@ describe('TeamSelectorButton', () => {
       system_team_ids: [],
       teams: [],
     } as unknown as Awaited<ReturnType<typeof userApis.getQuickAccess>>)
+    mockedUserApis.getRecentTeams.mockResolvedValue([])
     mockRefresh.mockResolvedValue(undefined)
     mockQuickAccessTeams = []
     mockQuickAccessVersion = 7
   })
 
-  it('marks system teams in the dropdown when names overlap', async () => {
+  it('deduplicates system and personal teams with the same identity', async () => {
     const systemTeam = makeTeam({ id: 1, name: 'spec-dev-team', user_id: 0 })
     const userTeam = makeTeam({ id: 2, name: 'spec-dev-team', user_id: 123 })
     const selectedTeam = makeTeam({ id: 3, name: 'dev-team', user_id: 0 })
@@ -125,16 +147,15 @@ describe('TeamSelectorButton', () => {
       />
     )
 
-    await screen.findByTestId('favorite-team-button-1')
+    await screen.findByTestId('favorite-team-button-2')
 
     const specTeamOptions = screen.getAllByTestId('team-option-spec-dev-team')
 
-    expect(specTeamOptions).toHaveLength(2)
-    expect(within(specTeamOptions[0]).getByText('系统')).toBeInTheDocument()
-    expect(within(specTeamOptions[1]).queryByText('系统')).not.toBeInTheDocument()
+    expect(specTeamOptions).toHaveLength(1)
+    expect(within(specTeamOptions[0]).queryByText('系统')).not.toBeInTheDocument()
   })
 
-  it('uses team displayName for dropdown labels and search', async () => {
+  it('uses team displayName for dropdown labels', async () => {
     const displayTeam = makeTeam({
       id: 2,
       name: 'spec-dev-team',
@@ -153,13 +174,70 @@ describe('TeamSelectorButton', () => {
       />
     )
 
-    fireEvent.change(screen.getByPlaceholderText('common:teams.search_team'), {
-      target: { value: 'Display' },
-    })
-
     const option = await screen.findByTestId('team-option-spec-dev-team')
     expect(within(option).getByText('Spec Dev Display')).toBeInTheDocument()
     expect(within(option).queryByText('spec-dev-team')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('common:teams.search_team')).not.toBeInTheDocument()
+  })
+
+  it('shows five recent teams and fills missing entries by update time', async () => {
+    mockedUserApis.getRecentTeams.mockResolvedValueOnce([
+      { id: 3, name: 'team-3', is_system: false },
+      { id: 1, name: 'team-1', is_system: false },
+    ])
+    const teams = [1, 2, 3, 4, 5, 6].map(id =>
+      makeTeam({
+        id,
+        name: `team-${id}`,
+        updated_at: `2026-07-0${id}T00:00:00Z`,
+      })
+    )
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={teams[0]}
+        setSelectedTeam={jest.fn()}
+        teams={teams}
+        disabled={false}
+        currentMode="code"
+      />
+    )
+
+    await waitFor(() => expect(mockedUserApis.getRecentTeams).toHaveBeenCalled())
+    expect(screen.getByText('common:teams.recently_used')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-team-3')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-team-1')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-team-6')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-team-5')).toBeInTheDocument()
+    expect(screen.getByTestId('team-option-team-4')).toBeInTheDocument()
+    expect(screen.queryByTestId('team-option-team-2')).not.toBeInTheDocument()
+
+    expect(screen.queryByPlaceholderText('common:teams.search_team')).not.toBeInTheDocument()
+  })
+
+  it('refreshes recent teams whenever the selector opens', async () => {
+    const teams = [1, 2, 3, 4, 5].map(id =>
+      makeTeam({
+        id,
+        name: `team-${id}`,
+        updated_at: `2026-07-0${id}T00:00:00Z`,
+      })
+    )
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={teams[0]}
+        setSelectedTeam={jest.fn()}
+        teams={teams}
+        disabled={false}
+        currentMode="code"
+      />
+    )
+
+    await waitFor(() => expect(mockedUserApis.getRecentTeams).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByTestId('open-team-selector-popover'))
+
+    await waitFor(() => expect(mockedUserApis.getRecentTeams).toHaveBeenCalledTimes(2))
   })
 
   it('adds a team to quick access favorites from the dropdown without selecting it', async () => {
@@ -293,7 +371,18 @@ describe('TeamSelectorButton', () => {
       />
     )
 
-    expect(await screen.findByTestId('quick-create-button')).toHaveAttribute('role', 'button')
+    const quickCreateButton = await screen.findByTestId('quick-create-button')
+    const useMoreButton = screen.getByTestId('team-selector-use-more-agents')
+
+    expect(quickCreateButton).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('settings-button')).toHaveAttribute('role', 'button')
+    expect(useMoreButton).toHaveTextContent('查看全部智能体')
+    expect(useMoreButton.compareDocumentPosition(quickCreateButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+
+    fireEvent.click(useMoreButton)
+
+    expect(mockPush).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&from=chat')
   })
 })

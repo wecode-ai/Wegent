@@ -18,6 +18,38 @@ use super::util::{
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorSuggestion {
+    pub id: String,
+    pub message: String,
+    pub rationale: String,
+    pub status: String,
+    pub created_at: i64,
+    pub resolved_at: Option<i64>,
+    pub source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeSupervisorState {
+    pub mode: String,
+    pub status: String,
+    pub instructions: String,
+    pub model_id: Option<String>,
+    #[serde(default = "default_supervisor_interval_seconds")]
+    pub interval_seconds: u64,
+    pub last_evaluated_at: Option<i64>,
+    #[serde(default)]
+    pub last_content_hash: Option<String>,
+    pub last_error: Option<String>,
+    pub suggestions: Vec<RuntimeSupervisorSuggestion>,
+}
+
+fn default_supervisor_interval_seconds() -> u64 {
+    30
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct RuntimeTaskLink {
     pub local_task_id: String,
@@ -32,6 +64,7 @@ pub(crate) struct RuntimeTaskLink {
     pub thread_status: String,
     pub turn_status: Option<String>,
     pub goal_status: Option<String>,
+    pub supervisor: Option<RuntimeSupervisorState>,
     #[serde(skip)]
     pub git_info: Option<Value>,
     pub created_at: i64,
@@ -62,12 +95,13 @@ impl RuntimeTaskLink {
             workspace_path,
             title,
             runtime: "codex".to_owned(),
-            status: "running".to_owned(),
-            running: true,
+            status: "active".to_owned(),
+            running: false,
             continuable: true,
-            thread_status: "active".to_owned(),
-            turn_status: Some("inProgress".to_owned()),
+            thread_status: "notLoaded".to_owned(),
+            turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -105,6 +139,7 @@ impl RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -135,6 +170,7 @@ impl RuntimeTaskLink {
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
+        let supervisor = local_link.as_ref().and_then(|link| link.supervisor.clone());
         let mut git_info = thread
             .get("gitInfo")
             .or_else(|| thread.get("git_info"))
@@ -148,10 +184,10 @@ impl RuntimeTaskLink {
             git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
         }
         let running = !local_archived && execution_running;
-        let mut status = merged_task_status(thread, local_link.as_ref(), running, local_archived);
+        let mut status = merged_task_status(thread, running, local_archived);
         let mut thread_status =
             codex_thread_status_type(thread).unwrap_or_else(|| "notLoaded".to_owned());
-        let mut turn_status = task_turn_status(thread, local_link.as_ref(), running);
+        let mut turn_status = task_turn_status(thread, running);
         if !running {
             if runtime_status_is_running(&status) {
                 status = "active".to_owned();
@@ -186,6 +222,7 @@ impl RuntimeTaskLink {
             thread_status,
             turn_status,
             goal_status,
+            supervisor,
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
@@ -229,6 +266,7 @@ impl RuntimeTaskLink {
             thread_status: self.thread_status.clone(),
             turn_status: self.turn_status.clone(),
             goal_status: self.goal_status.clone(),
+            supervisor: self.supervisor.clone(),
             git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -282,6 +320,7 @@ impl Default for RuntimeTaskLink {
             thread_status: "notLoaded".to_owned(),
             turn_status: None,
             goal_status: None,
+            supervisor: None,
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
@@ -318,6 +357,7 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_pinned_order: Option<usize>,
     pub project_active: bool,
     pub project_appearance: Option<Value>,
+    pub default_project_space: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -338,6 +378,7 @@ impl Default for RuntimeWorkspaceLink {
             project_pinned_order: None,
             project_active: false,
             project_appearance: None,
+            default_project_space: None,
         }
     }
 }
@@ -441,6 +482,9 @@ pub(crate) fn workspace_response(
                 workspace_json["projectActive"] = Value::Bool(workspace.project_active);
                 if let Some(appearance) = workspace.project_appearance.clone() {
                     workspace_json["projectAppearance"] = appearance;
+                }
+                if let Some(default_project_space) = workspace.default_project_space.clone() {
+                    workspace_json["defaultProjectSpace"] = default_project_space;
                 }
             }
             if let Some(remote_host_id) = remote_host_id {
@@ -592,6 +636,11 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     }
     if let Some(goal_status) = link.goal_status.clone() {
         task.insert("goalStatus".to_owned(), Value::String(goal_status));
+    }
+    if let Some(supervisor) = link.supervisor.clone() {
+        if let Ok(supervisor) = serde_json::to_value(supervisor) {
+            task.insert("supervisor".to_owned(), supervisor);
+        }
     }
     task.insert("pinned".to_owned(), Value::Bool(link.pinned));
     if let Some(order) = link.pinned_order {
@@ -767,32 +816,17 @@ fn thread_status(thread: &Value) -> String {
     .to_owned()
 }
 
-fn merged_task_status(
-    thread: &Value,
-    local_link: Option<&RuntimeTaskLink>,
-    running: bool,
-    archived: bool,
-) -> String {
+fn merged_task_status(thread: &Value, running: bool, archived: bool) -> String {
     if archived {
         return "archived".to_owned();
     }
     if running {
         return "running".to_owned();
     }
-    if let Some(status) = local_link
-        .map(|link| link.status.trim().to_ascii_lowercase())
-        .filter(|status| matches!(status.as_str(), "done" | "cancelled" | "failed"))
-    {
-        return status;
-    }
     thread_status(thread)
 }
 
-fn task_turn_status(
-    thread: &Value,
-    local_link: Option<&RuntimeTaskLink>,
-    running: bool,
-) -> Option<String> {
+fn task_turn_status(thread: &Value, running: bool) -> Option<String> {
     if running {
         return Some("inProgress".to_owned());
     }
@@ -802,17 +836,6 @@ fn task_turn_status(
         .and_then(|turns| turns.last())
         .and_then(|turn| string_field(turn, "status"))
         .map(normalize_codex_turn_status)
-        .or_else(|| local_link.and_then(|link| link.turn_status.clone()))
-        .or_else(|| {
-            local_link.and_then(
-                |link| match link.status.trim().to_ascii_lowercase().as_str() {
-                    "done" => Some("completed".to_owned()),
-                    "cancelled" | "canceled" => Some("interrupted".to_owned()),
-                    "failed" => Some("failed".to_owned()),
-                    _ => None,
-                },
-            )
-        })
 }
 
 fn normalize_codex_turn_status(status: String) -> String {
@@ -888,7 +911,7 @@ mod tests {
                     }
                 ],
                 "userMessagePresentations": [{
-                    "clientMessageId": "runtime-local-pane-1",
+                    "clientUserMessageId": "runtime-local-pane-1",
                     "references": [{
                         "token": "$plugin:skill",
                         "href": "/tmp/plugin/skill/SKILL.md"
@@ -1047,30 +1070,25 @@ mod tests {
     }
 
     #[test]
-    fn idle_thread_preserves_local_terminal_task_statuses() {
-        for (task_status, turn_status) in [
-            ("done", "completed"),
-            ("cancelled", "interrupted"),
+    fn idle_thread_uses_provider_turn_status() {
+        for (provider_status, turn_status) in [
+            ("completed", "completed"),
+            ("interrupted", "interrupted"),
             ("failed", "failed"),
         ] {
-            let local_link = RuntimeTaskLink {
-                status: task_status.to_owned(),
-                running: false,
-                turn_status: Some(turn_status.to_owned()),
-                ..RuntimeTaskLink::default()
-            };
             let link = RuntimeTaskLink::from_thread_metadata(
                 &json!({
                     "id": "thread-1",
                     "status": "idle",
                     "cwd": "/workspace/project",
+                    "turns": [{"status": provider_status}],
                 }),
-                Some(local_link),
+                None,
                 "/workspace/project".to_owned(),
                 false,
             );
 
-            assert_eq!(link.status, task_status);
+            assert_eq!(link.status, "active");
             assert!(!link.running);
             assert!(link.continuable);
             assert_eq!(link.thread_status, "idle");

@@ -4,7 +4,14 @@ sidebar_position: 9
 
 # Settings and data
 
-Settings cover language and startup behavior, appearance, Codex and local models, proxies, context, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+Settings cover language and startup behavior, appearance, Codex and local models, proxies, context and default principles for the experimental personal supervisor, quick phrases, keybindings, worktrees, browser data, and archived conversations.
+
+## View app information
+
+Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.
+The version shown in the About page is read from the running Tauri application package metadata,
+so it matches the version shown by the macOS **About Wework** system menu. Release builds that
+inject a version through the Tauri configuration use that value in both places.
 
 Common macOS shortcuts include:
 
@@ -18,9 +25,20 @@ Common macOS shortcuts include:
 | Select model           | `Control+Shift+M`         |
 | Appshot                | `Command+Shift+2`         |
 
+## Model availability
+
+**My Codex** shows official Codex models only when the current device has a configured
+`auth.json`. Without that file, the group is omitted from the model picker; provider models,
+local custom models, and cloud models remain available according to their own configuration. If
+no source provides a model, the picker displays **No models available**.
+
 ## Custom Codex models
 
-In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, Chat Completions protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+In **Settings → Models**, click **Add model** and choose a provider first. Wework includes profiles for Kimi Coding, the Kimi API Platform, DeepSeek, and GLM. After entering the corresponding platform API key, Wework discovers available models through the provider's `/models` endpoint. Each profile supplies its connection URL, API protocol, tool mode, and known model context windows; the Kimi API Platform profile uses the China-region `api.moonshot.cn` endpoint. Kimi Coding K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
+
+The DeepSeek profile uses the native Responses API and exposes only `deepseek-v4-flash`, the model currently available for Codex. It uses a 1,048,576-token context window, `high` default reasoning effort, live Web Search, and freeform `apply_patch`. The connection test also requires a real `apply_patch` custom-tool call. Existing Wework-managed DeepSeek V4-Flash configurations that use Chat Completions are migrated to the Responses API. The current catalog declares text input and disables image generation, so image generation and image understanding are not presented as supported capabilities for this profile.
+
+A text-only model can select another configured local model that explicitly declares image input as its vision proxy. Wework asks that model to describe each image before the primary request, then replaces `input_image` with the description text. DeepSeek V4-Flash uses an internal vision-enabled catalog entry in this mode so Codex can accept images without sending the original media to DeepSeek. Vision proxies support OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages endpoints. Each turn describes at most eight distinct images, accepts images up to 20 MB, and injects an explicit error message when description fails. Remote vision endpoints must use HTTPS; only `localhost` and loopback IP addresses may use HTTP, and vision requests do not follow redirects so credentials cannot be forwarded to an unauthorized destination.
 
 Each custom model has an optional **Group** field that controls how it appears in the model picker. Kimi Coding defaults this field to **Kimi**, but users can edit or clear it. Models without a group appear under **Custom models**.
 

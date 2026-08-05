@@ -4,12 +4,29 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 
 import { registerExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
-import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
+import ContextSelectorBase from '@/features/tasks/components/chat/ContextSelector'
 import type { ContextItem } from '@/types/context'
 import type { ExternalKbNode, ExternalKnowledgeBase } from '@/types/external-knowledge'
+
+type ContextSelectorProps = ComponentProps<typeof ContextSelectorBase>
+
+function ContextSelector({
+  onReplaceContexts,
+  ...props
+}: Omit<ContextSelectorProps, 'onReplaceContexts'> & {
+  onReplaceContexts?: ContextSelectorProps['onReplaceContexts']
+}) {
+  const replaceContexts =
+    onReplaceContexts ??
+    ((idsToRemove, contextsToAdd) => {
+      idsToRemove.forEach(id => props.onDeselect(id))
+      contextsToAdd.forEach(context => props.onSelect(context))
+    })
+  return <ContextSelectorBase {...props} onReplaceContexts={replaceContexts} />
+}
 
 const mockListKnowledgeBases = jest.fn()
 const mockGetAllGroupedKnowledgeBases = jest.fn()
@@ -337,6 +354,8 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     })
+    expect(onSelect).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     expect(onSelect).toHaveBeenCalledTimes(1)
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -356,6 +375,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
 
   it('keeps whole-KB and document refs mutually exclusive for external sources', async () => {
     const onChange = jest.fn()
+    mockListFakeNodes.mockResolvedValue({ items: [makeFakeDocument(1), makeFakeDocument(2)] })
 
     function StatefulSelector() {
       const [contexts, setContexts] = useState<ContextItem[]>([])
@@ -403,6 +423,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     )
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
@@ -412,23 +433,26 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
     expect(onChange.mock.calls.at(-1)?.[0][0].ref.target_type).toBeUndefined()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-node-document:doc-1'))
+    const documentRow = screen.getByTestId('knowledge-picker-external-node-document:doc-1')
+    const selectionIndicator = documentRow.lastElementChild
+    expect(selectionIndicator).not.toBeNull()
+    fireEvent.click(selectionIndicator as Element)
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1:document:document:doc-1',
+          id: 'external:fake-provider:explicit:lib-1:document:document:doc-2',
           ref: expect.objectContaining({
             name: 'Fake Lib',
             target_type: 'document',
-            node_id: 'document:doc-1',
-            document_id: 'doc-1',
-            target_name: 'Doc 1',
+            node_id: 'document:doc-2',
+            document_id: 'doc-2',
+            target_name: 'Doc 2',
           }),
         }),
       ])
     )
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-lib-1'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
@@ -437,6 +461,67 @@ describe('external knowledge source registry — ContextSelector (conversation)'
         }),
       ])
     )
+  })
+
+  it('uses external folders as batch selectors for descendant documents', async () => {
+    const onChange = jest.fn()
+    mockListFakeNodes.mockResolvedValue({
+      items: [
+        {
+          node_id: 'folder:guides',
+          raw_id: 'guides',
+          name: 'Guides',
+          node_type: 'folder',
+          children: [makeFakeDocument(1), makeFakeDocument(2)],
+        },
+      ],
+    })
+
+    function StatefulSelector() {
+      const [contexts, setContexts] = useState<ContextItem[]>([])
+      return (
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={contexts}
+          onSelect={context => setContexts(current => [...current, context])}
+          onDeselect={id => setContexts(current => current.filter(context => context.id !== id))}
+          onReplaceContexts={(idsToRemove, contextsToAdd) => {
+            setContexts(current => {
+              const idSet = new Set(idsToRemove)
+              const next = [...current.filter(context => !idSet.has(context.id)), ...contextsToAdd]
+              onChange(next)
+              return next
+            })
+          }}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      )
+    }
+
+    render(<StatefulSelector />)
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-external-kb-lib-1'))
+
+    const folderSelection = await screen.findByTestId(
+      'knowledge-picker-external-folder-scope-folder:guides'
+    )
+    fireEvent.click(folderSelection)
+
+    await waitFor(() => {
+      expect(onChange.mock.calls.at(-1)?.[0]).toHaveLength(2)
+      expect(folderSelection).toHaveAttribute('aria-checked', 'true')
+    })
+
+    fireEvent.click(folderSelection)
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
   })
 
   it('opens external knowledge bases without selecting them when whole-KB selection is unsupported', async () => {
@@ -558,6 +643,6 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     expect(documentRow).toBeDisabled()
     expect(documentRow).toHaveAttribute('aria-disabled', 'true')
     fireEvent.click(documentRow)
-    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })

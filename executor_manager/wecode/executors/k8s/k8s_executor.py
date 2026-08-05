@@ -14,6 +14,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Union
 
 import requests
@@ -281,6 +282,9 @@ class K8sExecutor(Executor):
                 error_msg = f"Kubernetes API error: {e}"
                 callback_status = TaskStatus.FAILED.value
 
+                if prepare_only and executor_name:
+                    self._cleanup_prepare_pod(executor_name, task_id)
+
                 # For validation tasks, report failure
                 if is_validation_task:
                     self._report_validation_failure(
@@ -294,6 +298,9 @@ class K8sExecutor(Executor):
                 progress = 100
                 error_msg = f"Error: {e}"
                 callback_status = TaskStatus.FAILED.value
+
+                if prepare_only and executor_name:
+                    self._cleanup_prepare_pod(executor_name, task_id)
 
                 # For validation tasks, report failure via dedicated API.
                 # For regular/subagent tasks, push FAILED status to backend so
@@ -347,6 +354,25 @@ class K8sExecutor(Executor):
                 "pod_name": executor_name,
                 "executor_name": executor_name,
             }
+
+    def _cleanup_prepare_pod(self, executor_name: str, task_id: str) -> None:
+        """Delete a pod left behind by a failed prepare.
+
+        Prepare does not dispatch a task, so a pod that never became ready has no
+        debugging value and would otherwise make the next retry collide on
+        AlreadyExists. Best-effort: failures here must not mask the original error.
+        """
+        try:
+            result = self.delete_executor(executor_name, K8S_NAMESPACE)
+            logger.info(
+                f"+++ Cleaned up leftover prepare pod '{executor_name}' for task "
+                f"{task_id}: {result.get('status')}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"+++ Failed to clean up leftover prepare pod '{executor_name}' for "
+                f"task {task_id}: {e}"
+            )
 
     def _submit_to_existing_executor(
         self,
@@ -681,6 +707,12 @@ class K8sExecutor(Executor):
                 "error_msg": "Failed to get Kubernetes API client",
             }
 
+        return self._create_pod(core_v1, pod, namespace, pod_name, task_id)
+
+    def _create_pod(
+        self, core_v1, pod, namespace, pod_name, task_id, allow_reconcile=True
+    ):
+        """Create a pod, reconciling AlreadyExists so retries stay idempotent."""
         try:
             result = core_v1.create_namespaced_pod(namespace, body=pod)
             k8s_pod_name = getattr(result.metadata, "name", None)
@@ -691,11 +723,121 @@ class K8sExecutor(Executor):
                 "status": "success",
                 "pod_name": pod_name,
             }
-        except Exception as e:
+        except ApiException as e:
+            # HTTP 409 AlreadyExists: the pod was left by a prior prepare whose
+            # response was cut off (e.g. gateway timeout).
+            already_exists = e.status == HTTPStatus.CONFLICT
+            if already_exists and allow_reconcile:
+                return self._reconcile_existing_pod(
+                    core_v1, pod, namespace, pod_name, task_id
+                )
             logger.error(
                 f"Failed to create Kubernetes pod '{pod_name}' for task {task_id}: {e}"
             )
             return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
+        except Exception as e:
+            # Intentional catch-all: any unexpected error must surface as a
+            # "failed" result dict instead of propagating, so the caller can
+            # report the failure and clean up consistently.
+            logger.error(
+                f"Failed to create Kubernetes pod '{pod_name}' for task {task_id}: {e}"
+            )
+            return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
+
+    def _reconcile_existing_pod(self, core_v1, pod, namespace, pod_name, task_id):
+        """Reconcile a create-time 409 AlreadyExists.
+
+        A prior prepare attempt may have created the pod but had its response cut
+        off by an upstream gateway timeout, so the caller retries with the same
+        pod name. Adopt the pod when it is still usable; otherwise delete the
+        stale pod and recreate it so the retry does not loop on AlreadyExists.
+        """
+        try:
+            existing = core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+        except ApiException as e:
+            if e.status == HTTPStatus.NOT_FOUND:
+                logger.info(
+                    f"+++ Pod '{pod_name}' disappeared after 409; recreating for task {task_id}"
+                )
+                return self._create_pod(
+                    core_v1, pod, namespace, pod_name, task_id, allow_reconcile=False
+                )
+            logger.error(
+                f"+++ Failed to read existing pod '{pod_name}' for task {task_id}: {e}"
+            )
+            return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
+
+        phase = getattr(existing.status, "phase", None) if existing.status else None
+        being_deleted = bool(getattr(existing.metadata, "deletion_timestamp", None))
+        pod_age = self._pod_age_seconds(existing)
+
+        if self._is_pod_adoptable(existing):
+            logger.info(
+                f"+++ Adopting existing pod '{pod_name}' (phase={phase}, "
+                f"age={pod_age:.0f}s) for task {task_id}"
+            )
+            return {"status": "success", "pod_name": pod_name}
+
+        logger.warning(
+            f"+++ Recreating existing pod '{pod_name}' for task {task_id} "
+            f"(phase={phase}, deleting={being_deleted}, age={pod_age})"
+        )
+        self.delete_executor(pod_name, namespace)
+        if not self._wait_pod_deleted(core_v1, namespace, pod_name):
+            return {
+                "status": "failed",
+                "pod_name": pod_name,
+                "error_msg": f"Stale pod '{pod_name}' did not terminate in time",
+            }
+        return self._create_pod(
+            core_v1, pod, namespace, pod_name, task_id, allow_reconcile=False
+        )
+
+    @staticmethod
+    def _pod_age_seconds(existing) -> Optional[float]:
+        """Age of a pod in seconds, or None when creation time is unavailable."""
+        created = getattr(existing.metadata, "creation_timestamp", None)
+        if created is None:
+            return None
+        return (datetime.now(timezone.utc) - created).total_seconds()
+
+    def _is_pod_adoptable(self, existing) -> bool:
+        """Only adopt a freshly created, not-yet-restored pod.
+
+        Workspace restore runs on the backend after prepare returns, so a young
+        pod created by a racing or gateway-timed-out prepare attempt has not been
+        restored yet and is safe to reuse. An older pod may already carry a
+        restored (and possibly modified) workspace; recreating it avoids running
+        restore a second time over live changes.
+        """
+        if getattr(existing.metadata, "deletion_timestamp", None):
+            return False
+        phase = getattr(existing.status, "phase", None) if existing.status else None
+        if phase not in ("Pending", "Running"):
+            return False
+        pod_age = self._pod_age_seconds(existing)
+        if pod_age is None:
+            return False
+        max_age = max(float(os.getenv("EXECUTOR_ADOPT_MAX_AGE_SECONDS", "300")), 0.0)
+        return pod_age <= max_age
+
+    def _wait_pod_deleted(
+        self, core_v1, namespace, pod_name, timeout_seconds=30, interval_seconds=1.0
+    ) -> bool:
+        """Poll until the named pod is gone (read returns 404)."""
+        deadline = time.monotonic() + max(timeout_seconds, 0)
+        while True:
+            try:
+                core_v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+            except ApiException as e:
+                if e.status == HTTPStatus.NOT_FOUND:
+                    return True
+                logger.warning(
+                    f"+++ Error while waiting for pod '{pod_name}' deletion: {e}"
+                )
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval_seconds)
 
     def _is_warmpool_sandbox_reusable(self, sandbox_status: Dict[str, Any]) -> bool:
         """Return whether an existing warm-pool sandbox has a usable Pod."""
@@ -1015,7 +1157,7 @@ class K8sExecutor(Executor):
             )
             return {"status": "success"}
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 logger.warning(
                     "Pod '%s' not found in namespace %s",
                     pod_name,
@@ -1071,7 +1213,7 @@ class K8sExecutor(Executor):
             logger.info(f"Deleted SandboxClaim '{sandbox_claim_name}'")
             return {"status": "success"}
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 logger.warning(
                     f"SandboxClaim '{sandbox_claim_name}' not found in namespace {K8S_NAMESPACE}"
                 )
@@ -1164,7 +1306,7 @@ class K8sExecutor(Executor):
                         f"found by task_id label '{task_id}'"
                     )
                 except ApiException as e:
-                    if e.status != 404:
+                    if e.status != HTTPStatus.NOT_FOUND:
                         logger.error(f"Failed to delete pod '{pod_name}': {e}")
 
             if deleted_pods:
@@ -1208,7 +1350,7 @@ class K8sExecutor(Executor):
                 return pod.metadata.labels.get("aigc.weibo.com/task-id")
             return None
         except ApiException as e:
-            if e.status != 404:
+            if e.status != HTTPStatus.NOT_FOUND:
                 logger.warning(f"Error getting task_id for pod '{executor_name}': {e}")
             return None
         except Exception as e:
@@ -1696,7 +1838,7 @@ class K8sExecutor(Executor):
             }
 
         except ApiException as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 return {
                     "exists": False,
                     "status": "not_found",

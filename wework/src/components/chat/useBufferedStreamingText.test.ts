@@ -5,6 +5,7 @@ import { useBufferedStreamingText } from './useBufferedStreamingText'
 describe('useBufferedStreamingText', () => {
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   test('coalesces streaming updates into the next animation frame', () => {
@@ -22,8 +23,48 @@ describe('useBufferedStreamingText', () => {
     expect(result.current).toBe('Hello world again')
   })
 
-  test('drains a quickly completed stream over multiple frames', () => {
+  test('flushes the latest content when an animation frame is unavailable', () => {
     vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Partial response' } }
+    )
+
+    rerender({ content: 'Partial response with the appended text' })
+    expect(result.current).toBe('Partial response')
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Partial response with the appended text')
+  })
+
+  test('cancels a pending fallback timer for a completed replacement', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'Partial response', streaming: true } }
+    )
+
+    rerender({
+      content: 'Partial response with the appended text',
+      streaming: true,
+    })
+    rerender({ content: 'Authoritative completed response', streaming: false })
+
+    act(() => vi.advanceTimersByTime(100))
+    expect(result.current).toBe('Authoritative completed response')
+  })
+
+  test('shows the authoritative completed snapshot immediately', () => {
     const complete = `A${'b'.repeat(80)}`
     const { result, rerender } = renderHook(
       ({ content, streaming }) => useBufferedStreamingText(content, streaming),
@@ -31,29 +72,6 @@ describe('useBufferedStreamingText', () => {
     )
 
     rerender({ content: complete, streaming: false })
-    expect(result.current).toBe('A')
-
-    act(() => vi.advanceTimersToNextFrame())
-    expect(result.current.length).toBeGreaterThan(1)
-    expect(result.current.length).toBeLessThan(complete.length)
-
-    act(() => vi.runAllTimers())
-    expect(result.current).toBe(complete)
-  })
-
-  test('does not split a surrogate pair while draining completed content', () => {
-    vi.useFakeTimers()
-    const complete = `A${'b'.repeat(9)}😀${'c'.repeat(68)}`
-    const { result, rerender } = renderHook(
-      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
-      { initialProps: { content: 'A', streaming: true } }
-    )
-
-    rerender({ content: complete, streaming: false })
-    act(() => vi.advanceTimersToNextFrame())
-    expect(result.current).toBe(`A${'b'.repeat(9)}`)
-
-    act(() => vi.runAllTimers())
     expect(result.current).toBe(complete)
   })
 

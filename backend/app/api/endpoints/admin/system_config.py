@@ -20,10 +20,12 @@ from app.schemas.admin import (
     SystemConfigResponse,
     SystemConfigUpdate,
 )
+from app.schemas.marketplace_tags import MarketplaceTagsResponse, MarketplaceTagsUpdate
 from app.schemas.quick_launch import (
     QuickLaunchFunctionsResponse,
     QuickLaunchFunctionsUpdate,
 )
+from app.services.marketplace_tag_service import marketplace_tag_service
 
 router = APIRouter()
 
@@ -77,6 +79,36 @@ DEFAULT_SLOGAN_TIPS_CONFIG = {
         },
     ],
 }
+
+
+@router.get(
+    "/system-config/marketplace-tags",
+    response_model=MarketplaceTagsResponse,
+)
+def get_marketplace_tags_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> MarketplaceTagsResponse:
+    """Get the marketplace tag catalog."""
+    return marketplace_tag_service.get_config(db)
+
+
+@router.put(
+    "/system-config/marketplace-tags",
+    response_model=MarketplaceTagsResponse,
+)
+def update_marketplace_tags_config(
+    config_data: MarketplaceTagsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> MarketplaceTagsResponse:
+    """Replace the marketplace tag catalog."""
+    return marketplace_tag_service.update_config(
+        db,
+        items=config_data.items,
+        expected_version=config_data.expected_version,
+        current_user=current_user,
+    )
 
 
 @router.get("/system-config/quick-access", response_model=SystemConfigResponse)

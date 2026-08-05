@@ -67,6 +67,8 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
@@ -85,15 +87,15 @@ Wework 前端通过一个用户级 `RuntimeTaskLifecycleStore` 管理所有任�
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
-同一对话可在回合之间切换同一 provider 类别中的模型。Wework 为每次续聊传递所选模型及其 provider 配置，executor 为每个 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。Codex thread 始终恢复到同一个 task 代理，不需要因同类别模型切换而重启 app-server、fork thread，或根据 Codex 请求体中可能过期的模型名查找其他代理。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
+同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
 
-官方 Codex 使用 OpenAI provider 身份创建 thread，第三方模型则通过 Wework router provider 运行。Codex app-server 不允许恢复 thread 时改变 provider，因此前端会在已启动会话中直接禁用跨类别模型：官方 Codex 会话不能切到第三方模型，第三方会话也不能切到官方 Codex。新建会话仍可选择任意可用模型；需要跨类别延续上下文时，用户可以新建会话并通过 `@` 引用原对话。
+OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效的 `encrypted_content`。runtime work 在续聊前比较任务摘要中的旧 `modelSelection` 与本次选择；发生模型或模型类型切换时，会将切换标记传入 executor。目标请求第一次经过 Wework router 时，代理会移除旧 provider 专属的加密推理/压缩条目以及 `previous_response_id`，并在请求成功后消费该标记。该清理也覆盖切换后先发生 compaction、请求中暂时没有 `<model_switch>` 标记的情况，避免把旧密文发送给 OpenAI Responses、Chat Completions 或 Anthropic Messages 上游。
 
-收到明确错误后，用户通过“切换模型并重试”发起的是一个新的回合：它复用原 task 和 thread 上下文，但只能选择同一 provider 类别中的模型，并只向新选择的上游发送一次请求。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
+收到明确错误后，用户通过“切换模型并重试”发起的是一个新的回合：它复用原 task 和 thread 的可移植上下文，并只向新选择的上游发送一次请求。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
 本地模型代理以 Codex Responses 协议作为内部统一表示，并在 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages 三种上游协议之间双向转换。切换协议时，历史中的工具调用 ID 和工具结果引用必须在请求边界统一规范化为只包含字母、数字、下划线或短横线的稳定 ID，并在同一历史内保持一一对应；不得把 provider 原始 ID 直接透传给另一个协议。流式响应返回的工具调用 ID 也执行同样的规范化，确保后续工具结果能够关联到原调用，并使 `item/started` 与 `item/completed` 收敛到同一个 Wework 工具块。
 
-Wework 在发送用户消息前生成稳定的客户端消息 ID，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求传入 executor，再映射到 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留对应的 `clientMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
+Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 工具状态以 app-server 的生命周期事件为准：`item/started` 创建运行中的工具块，`item/completed` 必须将对应工具块收敛为 `done`（显式失败除外）。部分独立工具条目（如图片查看、等待和网页搜索）不携带 `status` 字段；executor 在实时事件映射和 transcript 恢复时都将这类终态条目规范化为 `done`，避免 Wework 在工具已经完成后继续显示运行状态或递增计时。
 
@@ -101,7 +103,7 @@ Codex 同一回合可以交错产生推理、助手文本和工具调用。execu
 
 助手文本只有在 Codex 明确提供 `final` 或 `final_answer` phase 时才会在流式阶段进入 final content。phase 缺失或无法识别的文本必须先作为过程文本发送，避免第三方模型在文本与工具调用交错时让 Wework 在 final content 和过程块之间反复切换。executor 会保留最后一段未确定文本；回合成功结束且没有明确 final 文本时，才将它提升为最终结果。若同一回合随后产生明确 final 文本，则明确 final 始终优先。
 
-推理内容仍可保留在 runtime transcript 中用于诊断和恢复，但 Wework 不展示推理字符或字符数。回合仍在执行时，界面只显示统一的“正在思考”状态；产生正常助手文本、工具状态或回合终态后，由任务状态机和可见消息内容决定该提示的显示与消失。
+Codex 提供的推理摘要会作为 `thinking` processing block 进入 Wework。流式摘要以单行“正在思考 · 摘要”显示，只用于反馈当前正在生效的思考进度；回合完成、失败或取消后，Wework 会移除该思考块，不在消息历史中保留摘要占位或详情。executor 必须同时映射 reasoning delta 和只携带完整 summary 的 `item/completed`，否则模型长时间推理时界面会退化成没有进展内容的统一等待状态。未包含在 provider 摘要中的内部推理内容不会展示。
 
 ### 后端设备对话任务 REST 入口
 
@@ -443,7 +445,7 @@ flowchart LR
 
 开发模式通过 `wegent-executor-dev` 监控源码并重启实际 executor。该守护进程必须同时监控启动它的 Wework 父进程：Unix 上一旦父 PID 变化，就停止当前 executor 并退出，不能在 Wework 已退出后被系统接管并继续重启 executor。
 
-`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
+`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_SOCKET_URL` 覆盖 `connection.socket_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。Socket 地址为空时默认复用 Backend 地址；地址分离时，HTTP API 使用 Backend 地址，executor 的 Socket.IO transport 使用独立 Socket 地址。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
 
 ### 云设备启动身份变量
 

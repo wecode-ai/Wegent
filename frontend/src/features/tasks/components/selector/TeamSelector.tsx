@@ -18,7 +18,7 @@
 import React, { useEffect, useMemo, useRef } from 'react'
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select'
 import { Tag } from '@/components/ui/tag'
-import { Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { Squares2X2Icon } from '@heroicons/react/24/outline'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Team, TaskDetail } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -66,6 +66,7 @@ export default function TeamSelector({
   const searchParams = useSearchParams()
   const isMobile = useMediaQuery('(max-width: 767px)')
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), [])
+  const myAgentsHref = `${paths.resourceLibrary.getHref()}?tab=mine&type=agent&from=chat`
 
   // Get taskId from URL
   const taskIdFromUrl =
@@ -262,23 +263,26 @@ export default function TeamSelector({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full',
         isMobile ? 'px-4 py-3 min-h-[44px]' : 'px-2.5 py-2'
       )}
-      onClick={() => router.push(paths.settings.team.getHref())}
+      onClick={() => router.push(myAgentsHref)}
+      data-testid="team-selector-use-more-agents"
       role="button"
       tabIndex={0}
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          router.push(paths.settings.team.getHref())
+          router.push(myAgentsHref)
         }
       }}
     >
-      <Cog6ToothIcon
+      <Squares2X2Icon
         className={cn(
           'text-text-secondary group-hover:text-text-primary',
           isMobile ? 'w-5 h-5' : 'w-4 h-4'
         )}
       />
-      <span className="font-medium group-hover:text-text-primary">{t('common:teams.manage')}</span>
+      <span className="font-medium group-hover:text-text-primary">
+        {t('common:teams.use_more_agents')}
+      </span>
     </div>
   )
 

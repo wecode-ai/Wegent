@@ -119,6 +119,7 @@ interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
+  onVirtualLayoutChange?: () => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -134,6 +135,7 @@ const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
 const MESSAGE_LIST_GAP_PX = 16
 const MESSAGE_LIST_PADDING_TOP_PX = 32
 const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
+const preserveScrollPositionOutsideVirtualizer = () => false
 
 function ForkTurnIcon() {
   return (
@@ -210,6 +212,7 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
+  onVirtualLayoutChange,
   renderGapAfterMessage,
 }: MessageListProps) {
   const { t } = useTranslation('common')
@@ -318,6 +321,46 @@ export const MessageList = memo(function MessageList({
     },
     initialMeasurementsCache,
   })
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+    preserveScrollPositionOutsideVirtualizer
+  const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
+
+  useLayoutEffect(() => {
+    if (!virtualMessages) return
+    onVirtualLayoutChange?.()
+  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
+
+  useLayoutEffect(() => {
+    if (
+      !virtualMessages ||
+      streamingVirtualMessageIndex < 0 ||
+      streamingVirtualMessageIndex === visibleMessages.length - 1
+    ) {
+      return
+    }
+    const row = listRef.current?.querySelector<HTMLElement>(
+      `[data-index="${streamingVirtualMessageIndex}"]`
+    )
+    if (!row) return
+
+    const virtualItem = messageVirtualizer
+      .getVirtualItems()
+      .find(item => item.index === streamingVirtualMessageIndex)
+    const previousSize = virtualItem?.size
+    const previousTotalSize = messageVirtualizer.getTotalSize()
+    const measuredSize = Math.ceil(row.getBoundingClientRect().height)
+    messageVirtualizer.resizeItem(streamingVirtualMessageIndex, measuredSize)
+
+    if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1' && previousSize !== measuredSize) {
+      console.info('[Wework] Streaming virtual message measured', {
+        messageId: visibleMessages[streamingVirtualMessageIndex]?.id ?? null,
+        previousSize: previousSize ?? null,
+        measuredSize,
+        previousTotalSize,
+        nextTotalSize: messageVirtualizer.getTotalSize(),
+      })
+    }
+  }, [messageVirtualizer, streamingVirtualMessageIndex, virtualMessages, visibleMessages])
 
   useEffect(
     () => () => {
@@ -465,8 +508,7 @@ export const MessageList = memo(function MessageList({
         virtualMessages
           ? {
               height:
-                messageVirtualizer.getTotalSize() +
-                (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
+                virtualTotalSize + (shouldShowWaitingIndicator ? MESSAGE_LIST_GAP_PX + 32 : 0),
             }
           : undefined
       }
@@ -718,6 +760,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
       ? 'onAskSelectionInSidebar'
       : null,
+    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
 
@@ -823,13 +866,14 @@ function getProcessingSummaryStartMs(
   blocks: ProcessingBlock[],
   isStreaming: boolean
 ): number | undefined {
-  if (!isStreaming) return getTurnStartMs(message.createdAt)
-
+  const turnStartedAt = getTurnStartMs(message.createdAt)
   const blockStartTimes = blocks
     .map(block => block.createdAt)
     .filter((createdAt): createdAt is number => Number.isFinite(createdAt))
+  const earliestBlockStart = blockStartTimes.length > 0 ? Math.min(...blockStartTimes) : undefined
 
-  if (blockStartTimes.length > 0) return Math.min(...blockStartTimes)
+  if (blocks.length > 0) return earliestBlockStart ?? turnStartedAt
+  if (!isStreaming) return turnStartedAt
 
   return undefined
 }
@@ -1808,17 +1852,35 @@ function getDisplayProcessingBlocks(
   if (!blocks?.length) return []
 
   return blocks
+    .map(block =>
+      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+        ? { ...block, status: 'done' as const }
+        : block
+    )
     .filter(block => {
       if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
       return Boolean(block.content.trim())
     })
-    .map(block =>
-      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
-        ? { ...block, status: 'done' as const }
-        : block
-    )
+}
+
+function getLatestActiveThinkingContent(blocks: ProcessingBlock[] | undefined): string {
+  if (!blocks?.length) return ''
+
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]
+    if (
+      block?.type === 'thinking' &&
+      block.status !== 'done' &&
+      block.status !== 'error' &&
+      block.content.trim()
+    ) {
+      return block.content
+    }
+  }
+
+  return ''
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1898,6 +1960,9 @@ function AssistantMessage({
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
+  const activeThinkingContent = isStreaming
+    ? (message.streamingThinkingContent ?? getLatestActiveThinkingContent(message.blocks))
+    : ''
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -1908,13 +1973,20 @@ function AssistantMessage({
     `${processingStateKey}:final-processing`
   )
   const [finalProcessingCompletedAt] = useState(() => Date.now())
+  const isProcessingOnlyBeforeGuidance =
+    Boolean(message.runtimeGuidanceSplitBefore) && !hasVisibleContent
+  const hasPlanResponse = displayBlocks.some(
+    block => block.type === 'plan' && Boolean(block.content.trim())
+  )
   const usesFinalProcessingShell =
     hasBlocks &&
-    hasVisibleContent &&
+    !hasPlanResponse &&
     !hasRunningBlocks &&
     !isCancelled &&
-    !message.runtimeGuidanceSplitBefore &&
-    !message.runtimeGuidanceContinuation
+    (isProcessingOnlyBeforeGuidance ||
+      (hasVisibleContent &&
+        !message.runtimeGuidanceSplitBefore &&
+        !message.runtimeGuidanceContinuation))
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
@@ -1942,7 +2014,7 @@ function AssistantMessage({
           blocks={segment.blocks}
           fileEditDurationBlocks={displayBlocks}
           isStreaming={isStreaming}
-          startedAt={segment.blocks[0]?.createdAt}
+          startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
           processingPhase={
             segment.blocks.length === 0
@@ -1957,6 +2029,7 @@ function AssistantMessage({
             segment.kind === 'tool' &&
             !processingSegments.slice(index + 1).some(candidate => candidate.kind === 'tool')
           }
+          thinkingContent={activeThinkingContent}
           showSummary={segment.kind === 'tool'}
           stateKey={`${processingStateKey}:${index}`}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
@@ -2000,7 +2073,10 @@ function AssistantMessage({
             </div>
           ) : null}
           {usesFinalProcessingShell ? (
-            <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
+            <div
+              className="mb-3 min-w-0 w-full border-b border-border pb-2"
+              data-testid="final-processing-timeline"
+            >
               <button
                 type="button"
                 data-testid="final-processing-toggle"
@@ -2020,7 +2096,9 @@ function AssistantMessage({
           ) : (
             processingTimeline
           )}
-          {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {shouldShowThinking && !hasVisibleContent && (
+            <AssistantThinkingIndicator content={activeThinkingContent} />
+          )}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
           {message.contentTruncated ? (
             <ContentTruncatedNotice
@@ -2039,7 +2117,9 @@ function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
+          {shouldShowThinking && hasVisibleContent && (
+            <AssistantThinkingIndicator content={activeThinkingContent} />
+          )}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}

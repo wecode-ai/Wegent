@@ -18,15 +18,15 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
 use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, combined_codex_developer_instructions,
-        strip_wework_browser_instructions, CodexActiveTurnCallback,
-        CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     hooks::{
         codex::{post_tool_use_from_notification, CodexHookContext},
@@ -48,6 +48,7 @@ mod hooks;
 mod notifications;
 mod queries;
 mod sidebar;
+mod supervisor;
 mod system;
 mod tasks;
 mod turns;
@@ -64,7 +65,7 @@ use super::{
         sync_codex_global_remote_projects, upsert_codex_global_local_project,
         CodexGlobalProjectIndex, CodexGlobalRemoteProject,
     },
-    codex_notifications::codex_notification,
+    codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     connectors::ConnectorRuntime,
     events::{emit_response_event, CodexNotificationEventMapper},
@@ -285,11 +286,13 @@ fn hook_rpc_error(error: String) -> AppIpcError {
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
     codex_app_server: CodexAppServerClient,
+    codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
     event_tx: Option<broadcast::Sender<Value>>,
-    active_local_tasks: Arc<Mutex<HashSet<String>>>,
+    next_execution_id: Arc<AtomicU64>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
     active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
-    active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
+    active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
+    supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
@@ -302,13 +305,27 @@ pub struct RuntimeWorkRpcHandler {
     connectors: ConnectorRuntime,
 }
 
+#[derive(Default)]
+struct CodexRuntimeProxyConfig {
+    initialized: bool,
+    proxy_url: Option<String>,
+}
+
 struct ActiveTurnCancellation {
+    execution_id: u64,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
 }
 
 #[derive(Clone)]
+struct ActiveRequestUserInput {
+    execution_id: u64,
+    sender: mpsc::Sender<Value>,
+}
+
+#[derive(Clone)]
 struct ActiveCodexTurn {
+    execution_id: u64,
     thread_id: String,
     turn_id: String,
 }
@@ -345,11 +362,15 @@ impl RuntimeWorkRpcHandler {
             device_id: normalize_device_id(device_id.into()),
             connectors: ConnectorRuntime::new(codex_app_server.clone()),
             codex_app_server,
+            codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
+                CodexRuntimeProxyConfig::default(),
+            )),
             event_tx: None,
-            active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
+            next_execution_id: Arc::new(AtomicU64::new(1)),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
             active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
+            supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
@@ -377,6 +398,7 @@ impl RuntimeWorkRpcHandler {
             handler.hook_service.set_event_sender(sender);
         }
         handler.start_automation_scheduler();
+        handler.start_supervisor_scheduler();
         handler
     }
 
@@ -408,6 +430,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.goal.get" => self.get_task_goal(payload).await,
             "runtime.tasks.goal.set" => self.set_task_goal(payload).await,
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
+            "runtime.tasks.supervisor.get" => self.get_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.set" => self.set_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.clear" => self.clear_task_supervisor(payload).await,
+            "runtime.tasks.supervisor.resolve" => self.resolve_task_supervisor(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.hooks.list" | "runtime.hooks.reload" => {
@@ -421,6 +447,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,

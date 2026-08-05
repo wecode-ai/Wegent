@@ -13,6 +13,7 @@ import {
   RefreshCwIcon,
   GitBranchIcon,
   Link2Icon,
+  TagsIcon,
 } from 'lucide-react'
 import LoadingState from '@/features/common/LoadingState'
 import {
@@ -49,6 +50,7 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { MarketplaceTagsDialog } from '@/features/resource-library/components/MarketplaceTagsDialog'
 
 interface SkillManagementModalProps {
   open: boolean
@@ -77,6 +79,7 @@ export default function SkillManagementModal({
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
   const [updatingDefaultSkillId, setUpdatingDefaultSkillId] = useState<number | null>(null)
   const [referenceDialogOpen, setReferenceDialogOpen] = useState(false)
+  const [tagEditingSkillId, setTagEditingSkillId] = useState<number | null>(null)
   const [referenceDialogMode, setReferenceDialogMode] = useState<'view' | 'delete_conflict'>(
     'delete_conflict'
   )
@@ -475,7 +478,7 @@ export default function SkillManagementModal({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-8 w-8"
+                                className="h-11 w-11 md:h-8 md:w-8"
                                 onClick={() => handleUpdateFromGit(skill)}
                                 disabled={updatingFromGitId === skill.id}
                                 title={t('common:skills.update_from_git')}
@@ -505,6 +508,18 @@ export default function SkillManagementModal({
                             >
                               <DownloadIcon className="w-4 h-4" />
                             </Button>
+                            {scope === 'public' && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => setTagEditingSkillId(skill.id)}
+                                title={t('resource-library:marketplace_tags.edit_title')}
+                                data-testid={`edit-skill-marketplace-tags-button-${skill.id}`}
+                              >
+                                <TagsIcon className="w-4 h-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -552,6 +567,14 @@ export default function SkillManagementModal({
           isPublic={scope === 'public'}
         />
       )}
+
+      <MarketplaceTagsDialog
+        resourceId={tagEditingSkillId}
+        open={tagEditingSkillId !== null}
+        onOpenChange={nextOpen => {
+          if (!nextOpen) setTagEditingSkillId(null)
+        }}
+      />
 
       {/* Delete Confirmation Dialog */}
       <Dialog

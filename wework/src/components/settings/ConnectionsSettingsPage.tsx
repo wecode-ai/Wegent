@@ -43,7 +43,6 @@ import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import {
@@ -1363,9 +1362,9 @@ export function ConnectionsSettingsPage({
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
-  const usesOverlayTitlebar = isTauriRuntime()
+  const isDesktopRuntime = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
-    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || usesOverlayTitlebar
+    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || isDesktopRuntime
   )
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
@@ -1406,10 +1405,7 @@ export function ConnectionsSettingsPage({
       >
         <DesktopTopBar
           testId="settings-sidebar-topbar"
-          className={cn(
-            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2',
-            usesOverlayTitlebar && 'h-[76px] pt-6'
-          )}
+          className="-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2"
           left={
             <button
               type="button"
@@ -1436,7 +1432,10 @@ export function ConnectionsSettingsPage({
                 {showCategory && categoryLabel && (
                   <div
                     data-testid={`settings-category-${item.category}`}
-                    className="mb-1 mt-5 px-2.5 text-xs font-medium text-text-muted"
+                    className={cn(
+                      'mb-1 px-2.5 text-xs font-medium text-text-muted',
+                      index === 0 ? 'mt-2' : 'mt-5'
+                    )}
                   >
                     {t(`workbench.${categoryLabel.label}`, categoryLabel.fallback)}
                   </div>
@@ -1472,21 +1471,10 @@ export function ConnectionsSettingsPage({
         />
       </aside>
 
-      {usesOverlayTitlebar && (
-        <div
-          data-testid="settings-main-titlebar-drag-region"
-          className="absolute right-0 top-0 z-titlebar h-[52px]"
-          style={{ left: sidebarWidth }}
-        >
-          <MacOSTitleBarDragRegion className="h-full w-full" />
-        </div>
-      )}
-
       <main
         className={cn(
-          'min-w-0 flex-1 overflow-auto px-8 pb-8',
-          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background',
-          usesOverlayTitlebar ? 'pt-16' : 'pt-8'
+          'min-w-0 flex-1 overflow-auto px-8 pt-8 pb-8',
+          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
         )}
       >
         {activeNav === 'general' ? (

@@ -33,6 +33,7 @@ fn local_backend_config_uses_heartbeat_call_timeout_env() {
         bind_shell: "claudecode".to_owned(),
         connection: ConnectionConfig {
             backend_url: "http://localhost:8000".to_owned(),
+            socket_url: String::new(),
             auth_token: "wg-token".to_owned(),
         },
         ..DeviceConfig::default()
@@ -270,6 +271,7 @@ impl LocalBackendTransport for ScriptedTransport {
 fn local_backend_config() -> LocalBackendConfig {
     LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
+        socket_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
         device_id: "device-1".to_owned(),
         runtime_instance_id: "runtime-1".to_owned(),
