@@ -482,3 +482,26 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 })
+
+test('renders GitHub URLs as recognized inline link chips', () => {
+  renderEditor('Check https://github.com/wecode-ai/Wegent/pull/2350')
+
+  const chip = screen.getByTestId('composer-link-chip')
+  expect(chip).toHaveClass('composer-link-node', 'composer-mention-link')
+  expect(chip).toHaveAttribute(
+    'data-composer-link-url',
+    'https://github.com/wecode-ai/Wegent/pull/2350'
+  )
+  expect(chip).toHaveTextContent('wecode-ai/Wegent#2350')
+  expect(chip.querySelector('img')).toHaveAttribute(
+    'src',
+    'https://github.githubassets.com/favicons/favicon.svg'
+  )
+})
+
+test('keeps unrecognized URLs as plain text', () => {
+  renderEditor('Visit https://example.com/page')
+
+  expect(screen.queryByTestId('composer-link-chip')).not.toBeInTheDocument()
+  expect(screen.getByTestId('composer-editor')).toHaveTextContent('https://example.com/page')
+})

@@ -21,6 +21,10 @@ export function projectSpaceKey(ref: RuntimeProjectSpaceRef): string {
   return `${ref.projectStore}:${ref.projectId}`
 }
 
+export function runtimeCloudProjectId(project: CloudProject | null): string | undefined {
+  return project?.project_store === 'backend' ? project.id : undefined
+}
+
 export function projectSpaceApis(
   services: WorkbenchServices | null | undefined
 ): ProjectSpaceApi[] {

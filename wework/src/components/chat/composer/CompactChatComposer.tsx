@@ -168,7 +168,6 @@ export function CompactChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files && files.length > 0) {

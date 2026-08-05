@@ -785,53 +785,6 @@ def test_backend_routes_gitlab_updates_and_comments(
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
 
 
-def test_explicit_project_selection_tracks_runtime_task_idempotently(
-    test_client: TestClient,
-    test_db: Session,
-    test_user: User,
-    test_token: str,
-) -> None:
-    project = test_client.post(
-        "/api/v1/cloud-projects",
-        headers=_auth(test_token),
-        json={"project_key": "track", "name": "Tracked project"},
-    ).json()
-    payload = {
-        "deviceId": "desktop-1",
-        "taskId": "runtime-task-1",
-        "taskTitle": "Implement explicit task tracking",
-        "description": "Created from the Wework task composer.",
-    }
-    tracked = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/tasks/track",
-        headers=_auth(test_token),
-        json=payload,
-    )
-    assert tracked.status_code == 201
-    assert tracked.json()["item"]["status"] == "in_progress"
-    item_id = tracked.json()["item"]["id"]
-
-    retried = test_client.post(
-        f"/api/v1/cloud-projects/{project['id']}/tasks/track",
-        headers=_auth(test_token),
-        json=payload,
-    )
-    assert retried.status_code == 201
-    assert retried.json()["item"]["id"] == item_id
-
-    reviewed = test_client.patch(
-        "/api/v1/runtime-tasks/cloud-context/tracking-status",
-        headers=_auth(test_token),
-        json={
-            "deviceId": "desktop-1",
-            "taskId": "runtime-task-1",
-            "executionStatus": "succeeded",
-        },
-    )
-    assert reviewed.status_code == 200
-    assert reviewed.json()["status"] == "in_review"
-
-
 def test_todo_lifecycle_and_multiple_local_tasks(
     test_client: TestClient,
     test_db: Session,

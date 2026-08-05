@@ -234,39 +234,6 @@ class LoopItemTaskBindingResponse(BaseModel):
         return LoopItemResponse.normalize_unset_datetime(value)
 
 
-class RuntimeTaskTrack(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
-    task_id: str = Field(alias="taskId", min_length=1, max_length=255)
-    task_title: str = Field(alias="taskTitle", min_length=1, max_length=255)
-    description: str = ""
-    backend_task_id: int | None = Field(default=None, alias="backendTaskId")
-
-    def binding(self) -> LoopItemTaskBind:
-        return LoopItemTaskBind(
-            deviceId=self.device_id,
-            taskId=self.task_id,
-            taskTitle=self.task_title,
-            backendTaskId=self.backend_task_id,
-        )
-
-
-class RuntimeTaskTrackingStatusUpdate(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
-    task_id: str = Field(alias="taskId", min_length=1, max_length=255)
-    execution_status: Literal["running", "succeeded", "failed", "cancelled"] = Field(
-        alias="executionStatus"
-    )
-
-
-class RuntimeTaskTrackResponse(BaseModel):
-    item: LoopItemResponse
-    binding: LoopItemTaskBindingResponse
-
-
 class CloudTaskContextResponse(LoopItemTaskBindingResponse):
     project: CloudProjectResponse
     loop_item: LoopItemResponse | None = None
