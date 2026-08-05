@@ -349,7 +349,12 @@ def test_a_run_whose_task_cannot_be_created_does_not_block_the_wiki(
 
     generation = test_db.query(WikiGeneration).one()
     assert generation.status == WikiGenerationStatus.FAILED
-    assert "task creation failed" in generation.ext["errorMessage"]
+    # The code says what happened, in a form a client can translate; the exception
+    # text survives beside it, because that is the only part naming the cause.
+    from app.services.knowledge.code_wiki.generation import FailureCode
+
+    assert generation.ext["failureCode"] == FailureCode.TASK_NOT_CREATED
+    assert "no executor available" in generation.ext["errorMessage"]
 
     tasks.fails = False
     retry = start_run(
@@ -544,30 +549,62 @@ def test_a_supplied_commit_is_not_second_guessed(
     assert started.started
 
 
-def test_a_first_run_does_not_read_the_repository_at_all(
+def test_a_first_run_pins_the_commit_it_is_documenting(
     monkeypatch,
     test_db: Session,
     knowledge_base: Kind,
     test_user: User,
     tasks: FakeTasks,
 ):
-    """With nothing published there is no commit to diff against, so the mode is
-    full whatever the repository says, and the commit this version documents is
-    reported by the agent when it finishes. Reading HEAD here spends a network round
-    trip — up to the whole connect timeout, which is what made creating a wiki
-    appear to hang — on an answer that is discarded.
+    """A first run reads the repository, and this test exists because it once did
+    not.
+
+    Skipping the read looked free: with nothing published the mode is full whatever
+    the repository says, and the agent reports the commit when it finishes. But it
+    does not always report one, and a version published without a commit leaves the
+    next run with nothing to compare against — so that run is full too, and also
+    publishes without a commit. A wiki that misses it once never runs incrementally
+    again, which is the opposite of free.
     """
     from app.services.knowledge.code_wiki import runner
+    from app.services.knowledge.code_wiki.repo_state import RepositoryState
 
-    def refuse(*args, **kwargs):
-        raise AssertionError("the provider must not be consulted on a first run")
-
-    monkeypatch.setattr(runner, "read_repository_state", refuse)
+    monkeypatch.setattr(
+        runner,
+        "read_repository_state",
+        lambda *args, **kwargs: RepositoryState(head_commit="c0ffee1", branch="main"),
+    )
 
     started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
 
     assert started.started
     assert started.mode == "full"
+    assert started.generation.source_snapshot["commit"] == "c0ffee1"
+
+
+def test_a_repository_that_cannot_be_read_still_starts_a_run(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+):
+    """The read is what the skip was protecting against: a slow or unreachable
+    provider, up to the whole connect timeout. It cannot fail the run — every read
+    is best-effort and answers with an empty state — so this ends up exactly where
+    the skip left it, with the agent free to report the commit itself.
+    """
+    from app.services.knowledge.code_wiki import runner
+    from app.services.knowledge.code_wiki.repo_state import RepositoryState
+
+    monkeypatch.setattr(
+        runner, "read_repository_state", lambda *args, **kwargs: RepositoryState()
+    )
+
+    started = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert started.started
+    assert started.generation.source_snapshot["commit"] == ""
 
 
 def test_a_version_points_at_a_registry_row_that_exists(
@@ -666,3 +703,126 @@ def test_forgetting_a_repository_leaves_other_wikis_of_it_alone(
     test_db.flush()
 
     assert test_db.get(WikiProject, other.id) is not None
+
+
+# --- whether the run shows up as a conversation -----------------------------
+
+
+def _set_spec(test_db: Session, knowledge_base: Kind, **values) -> None:
+    payload = dict(knowledge_base.json or {})
+    spec = dict(payload.get("spec", {}))
+    spec.update(values)
+    payload["spec"] = spec
+    knowledge_base.json = payload
+    test_db.flush()
+
+
+def test_a_generation_run_stays_out_of_the_conversation_list_by_default(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A wiki regenerates on its own, so its runs are work the user did not start a
+    conversation to do. Listed, they bury the conversations they did start.
+    """
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].namespace == "system"
+
+
+def test_a_wiki_may_ask_for_its_runs_to_be_listed(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    _set_spec(test_db, knowledge_base, showGenerationTask=True)
+
+    start_run(test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD)
+
+    assert tasks.created[0].namespace == "default"
+
+
+def test_the_hiding_namespace_is_the_one_the_listing_query_excludes():
+    """The whole mechanism is that these two agree. The exclusion is written into raw
+    SQL rather than expressed through the model, so nothing else ties the constant
+    used here to the value that query filters on -- a rename on either side would
+    silently start listing every wiki run again, with no test failing.
+    """
+    from app.services.knowledge.code_wiki.runner import HIDDEN_TASK_NAMESPACE
+    from app.stores.tasks.sqlalchemy_task_store import (
+        _ACCESSIBLE_IDS_SQL,
+        _OWNED_IDS_SQL,
+    )
+
+    excluded = f"k.namespace != '{HIDDEN_TASK_NAMESPACE}'"
+    assert excluded in str(_ACCESSIBLE_IDS_SQL)
+    assert excluded in str(_OWNED_IDS_SQL)
+
+
+def test_a_pinned_commit_lets_the_next_run_be_incremental(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    no_side_effects,
+):
+    """The loop this closes, end to end.
+
+    A published version with no commit is not a cosmetic gap: published_commit
+    returns nothing, so the next run has nothing to diff against and is full, and it
+    publishes without a commit too. Two runs is the shortest sequence that shows it
+    — the second one has to be incremental, and it can only be if the first recorded
+    what it documented.
+    """
+    from app.services.knowledge.code_wiki import runner
+    from app.services.knowledge.code_wiki.repo_state import RepositoryState
+    from app.services.knowledge.code_wiki.run_mode import ChangedPath
+
+    monkeypatch.setattr(
+        runner,
+        "read_repository_state",
+        lambda *args, **kwargs: RepositoryState(head_commit="aaaaaaa"),
+    )
+    first = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+    _write_page(test_db, first.generation, "index")
+    finish_run(test_db, generation=first.generation, succeeded=True)
+
+    # The repository has moved, and one file changed.
+    monkeypatch.setattr(
+        runner,
+        "read_repository_state",
+        lambda *args, **kwargs: RepositoryState(
+            head_commit="bbbbbbb", changed_paths=[ChangedPath("src/one.py", "M")]
+        ),
+    )
+    second = start_run(test_db, knowledge_base=knowledge_base, user=test_user)
+
+    assert second.started
+    assert second.mode == "incremental"
+
+
+def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    """A member the wiki is shared with may trigger a run. Doing so must not make
+    them the identity that clones the repository and owns what it writes.
+
+    It used to. The caller became the task's user, the generation's user, and the
+    owner of every page projected out of the version — so a member with no
+    credentials for that host failed at checkout on somebody else's wiki, and the
+    pages a successful run wrote changed hands. The function's own docstring said
+    the owner ran it; only the code disagreed.
+    """
+    member = User(
+        user_name="shared-member",
+        email="member@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(member)
+    test_db.flush()
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=member, head_commit=HEAD
+    )
+
+    assert started.started
+    assert knowledge_base.user_id == test_user.id
+    assert started.generation.user_id == test_user.id

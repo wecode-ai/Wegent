@@ -135,6 +135,13 @@ def _enqueue_reindex(
         # per page here; the publish path refreshes them separately.
         trigger_summary=False,
         replace_active=True,
+        # Without this the state machine returns "already_indexed" for any document
+        # whose last index succeeded -- which is every page that has ever been
+        # published. A revised page's new text reached the reader and the old chunks
+        # stayed in the index, so chat and search kept answering from the version
+        # before. The document being replaced is exactly why it must be re-indexed;
+        # the flag is set the same way everywhere else content is rewritten.
+        allow_if_success=True,
     )
 
 

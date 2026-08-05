@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -58,6 +59,8 @@ export function EditKnowledgeBaseDialog({
   const { t } = useTranslation()
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
+  const [showGenerationTask, setShowGenerationTask] = useState(false)
+  const isCodeWiki = (knowledgeBase?.kb_type || 'notebook') === 'code_wiki'
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
@@ -154,6 +157,7 @@ export function EditKnowledgeBaseDialog({
         multimodalVideoPrompt: kb.multimodal_analysis_video_prompt ?? null,
         multimodalImagePrompt: kb.multimodal_analysis_image_prompt ?? null,
       })
+      setShowGenerationTask(kb.show_generation_task ?? false)
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
@@ -230,6 +234,7 @@ export function EditKnowledgeBaseDialog({
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
+        ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
       }
 
       // Add retrieval config update if advanced settings were modified
@@ -275,7 +280,6 @@ export function EditKnowledgeBaseDialog({
   const kb = fullKnowledgeBase
   const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
-  const isCodeWiki = kbType === 'code_wiki'
 
   // Handle default opening view update success
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
@@ -319,7 +323,28 @@ export function EditKnowledgeBaseDialog({
               </div>
             ) : fullKnowledgeBase ? (
               <>
+                {/* First, because it is what this knowledge base is rather than a
+                    setting on it. Stated, not editable: the binding is fixed at
+                    creation, and its version history hangs off it. */}
+                {isCodeWiki && kb?.source?.sourceUrl && (
+                  <div className="mb-4 flex items-center gap-2 rounded-md bg-muted px-3 py-2">
+                    <Code2 className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="truncate text-sm" title={kb.source.sourceUrl}>
+                      {tKnowledge('codeWiki.create.repository')}:{' '}
+                      {kb.source.projectName || kb.source.sourceUrl}
+                    </span>
+                  </div>
+                )}
+
                 <KnowledgeBaseForm
+                  advancedExtras={
+                    isCodeWiki ? (
+                      <GenerationTaskRow
+                        checked={showGenerationTask}
+                        onChange={setShowGenerationTask}
+                      />
+                    ) : undefined
+                  }
                   name={name}
                   description={description}
                   onNameChange={value => setName(value)}
@@ -389,18 +414,6 @@ export function EditKnowledgeBaseDialog({
                       >
                         {tKnowledge('document.knowledgeBase.changeDefaultView')}
                       </Button>
-                    </div>
-                  </div>
-                )}
-
-                {isCodeWiki && kb?.source?.sourceUrl && (
-                  <div className="border-t border-border pt-4 mt-4">
-                    <div className="flex items-center gap-2">
-                      <Code2 className="w-4 h-4 text-primary" />
-                      <span className="text-sm font-medium">
-                        {tKnowledge('codeWiki.create.repository')}:{' '}
-                        {kb.source.projectName || kb.source.sourceUrl}
-                      </span>
                     </div>
                   </div>
                 )}

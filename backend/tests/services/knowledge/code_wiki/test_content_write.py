@@ -385,3 +385,39 @@ def test_a_skill_identity_token_for_a_missing_user_is_refused(test_db):
 
     with pytest.raises(HTTPException):
         _verify_internal_token(authorization=f"Bearer {token}", db=test_db)
+
+
+def test_writing_a_page_does_not_read_back_the_others(
+    test_db: Session, generation: WikiGeneration
+):
+    """The agent submits one page at a time, and each submission looked up the pages
+    already written so a retitled one could still be found by path. It loaded their
+    bodies too — so the Nth submission read back the full text of the first N-1, and
+    a run's reads grew with the square of the pages it wrote. The pages are the
+    largest thing in the table.
+
+    Asserted by watching the SQL rather than the result, because the result is
+    identical either way; that is what let it stand.
+    """
+    from sqlalchemy import event
+
+    _write(test_db, generation, _section("a", "A", "aaaa" * 50))
+    _write(test_db, generation, _section("b", "B", "bbbb" * 50))
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = test_db.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        _write(test_db, generation, _section("c", "C", "cccc" * 50))
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    lookups = [s for s in selects if "wiki_contents" in s]
+    assert lookups, "the page lookup should still happen"
+    # Every column but the body: matching needs the path in ext and the title.
+    assert not any("wiki_contents.content" in s for s in lookups), lookups

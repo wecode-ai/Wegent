@@ -316,7 +316,7 @@ class TaskOperationsMixin:
             db,
             task=task,
             name=f"task-{task_id}",
-            namespace="default",
+            namespace=obj_in.namespace,
             project_id=obj_in.project_id or 0,
             client_origin=obj_in.client_origin,
         )
@@ -349,7 +349,7 @@ class TaskOperationsMixin:
             task_id=task_id,
             user_id=user.id,
             name=f"task-{task_id}",
-            namespace="default",
+            namespace=obj_in.namespace,
             payload=self._build_task_json(
                 obj_in=obj_in,
                 team=team,
@@ -413,6 +413,11 @@ class TaskOperationsMixin:
             },
             "metadata": {
                 "name": f"task-{task_id}",
+                # Deliberately not obj_in.namespace, which the row carries. That one
+                # decides whether the task is listed as a conversation; this one is
+                # where the model in the labels below is looked up, and moving it to
+                # "system" would send that lookup to a namespace holding no models and
+                # leave it to fall back.
                 "namespace": "default",
                 "labels": {
                     "type": obj_in.type,

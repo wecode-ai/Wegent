@@ -34,6 +34,7 @@ const EMPTY = {
   source_type: 'github' as const,
   source_url: '',
   language: 'zh',
+  show_generation_task: false,
   resolution: null,
 }
 

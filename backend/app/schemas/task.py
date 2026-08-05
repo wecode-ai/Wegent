@@ -83,6 +83,10 @@ class TaskCreate(BaseModel):
     task_type: Optional[str] = "chat"  # chat、code
     auto_delete_executor: Optional[str] = "false"  # true、fasle
     source: Optional[str] = "web"
+    # "system" keeps the task out of the conversation list, for work the user did not
+    # start a conversation to do. It stays openable by id, so whatever created it can
+    # still link to it -- hidden, not unreachable. Anything else appears as usual.
+    namespace: str = "default"
     client_origin: str = CLIENT_ORIGIN_FRONTEND
     project_id: Optional[int] = 0
     # Model selection fields

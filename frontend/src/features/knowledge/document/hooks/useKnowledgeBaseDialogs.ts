@@ -11,6 +11,7 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { migrateKnowledgeBaseToGroup } from '@/apis/knowledge'
 import type {
   KnowledgeBase,
@@ -169,7 +170,7 @@ export function useKnowledgeBaseDialogs({
           await sidebar.refreshAll()
           // Straight into the reader: generation has already started, and the empty
           // state there shows its progress.
-          router.push(`/knowledge/code-wiki/${wiki.id}`)
+          router.push(buildKbUrl(namespace, wiki.name, false))
           return
         }
 
@@ -223,6 +224,7 @@ export function useKnowledgeBaseDialogs({
       saveSummaryModelToPreference,
       reloadGroupKbs,
       resetCreateDialogState,
+      router,
     ]
   )
 

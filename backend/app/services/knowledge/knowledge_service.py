@@ -310,6 +310,8 @@ class KnowledgeService:
             spec_kwargs["source"] = data.source
         if data.language:
             spec_kwargs["language"] = data.language
+        if data.show_generation_task:
+            spec_kwargs["showGenerationTask"] = True
 
         # Add summaryModelRef if provided
         if data.summary_model_ref:
@@ -892,6 +894,12 @@ class KnowledgeService:
         # Update guided_questions if explicitly provided (including null to clear)
         if "guided_questions" in data.model_fields_set:
             spec["guidedQuestions"] = data.guided_questions
+
+        # Only meaningful for a code wiki; harmless on anything else, and refusing
+        # it by type here would put a second copy of "what is a code wiki" in the
+        # update path.
+        if data.show_generation_task is not None:
+            spec["showGenerationTask"] = data.show_generation_task
 
         # Update call limit configuration if provided
         if data.max_calls_per_conversation is not None:

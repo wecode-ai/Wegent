@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import {
   CodeWikiSourceFields,
   type CodeWikiSource,
@@ -36,6 +37,7 @@ import type {
   RetrievalConfigDraft,
   RagConfigMode,
 } from '@/types/knowledge'
+import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
@@ -105,7 +107,13 @@ function createDefaultRetrievalConfig(): RetrievalConfigDraft {
 type KnowledgeBaseKind = 'document' | 'code'
 
 function createEmptySource(): CodeWikiSource {
-  return { source_type: 'github', source_url: '', language: 'zh', resolution: null }
+  return {
+    source_type: 'github',
+    source_url: '',
+    language: 'zh',
+    show_generation_task: false,
+    resolution: null,
+  }
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -132,6 +140,16 @@ export function CreateKnowledgeBaseDialog({
   // Which kind of knowledge base is being created. Chosen first because it decides
   // which fields even apply: a code wiki has a repository and no opening view.
   const [kind, setKind] = useState<KnowledgeBaseKind>('document')
+  // Staged rollout: creating code wikis is off unless the deployment opts in.
+  // Reading and regenerating existing ones is unaffected, here and on the server.
+  const kindOptions = (
+    [
+      ['document', FileText, 'knowledge:document.knowledgeBase.kindDocument'],
+      ...(getRuntimeConfigSync().enableCodeWiki
+        ? [['code', Code2, 'knowledge:document.knowledgeBase.kindCode'] as const]
+        : []),
+    ] as const
+  ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
   const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
   // Default enable summary for all KB types
   const [summaryEnabled, setSummaryEnabled] = useState(true)
@@ -249,6 +267,7 @@ export function CreateKnowledgeBaseDialog({
               source_type: source.source_type,
               source_url: source.source_url,
               language: source.language,
+              show_generation_task: source.show_generation_task,
               // Left blank, the repository's own name is used. Sent from what the
               // form already resolved rather than pre-filled into the box, which
               // would read as the caller's own input — and rather than resolved
@@ -320,14 +339,12 @@ export function CreateKnowledgeBaseDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-3 [scrollbar-gutter:stable]">
-          {/* Which kind first: it decides which of the fields below even apply. */}
-          <div className="grid grid-cols-2 gap-3">
-            {(
-              [
-                ['document', FileText, 'knowledge:document.knowledgeBase.kindDocument'],
-                ['code', Code2, 'knowledge:document.knowledgeBase.kindCode'],
-              ] as const
-            ).map(([option, Icon, label]) => (
+          {/* Which kind first: it decides which of the fields below even apply. The
+              choice disappears entirely while code wikis are off, rather than being
+              shown disabled: an option nobody in this deployment can pick is noise,
+              and the server refuses the call regardless. */}
+          <div className={`grid gap-3 ${kindOptions.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {kindOptions.map(([option, Icon, label]) => (
               <button
                 key={option}
                 type="button"
@@ -356,6 +373,14 @@ export function CreateKnowledgeBaseDialog({
             ))}
           </div>
           <KnowledgeBaseForm
+            advancedExtras={
+              kind === 'code' ? (
+                <GenerationTaskRow
+                  checked={source.show_generation_task}
+                  onChange={checked => setSource({ ...source, show_generation_task: checked })}
+                />
+              ) : undefined
+            }
             nameRequired={kind !== 'code'}
             namePlaceholder={
               kind === 'code' ? t('knowledge:codeWiki.create.namePlaceholder') : undefined

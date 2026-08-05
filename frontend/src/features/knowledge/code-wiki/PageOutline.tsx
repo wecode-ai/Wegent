@@ -4,56 +4,47 @@
 
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
 interface Heading {
-  id: string
+  element: HTMLElement
   text: string
   /** 2 or 3; deeper levels are folded into 3 so the rail stays narrow. */
   level: number
 }
 
 interface PageOutlineProps {
-  /** Raw markdown of the page being read. */
+  /** Raw markdown of the page being read. Used only as a signal to re-scan. */
   content: string
   /** The element headings are rendered into, watched for scroll position. */
   scrollContainer: HTMLElement | null
 }
 
-/** Fenced blocks are skipped: `# ` inside one is a comment, not a heading. */
-const collectHeadings = (markdown: string): Heading[] => {
-  const headings: Heading[] = []
-  const seen = new Map<string, number>()
-  let inFence = false
+const HEADING_SELECTOR = 'h2, h3, h4, h5, h6'
 
-  for (const line of markdown.split('\n')) {
-    if (line.trimStart().startsWith('```')) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
-
-    const match = /^(#{2,6})\s+(.+?)\s*$/.exec(line)
-    if (!match) continue
-
-    const text = match[2].replace(/[*_`]/g, '').trim()
-    if (!text) continue
-
-    // Two sections can share a title, and an id that repeats would scroll to the
-    // first one from every entry.
-    const base = text.toLowerCase().replace(/[^\w一-龥]+/g, '-')
-    const count = seen.get(base) ?? 0
-    seen.set(base, count + 1)
-
-    headings.push({
-      id: count === 0 ? base : `${base}-${count}`,
-      text,
-      level: Math.min(match[1].length, 3),
-    })
-  }
-
-  return headings
+/**
+ * The headings actually on the page, in the order they appear.
+ *
+ * Read from the rendered document rather than parsed out of the markdown a second
+ * time. The rail has to reach these elements to scroll to them and to watch them, and
+ * anything derived separately has to be matched back up — which is what the previous
+ * version did, by computing a slug per heading and looking it up by id. Nothing was
+ * putting those ids on: the renderer overrides only `code` and `pre` and runs no slug
+ * plugin, so every lookup returned null and the rail was inert in both directions.
+ *
+ * Reading the DOM removes the matching problem instead of fixing it. There is one
+ * list, it is the one being scrolled, and it cannot disagree with itself about
+ * duplicate titles, punctuation or raw HTML headings.
+ */
+function readHeadings(container: HTMLElement): Heading[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(HEADING_SELECTOR))
+    .map(element => ({
+      element,
+      text: (element.textContent ?? '').trim(),
+      level: Math.min(Number(element.tagName.slice(1)) || 3, 3),
+    }))
+    .filter(heading => heading.text.length > 0)
 }
 
 /**
@@ -65,9 +56,34 @@ const collectHeadings = (markdown: string): Heading[] => {
  */
 export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
   const { t } = useTranslation()
-  const headings = useMemo(() => collectHeadings(content), [content])
-  const [activeId, setActiveId] = useState<string>('')
-  const observer = useRef<IntersectionObserver | null>(null)
+  const [headings, setHeadings] = useState<Heading[]>([])
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const frame = useRef<number | null>(null)
+
+  const rescan = useCallback(() => {
+    if (!scrollContainer) return
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    // Coalesced to one frame: the markdown renderer is dynamically imported and
+    // mermaid blocks resolve asynchronously, so the body arrives as a burst of
+    // mutations rather than one.
+    frame.current = requestAnimationFrame(() => setHeadings(readHeadings(scrollContainer)))
+  }, [scrollContainer])
+
+  useEffect(() => {
+    if (!scrollContainer) return
+    rescan()
+
+    // The content is not present when this first runs, and nothing tells us when it
+    // lands: `content` changes before the markdown is rendered, and the renderer
+    // itself is loaded on demand. Watching the container covers all of it.
+    const mutations = new MutationObserver(rescan)
+    mutations.observe(scrollContainer, { childList: true, subtree: true })
+
+    return () => {
+      mutations.disconnect()
+      if (frame.current !== null) cancelAnimationFrame(frame.current)
+    }
+  }, [scrollContainer, content, rescan])
 
   useEffect(() => {
     if (!scrollContainer || headings.length === 0) return
@@ -75,30 +91,25 @@ export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
     // rootMargin pulls the trigger line to the top quarter of the viewport, so the
     // highlighted entry is the section being read rather than the one just scrolled
     // past.
-    observer.current = new IntersectionObserver(
+    const positionOf = new Map(headings.map((heading, index) => [heading.element, index]))
+    const observer = new IntersectionObserver(
       entries => {
         const visible = entries
           .filter(entry => entry.isIntersecting)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
-        if (visible[0]) setActiveId(visible[0].target.id)
+        if (!visible[0]) return
+        const index = positionOf.get(visible[0].target as HTMLElement)
+        if (index !== undefined) setActiveIndex(index)
       },
       { root: scrollContainer, rootMargin: '0px 0px -75% 0px', threshold: 0 }
     )
 
-    for (const heading of headings) {
-      const element = scrollContainer.querySelector(`#${CSS.escape(heading.id)}`)
-      if (element) observer.current.observe(element)
-    }
+    for (const heading of headings) observer.observe(heading.element)
 
-    return () => observer.current?.disconnect()
+    return () => observer.disconnect()
   }, [headings, scrollContainer])
 
   if (headings.length === 0) return null
-
-  const jumpTo = (id: string) => {
-    const element = scrollContainer?.querySelector(`#${CSS.escape(id)}`)
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
 
   return (
     <nav
@@ -109,16 +120,16 @@ export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-text-tertiary">
         {t('knowledge:codeWiki.outline.title')}
       </p>
-      {headings.map(heading => (
+      {headings.map((heading, index) => (
         <button
-          key={heading.id}
+          key={`${index}-${heading.text}`}
           type="button"
-          onClick={() => jumpTo(heading.id)}
-          data-testid={`code-wiki-outline-${heading.id}`}
+          onClick={() => heading.element.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          data-testid={`code-wiki-outline-${index}`}
           className={`truncate rounded px-2 py-1 text-left text-sm transition-colors ${
             heading.level === 3 ? 'pl-5' : ''
           } ${
-            activeId === heading.id
+            activeIndex === index
               ? 'bg-surface-hover font-medium text-text-primary'
               : 'text-text-secondary hover:text-text-primary'
           }`}
@@ -130,3 +141,5 @@ export function PageOutline({ content, scrollContainer }: PageOutlineProps) {
     </nav>
   )
 }
+
+export { readHeadings }

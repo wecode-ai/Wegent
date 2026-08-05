@@ -7,6 +7,7 @@ import type {
   CodeWikiListResponse,
   CodeWikiPageTree,
   CodeWikiResolution,
+  CodeWikiRunHistory,
   CodeWikiRunStatus,
   CodeWikiRunResponse,
   CodeWikiSourceType,
@@ -76,6 +77,15 @@ export const codeWikiApi = {
    */
   status: async (knowledgeBaseId: number): Promise<CodeWikiRunStatus> =>
     client.get<CodeWikiRunStatus>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/status`),
+
+  /**
+   * What has been attempted on this wiki, newest first.
+   *
+   * Not polled. It is opened when a reader asks why the wiki looks the way it does,
+   * which is a deliberate act, and the answer does not change while they read it.
+   */
+  history: async (knowledgeBaseId: number): Promise<CodeWikiRunHistory> =>
+    client.get<CodeWikiRunHistory>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`),
 
   /**
    * Regenerate now, without waiting for a schedule.

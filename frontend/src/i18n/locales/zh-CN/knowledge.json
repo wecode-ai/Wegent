@@ -1115,7 +1115,9 @@
       "languageZh": "中文",
       "languageEn": "English",
       "alreadyBuilt": "已有 {{count}} 人为此仓库建过 wiki，可以向其索要分享",
-      "ownedBy": "归属 {{owner}}，可向其索要分享"
+      "ownedBy": "归属 {{owner}}，可向其索要分享",
+      "showGenerationTask": "显示生成任务",
+      "showGenerationTaskHint": "默认不显示。生成会自动进行，任务会淹没你主动发起的对话；不显示时仍可在生成历史中查看，也仍能按 id 打开。"
     },
     "reader": {
       "regenerate": "重新生成",
@@ -1128,7 +1130,31 @@
       "empty": "这个 wiki 还没有页面",
       "emptyHint": "生成一次即可在此查看文档。",
       "generating": "生成中…",
-      "previousRunStalled": "上次运行已中断，可重新生成"
+      "previousRunStalled": "上次运行已中断，可重新生成",
+      "linkNotFound": "该链接指向的页面不存在",
+      "backToChat": "回到对话"
+    },
+    "history": {
+      "title": "生成历史",
+      "never": "尚未生成",
+      "running": "生成中",
+      "stalled": "上次运行已中断",
+      "lastFailed": "上次生成失败",
+      "completed": "已生成",
+      "updated": "更新于 {{when}}",
+      "current": "当前版本",
+      "none": "还没有生成记录",
+      "mode": {
+        "full": "全量",
+        "incremental": "增量",
+        "custom": "自定义"
+      },
+      "commitUnreported": "未记录 commit"
+    },
+    "failure": {
+      "task_ended_without_report": "执行任务已结束，但没有回报生成结果",
+      "task_not_created": "无法创建执行任务",
+      "worker_abandoned": "执行进程失联，该次运行已被回收"
     }
   }
 }

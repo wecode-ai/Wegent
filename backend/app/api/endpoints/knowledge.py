@@ -36,6 +36,7 @@ from app.api.knowledge_document_side_effects import (
 from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
+from app.core.wiki_config import wiki_settings
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -53,6 +54,8 @@ from app.schemas.knowledge import (
     CodeWikiResolveRequest,
     CodeWikiResolveResponse,
     CodeWikiRunCreate,
+    CodeWikiRunHistory,
+    CodeWikiRunRecord,
     CodeWikiRunResponse,
     CodeWikiRunStatus,
     DocumentContentUpdate,
@@ -89,6 +92,7 @@ from app.services.knowledge.code_wiki.diagnostics import diagnose
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
     current_run_state,
+    run_history,
 )
 from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
@@ -662,14 +666,23 @@ def create_code_wiki(
     """Create a code wiki bound to a source repository, or return the existing one.
 
     The requester must be able to read the repository, so that a wiki cannot be built
-    for one they have no access to. Who may read the result is decided the same way:
-    the wiki belongs to the configured wiki account rather than to the requester, so
-    knowledge-base ACLs grant nobody else access and the repository is what does.
+    for one they have no access to. That is checked once, here. After it, the wiki is
+    an ordinary knowledge base owned by whoever created it: who may read it is decided
+    by knowledge-base ACLs like any other, and the repository is not consulted again.
 
-    One repository has one wiki. Asking for a repository that already has one returns
-    it — the caller wanted that repository's wiki, not the act of creating it — and
-    the response is 200 rather than 201 to say which happened.
+    A repository may have several wikis, one per creator. Asking for one the caller
+    already has returns it — they wanted that repository's wiki, not the act of
+    creating it — and the response is 200 rather than 201 to say which happened.
     """
+    # Enforced here rather than only in the client, which cannot stop a direct call.
+    # Creation only: existing wikis stay readable and stay able to regenerate, so
+    # turning the rollout down stops it spreading without breaking what it produced.
+    if not wiki_settings.CODE_WIKI_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Code wikis are not enabled on this deployment",
+        )
+
     try:
         source = SourceRepository.from_url(data.source_type, data.source_url)
         assert_user_can_read_source(db, current_user.id, source)
@@ -701,6 +714,7 @@ def create_code_wiki(
             kb_type=KnowledgeBaseType.CODE_WIKI.value,
             source=source,
             language=data.language,
+            show_generation_task=data.show_generation_task,
             # A code wiki is an ordinary knowledge base with a repository attached,
             # so every one of these applies to it. Listing only the ones it "needs"
             # is what silently dropped the summary settings and left the retrieval
@@ -880,9 +894,49 @@ def get_code_wiki_status(
         generation_id=state.generation_id,
         started_at=state.started_at,
         error_message=state.error_message,
+        failure_code=state.failure_code,
         is_stale=state.is_stale,
         last_published_at=spec.get(PUBLISHED_AT_KEY),
         last_published_commit=str(spec.get(PUBLISHED_COMMIT_KEY, "") or ""),
+    )
+
+
+@router.get(
+    "/{knowledge_base_id}/code-wiki/generations", response_model=CodeWikiRunHistory
+)
+@trace_sync("get_code_wiki_history", "knowledge.api")
+def get_code_wiki_history(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """What has been attempted on this wiki, newest first.
+
+    Reading is enough, as with the status this sits beside: a reader looking at a
+    wiki with no pages, or one that has not moved in a week, is asking why — and
+    refusing them the answer leaves them with a broken page and no explanation.
+
+    Nothing here reveals more than the wiki already does. The commits are the ones
+    its pages document, and the failure reasons come from a repository the reader can
+    already see the contents of.
+    """
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    return CodeWikiRunHistory(
+        runs=[
+            CodeWikiRunRecord(
+                generation_id=record.generation_id,
+                status=record.status,
+                mode=record.mode,
+                started_at=record.started_at,
+                completed_at=record.completed_at,
+                commit=record.commit,
+                error_message=record.error_message,
+                failure_code=record.failure_code,
+                published=record.published,
+                task_id=record.task_id,
+            )
+            for record in run_history(db, knowledge_base)
+        ]
     )
 
 

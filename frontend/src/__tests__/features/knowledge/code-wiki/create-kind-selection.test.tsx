@@ -23,7 +23,16 @@ jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
 }))
 
+// The code option is behind a staged rollout. These tests are about what choosing it
+// does, so they turn it on; the test below is about the rollout itself.
+const mockRuntimeConfig = jest.fn(() => ({ enableCodeWiki: true }))
+jest.mock('@/lib/runtime-config', () => ({
+  getRuntimeConfigSync: () => mockRuntimeConfig(),
+}))
+
 describe('CreateKnowledgeBaseDialog kind selection', () => {
+  beforeEach(() => mockRuntimeConfig.mockReturnValue({ enableCodeWiki: true }))
+
   it('starts on documents, where a name is required', async () => {
     const onSubmit = jest.fn()
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
@@ -54,5 +63,18 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.getByTestId('code-wiki-source-mode-select')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('code-wiki-source-mode-url'))
     expect(screen.getByTestId('code-wiki-source-url')).toBeInTheDocument()
+  })
+})
+
+describe('code wiki rollout gate', () => {
+  it('offers no code option at all while the rollout is off', () => {
+    // Hidden rather than disabled: an option nobody in this deployment can pick is
+    // noise, and the server refuses the call regardless of what the dialog shows.
+    mockRuntimeConfig.mockReturnValue({ enableCodeWiki: false })
+
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    expect(screen.queryByTestId('create-kb-kind-code')).not.toBeInTheDocument()
+    expect(screen.getByTestId('create-kb-kind-document')).toBeInTheDocument()
   })
 })

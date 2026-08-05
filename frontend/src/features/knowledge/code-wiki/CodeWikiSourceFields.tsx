@@ -17,6 +17,7 @@ import {
 import { RepositorySelector } from '@/features/tasks/components/selector'
 import { SimpleConfigRow } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import { useTranslation } from '@/hooks/useTranslation'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { useUser } from '@/features/common/UserContext'
 import type { GitInfo, GitRepoInfo } from '@/types/api'
@@ -26,6 +27,8 @@ export interface CodeWikiSource {
   source_type: CodeWikiSourceType
   source_url: string
   language: string
+  /** Whether generation runs appear in the conversation list. Off unless asked for. */
+  show_generation_task: boolean
   /** Set once resolved; the parent uses it to know the form is usable. */
   resolution: CodeWikiResolution | null
 }
@@ -286,7 +289,7 @@ function SourceStatus({
               <li key={wiki.id} className="text-xs text-text-muted">
                 {wiki.accessible ? (
                   <a
-                    href={`/knowledge/code-wiki/${wiki.id}`}
+                    href={buildKbUrl('default', wiki.name, false)}
                     className="text-primary hover:underline"
                     data-testid={`code-wiki-existing-open-${wiki.id}`}
                   >

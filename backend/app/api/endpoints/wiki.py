@@ -13,7 +13,7 @@ from app.core import security
 from app.core.wiki_config import wiki_settings
 from app.db.session import get_wiki_db
 from app.models.user import User
-from app.models.wiki import WikiGeneration
+from app.models.wiki import WikiGeneration, WikiProject
 from app.schemas.wiki import (
     WikiContentInDB,
     WikiContentWriteRequest,
@@ -209,28 +209,88 @@ def create_wiki_generation(
     )
 
 
+def _assert_may_read_generation(
+    wiki_db: Session, main_db: Session, generation_id: int, current_user: User
+) -> WikiGeneration:
+    """Refuse a generation the caller has no claim on.
+
+    These endpoints selected by ``WIKI_DEFAULT_USER_ID``, which is a configuration
+    value and not a claim: at its default of 0 the service layer reads it as "do not
+    filter by user", so any signed-in caller could walk sequential ids and read the
+    full page text of anybody's wiki. Set above zero it narrows to one account's
+    wikis, which every signed-in caller could then read — a smaller hole, not a
+    closed one.
+
+    A generation is readable when the thing it belongs to is:
+
+    * a code wiki (``kind_id``) — the ordinary knowledge-base ACL, the same check
+      its own endpoints make;
+    * a legacy project — read access to the underlying repository, which is already
+      what the project list and detail endpoints require. Generations were simply
+      never held to it.
+
+    404 rather than 403 throughout, so a refusal does not confirm that the id exists.
+
+    Returns:
+        The generation, so a caller needing its owner does not look it up again.
+    """
+    generation = wiki_db.query(WikiGeneration).filter_by(id=generation_id).first()
+    if generation is None:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    if generation.kind_id:
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+            db=main_db, knowledge_base_id=generation.kind_id, user_id=current_user.id
+        )
+        if knowledge_base is None or not has_access:
+            raise HTTPException(status_code=404, detail="Generation not found")
+        return generation
+
+    _assert_may_read_project(wiki_db, main_db, generation.project_id, current_user)
+    return generation
+
+
+def _assert_may_read_project(
+    wiki_db: Session, main_db: Session, project_id: int, current_user: User
+) -> None:
+    """Refuse a legacy project whose repository the caller cannot read."""
+    project = wiki_db.query(WikiProject).filter_by(id=project_id).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    # Reloaded from the main database: the access check reads git_info, and the
+    # request's user may be a stale copy.
+    user = main_db.query(User).filter(User.id == current_user.id).first()
+    if not wiki_service.check_user_project_access(project, user):
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+
 @router.get("/generations", response_model=WikiGenerationListResponse)
 def get_wiki_generations(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    project_id: int = Query(None, description="Filter by project ID"),
+    project_id: int = Query(..., description="Project whose generations to list"),
     current_user: User = Depends(security.get_current_user),
     wiki_db: Session = Depends(get_wiki_db),
+    main_db: Session = Depends(get_db),
 ):
-    """Get wiki generation task list.
+    """Generations of one legacy project, for a caller who may read its repository.
 
-    Always uses system-bound user ID (WIKI_DEFAULT_USER_ID) for querying generations.
-    - When WIKI_DEFAULT_USER_ID > 0: returns system-bound user's generations
-    - When WIKI_DEFAULT_USER_ID = 0: returns all users' generations (legacy behavior)
+    ``project_id`` is required. Without it this listed across every project, filtered
+    only by WIKI_DEFAULT_USER_ID — a configuration value, not a claim — so the answer
+    depended on a deployment setting rather than on who was asking.
+
+    Code wikis are not listed here. Their history is served by
+    ``GET /knowledge-bases/{id}/code-wiki/generations``, which applies the ordinary
+    knowledge-base ACL.
     """
     skip = (page - 1) * limit
-
-    # Always use system-bound user ID for querying generations
-    # When WIKI_DEFAULT_USER_ID = 0, pass user_id=0 to query all users' generations (legacy behavior)
-    user_id = wiki_settings.DEFAULT_USER_ID  # 0 means query all users (legacy)
+    _assert_may_read_project(wiki_db, main_db, project_id, current_user)
 
     items, total = wiki_service.get_generations(
-        db=wiki_db, user_id=user_id, project_id=project_id, skip=skip, limit=limit
+        db=wiki_db, user_id=0, project_id=project_id, skip=skip, limit=limit
     )
     return {"total": total, "items": items}
 
@@ -240,16 +300,11 @@ def get_wiki_generation(
     generation_id: int,
     current_user: User = Depends(security.get_current_user),
     wiki_db: Session = Depends(get_wiki_db),
+    main_db: Session = Depends(get_db),
 ):
-    """Get wiki generation task detail.
-
-    Always uses system-bound user ID (WIKI_DEFAULT_USER_ID) for querying generation details.
-    - When WIKI_DEFAULT_USER_ID > 0: returns system-bound user's generation
-    - When WIKI_DEFAULT_USER_ID = 0: returns generation for all users (legacy behavior)
-    """
-    # Always use system-bound user ID for querying generation details
-    # When WIKI_DEFAULT_USER_ID = 0, pass user_id=0 to query all users' generation details (legacy behavior)
-    user_id = wiki_settings.DEFAULT_USER_ID  # 0 means query all users (legacy)
+    """One generation and its full page text, for a caller entitled to it."""
+    _assert_may_read_generation(wiki_db, main_db, generation_id, current_user)
+    user_id = 0  # Authorised above; the service layer reads 0 as "no user filter".
 
     generation = wiki_service.get_generation_detail(
         db=wiki_db, generation_id=generation_id, user_id=user_id
@@ -324,16 +379,11 @@ def get_wiki_generation_contents(
     generation_id: int,
     current_user: User = Depends(security.get_current_user),
     wiki_db: Session = Depends(get_wiki_db),
+    main_db: Session = Depends(get_db),
 ):
-    """Get wiki generation contents.
-
-    Always uses system-bound user ID (WIKI_DEFAULT_USER_ID) for querying generation contents.
-    - When WIKI_DEFAULT_USER_ID > 0: returns system-bound user's contents
-    - When WIKI_DEFAULT_USER_ID = 0: returns contents for all users (legacy behavior)
-    """
-    # Always use system-bound user ID for querying generation contents
-    # When WIKI_DEFAULT_USER_ID = 0, pass user_id=0 to query all users' generation contents (legacy behavior)
-    user_id = wiki_settings.DEFAULT_USER_ID  # 0 means query all users (legacy)
+    """A generation's page text, for a caller entitled to it."""
+    _assert_may_read_generation(wiki_db, main_db, generation_id, current_user)
+    user_id = 0  # Authorised above; the service layer reads 0 as "no user filter".
 
     return wiki_service.get_generation_contents(
         db=wiki_db, generation_id=generation_id, user_id=user_id
@@ -345,20 +395,21 @@ def cancel_wiki_generation(
     generation_id: int,
     current_user: User = Depends(security.get_current_user),
     wiki_db: Session = Depends(get_wiki_db),
+    main_db: Session = Depends(get_db),
 ):
-    """Cancel a wiki generation task.
+    """Stop a run, for a caller entitled to the generation.
 
-    Always uses system-bound user ID (WIKI_DEFAULT_USER_ID) for cancellation.
-    - When WIKI_DEFAULT_USER_ID > 0: uses system-bound user for cancellation
-    - When WIKI_DEFAULT_USER_ID = 0: uses current user (legacy behavior)
+    Held to the same claim as reading it. Selecting the account by configuration let
+    any signed-in caller cancel any run that account owned — including a code wiki's,
+    which would leave its version to be reclaimed hours later.
     """
-    # Always use system-bound user ID for cancellation
-    # When WIKI_DEFAULT_USER_ID = 0, use current user (legacy behavior)
-    user_id = (
-        wiki_settings.DEFAULT_USER_ID
-        if wiki_settings.DEFAULT_USER_ID > 0
-        else current_user.id
+    generation = _assert_may_read_generation(
+        wiki_db, main_db, generation_id, current_user
     )
+    # The generation's own owner, not 0. Cancelling filters on user_id strictly --
+    # unlike the read paths, where 0 means "no filter" -- so passing 0 here would
+    # look for a generation belonging to nobody and cancel nothing.
+    user_id = generation.user_id
 
     return wiki_service.cancel_wiki_generation(
         wiki_db=wiki_db, generation_id=generation_id, user_id=user_id
@@ -420,11 +471,13 @@ def get_wiki_project(
         # Use 404 to avoid leaking the existence of inaccessible projects.
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Get recent generations for this project using system-bound user ID
-    # When WIKI_DEFAULT_USER_ID = 0, returns all users' generations (legacy behavior)
+    # Scoped by the project, which was authorised just above; 0 is the service
+    # layer's "no user filter". It read WIKI_DEFAULT_USER_ID here, which narrowed
+    # the answer by a configuration value and hid this project's own history from
+    # the caller entitled to it.
     generations, _ = wiki_service.get_generations(
         db=wiki_db,
-        user_id=wiki_settings.DEFAULT_USER_ID,  # Use system-bound user ID
+        user_id=0,
         project_id=project_id,
         skip=0,
         limit=10,
@@ -451,7 +504,7 @@ def get_wiki_stats_summary(
 ):
     """Get wiki statistics summary for current user"""
     # Get user's generations count by status
-    from app.models.wiki import WikiGeneration
+    from app.models.wiki import WikiGeneration, WikiProject
 
     user_id = _resolve_user_id(account_id, current_user, main_db)
 

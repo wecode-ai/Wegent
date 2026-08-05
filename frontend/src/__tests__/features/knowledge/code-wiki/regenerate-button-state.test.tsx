@@ -22,6 +22,7 @@ function status(over: Partial<CodeWikiRunStatus>): CodeWikiRunStatus {
     status: 'completed',
     generation_id: 1,
     error_message: '',
+    failure_code: '',
     is_stale: false,
     last_published_commit: '',
     ...over,
