@@ -243,7 +243,7 @@ export function SitesPage() {
         return
       }
       const createStrategy = definition.create
-      if (appType === 'site' && (await tryQueueLocalCodexSitesTrial(localCodexPluginApi))) {
+      if (appType === 'web' && (await tryQueueLocalCodexSitesTrial(localCodexPluginApi))) {
         navigateTo('/')
         return
       }
