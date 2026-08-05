@@ -7995,6 +7995,118 @@ describe('DesktopWorkbenchLayout', () => {
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(4)
   })
 
+  test('preserves an absolute file opened from a message when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const workspaceFileApi = {
+      listWorkspaceEntries: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          entries: [],
+        })
+      ),
+      readWorkspaceTextFile: vi.fn().mockImplementation((_deviceId: string, path: string) =>
+        Promise.resolve({
+          path,
+          name: 'outside.md',
+          content: 'outside workspace preview',
+          editable: true,
+          revision: 'sha256:outside',
+          truncated: false,
+          size: 25,
+          modifiedAt: null,
+        })
+      ),
+    }
+    const messages = [
+      {
+        id: 'assistant-edited-absolute-file',
+        taskId: 101,
+        role: 'assistant' as const,
+        content: '',
+        status: 'completed' as const,
+        createdAt: '2026-08-05T00:00:00.000Z',
+        blocks: [
+          {
+            id: 'edit-absolute-file',
+            subtaskId: 101,
+            type: 'tool' as const,
+            toolName: 'edit_file',
+            toolInput: {
+              path: '/tmp/outside.md',
+              old_string: 'before',
+              new_string: 'after',
+            },
+            status: 'completed' as const,
+            createdAt: 1770000000000,
+          },
+        ],
+      },
+    ]
+    const propsWithFileMessage = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      messages,
+      workspaceFileApi,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+    await userEvent.click(activePane().getByRole('button', { name: /正在编辑 outside\.md/ }))
+    expect(await activePane().findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'outside workspace preview'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithFileMessage(taskA)} />)
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-file-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(activePane().getByTestId('workspace-file-path')).toHaveTextContent('/tmp/outside.md')
+      expect(activePane().getByTestId('workspace-markdown-preview')).toHaveTextContent(
+        'outside workspace preview'
+      )
+    })
+    expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
+  })
+
+  test('preserves the review when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const onLoadEnvironmentDiff = vi
+      .fn()
+      .mockResolvedValue(
+        'diff --git a/src/task-a.ts b/src/task-a.ts\n--- a/src/task-a.ts\n+++ b/src/task-a.ts\n@@ -1 +1 @@\n-old\n+restored\n'
+      )
+    const propsWithReview = (task: typeof taskA) => ({
+      ...propsForTask(task),
+      onLoadEnvironmentDiff,
+    })
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsWithReview(taskA)} />)
+
+    await userEvent.click(activePane().getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(activePane().getByTestId('right-workspace-review-option'))
+    expect(await activePane().findByTestId('file-changes-review-panel')).toHaveTextContent(
+      'src/task-a.ts'
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsWithReview(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsWithReview(taskA)} />)
+
+    await waitFor(() => {
+      expect(activePane().getByTestId('right-workspace-review-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(activePane().getByTestId('file-changes-review-panel')).toHaveTextContent(
+        'src/task-a.ts'
+      )
+      expect(activePane().getByTestId('file-changes-review-panel')).toHaveTextContent('restored')
+    })
+    expect(onLoadEnvironmentDiff).toHaveBeenCalledTimes(1)
+  })
+
   test('preserves the open directory when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const workspaceFileApi = {

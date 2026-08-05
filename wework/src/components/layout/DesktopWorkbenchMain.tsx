@@ -292,9 +292,10 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  reviewState: DesktopReviewState
   selectedFileWorkspaceTargetKey: string | null
   selectedWorkspaceFile: {
-    targetKey: string
+    target: WorkspaceTarget
     path: string
     isDirectory: boolean
   } | null
@@ -1308,6 +1309,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState(
     () => initialWorkspaceState?.selectedWorkspaceFile ?? null
   )
+  const [reviewState, setReviewState] = useState<DesktopReviewState>(
+    () =>
+      initialWorkspaceState?.reviewState ?? {
+        loading: false,
+        diff: '',
+      }
+  )
+  const restoredLoadingReviewRef = useRef(
+    initialWorkspaceState?.reviewState.loading ? initialWorkspaceState.reviewState : null
+  )
   const [fileWorkspaceDirty, setFileWorkspaceDirty] = useState(false)
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
@@ -1315,6 +1326,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      reviewState,
       selectedFileWorkspaceTargetKey,
       selectedWorkspaceFile,
     })
@@ -1325,6 +1337,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    reviewState,
     selectedFileWorkspaceTargetKey,
     selectedWorkspaceFile,
   ])
@@ -1370,18 +1383,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
-  const [reviewState, setReviewState] = useState<DesktopReviewState>({
-    loading: false,
-    diff: '',
-    error: undefined,
-    reviewTitle: undefined,
-    reviewMode: undefined,
-    defaultFileTreeVisible: undefined,
-    branchName: undefined,
-    targetBranchName: undefined,
-    sourceSubtaskId: undefined,
-    reloadDiff: undefined,
-  })
   const closeRightPanel = useCallback(() => {
     setRightPanelExpanded(false)
     setRightPanelOpen(false)
@@ -1552,12 +1553,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       target => `${target.deviceId}:${target.path}` === selectedFileWorkspaceTargetKey
     ) ?? null
   const fileWorkspaceTarget =
-    openFileRequest?.target ?? selectedFileWorkspaceTarget ?? effectiveWorkspaceTarget
+    openFileRequest?.target ??
+    selectedFileWorkspaceTarget ??
+    selectedWorkspaceFile?.target ??
+    effectiveWorkspaceTarget
   const fileWorkspaceTargetKey = fileWorkspaceTarget
     ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
     : null
   const initialFileWorkspaceSelection =
-    selectedWorkspaceFile && selectedWorkspaceFile.targetKey === fileWorkspaceTargetKey
+    selectedWorkspaceFile &&
+    `${selectedWorkspaceFile.target.deviceId}:${selectedWorkspaceFile.target.path}` ===
+      fileWorkspaceTargetKey
       ? {
           path: selectedWorkspaceFile.path,
           isDirectory: selectedWorkspaceFile.isDirectory,
@@ -1996,6 +2002,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [openRightPanelTab, setReviewState, t]
   )
+  useEffect(() => {
+    const restoredReview = restoredLoadingReviewRef.current
+    restoredLoadingReviewRef.current = null
+    if (!restoredReview?.reloadDiff) return
+
+    void openReviewFromDiffLoader(restoredReview.reloadDiff, {
+      reviewTitle: restoredReview.reviewTitle,
+      reviewMode: restoredReview.reviewMode,
+      defaultFileTreeVisible: restoredReview.defaultFileTreeVisible,
+      branchName: restoredReview.branchName,
+      targetBranchName: restoredReview.targetBranchName,
+      focusFilePath: restoredReview.focusFilePath,
+      sourceSubtaskId: restoredReview.sourceSubtaskId,
+    })
+  }, [openReviewFromDiffLoader])
 
   const openEnvironmentChangesReview = useCallback(
     async (mode: EnvironmentDiffMode = 'branch') => {
@@ -2045,14 +2066,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [])
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
-      if (!fileWorkspaceTargetKey) return
+      if (!fileWorkspaceTarget) return
       setSelectedWorkspaceFile({
-        targetKey: fileWorkspaceTargetKey,
+        target: fileWorkspaceTarget,
         path: selection.path,
         isDirectory: selection.isDirectory,
       })
     },
-    [fileWorkspaceTargetKey]
+    [fileWorkspaceTarget]
   )
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
