@@ -24,7 +24,7 @@ interface UseWorkbenchDeviceUpgradesOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
-  refreshDevices: (options?: { useCacheFallback?: boolean }) => Promise<void>
+  refreshDevices: (options?: { useCacheFallback?: boolean; syncCloud?: boolean }) => Promise<void>
 }
 
 export function useWorkbenchDeviceUpgrades({
@@ -118,7 +118,7 @@ export function useWorkbenchDeviceUpgrades({
 
   useEffect(() => {
     const refreshDevicesAfterEvent = () => {
-      void refreshDevices({ useCacheFallback: false }).catch(() => undefined)
+      void refreshDevices({ useCacheFallback: false, syncCloud: false }).catch(() => undefined)
     }
     const handleDeviceOnline = (payload: unknown) => {
       const deviceId = getDeviceEventId(payload)

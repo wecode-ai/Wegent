@@ -75,6 +75,11 @@ export type ArchiveRuntimeTaskResult = {
 
 export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
 
+export type RefreshDevices = (options?: {
+  useCacheFallback?: boolean
+  syncCloud?: boolean
+}) => Promise<void>
+
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
@@ -232,7 +237,7 @@ export interface WorkbenchContextValue {
   ) => Promise<RuntimeTaskIMNotificationSubscriptionResponse>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: RefreshWorkLists
-  refreshDevices: () => Promise<void>
+  refreshDevices: RefreshDevices
   getRemoteDeviceStartupCommand: () => Promise<DockerRemoteDeviceCommandResponse>
   upgradeDevice: (deviceId: string) => Promise<void>
   createProject: (

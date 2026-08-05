@@ -2807,6 +2807,39 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('device-status')).toHaveTextContent('online')
   })
 
+  test('does not trigger a cloud sync for socket device events', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers = handlers
+      return vi.fn()
+    })
+    const cloudListRuntimeWork = vi.fn().mockResolvedValue({
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    })
+    const services = createWorkbenchServices({
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([createDevice()]),
+        listRuntimeWork: cloudListRuntimeWork,
+      },
+    })
+
+    renderWorkbench(<DeviceStatusProbe />, services)
+
+    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      streamHandlers.onDeviceSlotUpdate?.({ device_id: 'device-1' })
+    })
+
+    expect(cloudListRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
   test('keeps the last confirmed online state when an offline event refresh fails', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
