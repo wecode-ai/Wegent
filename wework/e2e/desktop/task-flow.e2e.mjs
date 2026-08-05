@@ -207,10 +207,20 @@ const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
 const VISION_SIDECAR_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VISION_SIDECAR_COMPLETE'
-const VISION_SIDECAR_MAIN_OPTION_ID = 'local-model:desktop-e2e-vision-main'
-const VISION_SIDECAR_MAIN_LABEL = 'Desktop E2E Vision Main'
-const VISION_SIDECAR_MAIN_MODEL_ID = 'deepseek-v4-flash'
-const VISION_SIDECAR_MODEL_ID = 'kimi-k3'
+const LOCAL_VISION_SIDECAR_CASE = {
+  source: 'local',
+  mainOptionId: 'local-model:desktop-e2e-vision-main',
+  mainLabel: 'Desktop E2E Vision Main',
+  mainModelId: 'desktop-e2e-local-vision-main-upstream',
+  sidecarModelId: 'kimi-k3',
+}
+const CLOUD_VISION_SIDECAR_CASE = {
+  source: 'cloud',
+  mainOptionId: 'desktop-e2e-cloud-vision-main',
+  mainLabel: 'Desktop E2E Cloud Vision Main',
+  mainModelId: 'desktop-e2e-cloud-vision-main-upstream',
+  sidecarModelId: 'desktop-e2e-cloud-vision-sidecar-upstream',
+}
 const IMAGE_ARTIFACT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
@@ -1560,7 +1570,7 @@ async function verifyStandaloneViewImageTask({ composerSelector, control, projec
   await verifyViewImageProcessingBlock(control)
 }
 
-async function verifyVisionSidecar({ composerSelector, control, projectRowSelector }) {
+async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
   control.setScenario('vision_sidecar')
   control.visionSidecarRequests = []
 
@@ -1573,7 +1583,7 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control, VISION_SIDECAR_MAIN_OPTION_ID, VISION_SIDECAR_MAIN_LABEL)
+    await selectE2EModel(control, modelCase.mainOptionId, modelCase.mainLabel)
     await control.command('dropFile', composerSelector, {
       filename: 'vision-sidecar.png',
       mimeType: 'image/png',
@@ -1585,8 +1595,8 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     await captureVerificationScreenshot(
       control,
       attempt === 0
-        ? 'vision-sidecar-01-request-ready.png'
-        : 'vision-sidecar-03-cache-request-ready.png'
+        ? `${modelCase.source}-vision-sidecar-01-request-ready.png`
+        : `${modelCase.source}-vision-sidecar-03-cache-request-ready.png`
     )
     await sendPrompt(control, composerSelector, VISION_SIDECAR_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -1595,7 +1605,9 @@ async function verifyVisionSidecar({ composerSelector, control, projectRowSelect
     })
     await captureVerificationScreenshot(
       control,
-      attempt === 0 ? 'vision-sidecar-02-response.png' : 'vision-sidecar-04-cache-hit-response.png'
+      attempt === 0
+        ? `${modelCase.source}-vision-sidecar-02-response.png`
+        : `${modelCase.source}-vision-sidecar-04-cache-hit-response.png`
     )
   }
 
@@ -7256,6 +7268,8 @@ class RealCloudEnvironment {
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      GIT_TOKEN_AES_KEY: '12345678901234567890123456789012',
+      GIT_TOKEN_AES_IV: '1234567890123456',
       WEGENT_SOCKET_URL: this.socketUrl,
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
@@ -7291,6 +7305,7 @@ class RealCloudEnvironment {
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
     await this.seedCloudProtocolModels()
+    await this.seedCloudVisionSidecarModels()
 
     const remoteHome = join(resultDir, 'cloud-executor-home')
     this.remoteCodexHome = join(remoteHome, 'codex')
@@ -7361,6 +7376,91 @@ class RealCloudEnvironment {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(items),
+    })
+  }
+
+  async seedCloudVisionSidecarModels() {
+    const headers = {
+      Authorization: `Bearer ${this.authToken}`,
+      'Content-Type': 'application/json',
+    }
+    const createModel = model =>
+      fetchJson(`${this.backendUrl}/api/v1/namespaces/default/models`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(model),
+      })
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: 'desktop-e2e-cloud-vision-sidecar',
+        namespace: 'default',
+        displayName: 'Desktop E2E Cloud Vision Sidecar',
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_VISION_SIDECAR_CASE.sidecarModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+        },
+        protocol: 'openai',
+        apiFormat: 'chat/completions',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+        modelCapabilities: {
+          supportsImage: true,
+        },
+      },
+    })
+
+    const unifiedModels = await fetchJson(
+      `${this.backendUrl}/api/models/unified?include_config=true&scope=all&model_category_type=llm&client_origin=wework`,
+      { headers }
+    )
+    const sidecar = unifiedModels.data?.find(
+      model => model.name === 'desktop-e2e-cloud-vision-sidecar' && model.type === 'user'
+    )
+    assert.ok(sidecar, 'The cloud vision sidecar fixture was not returned by model aggregation')
+    assert.equal(
+      typeof sidecar.resourceUserId,
+      'number',
+      'The cloud vision sidecar fixture did not expose its resource owner'
+    )
+
+    await createModel({
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: CLOUD_VISION_SIDECAR_CASE.mainOptionId,
+        namespace: 'default',
+        displayName: CLOUD_VISION_SIDECAR_CASE.mainLabel,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: 'openai',
+            model_id: CLOUD_VISION_SIDECAR_CASE.mainModelId,
+            base_url: `${this.modelServerUrl}/v1`,
+            api_key: MODEL_API_KEY,
+          },
+          visionSidecarModel: {
+            modelName: sidecar.name,
+            modelType: sidecar.type,
+            namespace: sidecar.namespace,
+            resourceUserId: sidecar.resourceUserId,
+            apiFormat: 'openai-chat-completions',
+          },
+        },
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        modelType: 'llm',
+        isWeworkAvailable: true,
+      },
     })
   }
 
@@ -8518,7 +8618,11 @@ class DesktopE2EServer {
 
     if (this.scenario === 'vision_sidecar') {
       const serialized = JSON.stringify(body)
-      if (body.model === VISION_SIDECAR_MODEL_ID) {
+      const modelCase = [LOCAL_VISION_SIDECAR_CASE, CLOUD_VISION_SIDECAR_CASE].find(
+        candidate => body.model === candidate.sidecarModelId || body.model === candidate.mainModelId
+      )
+      assert.ok(modelCase, `Unexpected vision sidecar model request: ${body.model}`)
+      if (body.model === modelCase.sidecarModelId) {
         assert.equal(protocol, 'chat', 'The vision sidecar reached the wrong protocol endpoint')
         assert.equal(body.stream, false, 'The vision sidecar request must not stream')
         assert.ok(serialized.includes('image_url'), 'The vision sidecar did not receive the image')
@@ -8536,7 +8640,7 @@ class DesktopE2EServer {
         })
         return
       }
-      if (body.model === VISION_SIDECAR_MAIN_MODEL_ID) {
+      if (body.model === modelCase.mainModelId) {
         assert.equal(protocol, 'responses', 'The vision primary model used the wrong protocol')
         if (codexRequestKind(body) === 'prewarm' || codexRequestKind(body) === 'compaction') {
           const responseId = `vision-sidecar-empty-${this.modelRequests.length}`
@@ -8565,7 +8669,6 @@ class DesktopE2EServer {
         ])
         return
       }
-      throw new Error(`Unexpected vision sidecar model request: ${body.model}`)
     }
 
     const localModel = localProtocolCase(body.model)
@@ -11348,6 +11451,16 @@ async function verifyConnectedModelsOnLocalExecution({
     workspacePath,
   })
 
+  await verifyVisionSidecar({
+    composerSelector,
+    control,
+    modelCase: CLOUD_VISION_SIDECAR_CASE,
+    projectRowSelector: newConversationSelector.replace(
+      ' [data-testid="project-new-conversation-button"]',
+      ''
+    ),
+  })
+
   const currentProjectSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -13420,8 +13533,13 @@ last_updated = "2026-07-30T00:00:00Z"`
         }
         phase = 'provider-switch-retry'
         await verifyCrossProviderSwitchRetry(control, composerSelector)
-        phase = 'vision-sidecar'
-        await verifyVisionSidecar({ composerSelector, control, projectRowSelector })
+        phase = 'local-vision-sidecar'
+        await verifyVisionSidecar({
+          composerSelector,
+          control,
+          modelCase: LOCAL_VISION_SIDECAR_CASE,
+          projectRowSelector,
+        })
         await writeFile(
           join(resultDir, 'model-switch-protocol-verification.json'),
           `${JSON.stringify(modelSwitchVerification, null, 2)}\n`,

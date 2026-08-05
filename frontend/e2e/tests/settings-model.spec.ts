@@ -70,6 +70,92 @@ test.describe('Settings - Model Management', () => {
     await openCreateModelDialog(page)
   })
 
+  test('should configure an LLM with an image understanding sidecar', async ({
+    page,
+    testPrefix,
+  }) => {
+    const visionModelName = TestData.uniqueName(`${testPrefix}-vision`)
+    const primaryModelName = TestData.uniqueName(`${testPrefix}-primary`)
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'))
+    expect(token).toBeTruthy()
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    }
+    const createResponse = await page.request.post('/api/v1/namespaces/default/models', {
+      headers,
+      data: {
+        apiVersion: 'agent.wecode.io/v1',
+        kind: 'Model',
+        metadata: {
+          name: visionModelName,
+          namespace: 'default',
+          displayName: 'E2E Vision Sidecar',
+        },
+        spec: {
+          modelConfig: {
+            env: {
+              model: 'openai',
+              model_id: 'vision-model',
+              api_key: 'test-api-key-for-e2e',
+              base_url: 'https://vision.example/v1',
+            },
+          },
+          protocol: 'openai-responses',
+          apiFormat: 'responses',
+          modelType: 'llm',
+          isWeworkAvailable: true,
+          modelCapabilities: {
+            supportsImage: true,
+          },
+        },
+      },
+    })
+    expect([200, 201]).toContain(createResponse.status())
+
+    try {
+      const dialog = await openCreateModelDialog(page)
+      await dialog.locator('[data-testid="model-wework-available-switch"]').click()
+
+      const sidecarSelect = dialog.locator('[data-testid="vision-sidecar-model-select"]')
+      await expect(sidecarSelect).toBeVisible()
+      await sidecarSelect.click()
+      await page.getByRole('option', { name: 'E2E Vision Sidecar' }).click()
+
+      await dialog.locator('[data-testid="model-id-name-input"]').fill(primaryModelName)
+      await dialog.locator('[data-testid="model-id-select"]').click()
+      await page.getByText('gpt-4o (Recommended)', { exact: true }).click()
+      await dialog.locator('input#api_key').fill('test-api-key-for-e2e')
+      await dialog.getByRole('button', { name: /Save|保存/ }).click()
+
+      await expect
+        .poll(async () => {
+          const response = await page.request.get(
+            `/api/v1/namespaces/default/models/${primaryModelName}`,
+            { headers }
+          )
+          if (!response.ok()) return null
+          const createdModel = await response.json()
+          return createdModel.spec?.modelConfig?.visionSidecarModel
+        })
+        .toEqual({
+          modelName: visionModelName,
+          modelType: 'user',
+          namespace: 'default',
+          resourceUserId: expect.any(Number),
+          apiFormat: 'openai-responses',
+        })
+    } finally {
+      for (const modelName of [primaryModelName, visionModelName]) {
+        const deleteResponse = await page.request.delete(
+          `/api/v1/namespaces/default/models/${modelName}`,
+          { headers }
+        )
+        expect([200, 204, 404]).toContain(deleteResponse.status())
+      }
+    }
+  })
+
   test('should create new model', async ({ page, testPrefix }) => {
     const modelName = TestData.uniqueName(`${testPrefix}-model`)
     const dialog = await openCreateModelDialog(page)
