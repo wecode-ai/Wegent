@@ -29,11 +29,11 @@ use crate::{
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
-    protocol::ExecutionRequest,
+    protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
     runner::{AgentEngine, ExecutionOutcome},
     server::{
         codex_model_catalog, executor_loopback_base_url,
-        local_model_proxy::{self, LocalModelProxyUpstream},
+        local_model_proxy::{self, LocalModelProxyUpstream, VisionSidecarUpstream},
     },
 };
 
@@ -67,6 +67,8 @@ const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
 const CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE: &str =
     "features.tool_call_mcp_elicitation=false";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
+const DEFAULT_VISION_SIDECAR_TIMEOUT_MS: u64 = 45_000;
+const DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS: usize = 8;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 The messages before this boundary are inherited reference context from the main thread.
@@ -2377,6 +2379,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
                 upstream,
                 model.clone(),
                 request_model_switched(request),
+                vision_sidecar_upstream(&request.model_config)?,
             );
         } else {
             launch_config.model_provider = Some(inference_provider.clone());
@@ -2396,6 +2399,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
             explicit_codex_upstream(&request.model_config, &base_url, &api_key),
             model.clone(),
             request_model_switched(request),
+            vision_sidecar_upstream(&request.model_config)?,
         );
     } else {
         launch_config.model_provider = Some(inference_model_provider(&request.model_config));
@@ -2439,9 +2443,11 @@ fn configure_codex_router(
     mut upstream: LocalModelProxyUpstream,
     routing_model_id: Option<String>,
     model_switched: bool,
+    vision_sidecar: Option<VisionSidecarUpstream>,
 ) {
     upstream.routing_model_id = routing_model_id;
-    let local_token = local_model_proxy::register(task_id, upstream);
+    let local_token =
+        local_model_proxy::register_with_vision_sidecar(task_id, upstream, vision_sidecar);
     if model_switched {
         local_model_proxy::mark_model_switch(&local_token);
     }
@@ -2469,6 +2475,60 @@ fn request_model_switched(request: &ExecutionRequest) -> bool {
         .get("wework_model_switched")
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn vision_sidecar_upstream(model_config: &Value) -> Result<Option<VisionSidecarUpstream>, String> {
+    let Some(sidecar) = model_config
+        .get("vision_sidecar")
+        .or_else(|| model_config.get("visionSidecar"))
+    else {
+        return Ok(None);
+    };
+    if bool_value(sidecar.get("enabled")) == Some(false) {
+        return Ok(None);
+    }
+    let request_url = non_empty_config(sidecar, "request_url")
+        .or_else(|| non_empty_config(sidecar, "requestUrl"))
+        .ok_or_else(|| "Vision sidecar request URL is required".to_owned())?;
+    let model_id = non_empty_config(sidecar, "model_id")
+        .or_else(|| non_empty_config(sidecar, "modelId"))
+        .ok_or_else(|| "Vision sidecar model ID is required".to_owned())?;
+    let api_key = api_key(sidecar).unwrap_or_else(|| "dummy".to_owned());
+    let api_format = non_empty_config(sidecar, "api_format")
+        .or_else(|| non_empty_config(sidecar, "apiFormat"))
+        .unwrap_or_else(|| "openai-responses".to_owned());
+    if !matches!(
+        api_format.as_str(),
+        "openai-responses" | "openai-chat-completions" | "anthropic-messages"
+    ) {
+        return Err(format!(
+            "Unsupported vision sidecar API format: {api_format}"
+        ));
+    }
+    let max_descriptions_per_turn = sidecar
+        .get("max_descriptions_per_turn")
+        .or_else(|| sidecar.get("maxDescriptionsPerTurn"))
+        .and_then(value_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(DEFAULT_VISION_SIDECAR_MAX_DESCRIPTIONS);
+    let timeout_ms = sidecar
+        .get("timeout_ms")
+        .or_else(|| sidecar.get("timeoutMs"))
+        .and_then(value_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_VISION_SIDECAR_TIMEOUT_MS);
+    Ok(Some(VisionSidecarUpstream {
+        request_url,
+        api_format,
+        api_key,
+        default_headers: parse_header_map(sidecar.get("default_headers")),
+        proxy_url: runtime_proxy_url(sidecar)
+            .or_else(|| runtime_proxy_url(model_config))
+            .map(str::to_owned),
+        model_id,
+        max_descriptions_per_turn,
+        timeout: Duration::from_millis(timeout_ms),
+    }))
 }
 
 fn explicit_codex_upstream(
@@ -3564,7 +3624,7 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
         .join("\n");
     let request_text = extract_user_request_text(text_parts);
     format!(
-        "\n# Files mentioned by the user:\n\n{file_lines}\n\n## My request for Codex:\n{request_text}\n"
+        "\n{CODEX_FILES_MENTIONED_HEADER}\n\n{file_lines}\n\n{CODEX_REQUEST_MARKER}\n{request_text}\n"
     )
 }
 

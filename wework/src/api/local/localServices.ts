@@ -113,6 +113,7 @@ import {
 import {
   buildLocalModelRequestUrl,
   DEEPSEEK_V4_FLASH_CATALOG_MODEL_ID,
+  DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -121,6 +122,7 @@ import {
   reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { localModelSupportsImageInput } from '@/features/model-settings/localModelProviders'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
@@ -803,6 +805,32 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
   return `local-${config.id}`.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'local'
 }
 
+function localVisionSidecarConfig(config: LocalModelConfig): Record<string, unknown> | null {
+  if (!config.visionModelConfigId) return null
+  const visionModel = listLocalModelConfigs().find(
+    candidate => candidate.id === config.visionModelConfigId
+  )
+  if (!visionModel?.enabled) {
+    throw new Error('Vision proxy model is missing or disabled')
+  }
+  if (!localModelSupportsImageInput(visionModel)) {
+    throw new Error('Vision proxy model does not declare image input support')
+  }
+  return {
+    enabled: true,
+    request_url: buildLocalModelRequestUrl(
+      visionModel.baseUrl,
+      visionModel.requestPath,
+      visionModel.apiFormat
+    ),
+    api_format: visionModel.apiFormat,
+    api_key: visionModel.apiKey || 'dummy',
+    model_id: visionModel.modelId,
+    max_descriptions_per_turn: 8,
+    timeout_ms: 45_000,
+  }
+}
+
 function wecodeExecutorForRuntime(runtime: string): string {
   const normalized = runtime
     .trim()
@@ -831,11 +859,16 @@ function localRuntimeModelConfig(
       localModel.requestPath,
       localModel.apiFormat
     )
+    const visionSidecar = localVisionSidecarConfig(localModel)
+    const codexCatalogModelId =
+      visionSidecar && localModel.providerProfileId === 'deepseek'
+        ? DEEPSEEK_V4_FLASH_VISION_CATALOG_MODEL_ID
+        : localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID
     return {
       model: 'openai',
       model_id: localModel.modelId,
       wework_model_kind: 'model-interface',
-      codex_catalog_model_id: localModel.codexCatalogModelId || DEFAULT_GPT_56_CATALOG_MODEL_ID,
+      codex_catalog_model_id: codexCatalogModelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
       tool_profile: localModel.toolProfile,
@@ -849,6 +882,7 @@ function localRuntimeModelConfig(
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
+      ...(visionSidecar ? { vision_sidecar: visionSidecar } : {}),
       ...(localModelDefaultReasoningEffort(localModel)
         ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
         : {}),
