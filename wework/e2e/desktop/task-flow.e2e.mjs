@@ -3569,6 +3569,30 @@ async function waitForControlValue(
   throw new Error(message)
 }
 
+function normalizeComposerText(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function waitForControlValueIncludes(
+  control,
+  selector,
+  expectedSubstring,
+  message,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
+  const expected = normalizeComposerText(expectedSubstring)
+  const startedAt = Date.now()
+  let lastValue = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    lastValue = await control.command('getValue', selector)
+    if (normalizeComposerText(lastValue).includes(expected)) return lastValue
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastValue)}`)
+}
+
 async function waitForControlSelectionOffset(control, selector, expected, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -4814,10 +4838,10 @@ async function verifyMarketplacePluginLifecycle({
   )
   assert.ok(refinedPluginSuggestion.trim(), 'AI did not return a plugin task suggestion')
   await control.command('click', '[data-testid="plugin-trial-recommendation-apply"]')
-  assert.ok(
-    (await control.command('getValue', ACTIVE_COMPOSER_SELECTOR)).includes(
-      refinedPluginSuggestion.trim()
-    ),
+  await waitForControlValueIncludes(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    refinedPluginSuggestion,
     'The AI-refined plugin task was not applied to the composer'
   )
   await captureVerificationScreenshot(control, 'marketplace-plugins-04-used-in-chat.png')

@@ -585,6 +585,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     [value]
   )
 
+  // Apply through the live composer handle so BufferedChatInput's debounced parent
+  // onChange path cannot leave ProseMirror on the pre-apply draft for ~300ms.
+  const applyRefinedPrompt = (prompt: string) => {
+    const next = buildRefinedPluginPrompt(composerRef.current?.getValue() ?? value, prompt)
+    composerRef.current?.setValue(next)
+    onChange(next)
+  }
+
   const displayedGoal = visibleRuntimeGoal(goal)
   const inputPlaceholder = goalDraftActive
     ? t('workbench.goal_input_placeholder', 'WeWork 应该往哪个方向努力?')
@@ -787,7 +795,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                   }) ?? Promise.reject(new Error('AI refinement unavailable'))
               : undefined
           }
-          onApplyRefinedPrompt={prompt => onChange(buildRefinedPluginPrompt(value, prompt))}
+          onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
         {displayedGoal && !goalDraftActive && (
@@ -893,7 +901,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
                 }) ?? Promise.reject(new Error('AI refinement unavailable'))
             : undefined
         }
-        onApplyRefinedPrompt={prompt => onChange(buildRefinedPluginPrompt(value, prompt))}
+        onApplyRefinedPrompt={applyRefinedPrompt}
         onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
       />
       {displayedGoal && !goalDraftActive && (
