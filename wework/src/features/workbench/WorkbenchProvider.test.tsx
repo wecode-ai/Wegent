@@ -2517,6 +2517,71 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('does not leave cloud work stuck syncing when a sync is superseded', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <BootstrapProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('syncing')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh devices' }))
+    await act(async () => {
+      runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+      await runtimeWork.promise
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).not.toHaveTextContent('syncing')
+    )
+  })
+
+  test('does not leave cloud work stuck syncing when a task is archived mid-sync', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock()
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([]),
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(
+      <>
+        <CloudWorkStatusProbe />
+        <ArchiveRemoteRuntimeTaskProbe />
+      </>,
+      services
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).toHaveTextContent('syncing')
+    )
+
+    await userEvent.click(screen.getByText('archive remote task'))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-work-availability')).not.toHaveTextContent('syncing')
+    )
+  })
+
   test('restores cached remote task summaries when the device is offline at startup', async () => {
     writeCachedRemoteRuntimeWork(1, {
       projects: [

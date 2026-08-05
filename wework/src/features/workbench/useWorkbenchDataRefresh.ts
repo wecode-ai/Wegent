@@ -14,6 +14,8 @@ import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/typ
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
+  abandonCloudRuntimeSync,
+  clearCloudRuntimeSync,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeDeviceLists,
@@ -93,14 +95,11 @@ function removeRuntimeTasksFromCloudState(
           runtimeWork: removeRuntimeTasks(snapshot.runtimeWork, addresses),
         }
       : null
-  return {
+  return clearCloudRuntimeSync({
     ...state,
-    availability:
-      state.inFlightRevision == null ? state.availability : state.lastGood ? 'stale' : 'idle',
     current: removeFromSnapshot(state.current),
     lastGood: removeFromSnapshot(state.lastGood),
-    inFlightRevision: null,
-  }
+  })
 }
 
 function removeRuntimeProjectFromCloudState(
@@ -336,7 +335,6 @@ export function useWorkbenchDataRefresh({
       try {
         if (cloudRuntimeStateRef.current.inFlightRevision != null) {
           if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
-          const inFlightRevision = cloudRuntimeStateRef.current.inFlightRevision
           const inFlightBackgroundApi = backgroundApi
           const devicesResult = await timedWorkbenchBootstrapRequest(
             'cloudDevices',
@@ -348,7 +346,6 @@ export function useWorkbenchDataRefresh({
             !isCurrentRefresh() ||
             options?.isCancelled?.() ||
             devicesResult.status !== 'fulfilled' ||
-            cloudRuntimeStateRef.current.inFlightRevision !== inFlightRevision ||
             cloudBackgroundApiRef.current !== inFlightBackgroundApi
           ) {
             return
@@ -437,6 +434,9 @@ export function useWorkbenchDataRefresh({
           cloudRuntimeStateRef.current.inFlightRevision !== revision ||
           cloudBackgroundApiRef.current !== backgroundApi
         ) {
+          if (revision != null) {
+            updateCloudRuntimeState(abandonCloudRuntimeSync(cloudRuntimeStateRef.current, revision))
+          }
           return
         }
 
