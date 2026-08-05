@@ -169,6 +169,55 @@ fn store_dir_matches_plugin_key(dir_name: &str, plugin_key: &str) -> bool {
         || dir_name == plugin_key
 }
 
+fn is_safe_plugin_key(plugin_key: &str) -> bool {
+    let path = Path::new(plugin_key);
+    !plugin_key.is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn push_codex_cache_candidates(
+    cache_root: &Path,
+    plugin_key: &str,
+    candidates: &mut Vec<PathBuf>,
+) {
+    // Codex materializes installs as:
+    //   plugins/cache/{marketplace}/{plugin_key}/{version}/
+    // Do not hardcode a single marketplace (e.g. "wegent"); local and official
+    // marketplaces each get their own top-level cache directory.
+    if !cache_root.is_dir() || !is_safe_plugin_key(plugin_key) {
+        return;
+    }
+    let Ok(marketplaces) = fs::read_dir(cache_root) else {
+        return;
+    };
+    for marketplace in marketplaces.flatten() {
+        let marketplace_path = marketplace.path();
+        if !marketplace_path.is_dir() {
+            continue;
+        }
+        let plugin_dir = marketplace_path.join(plugin_key);
+        if !plugin_dir.is_dir() {
+            continue;
+        }
+        let mut found_version = false;
+        if let Ok(versions) = fs::read_dir(&plugin_dir) {
+            for version in versions.flatten() {
+                let version_path = version.path();
+                if version_path.is_dir() {
+                    candidates.push(version_path);
+                    found_version = true;
+                }
+            }
+        }
+        if !found_version {
+            candidates.push(plugin_dir);
+        }
+    }
+}
+
 fn resolve_plugin_root_candidates(
     plugin_key: &str,
     payload: &Value,
@@ -183,6 +232,13 @@ fn resolve_plugin_root_candidates(
         return Err(AppIpcError::new(
             "plugin_root_missing",
             format!("pluginRoot does not exist: {}", path.display()),
+        ));
+    }
+
+    if !is_safe_plugin_key(plugin_key) {
+        return Err(AppIpcError::new(
+            "bad_request",
+            format!("Invalid pluginKey '{plugin_key}'"),
         ));
     }
 
@@ -206,24 +262,23 @@ fn resolve_plugin_root_candidates(
         }
     }
 
-    let cache_root = executor_home
-        .join("codex/plugins/cache")
-        .join("wegent")
-        .join(plugin_key);
-    if cache_root.is_dir() {
-        if let Ok(entries) = fs::read_dir(&cache_root) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    candidates.push(entry.path());
-                }
+    let mut cache_roots = vec![executor_home.join("codex/plugins/cache")];
+    for env_key in ["CODEX_HOME", "WEGENT_CODEX_HOME"] {
+        if let Some(codex_home) = env::var_os(env_key) {
+            let cache_root = PathBuf::from(codex_home).join("plugins/cache");
+            if !cache_roots.iter().any(|existing| existing == &cache_root) {
+                cache_roots.push(cache_root);
             }
-        } else {
-            candidates.push(cache_root);
         }
+    }
+    for cache_root in &cache_roots {
+        push_codex_cache_candidates(cache_root, plugin_key, &mut candidates);
     }
 
     // Prefer the newest version directory by name, then skip packages whose
     // manifest lacks the requested localAuth connector.
+    candidates.sort();
+    candidates.dedup();
     candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
     candidates.retain(|candidate| has_plugin_manifest(candidate));
     if candidates.is_empty() {
@@ -768,6 +823,23 @@ fn redact_secrets(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn write_plugin_manifest(plugin_root: &Path) {
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{"name":"desktop-e2e-plugin","version":"0.1.0"}"#,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn force_nonblocking_poll_args() {
@@ -817,5 +889,81 @@ mod tests {
             normalize_status_response(&json!({"status": "ok", "hint": "ready"}), &spec, None);
         assert_eq!(result.get("status").and_then(Value::as_str), Some("ok"));
         assert_eq!(result.get("rawStatus").and_then(Value::as_str), Some("ok"));
+    }
+
+    #[test]
+    fn resolve_plugin_root_scans_all_marketplace_caches() {
+        let _guard = env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let executor_home = temp.path().join("executor-home");
+        let plugin_root = executor_home
+            .join("codex/plugins/cache/desktop-e2e-marketplace/desktop-e2e-plugin/0.1.0");
+        write_plugin_manifest(&plugin_root);
+
+        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let previous_codex_home = env::var_os("CODEX_HOME");
+        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
+        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+        env::remove_var("CODEX_HOME");
+        env::remove_var("WEGENT_CODEX_HOME");
+
+        let candidates =
+            resolve_plugin_root_candidates("desktop-e2e-plugin", &json!({})).expect("candidates");
+        assert_eq!(candidates, vec![plugin_root]);
+
+        match previous_executor_home {
+            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
+            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
+        }
+        match previous_codex_home {
+            Some(value) => env::set_var("CODEX_HOME", value),
+            None => env::remove_var("CODEX_HOME"),
+        }
+        match previous_wegent_codex_home {
+            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
+            None => env::remove_var("WEGENT_CODEX_HOME"),
+        }
+    }
+
+    #[test]
+    fn resolve_plugin_root_prefers_newest_version_directory() {
+        let _guard = env_lock();
+        let temp = tempfile::tempdir().unwrap();
+        let executor_home = temp.path().join("executor-home");
+        let older = executor_home.join("codex/plugins/cache/wegent/demo-plugin/0.1.0");
+        let newer = executor_home.join("codex/plugins/cache/wegent/demo-plugin/0.2.0");
+        write_plugin_manifest(&older);
+        write_plugin_manifest(&newer);
+
+        let previous_executor_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let previous_codex_home = env::var_os("CODEX_HOME");
+        let previous_wegent_codex_home = env::var_os("WEGENT_CODEX_HOME");
+        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+        env::remove_var("CODEX_HOME");
+        env::remove_var("WEGENT_CODEX_HOME");
+
+        let candidates =
+            resolve_plugin_root_candidates("demo-plugin", &json!({})).expect("candidates");
+        assert_eq!(candidates.first(), Some(&newer));
+
+        match previous_executor_home {
+            Some(value) => env::set_var("WEGENT_EXECUTOR_HOME", value),
+            None => env::remove_var("WEGENT_EXECUTOR_HOME"),
+        }
+        match previous_codex_home {
+            Some(value) => env::set_var("CODEX_HOME", value),
+            None => env::remove_var("CODEX_HOME"),
+        }
+        match previous_wegent_codex_home {
+            Some(value) => env::set_var("WEGENT_CODEX_HOME", value),
+            None => env::remove_var("WEGENT_CODEX_HOME"),
+        }
+    }
+
+    #[test]
+    fn reject_unsafe_plugin_key() {
+        assert!(!is_safe_plugin_key("../escape"));
+        assert!(!is_safe_plugin_key("/tmp/evil"));
+        assert!(is_safe_plugin_key("desktop-e2e-plugin"));
     }
 }
