@@ -126,7 +126,11 @@ export function useAiGenerationTelemetry({
         $ai_trace_id: pending.traceId,
         $ai_parent_id: pending.traceId,
         $ai_model: toKnownAiModelId(model?.modelId, knownModelIdsRef.current),
-        $ai_provider: toKnownAiProvider(model?.provider),
+        $ai_provider: toKnownAiProvider(
+          model?.modelId,
+          model?.provider,
+          model?.config?.weworkModelKind
+        ),
         ...(usage?.last && {
           $ai_input_tokens: usage.last.inputTokens,
           $ai_output_tokens: usage.last.outputTokens,
