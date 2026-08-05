@@ -253,6 +253,8 @@ class GeminiMultimodalAnalyzer:
     def _classify_error(exc: Exception) -> VideoAnalysisError:
         """Map a raw SDK exception to a Transient/Permanent error."""
         msg_lower = str(exc).lower()
+        # Check quota first: some gateways report quota exhaustion as 403
+        # PERMISSION_DENIED, which also matches the authentication markers.
         if any(k in msg_lower for k in _QUOTA_MARKERS):
             return PermanentError("gemini_quota", f"Gemini quota exhausted: {exc}")
         if any(k in msg_lower for k in _AUTH_MARKERS):

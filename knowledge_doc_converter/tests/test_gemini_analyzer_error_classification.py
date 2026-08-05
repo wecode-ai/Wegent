@@ -19,11 +19,12 @@ from knowledge_doc_converter.tasks.multimodal_task import (
 @pytest.mark.parametrize(
     ("raw_error", "expected_class", "expected_type"),
     [
-        (
+        pytest.param(
             "403 PERMISSION_DENIED: 当前用户高价模型额度已用完, "
             "model_id: gemini-3.5-flash",
             "gemini_quota",
             PermanentError,
+            id="quota-precedes-auth-for-internal-403",
         ),
         (
             "403 PERMISSION_DENIED: invalid API key",
