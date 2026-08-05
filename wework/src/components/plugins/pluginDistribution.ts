@@ -26,7 +26,7 @@ export function installedPluginMarketplaceId(plugin: InstalledPlugin): string | 
 export function marketplacePluginDistribution(plugin: PluginMarketplaceItem): PluginDistribution {
   if (plugin.visibility === 'personal') return 'personal'
   const marketplaceId = marketplaceItemMarketplaceId(plugin)
-  if (isPersonalMarketplaceId(marketplaceId)) return 'personal'
+  if (marketplaceId && isPersonalMarketplaceId(marketplaceId)) return 'personal'
   if (isInternalDeviceMarketplaceId(marketplaceId)) return 'workspace'
   if (plugin.latestReleaseId == null && plugin.sourceProvider === 'codex') {
     return isOpenAiOfficialMarketplaceId(marketplaceId) ? 'official' : 'external'
