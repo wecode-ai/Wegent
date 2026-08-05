@@ -1215,7 +1215,7 @@ export function WorkbenchProvider({
   )
   const stableRefreshWorkLists = useStableEvent(refreshWorkLists)
   const refreshRuntimeWorkLists = useStableEvent((address: RuntimeTaskAddress) => {
-    void stableRefreshWorkLists().catch(error => {
+    void stableRefreshWorkLists({ syncCloud: false }).catch(error => {
       console.warn('[Wework] Runtime work list refresh failed', {
         deviceId: address.deviceId,
         taskId: address.taskId,
