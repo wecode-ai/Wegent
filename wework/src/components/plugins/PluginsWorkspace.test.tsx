@@ -335,6 +335,7 @@ function mockSystemSkillsFetch(
   }> = {}
 ) {
   let marketplaceUpdateAvailable = false
+  let cloudMarketplacePluginInstalled = Boolean(overrides.marketplaceInstalled)
   const personalSkillsResponse = {
     items: [
       {
@@ -518,7 +519,7 @@ function mockSystemSkillsFetch(
     },
     status: { state: 'Available' },
   }
-  const marketplacePlugin = {
+  const buildDocumentsMarketplacePlugin = () => ({
     id: 101,
     remotePluginId: 'openai-documents',
     name: 'documents',
@@ -531,12 +532,12 @@ function mockSystemSkillsFetch(
     sourceLabel: 'Codex 官方',
     featured: false,
     installed:
-      overrides.marketplaceInstalled &&
+      cloudMarketplacePluginInstalled &&
       (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
     enabled:
-      overrides.marketplaceInstalled &&
+      cloudMarketplacePluginInstalled &&
       (overrides.marketplaceDeviceState ?? 'installed') === 'installed',
-    installedPluginId: overrides.marketplaceInstalled ? 101 : null,
+    installedPluginId: cloudMarketplacePluginInstalled ? 101 : null,
     interface: {
       displayName: 'Documents',
       shortDescription: 'Create and edit documents',
@@ -577,7 +578,7 @@ function mockSystemSkillsFetch(
     createdAt: null,
     updatedAt: null,
     latestReleaseId: 1001,
-    currentDeviceInstallation: overrides.marketplaceInstalled
+    currentDeviceInstallation: cloudMarketplacePluginInstalled
       ? {
           deviceId: 'current-device',
           desiredReleaseId: 1001,
@@ -593,14 +594,14 @@ function mockSystemSkillsFetch(
           updatedAt: '2026-07-25T12:00:00',
         }
       : null,
-  }
-  const marketplacePlugins = Array.from(
-    { length: Math.max(1, overrides.marketplaceCount ?? 1) },
-    (_, index) => {
-      if (index === 0) return marketplacePlugin
+  })
+  const buildMarketplacePlugins = () =>
+    Array.from({ length: Math.max(1, overrides.marketplaceCount ?? 1) }, (_, index) => {
+      if (index === 0) return buildDocumentsMarketplacePlugin()
       const sequence = index + 1
+      const documentsPlugin = buildDocumentsMarketplacePlugin()
       return {
-        ...marketplacePlugin,
+        ...documentsPlugin,
         id: 100 + sequence,
         remotePluginId: `openai-plugin-${sequence}`,
         name: `plugin-${sequence}`,
@@ -611,69 +612,73 @@ function mockSystemSkillsFetch(
         latestReleaseId: 1000 + sequence,
         currentDeviceInstallation: null,
         interface: {
-          ...marketplacePlugin.interface,
+          ...documentsPlugin.interface,
           displayName: `Plugin ${sequence}`,
           shortDescription: `Plugin ${sequence} description`,
           logo: `/Users/test/plugins/plugin-${sequence}/assets/logo.png`,
         },
       }
-    }
-  )
-  const installedMarketplacePlugin = {
-    apiVersion: 'agent.wecode.io/v1',
-    kind: 'InstalledPlugin',
-    metadata: {
-      name: 'documents',
-      namespace: 'default',
-      labels: { id: '101' },
-    },
-    spec: {
-      source: {
-        type: 'marketplace',
-        pluginKey: 'documents',
-        catalogItemId: 'openai-documents',
+    })
+  const buildInstalledMarketplacePlugin = () => {
+    const marketplaceRow = buildDocumentsMarketplacePlugin()
+    return {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'InstalledPlugin',
+      metadata: {
+        name: 'documents',
+        namespace: 'default',
+        labels: { id: '101' },
       },
-      displayName: 'Documents',
-      description: 'Create and edit document artifacts',
-      version: '1.0.0',
-      enabled: true,
-      installState:
-        overrides.marketplaceDeviceState === 'failed'
-          ? 'failed'
-          : overrides.marketplaceDeviceState === 'pending'
-            ? 'not_installed'
-            : 'installed',
-      origin: 'market',
-      sourceProvider: 'codex',
-      sourceLabel: 'Codex 官方',
-      visibility: 'public',
-      pluginId: 101,
-      releaseId: 1001,
-      componentStates: {},
-      components: marketplacePlugin.components,
-      interface: {
-        ...marketplacePlugin.interface,
-        logo: overrides.installedMarketplaceLogo ?? marketplacePlugin.interface.logo,
-      },
-      packageRef: null,
-      sourcePayload: null,
-    },
-    status: {
-      state: overrides.marketplaceDeviceState ?? 'installed',
-      devices: [
-        marketplacePlugin.currentDeviceInstallation ?? {
-          deviceId: 'current-device',
-          desiredReleaseId: 1001,
-          actualReleaseId: 1001,
-          state: 'installed',
-          errorCode: null,
-          errorMessage: null,
-          attemptCount: 1,
-          lastSyncAt: '2026-07-25T12:00:00',
-          updatedAt: '2026-07-25T12:00:00',
+      spec: {
+        source: {
+          type: 'marketplace',
+          providerKey: 'wegent-market',
+          pluginKey: 'documents',
+          catalogItemId: 'openai-documents',
+          marketplace: 'default',
         },
-      ],
-    },
+        displayName: 'Documents',
+        description: 'Create and edit document artifacts',
+        version: '1.0.0',
+        enabled: true,
+        installState:
+          overrides.marketplaceDeviceState === 'failed'
+            ? 'failed'
+            : overrides.marketplaceDeviceState === 'pending'
+              ? 'not_installed'
+              : 'installed',
+        origin: 'market',
+        sourceProvider: 'codex',
+        sourceLabel: 'Codex 官方',
+        visibility: 'public',
+        pluginId: 101,
+        releaseId: 1001,
+        componentStates: {},
+        components: marketplaceRow.components,
+        interface: {
+          ...marketplaceRow.interface,
+          logo: overrides.installedMarketplaceLogo ?? marketplaceRow.interface.logo,
+        },
+        packageRef: null,
+        sourcePayload: null,
+      },
+      status: {
+        state: overrides.marketplaceDeviceState ?? 'installed',
+        devices: [
+          marketplaceRow.currentDeviceInstallation ?? {
+            deviceId: 'current-device',
+            desiredReleaseId: 1001,
+            actualReleaseId: 1001,
+            state: 'installed',
+            errorCode: null,
+            errorMessage: null,
+            attemptCount: 1,
+            lastSyncAt: '2026-07-25T12:00:00',
+            updatedAt: '2026-07-25T12:00:00',
+          },
+        ],
+      },
+    }
   }
   const skill = (page: number) => ({
     id: `@weibo/page-${page}`,
@@ -781,13 +786,13 @@ function mockSystemSkillsFetch(
           status: 200,
           json: () =>
             Promise.resolve({
-              items: overrides.marketplaceInstalled ? [installedMarketplacePlugin] : [],
+              items: cloudMarketplacePluginInstalled ? [buildInstalledMarketplacePlugin()] : [],
             }),
         })
       }
       if (requestUrl.pathname === '/api/plugins/marketplace') {
         const keyword = requestUrl.searchParams.get('q')
-        const currentMarketplacePlugins = marketplacePlugins.map((plugin, index) =>
+        const currentMarketplacePlugins = buildMarketplacePlugins().map((plugin, index) =>
           marketplaceUpdateAvailable && index === 0
             ? {
                 ...plugin,
@@ -821,12 +826,21 @@ function mockSystemSkillsFetch(
         }
         return new Promise(resolve => {
           setTimeout(() => {
+            cloudMarketplacePluginInstalled = true
             resolve({
               ok: true,
               status: 200,
-              json: () => Promise.resolve({ plugin: installedMarketplacePlugin }),
+              json: () => Promise.resolve({ plugin: buildInstalledMarketplacePlugin() }),
             })
           }, 10)
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'DELETE') {
+        cloudMarketplacePluginInstalled = false
+        return Promise.resolve({
+          ok: true,
+          status: 204,
+          json: () => Promise.resolve(null),
         })
       }
       const page = Number(requestUrl.searchParams.get('page') ?? 1)

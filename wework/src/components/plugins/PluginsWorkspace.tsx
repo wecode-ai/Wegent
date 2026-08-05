@@ -142,9 +142,10 @@ function toMarketplaceInstalledPluginItem(item: PluginMarketplaceItem): Installe
     spec: {
       source: {
         type: item.sourceType,
-        providerKey: 'marketplace',
+        providerKey: 'wegent-market',
         pluginKey: item.name,
         catalogItemId: item.remotePluginId,
+        marketplace: 'default',
       },
       origin: 'market',
       pluginId: Number(item.id),
