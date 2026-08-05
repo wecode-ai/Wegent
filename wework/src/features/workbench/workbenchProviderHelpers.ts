@@ -34,9 +34,6 @@ export function getBlockedModelSelectionMessage(
   if (reason === 'unavailable') {
     return `${modelLabel} 当前不可用`
   }
-  if (reason === 'provider_boundary_mismatch') {
-    return '官方 Codex 与第三方模型不能在同一对话中切换。你可以新建会话，并通过 @ 引用当前对话继续处理。'
-  }
   return `${modelLabel} 与当前对话的模型协议不兼容，请新建对话后使用该模型`
 }
 

@@ -4,6 +4,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeProjectRef,
   RuntimeProjectRoot,
+  RuntimeProjectSpaceRef,
   RuntimeProjectWork,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
@@ -74,6 +75,13 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
         .map(sanitizeProjectRoot)
         .filter((root): root is RuntimeProjectRoot => root !== null)
     : undefined
+  const rawDefaultProjectSpace = recordValue(project.defaultProjectSpace)
+  const defaultProjectStore = stringValue(rawDefaultProjectSpace.projectStore)
+  const defaultProjectId = stringValue(rawDefaultProjectSpace.projectId)
+  const defaultProjectSpace: RuntimeProjectSpaceRef | undefined =
+    (defaultProjectStore === 'local' || defaultProjectStore === 'backend') && defaultProjectId
+      ? { projectStore: defaultProjectStore, projectId: defaultProjectId }
+      : undefined
 
   return {
     key,
@@ -99,6 +107,7 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
       ? { pinnedOrder: nullableNumberValue(project.pinnedOrder) }
       : {}),
     ...(booleanValue(project.active) !== undefined ? { active: booleanValue(project.active) } : {}),
+    ...(defaultProjectSpace ? { defaultProjectSpace } : {}),
   }
 }
 

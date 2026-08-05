@@ -6,8 +6,15 @@ import type { RuntimeTaskAddress } from '@/types/api'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
-interface TodoBindingPickerProps {
+interface ProjectSpaceOption {
+  key: string
+  project: CloudProject
+  items: CloudLoopItem[]
   api: DeliveryApi
+}
+
+interface TodoBindingPickerProps {
+  apis: DeliveryApi[]
   runtimeTask?: RuntimeTaskAddress
   runtimeTaskTitle?: string | null
   currentProject: CloudProject | null
@@ -17,7 +24,7 @@ interface TodoBindingPickerProps {
 }
 
 export function TodoBindingPicker({
-  api,
+  apis,
   runtimeTask,
   runtimeTaskTitle,
   currentProject,
@@ -25,57 +32,89 @@ export function TodoBindingPicker({
   onClose,
   onBound,
 }: TodoBindingPickerProps) {
-  const [projects, setProjects] = useState<CloudProject[]>([])
-  const [items, setItems] = useState<CloudLoopItem[]>([])
+  const [projectOptions, setProjectOptions] = useState<ProjectSpaceOption[]>([])
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
-  const [projectId, setProjectId] = useState<string | null>(null)
+  const [projectKey, setProjectKey] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    void api
-      .listCloudProjects()
-      .then(async response => {
-        const groups = await Promise.all(
-          response.items.map(project => api.listLoopItems(project.id).then(result => result.items))
+    void Promise.allSettled(
+      apis.map(async api => {
+        const response = await api.listCloudProjects()
+        return Promise.all(
+          response.items.map(async project => {
+            const items = await api
+              .listLoopItems(project.id)
+              .then(result => result.items)
+              .catch(() => [])
+            return {
+              key: `${project.project_store}:${project.id}`,
+              project,
+              api,
+              items,
+            }
+          })
         )
-        if (!active) return
-        setProjects(response.items)
-        setProjectId(currentProject?.id ?? response.items[0]?.id ?? null)
-        setItems(groups.flat())
       })
-      .catch(cause => {
-        if (active) setError(cause instanceof Error ? cause.message : '加载任务失败')
-      })
+    ).then(results => {
+      if (!active) return
+      const options = results.flatMap(result => (result.status === 'fulfilled' ? result.value : []))
+      const uniqueOptions = options.filter(
+        (option, index) => options.findIndex(candidate => candidate.key === option.key) === index
+      )
+      const currentProjectKey = currentProject
+        ? `${currentProject.project_store}:${currentProject.id}`
+        : null
+      setProjectOptions(uniqueOptions)
+      setProjectKey(
+        uniqueOptions.some(option => option.key === currentProjectKey)
+          ? currentProjectKey
+          : (uniqueOptions[0]?.key ?? null)
+      )
+      if (uniqueOptions.length === 0 && results.some(result => result.status === 'rejected')) {
+        const rejection = results.find(result => result.status === 'rejected')
+        setError(
+          rejection?.status === 'rejected' && rejection.reason instanceof Error
+            ? rejection.reason.message
+            : '加载任务失败'
+        )
+      }
+    })
     return () => {
       active = false
     }
-  }, [api, currentProject?.id])
+  }, [apis, currentProject])
 
+  const selectedOption =
+    projectOptions.find(option => option.key === projectKey) ?? projectOptions[0] ?? null
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    return items.filter(
+    return (selectedOption?.items ?? []).filter(
       item =>
-        item.cloud_project_id === projectId &&
-        (!normalized ||
-          `${item.id} ${item.title} ${item.description}`.toLowerCase().includes(normalized))
+        !normalized ||
+        `${item.id} ${item.title} ${item.description}`.toLowerCase().includes(normalized)
     )
-  }, [items, projectId, query])
+  }, [query, selectedOption])
 
-  const selectedProject = projects.find(project => project.id === projectId) ?? null
+  const selectedProject = selectedOption?.project ?? null
 
   async function bindProject() {
-    if (!selectedProject || saving) return
+    if (!selectedOption || saving) return
     setSaving(true)
     setError(null)
     try {
       if (runtimeTask) {
-        await api.bindProjectTask(selectedProject.id, runtimeTask, runtimeTaskTitle)
+        await selectedOption.api.bindProjectTask(
+          selectedOption.project.id,
+          runtimeTask,
+          runtimeTaskTitle
+        )
       }
-      onBound(selectedProject, null)
+      onBound(selectedOption.project, null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '关联云项目失败')
     } finally {
@@ -84,16 +123,16 @@ export function TodoBindingPicker({
   }
 
   async function bind(item: CloudLoopItem) {
-    if (saving || currentItem?.id === item.id) return
+    if (!selectedOption || saving || currentItem?.id === item.id) return
     setSaving(true)
     setError(null)
     try {
       if (runtimeTask) {
         await (runtimeTaskTitle
-          ? api.bindTask(item.id, runtimeTask, runtimeTaskTitle)
-          : api.bindTask(item.id, runtimeTask))
+          ? selectedOption.api.bindTask(item.id, runtimeTask, runtimeTaskTitle)
+          : selectedOption.api.bindTask(item.id, runtimeTask))
       }
-      onBound(projects.find(project => project.id === item.cloud_project_id) ?? null, item)
+      onBound(selectedOption.project, item)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '关联任务失败')
     } finally {
@@ -110,7 +149,13 @@ export function TodoBindingPicker({
     setSaving(true)
     setError(null)
     try {
-      await api.unbindCloudContext(runtimeTask)
+      const currentProjectKey = currentProject
+        ? `${currentProject.project_store}:${currentProject.id}`
+        : null
+      const currentOption =
+        projectOptions.find(option => option.key === currentProjectKey) ?? selectedOption
+      if (!currentOption) throw new Error('关联的项目空间不可用')
+      await currentOption.api.unbindCloudContext(runtimeTask)
       onBound(null, null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '解除关联失败')
@@ -120,17 +165,20 @@ export function TodoBindingPicker({
   }
 
   async function createAndBind() {
-    if (!projectId || !title.trim() || saving) return
+    if (!selectedOption || !title.trim() || saving) return
     setSaving(true)
     setError(null)
     try {
-      const item = await api.createLoopItem(projectId, { title: title.trim(), status: 'inbox' })
+      const item = await selectedOption.api.createLoopItem(selectedOption.project.id, {
+        title: title.trim(),
+        status: 'inbox',
+      })
       if (runtimeTask) {
         await (runtimeTaskTitle
-          ? api.bindTask(item.id, runtimeTask, runtimeTaskTitle)
-          : api.bindTask(item.id, runtimeTask))
+          ? selectedOption.api.bindTask(item.id, runtimeTask, runtimeTaskTitle)
+          : selectedOption.api.bindTask(item.id, runtimeTask))
       }
-      onBound(projects.find(project => project.id === item.cloud_project_id) ?? null, item)
+      onBound(selectedOption.project, item)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '创建并关联任务失败')
     } finally {
@@ -157,13 +205,13 @@ export function TodoBindingPicker({
           <div className="space-y-3 p-4">
             <select
               data-testid="todo-binding-project"
-              value={projectId ?? ''}
-              onChange={event => setProjectId(event.target.value)}
+              value={projectKey ?? ''}
+              onChange={event => setProjectKey(event.target.value)}
               className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-text-muted"
             >
-              {projects.map(project => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
+              {projectOptions.map(option => (
+                <option key={option.key} value={option.key}>
+                  {option.project.name}
                 </option>
               ))}
             </select>
@@ -182,13 +230,13 @@ export function TodoBindingPicker({
               <LibraryBig className="h-4 w-4 shrink-0 text-text-muted" />
               <select
                 data-testid="todo-binding-project"
-                value={projectId ?? ''}
-                onChange={event => setProjectId(event.target.value)}
+                value={projectKey ?? ''}
+                onChange={event => setProjectKey(event.target.value)}
                 className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-text-muted"
               >
-                {projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
+                {projectOptions.map(option => (
+                  <option key={option.key} value={option.key}>
+                    {option.project.name}
                   </option>
                 ))}
               </select>
@@ -256,7 +304,7 @@ export function TodoBindingPicker({
               <button
                 type="button"
                 data-testid="todo-binding-create-confirm"
-                disabled={!projectId || !title.trim() || saving}
+                disabled={!selectedOption || !title.trim() || saving}
                 onClick={() => void createAndBind()}
                 className="h-8 rounded-lg bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-50"
               >

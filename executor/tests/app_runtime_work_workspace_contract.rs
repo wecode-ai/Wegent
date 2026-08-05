@@ -290,7 +290,11 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
                 "runtime": "codex",
                 "projectKey": "product",
                 "name": "Product",
-                "roots": [first_root, second_root]
+                "roots": [first_root, second_root],
+                "defaultProjectSpace": {
+                    "projectStore": "backend",
+                    "projectId": "space-1"
+                }
             }
         }))
         .await
@@ -299,8 +303,16 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
     assert_eq!(response["accepted"], true);
     assert_eq!(response["deviceId"], "device-1");
     assert_eq!(response["projectKey"], "product");
+    assert_eq!(
+        response["defaultProjectSpace"],
+        json!({"projectStore": "backend", "projectId": "space-1"})
+    );
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
     assert_eq!(state["local-projects"]["product"]["name"], "Product");
+    assert_eq!(
+        state["local-projects"]["product"]["defaultProjectSpace"],
+        json!({"projectStore": "backend", "projectId": "space-1"})
+    );
     assert_eq!(
         state["project-writable-roots"]["product"]
             .as_array()
@@ -309,6 +321,24 @@ async fn runtime_local_project_rpc_persists_multiple_roots() {
         2
     );
     assert_eq!(state["unknown"], true);
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.projects.upsert_local",
+            "payload": {
+                "runtime": "codex",
+                "projectKey": "product",
+                "name": "Product",
+                "roots": [first_root, second_root],
+                "defaultProjectSpace": null
+            }
+        }))
+        .await
+        .expect("clearing the default project space should succeed");
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert!(state["local-projects"]["product"]
+        .get("defaultProjectSpace")
+        .is_none());
 }
 
 #[tokio::test]

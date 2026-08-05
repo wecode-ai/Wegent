@@ -4,11 +4,14 @@ export type RuntimeTaskExecutionPhase = 'unknown' | 'idle' | 'starting' | 'runni
 
 export type RuntimeTaskTurnPhase = 'idle' | 'submitting' | 'awaiting' | 'streaming'
 
+export type RuntimeTaskTurnOutcome = 'succeeded' | 'failed' | 'cancelled' | null
+
 export interface RuntimeTaskLifecycleState {
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
   executionPhase: RuntimeTaskExecutionPhase
   turnPhase: RuntimeTaskTurnPhase
+  turnOutcome: RuntimeTaskTurnOutcome
   activeTurnId: string | null
   goalStatus: RuntimeGoalStatus | null
   continuable: boolean
@@ -40,6 +43,7 @@ export interface RuntimeTaskLifecycleSnapshot {
   turn: {
     phase: RuntimeTaskTurnPhase
     active: boolean
+    outcome: RuntimeTaskTurnOutcome
   }
   goalStatus: RuntimeGoalStatus | null
   continuable: boolean
@@ -61,7 +65,11 @@ export type RuntimeTaskLifecycleEvent =
   | { type: 'executor_started' }
   | { type: 'executor_settled' }
   | { type: 'turn_started'; turnId?: string | null }
-  | { type: 'turn_settled'; turnId?: string | null }
+  | {
+      type: 'turn_settled'
+      turnId?: string | null
+      outcome?: Exclude<RuntimeTaskTurnOutcome, null>
+    }
   | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }
   | { type: 'marked_read' }

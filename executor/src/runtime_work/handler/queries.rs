@@ -270,13 +270,10 @@ impl RuntimeWorkRpcHandler {
             }
         }
 
-        let mut thread = self
+        let thread = self
             .read_codex_thread_with_turns(&thread_id)
             .await
             .map_err(|error| AppIpcError::new("codex_error", error))?;
-        if let Some(link) = local_link.as_ref() {
-            reconcile_persisted_codex_turn_status(&mut thread, link);
-        }
         self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
@@ -330,47 +327,5 @@ impl RuntimeWorkRpcHandler {
             full_content: include_full_content,
             turn_item_source: TranscriptTurnItemSource::CodexItems,
         }))
-    }
-}
-
-pub(super) fn reconcile_persisted_codex_turn_status(thread: &mut Value, link: &RuntimeTaskLink) {
-    let Some(turn_id) = string_field(&link.runtime_handle, "lastTurnId") else {
-        return;
-    };
-    let Some(status) = link
-        .turn_status
-        .as_deref()
-        .filter(|status| !runtime_status_is_running(status))
-    else {
-        return;
-    };
-    let Some(turn) = thread
-        .get_mut("turns")
-        .and_then(Value::as_array_mut)
-        .into_iter()
-        .flatten()
-        .find(|turn| string_field(turn, "id").as_deref() == Some(turn_id.as_str()))
-    else {
-        return;
-    };
-    let previous_status = string_field(turn, "status").unwrap_or_default();
-    let Some(turn) = turn.as_object_mut() else {
-        return;
-    };
-    turn.insert("status".to_owned(), Value::String(status.to_owned()));
-    if let Some(completed_at) = link.completed_at {
-        turn.insert("completedAt".to_owned(), json!(completed_at));
-    }
-    if previous_status != status {
-        log_executor_event(
-            "runtime work transcript turn status reconciled",
-            &[
-                ("local_task_id", link.local_task_id.clone()),
-                ("thread_id", link.thread_id.clone().unwrap_or_default()),
-                ("turn_id", turn_id),
-                ("provider_status", previous_status),
-                ("persisted_status", status.to_owned()),
-            ],
-        );
     }
 }

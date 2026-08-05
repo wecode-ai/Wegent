@@ -8,13 +8,13 @@ sidebar_position: 32
 
 ## Goal
 
-A cloud project is the shared collaboration and storage boundary for a team. Members may link the same cloud project to different local projects, execute work in Wework, and submit selected conversations, files, and Markdown as immutable delivery snapshots.
+A cloud project is the shared collaboration and storage boundary for a team. Members may select the same cloud project as the default destination of their own local projects, execute work in Wework, and submit selected conversations, files, and Markdown as immutable delivery snapshots.
 
 A cloud project is not the existing `Project` model:
 
 - `Project` is a user-owned local execution workspace containing device, path, Git, and runtime configuration.
 - `CloudProject` is a shared aggregate containing membership, TODOs, shared files, and a MinIO namespace.
-- One cloud project may link to many local projects owned by different members.
+- Local projects owned by different members may independently select the same cloud project; the cloud project stores no reverse link.
 - One TODO may link to many Wework Tasks, while one Task may process at most one active TODO at a time.
 
 ## Domain relationships
@@ -23,8 +23,6 @@ A cloud project is not the existing `Project` model:
 CloudProject
 ├── ResourceMember(resource_type=CloudProject)
 ├── ShareLink(resource_type=CloudProject)
-├── CloudProjectLocalBinding
-│   └── Project (local execution workspace)
 └── LoopItem
     ├── LoopItemTaskBinding
     │   └── TaskResource
@@ -38,7 +36,7 @@ CloudProject
 | Data | Source of truth |
 | --- | --- |
 | Cloud projects, members, TODOs, task links, delivery metadata | Backend MySQL |
-| Local paths, devices, Git, and execution configuration | Existing `projects` and `tasks` |
+| Local paths, devices, Git, execution configuration, and default project-space reference | Device-local Codex project state |
 | Shared files, Markdown, conversations, and delivery snapshots | MinIO/S3 |
 | AI access to cloud data | MCP authorized by the Backend |
 
@@ -69,9 +67,9 @@ created_by_user_id, storage_prefix, next_item_number
 status, version, created_at, updated_at
 ```
 
-### CloudProjectLocalBinding
+### Local-project default space
 
-`cloud_project_local_bindings` records which local project a member uses on a device. Absolute paths remain in local project configuration and must not be returned to other cloud project members.
+A local Codex project may store one `{ projectStore, projectId }` default project-space reference. The reference belongs to device-local project state, never enters the Backend, and creates no reverse index on the project space. A new conversation may override or clear the default before its first message is sent.
 
 ### LoopItem
 
@@ -109,7 +107,7 @@ Every TODO, delivery, file, and MCP request resolves the caller's cloud-project 
 ## Service boundaries
 
 ```text
-cloud_projects/  projects, members, and local bindings
+cloud_projects/  projects and members
 loop_items/      TODOs, state transitions, and Task bindings
 delivery/        immutable delivery snapshots
 cloud_files/     mutable shared files
@@ -133,7 +131,6 @@ Delivery services do not own TODO CRUD. LoopItem services do not access MinIO di
 /v1/cloud-projects
 /v1/cloud-projects/{id}/members
 /v1/cloud-projects/{id}/members/{user_id}
-/v1/cloud-projects/{id}/local-bindings
 /v1/cloud-projects/{id}/files
 /v1/cloud-projects/{id}/folders
 /v1/cloud-projects/files/{file_id}

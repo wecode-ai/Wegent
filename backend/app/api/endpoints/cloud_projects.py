@@ -27,8 +27,6 @@ from app.schemas.cloud_project import (
     CloudProjectMemberUpdate,
     CloudProjectResponse,
     CloudProjectUpdate,
-    LocalBindingCreate,
-    LocalBindingResponse,
 )
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects import cloud_project_service
@@ -102,35 +100,6 @@ def archive_cloud_project(
     current_user: User = Depends(get_current_user),
 ) -> None:
     cloud_project_service.archive(db, project_id, current_user.id, version)
-
-
-@router.post(
-    "/{project_id}/local-bindings",
-    response_model=LocalBindingResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def add_local_binding(
-    project_id: int,
-    values: LocalBindingCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> LocalBindingResponse:
-    binding = cloud_project_service.add_local_binding(
-        db, project_id, current_user.id, values
-    )
-    return LocalBindingResponse.model_validate(binding)
-
-
-@router.get("/{project_id}/local-bindings", response_model=list[LocalBindingResponse])
-def list_local_bindings(
-    project_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> list[LocalBindingResponse]:
-    bindings = cloud_project_service.list_local_bindings(
-        db, project_id, current_user.id
-    )
-    return [LocalBindingResponse.model_validate(binding) for binding in bindings]
 
 
 @router.get("/{project_id}/members", response_model=list[CloudProjectMemberResponse])

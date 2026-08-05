@@ -535,6 +535,9 @@ function emitResponseBlockCreated(
   handlers.onBlockCreated?.({
     ...base,
     block: block as ChatBlock,
+    ...(stringField(data, 'replacesItemId') && {
+      replacesItemId: stringField(data, 'replacesItemId'),
+    }),
   })
 }
 

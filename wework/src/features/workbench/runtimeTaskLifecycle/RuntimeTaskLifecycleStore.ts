@@ -110,8 +110,12 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'turn_started', turnId })
   }
 
-  turnSettled(address: RuntimeTaskAddress, turnId?: string | null): void {
-    this.dispatch(address, { type: 'turn_settled', turnId })
+  turnSettled(
+    address: RuntimeTaskAddress,
+    turnId?: string | null,
+    outcome?: 'succeeded' | 'failed' | 'cancelled'
+  ): void {
+    this.dispatch(address, { type: 'turn_settled', turnId, outcome })
   }
 
   syncTranscript(
@@ -189,6 +193,12 @@ export class RuntimeTaskLifecycleStore {
       nextMachine.dispatch({ type: 'send_requested' })
     } else if (previousState.turnPhase === 'awaiting') {
       nextMachine.dispatch({ type: 'send_accepted' })
+    }
+    if (previousState.turnOutcome) {
+      nextMachine.dispatch({
+        type: 'turn_settled',
+        outcome: previousState.turnOutcome,
+      })
     }
     if (previousState.unread) nextMachine.dispatch({ type: 'marked_unread' })
     this.machines.delete(previousKey)

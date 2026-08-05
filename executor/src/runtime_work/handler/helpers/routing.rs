@@ -1,6 +1,6 @@
-fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
+fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) {
     if !is_inactive_running_codex_task(link) {
-        return false;
+        return;
     }
     link.status = "active".to_owned();
     link.running = false;
@@ -13,23 +13,18 @@ fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
         link.turn_status = Some("completed".to_owned());
     }
     link.updated_at = now_ms();
-    true
 }
 
-fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) -> bool {
+fn apply_local_execution_state(link: &mut RuntimeTaskLink, running: bool) {
     if !running {
-        return normalize_inactive_running_codex_task(link);
+        normalize_inactive_running_codex_task(link);
+        return;
     }
 
-    let changed = !link.running
-        || link.status != "running"
-        || link.thread_status != "active"
-        || link.turn_status.as_deref() != Some("inProgress");
     link.running = true;
     link.status = "running".to_owned();
     link.thread_status = "active".to_owned();
     link.turn_status = Some("inProgress".to_owned());
-    changed
 }
 
 fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
@@ -198,6 +193,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_pinned_order: project.pinned_order,
             project_active: project.active,
             project_appearance: project.appearance.clone(),
+            default_project_space: project.default_project_space.clone(),
         })
         .collect()
 }

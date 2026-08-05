@@ -1059,6 +1059,36 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
 
+  test('keeps processing expanded when a completed response contains a plan', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-plan-with-final-content',
+            role: 'assistant',
+            content: '计划已生成。',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'plan-1',
+                subtaskId: 11,
+                type: 'plan',
+                content: '# 实施计划\n\n- 保持处理过程展开。',
+                status: 'done',
+                createdAt: Date.parse('2026-06-11T10:00:00Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('保持处理过程展开')
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByText('计划已生成。')).toBeInTheDocument()
+  })
+
   test('downloads explicit plan blocks through the Tauri native command', async () => {
     tauriCoreMock.isTauri = vi.fn(() => true)
     tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/test/Downloads/plan.md')

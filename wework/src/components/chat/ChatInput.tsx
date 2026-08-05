@@ -135,6 +135,7 @@ export interface ChatInputProps {
   cloudProjectCandidates?: ComposerCloudMentionCandidate[]
   cloudSpaceEnabled?: boolean
   onSelectCloudProject?: (project: CloudProject) => void
+  selectedCloudProjectId?: CloudProject['id']
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
@@ -257,6 +258,7 @@ export function ChatInput({
   cloudProjectCandidates,
   cloudSpaceEnabled,
   onSelectCloudProject,
+  selectedCloudProjectId,
   isStreaming = false,
   onPause,
   showWorkspaceMenu,
@@ -410,6 +412,7 @@ export function ChatInput({
     cloudProjectCandidates,
     cloudSpaceEnabled,
     onSelectCloudProject,
+    selectedCloudProjectId,
   }
   const errorBanner = error ? (
     <div

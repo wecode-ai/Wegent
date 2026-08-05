@@ -68,29 +68,6 @@ function cloudCodexCatalogModelId(model: UnifiedModel): string {
     : ''
 }
 
-export function isOfficialCodexModel(model: UnifiedModel): boolean {
-  return modelKind(model) === 'codex-official'
-}
-
-export function disableCrossProviderModels(
-  models: UnifiedModel[],
-  activeModel: UnifiedModel | null
-): UnifiedModel[] {
-  if (!activeModel) return models
-
-  const activeIsOfficialCodex = isOfficialCodexModel(activeModel)
-  return models.map(model => {
-    if (isOfficialCodexModel(model) === activeIsOfficialCodex || model.compatibilityDisabled) {
-      return model
-    }
-    return {
-      ...model,
-      compatibilityDisabled: true,
-      compatibilityDisabledReason: 'provider_boundary_mismatch',
-    }
-  })
-}
-
 function isLocalModel(model: UnifiedModel): boolean {
   return model.provider === 'local'
 }

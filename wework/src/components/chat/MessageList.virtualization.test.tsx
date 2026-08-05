@@ -8,11 +8,14 @@ import {
 import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 
-const { measureElementMock, resizeItemMock, useVirtualizerMock } = vi.hoisted(() => ({
-  measureElementMock: vi.fn(),
-  resizeItemMock: vi.fn(),
-  useVirtualizerMock: vi.fn(),
-}))
+const { measureElementMock, resizeItemMock, useVirtualizerMock, virtualizerInstances } = vi.hoisted(
+  () => ({
+    measureElementMock: vi.fn(),
+    resizeItemMock: vi.fn(),
+    useVirtualizerMock: vi.fn(),
+    virtualizerInstances: [] as Array<Record<string, unknown>>,
+  })
+)
 
 vi.mock('@/lib/runtime-environment', () => ({
   isTauriRuntime: () => true,
@@ -34,14 +37,13 @@ vi.mock('@tanstack/react-virtual', () => ({
       count: number
     }) => number[]
   }) => {
-    useVirtualizerMock(options)
     const visibleIndexes = options.rangeExtractor({
       startIndex: Math.max(0, options.count - 2),
       endIndex: options.count - 1,
       overscan: 2,
       count: options.count,
     })
-    return {
+    const virtualizer = {
       getDistanceFromEnd: () => 0,
       getTotalSize: () => 10_000,
       getVirtualItems: () =>
@@ -56,6 +58,9 @@ vi.mock('@tanstack/react-virtual', () => ({
         { index: 0, key: options.getItemKey(0), start: 32, end: 132, size: 100, lane: 0 },
       ],
     }
+    useVirtualizerMock(options)
+    virtualizerInstances.push(virtualizer)
+    return virtualizer
   },
 }))
 
@@ -65,6 +70,7 @@ describe('MessageList Tauri virtualization', () => {
     measureElementMock.mockClear()
     resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
+    virtualizerInstances.length = 0
     vi.unstubAllGlobals()
   })
 
@@ -91,6 +97,10 @@ describe('MessageList Tauri virtualization', () => {
         overscan: 2,
       })
     )
+    const virtualizer = virtualizerInstances.at(-1)
+    expect(
+      (virtualizer?.shouldAdjustScrollPositionOnItemSizeChange as (() => boolean) | undefined)?.()
+    ).toBe(false)
     expect(intersectionObserver).not.toHaveBeenCalled()
   })
 

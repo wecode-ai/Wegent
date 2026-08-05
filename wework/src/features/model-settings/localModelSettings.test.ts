@@ -100,6 +100,82 @@ describe('localModelSettings', () => {
     expect(localStorage.getItem('wework.localModelSettings.v1')).toContain('local-secret')
   })
 
+  test('persists a vision proxy reference and clears it when that model is deleted', () => {
+    const vision = saveLocalModelConfig({
+      id: 'vision',
+      displayName: 'Vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+      catalogEntry: {
+        input_modalities: ['text', 'image'],
+      },
+    })
+    const primary = saveLocalModelConfig({
+      id: 'deepseek',
+      providerProfileId: 'deepseek',
+      displayName: 'DeepSeek',
+      modelId: 'deepseek-v4-flash',
+      baseUrl: 'https://api.deepseek.com',
+      visionModelConfigId: vision.id,
+    })
+
+    expect(primary.visionModelConfigId).toBe('vision')
+    expect(deleteLocalModelConfig('vision')).toBe(true)
+    expect(listLocalModelConfigs()).toEqual([
+      expect.not.objectContaining({ visionModelConfigId: 'vision' }),
+    ])
+  })
+
+  test('rejects a missing, disabled, or self-referencing vision proxy', () => {
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'self',
+        modelId: 'self',
+        baseUrl: 'https://models.example/v1',
+        visionModelConfigId: 'self',
+      })
+    ).toThrow('must be different')
+
+    const disabled = saveLocalModelConfig({
+      id: 'disabled-vision',
+      modelId: 'vision',
+      baseUrl: 'https://vision.example/v1',
+      enabled: false,
+    })
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'primary',
+        modelId: 'primary',
+        baseUrl: 'https://models.example/v1',
+        visionModelConfigId: disabled.id,
+      })
+    ).toThrow('missing or disabled')
+  })
+
+  test('rejects disabling a vision proxy that is still referenced', () => {
+    saveLocalModelConfig({
+      id: 'vision',
+      modelId: 'vision-model',
+      baseUrl: 'https://vision.example/v1',
+    })
+    saveLocalModelConfig({
+      id: 'primary',
+      modelId: 'primary-model',
+      baseUrl: 'https://models.example/v1',
+      visionModelConfigId: 'vision',
+    })
+
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'vision',
+        modelId: 'vision-model',
+        baseUrl: 'https://vision.example/v1',
+        enabled: false,
+      })
+    ).toThrow('still referenced')
+    expect(listLocalModelConfigs().find(config => config.id === 'vision')?.enabled).toBe(true)
+  })
+
   test('preserves persisted API keys in local storage', () => {
     localStorage.setItem(
       'wework.localModelSettings.v1',

@@ -384,6 +384,8 @@ Codex 失败轮次不保证在线程 transcript 中生成 assistant item。execu
 
 Wework 的本地模型调用统一以 Codex Responses 协议进入 executor。executor 为自定义模型生成显式 model catalog，并按 `custom`、`function`、`shell` 工具模式决定是否发布 freeform `apply_patch`。原生 Responses 接口由本地模型代理直接转发；OpenAI Chat Completions 和 Anthropic Messages 接口由独立协议模块转换请求、流式事件、推理内容、工具调用、工具结果和用量信息，custom tool 的 grammar 会保存在 function wrapper 中。Anthropic Messages 的总输入用量必须包含 `input_tokens`、`cache_read_input_tokens` 和 `cache_creation_input_tokens`；缓存读取量同时映射为 Responses 的 cached token 明细，确保 Codex 的上下文余量和自动压缩判断使用完整输入量。代理使用有界历史恢复跨请求工具调用，透传非 2xx，并把非 SSE 成功响应转换为标准 Responses SSE；传输截断或上游错误流会产生失败终态，上游明确返回输出长度限制时则产生 `response.incomplete`。云端 Model 的 `context_window` 和 `max_output_tokens` 会沿 Wework 执行请求传入 Codex 与本地模型代理；请求中的显式输出限制优先于模型配置，模型配置优先于默认值。未配置时，Codex 上下文窗口默认为 256K（262144 tokens），代理输出限制默认为 96000 tokens。API Key、附加请求头和出站代理配置只保留在 executor 的本地代理边界，不传入 Codex 进程。代理注册按完整上游配置生成稳定 token、引用计数并在空闲超时后清理，避免 persistent Codex 会话在追问时命中已释放 token。
 
+文本模型可在同一本地代理边界配置一个声明图片输入能力的视觉 sidecar。Codex 仍按带图片的 Responses 请求工作，但 executor 会在协议转换和发送主请求前调用 sidecar，把每个 `input_image` 原位替换为受限长度的文字描述；DeepSeek V4 Flash 在该模式下使用仅内部可见、声明图片输入能力的 catalog 别名，原始图片不会发送给 DeepSeek。sidecar 支持 Responses、Chat Completions 和 Anthropic Messages，上游密钥仍只保留在 executor 中。实现使用有界 LRU 描述缓存、进程级并发限制、单轮图片数量和内嵌数据大小限制；超时、非法图片或上游失败会生成明确的失败描述并移除原始图片，同时日志只记录协议、计数、缓存命中和耗时等聚合诊断字段。
+
 #### 任务监督与运行时就绪
 
 Wework 允许用户在发送首条消息前配置任务监督。该配置作为 `RuntimeTaskCreateRequest.initialSupervisor` 随任务创建请求传入 executor，并在创建任务、写入 runtime 索引之前原子保存；不要在任务地址尚未生成时调用独立的监督设置接口，否则会产生 `thread_id=none` 或 `session_id=none` 的无效状态，并可能被后续任务写入覆盖。

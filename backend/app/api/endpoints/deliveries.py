@@ -45,6 +45,9 @@ from app.schemas.delivery import (
     LoopItemUpdate,
     MyWorkItemResponse,
     MyWorkListResponse,
+    RuntimeTaskTrack,
+    RuntimeTaskTrackingStatusUpdate,
+    RuntimeTaskTrackResponse,
 )
 from app.services.cloud_projects import cloud_project_service
 from app.services.delivery import delivery_service
@@ -192,6 +195,109 @@ def bind_cloud_project_task(
         db, project_id, values, current_user.id
     )
     return LoopItemTaskBindingResponse.model_validate(binding)
+
+
+def _tracked_item_response(
+    db: Session,
+    item_id: str,
+    current_user: User,
+) -> LoopItemResponse:
+    if external_loop_item_provider.is_external_item(db, item_id):
+        return LoopItemResponse.model_validate(
+            external_loop_item_provider.get(db, item_id, current_user.id)
+        )
+    item = loop_item_service.get(db, item_id, current_user.id)
+    return _loop_item_response(db, item, current_user)
+
+
+@router.post(
+    "/cloud-projects/{project_id}/tasks/track",
+    response_model=RuntimeTaskTrackResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def track_cloud_project_task(
+    project_id: int,
+    values: RuntimeTaskTrack,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RuntimeTaskTrackResponse:
+    existing = loop_item_service.find_active_task_binding(
+        db, current_user.id, values.device_id, values.task_id
+    )
+    if existing is not None and existing.loop_item_id:
+        if str(existing.cloud_project_id) != str(project_id):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Runtime task is already tracked by another project",
+            )
+        return RuntimeTaskTrackResponse(
+            item=_tracked_item_response(db, existing.loop_item_id, current_user),
+            binding=LoopItemTaskBindingResponse.model_validate(existing),
+        )
+
+    project = cloud_project_service.get(db, project_id, current_user.id)
+    created = loop_item_provider_router.create(
+        db,
+        project,
+        current_user,
+        LoopItemCreate(
+            title=values.task_title,
+            description=values.description,
+            status="in_progress",
+        ),
+    )
+    item_id = str(created.values["id"])
+    external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+    binding = loop_item_service.bind_task(
+        db, item_id, values.binding(), current_user.id
+    )
+    return RuntimeTaskTrackResponse(
+        item=LoopItemResponse.model_validate(created.values),
+        binding=LoopItemTaskBindingResponse.model_validate(binding),
+    )
+
+
+@router.patch(
+    "/runtime-tasks/cloud-context/tracking-status",
+    response_model=LoopItemResponse | None,
+)
+def update_runtime_task_tracking_status(
+    values: RuntimeTaskTrackingStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemResponse | None:
+    binding = loop_item_service.find_active_task_binding(
+        db, current_user.id, values.device_id, values.task_id
+    )
+    if binding is None or not binding.loop_item_id:
+        return None
+    item = _tracked_item_response(db, binding.loop_item_id, current_user)
+    next_status: str | None = None
+    if values.execution_status == "running" and item.status in {
+        "inbox",
+        "pending",
+        "in_review",
+    }:
+        next_status = "in_progress"
+    elif values.execution_status == "succeeded" and item.status == "in_progress":
+        next_status = "in_review"
+    if next_status is None:
+        return item
+    if external_loop_item_provider.is_external_item(db, item.id):
+        updated = external_loop_item_provider.update(
+            db,
+            item.id,
+            current_user.id,
+            LoopItemUpdate(version=item.version, status=next_status),
+        )
+        return LoopItemResponse.model_validate(updated)
+    stored = loop_item_service.update(
+        db,
+        item.id,
+        current_user.id,
+        LoopItemUpdate(version=item.version, status=next_status),
+    )
+    return _loop_item_response(db, stored, current_user)
 
 
 @router.delete("/runtime-tasks/cloud-context", status_code=status.HTTP_204_NO_CONTENT)
