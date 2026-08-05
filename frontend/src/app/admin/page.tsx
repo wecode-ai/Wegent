@@ -68,6 +68,10 @@ const BackgroundExecutionMonitorPanel = dynamic(
 const DeviceMonitorPanel = dynamic(() => import('@/features/admin/components/DeviceMonitorPanel'), {
   ssr: false,
 })
+const TaskRunMonitorPanel = dynamic(
+  () => import('@/features/admin/components/TaskRunMonitorPanel'),
+  { ssr: false }
+)
 const IMChannelList = dynamic(() => import('@/features/admin/components/IMChannelList'), {
   ssr: false,
 })
@@ -122,6 +126,7 @@ function AdminContent() {
         'system-config',
         'im-channels',
         'connector-apps',
+        'task-runs',
         'monitor',
         'device-monitor',
       ].includes(tab)
@@ -193,6 +198,8 @@ function AdminContent() {
         return <IMChannelList />
       case 'connector-apps':
         return <ConnectorAppList />
+      case 'task-runs':
+        return <TaskRunMonitorPanel />
       case 'monitor':
         return <BackgroundExecutionMonitorPanel />
       case 'device-monitor':

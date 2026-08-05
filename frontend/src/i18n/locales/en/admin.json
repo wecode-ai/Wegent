@@ -15,6 +15,7 @@
     "system_config": "System Config",
     "im_channels": "IM Channels",
     "connector_apps": "Apps",
+    "task_runs": "Task Run Monitor",
     "monitor": "Subscription Monitor",
     "device_monitor": "Device Monitor"
   },
@@ -549,6 +550,45 @@
       "signing_key_name_required": "SigningKey name is required",
       "audience_required": "Audience is required",
       "invalid_ttl": "TTL configuration is invalid"
+    }
+  },
+  "task_run_monitor": {
+    "title": "Task Run Monitor",
+    "description": "Track task statuses and failure reasons from assistant run records across all users",
+    "refresh": "Refresh task run statistics",
+    "time_range": {
+      "1": "Last hour",
+      "6": "Last 6 hours",
+      "24": "Last 24 hours",
+      "72": "Last 3 days",
+      "168": "Last 7 days",
+      "720": "Last 30 days"
+    },
+    "stats": {
+      "total": "Total runs",
+      "completed": "Completed",
+      "failed": "Failed",
+      "running": "Running",
+      "pending": "Pending",
+      "cancelled": "Cancelled"
+    },
+    "status_distribution": "All statuses",
+    "failure_reasons": {
+      "title": "Top failure reasons",
+      "description": "Identical error messages are grouped; percentages use all failed runs",
+      "empty": "No failed runs in this time range",
+      "unknown": "No failure reason recorded"
+    },
+    "recent_failures": {
+      "title": "Recent failures",
+      "description": "Task, user, source, and original error details for investigation",
+      "empty": "No recent failures",
+      "user": "User",
+      "subtask": "Run"
+    },
+    "rate_note": "Success and failure rates only include completed and failed terminal runs. Pending, running, and cancelled runs are excluded.",
+    "errors": {
+      "load_failed": "Failed to load task run statistics"
     }
   },
   "monitor": {

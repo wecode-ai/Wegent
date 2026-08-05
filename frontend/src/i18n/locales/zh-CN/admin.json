@@ -15,6 +15,7 @@
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
     "connector_apps": "应用连接",
+    "task_runs": "任务运行监控",
     "monitor": "订阅监控",
     "device_monitor": "设备监控"
   },
@@ -549,6 +550,45 @@
       "signing_key_name_required": "签名密钥（SigningKey）名称不能为空",
       "audience_required": "受众（aud）不能为空",
       "invalid_ttl": "TTL 配置不合法"
+    }
+  },
+  "task_run_monitor": {
+    "title": "任务运行监控",
+    "description": "按实际 assistant 运行记录统计所有用户的任务状态和失败原因",
+    "refresh": "刷新任务运行统计",
+    "time_range": {
+      "1": "最近 1 小时",
+      "6": "最近 6 小时",
+      "24": "最近 24 小时",
+      "72": "最近 3 天",
+      "168": "最近 7 天",
+      "720": "最近 30 天"
+    },
+    "stats": {
+      "total": "总运行数",
+      "completed": "已完成",
+      "failed": "失败",
+      "running": "运行中",
+      "pending": "等待中",
+      "cancelled": "已取消"
+    },
+    "status_distribution": "全部状态",
+    "failure_reasons": {
+      "title": "失败原因排行",
+      "description": "相同错误信息合并统计，占比以全部失败运行数为分母",
+      "empty": "所选时间范围内没有失败运行",
+      "unknown": "未记录失败原因"
+    },
+    "recent_failures": {
+      "title": "最近失败记录",
+      "description": "展示任务、用户、来源和原始错误信息，便于继续排查",
+      "empty": "暂无失败记录",
+      "user": "用户",
+      "subtask": "运行"
+    },
+    "rate_note": "成功率与失败率仅以已完成和失败的终态运行为分母；等待中、运行中和主动取消不参与计算。",
+    "errors": {
+      "load_failed": "加载任务运行统计失败"
     }
   },
   "monitor": {
