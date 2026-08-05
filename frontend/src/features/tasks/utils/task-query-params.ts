@@ -5,6 +5,7 @@
 type SearchParamsReader = Pick<URLSearchParams, 'get'>
 
 export const TASK_QUERY_KEYS = ['taskId', 'task_id', 'taskid'] as const
+export const TEAM_QUERY_KEY = 'teamId'
 
 export function getTaskQueryParam(searchParams: SearchParamsReader): string | null {
   for (const key of TASK_QUERY_KEYS) {
@@ -23,4 +24,10 @@ export function removeTaskQueryParams(searchParams: URLSearchParams): boolean {
     }
   }
   return removed
+}
+
+export function removeTeamQueryParam(searchParams: URLSearchParams): boolean {
+  if (!searchParams.has(TEAM_QUERY_KEY)) return false
+  searchParams.delete(TEAM_QUERY_KEY)
+  return true
 }
