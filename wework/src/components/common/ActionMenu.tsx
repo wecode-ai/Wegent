@@ -34,7 +34,7 @@ function formatActionMenuShortcut(shortcut: string): string {
 
 export interface ActionMenuItem {
   label: string
-  icon: ComponentType<{ className?: string }>
+  icon?: ComponentType<{ className?: string }>
   onSelect?: () => void | Promise<void>
   testId: string
   danger?: boolean
@@ -331,59 +331,64 @@ export function ActionMenu({
             }}
             className="fixed z-[70] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
           >
-            {items.map(item => (
-              <button
-                key={item.testId}
-                type="button"
-                data-testid={item.testId}
-                ref={element => {
-                  itemRefs.current[item.testId] = element
-                }}
-                role="menuitem"
-                disabled={item.disabled}
-                aria-haspopup={item.children?.length ? 'menu' : undefined}
-                aria-expanded={item.children?.length ? openSubmenuId === item.testId : undefined}
-                onPointerEnter={() => openSubmenu(item)}
-                onPointerDown={event => {
-                  if (item.disabled) return
-                  event.preventDefault()
-                  event.stopPropagation()
-                  pointerSelectionRef.current = true
-                  if (item.children?.length) {
-                    openSubmenu(item)
-                  } else {
-                    void handleItemSelect(item)
-                  }
-                }}
-                onClick={() => {
-                  if (pointerSelectionRef.current) {
-                    pointerSelectionRef.current = false
-                    return
-                  }
-                  if (item.children?.length) {
-                    openSubmenu(item)
-                  } else {
-                    void handleItemSelect(item)
-                  }
-                }}
-                onKeyDown={event => handleItemKeyDown(event, item)}
-                className={[
-                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
-                  item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
-                  item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
-                ].join(' ')}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span className="truncate">{item.label}</span>
-                {item.shortcut ? (
-                  <KeyboardShortcut
-                    value={formatActionMenuShortcut(item.shortcut)}
-                    className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
-                  />
-                ) : null}
-                {item.children?.length ? <ChevronRight className="ml-auto h-4 w-4" /> : null}
-              </button>
-            ))}
+            {items.map(item => {
+              const ItemIcon = item.icon
+              return (
+                <button
+                  key={item.testId}
+                  type="button"
+                  data-testid={item.testId}
+                  ref={element => {
+                    itemRefs.current[item.testId] = element
+                  }}
+                  role="menuitem"
+                  disabled={item.disabled}
+                  aria-haspopup={item.children?.length ? 'menu' : undefined}
+                  aria-expanded={item.children?.length ? openSubmenuId === item.testId : undefined}
+                  onPointerEnter={() => openSubmenu(item)}
+                  onPointerDown={event => {
+                    if (item.disabled) return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    pointerSelectionRef.current = true
+                    if (item.children?.length) {
+                      openSubmenu(item)
+                    } else {
+                      void handleItemSelect(item)
+                    }
+                  }}
+                  onClick={() => {
+                    if (pointerSelectionRef.current) {
+                      pointerSelectionRef.current = false
+                      return
+                    }
+                    if (item.children?.length) {
+                      openSubmenu(item)
+                    } else {
+                      void handleItemSelect(item)
+                    }
+                  }}
+                  onKeyDown={event => handleItemKeyDown(event, item)}
+                  className={[
+                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                    item.danger
+                      ? 'text-red-500 hover:bg-red-50'
+                      : 'text-text-primary hover:bg-muted',
+                    item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                  ].join(' ')}
+                >
+                  {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
+                  <span className="truncate">{item.label}</span>
+                  {item.shortcut ? (
+                    <KeyboardShortcut
+                      value={formatActionMenuShortcut(item.shortcut)}
+                      className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
+                    />
+                  ) : null}
+                  {item.children?.length ? <ChevronRight className="ml-auto h-4 w-4" /> : null}
+                </button>
+              )
+            })}
           </div>,
           document.body
         )}
@@ -401,49 +406,52 @@ export function ActionMenu({
               }}
               className="fixed z-[71] min-w-[176px] rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
-              {openSubmenuItem.children.map(item => (
-                <button
-                  key={item.testId}
-                  type="button"
-                  data-testid={item.testId}
-                  ref={element => {
-                    submenuItemRefs.current[item.testId] = element
-                  }}
-                  role="menuitem"
-                  disabled={item.disabled}
-                  onPointerDown={event => {
-                    if (item.disabled) return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    pointerSelectionRef.current = true
-                    void handleItemSelect(item)
-                  }}
-                  onClick={() => {
-                    if (pointerSelectionRef.current) {
-                      pointerSelectionRef.current = false
-                      return
-                    }
-                    void handleItemSelect(item)
-                  }}
-                  onKeyDown={event => handleItemKeyDown(event, item, true)}
-                  className={[
-                    'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
-                    item.danger
-                      ? 'text-red-500 hover:bg-red-50'
-                      : 'text-text-primary hover:bg-muted',
-                    item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
-                  ].join(' ')}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                  {item.shortcut ? (
-                    <KeyboardShortcut
-                      value={formatActionMenuShortcut(item.shortcut)}
-                      className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
-                    />
-                  ) : null}
-                </button>
-              ))}
+              {openSubmenuItem.children.map(item => {
+                const ItemIcon = item.icon
+                return (
+                  <button
+                    key={item.testId}
+                    type="button"
+                    data-testid={item.testId}
+                    ref={element => {
+                      submenuItemRefs.current[item.testId] = element
+                    }}
+                    role="menuitem"
+                    disabled={item.disabled}
+                    onPointerDown={event => {
+                      if (item.disabled) return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      pointerSelectionRef.current = true
+                      void handleItemSelect(item)
+                    }}
+                    onClick={() => {
+                      if (pointerSelectionRef.current) {
+                        pointerSelectionRef.current = false
+                        return
+                      }
+                      void handleItemSelect(item)
+                    }}
+                    onKeyDown={event => handleItemKeyDown(event, item, true)}
+                    className={[
+                      'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
+                      item.danger
+                        ? 'text-red-500 hover:bg-red-50'
+                        : 'text-text-primary hover:bg-muted',
+                      item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
+                    ].join(' ')}
+                  >
+                    {ItemIcon ? <ItemIcon className="h-4 w-4 shrink-0" /> : null}
+                    <span className="truncate">{item.label}</span>
+                    {item.shortcut ? (
+                      <KeyboardShortcut
+                        value={formatActionMenuShortcut(item.shortcut)}
+                        className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
+                      />
+                    ) : null}
+                  </button>
+                )
+              })}
             </div>,
             document.body
           )

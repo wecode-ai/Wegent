@@ -2,8 +2,6 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  Cookie,
-  Database,
   Download,
   EllipsisVertical,
   ExternalLink,
@@ -1997,20 +1995,17 @@ export function WorkspaceBrowserPanel({
               items={[
                 {
                   label: t('workbench.browser_clear_data'),
-                  icon: Trash2,
                   testId: 'workspace-browser-clear-data-item',
                   disabled: Boolean(clearingDataKind),
                   children: [
                     {
                       label: t('workbench.browser_clear_cookies'),
-                      icon: Cookie,
                       testId: 'workspace-browser-clear-cookies-item',
                       disabled: Boolean(clearingDataKind),
                       onSelect: () => clearBrowserData('cookies'),
                     },
                     {
                       label: t('workbench.browser_clear_cache'),
-                      icon: Database,
                       testId: 'workspace-browser-clear-cache-item',
                       disabled: Boolean(clearingDataKind),
                       onSelect: () => clearBrowserData('cache'),
