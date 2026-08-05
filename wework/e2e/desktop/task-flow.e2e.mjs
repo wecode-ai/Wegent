@@ -13843,49 +13843,11 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       const activeBrowserInputSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-url-input"]`
       const activeTerminalSelector = `${activeTaskWorkbenchSelector} [data-testid="workspace-terminal-window"]`
-      const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
       const bottomPanelToggleSelector = '[data-testid="toggle-bottom-workspace-panel-button"]'
       const bottomWorkspaceTabCloseSelector = '[data-testid="close-bottom-workspace-tab-button"]'
       const rightBrowserTabCloseSelector =
         '[data-testid="right-workspace-browser-tab-close-button"]'
       const retainedBrowserUrl = 'https://example.com/session-state'
-      await control.command('waitFor', rightPanelToggleSelector, {
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-      await control.command('click', rightPanelToggleSelector)
-      await control.command(
-        'click',
-        `${activeTaskWorkbenchSelector} [data-testid="right-workspace-browser-option"]`
-      )
-      await control.command('waitFor', activeBrowserInputSelector, {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-      })
-      await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
-      await control.command('submit', activeBrowserInputSelector)
-      await control.command(
-        'waitFor',
-        `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-native-view"]`,
-        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
-      )
-      await control.command('click', bottomPanelToggleSelector)
-      const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
-        control,
-        value => {
-          const terminalOpened =
-            value.testIds.includes('workspace-terminal-window') &&
-            !value.testIds.includes('workspace-tool-launcher')
-          const localTerminalUnavailable =
-            value.testIds.includes('workspace-tool-launcher') &&
-            value.testIds.includes('workspace-local-device-limited-tools')
-          return terminalOpened || localTerminalUnavailable
-        },
-        'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
-        DEFAULT_STEP_TIMEOUT_MS,
-        activeTaskWorkbenchSelector
-      )
-      const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
-        'workspace-terminal-window'
-      )
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -13914,6 +13876,37 @@ last_updated = "2026-07-30T00:00:00Z"`
         ),
         join(workspacePath, GIT_SEED_NAME),
         'The linked absolute file opened from the wrong workspace target'
+      )
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('click', '[data-testid="right-workspace-browser-option"]')
+      await control.command('waitFor', activeBrowserInputSelector, {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('fill', activeBrowserInputSelector, { value: retainedBrowserUrl })
+      await control.command('submit', activeBrowserInputSelector)
+      await control.command(
+        'waitFor',
+        `${activeTaskWorkbenchSelector} [data-testid="workspace-browser-native-view"]`,
+        { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      )
+      await control.command('click', bottomPanelToggleSelector)
+      const firstTaskBottomWorkspaceSnapshot = await waitForSnapshot(
+        control,
+        value => {
+          const terminalOpened =
+            value.testIds.includes('workspace-terminal-window') &&
+            !value.testIds.includes('workspace-tool-launcher')
+          const localTerminalUnavailable =
+            value.testIds.includes('workspace-tool-launcher') &&
+            value.testIds.includes('workspace-local-device-limited-tools')
+          return terminalOpened || localTerminalUnavailable
+        },
+        'The first task bottom workspace panel did not open a terminal or limited-tools launcher',
+        DEFAULT_STEP_TIMEOUT_MS,
+        activeTaskWorkbenchSelector
+      )
+      const firstTaskOpenedTerminal = firstTaskBottomWorkspaceSnapshot.testIds.includes(
+        'workspace-terminal-window'
       )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
       await control.command('click', '[data-testid="right-workspace-review-option"]')
