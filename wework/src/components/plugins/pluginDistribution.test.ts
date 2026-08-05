@@ -97,6 +97,29 @@ function installedPlugin(input: {
 }
 
 describe('pluginDistribution', () => {
+  test('maps personal marketplace plugins to personal distribution', () => {
+    expect(
+      marketplacePluginDistribution(
+        marketplaceItem({
+          name: 'my-skill',
+          sourceProvider: 'user',
+          visibility: 'workspace',
+          manifest: { marketplaceId: 'wework-personal' },
+        })
+      )
+    ).toBe('personal')
+    expect(
+      marketplacePluginDistribution(
+        marketplaceItem({
+          name: 'code-review',
+          sourceProvider: 'user',
+          visibility: 'public',
+          manifest: { marketplaceId: 'personal' },
+        })
+      )
+    ).toBe('personal')
+  })
+
   test('maps OpenAI local marketplaces to official and user-added ones to external', () => {
     expect(
       marketplacePluginDistribution(

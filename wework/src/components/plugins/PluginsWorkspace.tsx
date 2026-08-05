@@ -2,7 +2,6 @@ import {
   Boxes,
   ChevronDown,
   MoreHorizontal,
-  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -35,7 +34,6 @@ import {
   queuePluginPromptTrial,
   queuePluginTrial,
 } from '@/features/plugins/pluginTrial'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { isWegentCloudMarketplace, type PluginReference } from '@/features/plugins/pluginNavigation'
 import { isBuiltInMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
@@ -284,10 +282,9 @@ function cloudMarketplaceKey(): string {
 }
 
 function isUserAddedMarketplace(marketplace: MarketplaceOption): boolean {
-  return (
-    marketplace.kind === 'local' &&
-    (marketplace.id === WEWORK_PERSONAL_MARKETPLACE_ID || !isBuiltInMarketplaceId(marketplace.id))
-  )
+  // Built-in personal marketplaces (wework-personal / personal) surface under the
+  // 「个人创建」 distribution tab instead of a separate marketplace source tab.
+  return marketplace.kind === 'local' && !isBuiltInMarketplaceId(marketplace.id)
 }
 
 function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string | null {
@@ -3109,15 +3106,7 @@ export function PluginsWorkspace({
                 </p>
               </div>
             ) : visibleMarketplaceItems.length === 0 ? (
-              <div
-                data-testid={
-                  marketplaceSourceFilterKey ===
-                    localMarketplaceKey(WEWORK_PERSONAL_MARKETPLACE_ID) && !normalizedQuery
-                    ? 'plugins-bundled-marketplace-empty'
-                    : undefined
-                }
-                className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm"
-              >
+              <div className="flex min-h-[160px] flex-col items-start justify-center gap-2 text-sm">
                 <h2 className="text-sm font-semibold text-text-primary">
                   {t('workbench.plugins_no_marketplace_results', '没有匹配的插件')}
                 </h2>
@@ -3127,30 +3116,17 @@ export function PluginsWorkspace({
                     '可以清除搜索和分类后重新浏览。'
                   )}
                 </p>
-                {marketplaceSourceFilterKey ===
-                  localMarketplaceKey(WEWORK_PERSONAL_MARKETPLACE_ID) && !normalizedQuery ? (
-                  <button
-                    type="button"
-                    data-testid="plugins-add-custom-marketplace-empty-button"
-                    className="plugin-market-action-button mt-1"
-                    onClick={() => setShowAddMarketDialog(true)}
-                  >
-                    <Plus className="h-4 w-4" aria-hidden="true" />
-                    {t('workbench.plugins_add_market', '添加插件市场')}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    data-testid="plugins-clear-marketplace-filters"
-                    className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
-                    onClick={() => {
-                      setQuery('')
-                      setMarketplaceDistributionFilter('all')
-                    }}
-                  >
-                    {t('workbench.plugins_view_all', '查看全部')}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  data-testid="plugins-clear-marketplace-filters"
+                  className="mt-1 h-8 rounded-[10px] border border-border/30 bg-surface px-3 text-xs font-medium text-text-primary transition-colors hover:bg-muted"
+                  onClick={() => {
+                    setQuery('')
+                    setMarketplaceDistributionFilter('all')
+                  }}
+                >
+                  {t('workbench.plugins_view_all', '查看全部')}
+                </button>
               </div>
             ) : (
               <section data-testid="plugins-all-section">

@@ -1903,6 +1903,7 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Documents')).toBeInTheDocument()
     expect(screen.getByText('My Skill')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-tab-wework-personal')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-distribution-tab-personal'))
     expect(screen.getByText('My Skill')).toBeInTheDocument()
     expect(screen.queryByText('Documents')).not.toBeInTheDocument()
