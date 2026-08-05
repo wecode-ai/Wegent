@@ -39,7 +39,10 @@ use crate::{
     envd::archive::{
         create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
     },
-    heartbeat::start_heartbeat_from_env,
+    heartbeat::{
+        executor_warm_pool_mode_enabled, start_heartbeat_from_env, TaskHeartbeatActivationError,
+        TaskHeartbeatController,
+    },
     logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
     protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
     runner::BackgroundTaskRunner,
@@ -71,11 +74,27 @@ impl RunnerResult {
 #[derive(Debug, Clone)]
 pub struct AppState<R> {
     runner: R,
+    task_heartbeat: Option<TaskHeartbeatController>,
 }
 
 impl<R> AppState<R> {
     pub fn new(runner: R) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            task_heartbeat: None,
+        }
+    }
+
+    pub fn with_dynamic_task_heartbeat(mut self) -> Self {
+        self.task_heartbeat = Some(TaskHeartbeatController::default());
+        self
+    }
+
+    fn activate_task_heartbeat(&self, task_id: &str) -> Result<(), HttpError> {
+        let Some(controller) = &self.task_heartbeat else {
+            return Ok(());
+        };
+        controller.activate(task_id).map_err(HttpError::from)
     }
 }
 
@@ -153,9 +172,13 @@ async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<
 pub fn create_docker_router_from_env() -> Result<Router, String> {
     let engine = AgentProcessEngine::new(AgentCommandPlanner::from_env());
     let sink = CallbackSink::new(env::var("CALLBACK_URL").unwrap_or_default())?;
-    Ok(create_router(AppState::new(BackgroundTaskRunner::new(
-        engine, sink,
-    ))))
+    let state = AppState::new(BackgroundTaskRunner::new(engine, sink));
+    let state = if executor_warm_pool_mode_enabled() {
+        state.with_dynamic_task_heartbeat()
+    } else {
+        state
+    };
+    Ok(create_router(state))
 }
 
 pub async fn serve(config: ServerConfig) -> Result<(), String> {
@@ -789,6 +812,7 @@ where
     let request = OpenAIResponsesRequest::from_value(payload)?;
     let background = request.background();
     let execution_request = request.to_execution_request();
+    state.activate_task_heartbeat(&execution_request.task_id)?;
     let response_id = format!("resp_{}", execution_request.subtask_id);
     let mut fields = task_fields(&execution_request.task_id, &execution_request.subtask_id);
     fields.push((
@@ -1824,6 +1848,21 @@ impl From<ProtocolError> for HttpError {
     fn from(error: ProtocolError) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
+            detail: error.to_string(),
+        }
+    }
+}
+
+impl From<TaskHeartbeatActivationError> for HttpError {
+    fn from(error: TaskHeartbeatActivationError) -> Self {
+        let status = match &error {
+            TaskHeartbeatActivationError::EmptyTaskId => StatusCode::BAD_REQUEST,
+            TaskHeartbeatActivationError::TaskConflict { .. } => StatusCode::CONFLICT,
+            TaskHeartbeatActivationError::MissingEndpoint
+            | TaskHeartbeatActivationError::StateUnavailable => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        Self {
+            status,
             detail: error.to_string(),
         }
     }

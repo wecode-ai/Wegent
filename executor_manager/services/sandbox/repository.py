@@ -640,6 +640,27 @@ class SandboxRepository(metaclass=SingletonMeta):
             logger.warning(f"[SandboxRepository] Failed to load executor binding: {e}")
             return None
 
+    def delete_executor_binding(self, task_id: int) -> bool:
+        """Delete a task-to-executor binding after runtime cleanup."""
+        if self.redis_client is None:
+            return False
+
+        try:
+            binding_key = f"task_executor:{task_id}"
+            self.redis_client.delete(binding_key)
+            logger.info(
+                "[SandboxRepository] Deleted executor binding: task_id=%s",
+                task_id,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "[SandboxRepository] Failed to delete executor binding for task %s: %s",
+                task_id,
+                e,
+            )
+            return False
+
     # =========================================================================
     # E2B Sandbox ID Index Operations
     # =========================================================================

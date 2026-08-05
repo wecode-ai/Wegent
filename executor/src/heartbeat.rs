@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, time::Duration};
+use std::{
+    env, fmt,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use reqwest::Client;
 use serde_json::json;
@@ -45,6 +49,112 @@ impl HeartbeatConfig {
             timeout,
         })
     }
+
+    fn for_task(task_id: &str) -> Option<Self> {
+        let heartbeat_id = task_id.trim();
+        if heartbeat_id.is_empty() {
+            return None;
+        }
+        let heartbeat_type = "task".to_owned();
+        let heartbeat_url = build_heartbeat_url(heartbeat_id, &heartbeat_type)?;
+        Some(Self {
+            heartbeat_id: heartbeat_id.to_owned(),
+            heartbeat_type,
+            heartbeat_url,
+            interval: Duration::from_secs(env_u64(
+                "HEARTBEAT_INTERVAL",
+                DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+            )),
+            timeout: Duration::from_secs(DEFAULT_HEARTBEAT_TIMEOUT_SECONDS),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskHeartbeatController {
+    active: Arc<Mutex<Option<ActiveTaskHeartbeat>>>,
+}
+
+#[derive(Debug)]
+struct ActiveTaskHeartbeat {
+    task_id: String,
+    handle: JoinHandle<()>,
+}
+
+impl Drop for ActiveTaskHeartbeat {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskHeartbeatActivationError {
+    EmptyTaskId,
+    MissingEndpoint,
+    TaskConflict {
+        active_task_id: String,
+        requested_task_id: String,
+    },
+    StateUnavailable,
+}
+
+impl fmt::Display for TaskHeartbeatActivationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyTaskId => formatter.write_str("task_id is required"),
+            Self::MissingEndpoint => {
+                formatter.write_str("executor heartbeat endpoint is not configured")
+            }
+            Self::TaskConflict {
+                active_task_id,
+                requested_task_id,
+            } => write!(
+                formatter,
+                "executor is bound to task {active_task_id}, not {requested_task_id}"
+            ),
+            Self::StateUnavailable => {
+                formatter.write_str("executor task binding state is unavailable")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TaskHeartbeatActivationError {}
+
+impl TaskHeartbeatController {
+    pub fn activate(&self, task_id: &str) -> Result<(), TaskHeartbeatActivationError> {
+        let requested_task_id = task_id.trim();
+        if requested_task_id.is_empty() {
+            return Err(TaskHeartbeatActivationError::EmptyTaskId);
+        }
+
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| TaskHeartbeatActivationError::StateUnavailable)?;
+        if let Some(active) = active.as_ref() {
+            if active.task_id == requested_task_id {
+                return Ok(());
+            }
+            return Err(TaskHeartbeatActivationError::TaskConflict {
+                active_task_id: active.task_id.clone(),
+                requested_task_id: requested_task_id.to_owned(),
+            });
+        }
+
+        let config = HeartbeatConfig::for_task(requested_task_id)
+            .ok_or(TaskHeartbeatActivationError::MissingEndpoint)?;
+        let handle = start_heartbeat(config);
+        *active = Some(ActiveTaskHeartbeat {
+            task_id: requested_task_id.to_owned(),
+            handle,
+        });
+        Ok(())
+    }
+}
+
+pub fn executor_warm_pool_mode_enabled() -> bool {
+    env_value("EXECUTOR_WARMPOOL_MODE").is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 pub fn start_heartbeat_from_env() -> Option<JoinHandle<()>> {
@@ -185,7 +295,10 @@ fn truncate_for_log(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{callback_base_url, HeartbeatConfig};
+    use super::{
+        callback_base_url, executor_warm_pool_mode_enabled, HeartbeatConfig,
+        TaskHeartbeatActivationError, TaskHeartbeatController,
+    };
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     fn env_lock() -> MutexGuard<'static, ()> {
@@ -266,6 +379,53 @@ mod tests {
         assert_eq!(
             callback_base_url(Some("http://manager/executor-manager/callback")).unwrap(),
             "http://manager/executor-manager"
+        );
+    }
+
+    #[test]
+    fn executor_warm_pool_mode_requires_explicit_executor_flag() {
+        let _lock = env_lock();
+        let _generic = EnvGuard::set("WARM_POOL_MODE", "true");
+        let _executor = EnvGuard::remove("EXECUTOR_WARMPOOL_MODE");
+
+        assert!(!executor_warm_pool_mode_enabled());
+
+        let _executor = EnvGuard::set("EXECUTOR_WARMPOOL_MODE", "true");
+        assert!(executor_warm_pool_mode_enabled());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dynamic_task_heartbeat_is_idempotent_and_rejects_another_task() {
+        let _lock = env_lock();
+        let _base = EnvGuard::set(
+            "EXECUTOR_MANAGER_HEARTBEAT_BASE_URL",
+            "http://127.0.0.1:9/executor-manager",
+        );
+        let _callback = EnvGuard::remove("CALLBACK_URL");
+        let _interval = EnvGuard::set("HEARTBEAT_INTERVAL", "3600");
+        let controller = TaskHeartbeatController::default();
+
+        assert_eq!(controller.activate("42"), Ok(()));
+        assert_eq!(controller.activate("42"), Ok(()));
+        assert_eq!(
+            controller.activate("43"),
+            Err(TaskHeartbeatActivationError::TaskConflict {
+                active_task_id: "42".to_owned(),
+                requested_task_id: "43".to_owned(),
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dynamic_task_heartbeat_requires_manager_endpoint() {
+        let _lock = env_lock();
+        let _base = EnvGuard::remove("EXECUTOR_MANAGER_HEARTBEAT_BASE_URL");
+        let _callback = EnvGuard::remove("CALLBACK_URL");
+        let controller = TaskHeartbeatController::default();
+
+        assert_eq!(
+            controller.activate("42"),
+            Err(TaskHeartbeatActivationError::MissingEndpoint)
         );
     }
 }

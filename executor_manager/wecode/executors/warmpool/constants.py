@@ -49,6 +49,10 @@ LABEL_USER = "aigc.weibo.com/user"
 LABEL_PROXY_USER = "aigc.weibo.com/proxy-user"
 LABEL_TASK_TYPE = "aigc.weibo.com/task-type"
 LABEL_TEAM_MODE = "aigc.weibo.com/team-mode"
+LABEL_POOL_STATE = "aigc.weibo.com/pool-state"
+LABEL_POOL_PROFILE = "aigc.weibo.com/pool-profile"
+
+POOL_PROFILE_EXECUTOR_STANDARD = "executor-standard"
 
 # Wegent annotations
 ANNOTATION_EMAIL = "aigc.weibo.com/email"
