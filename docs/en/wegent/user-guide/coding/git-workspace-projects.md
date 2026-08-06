@@ -58,6 +58,8 @@ In the new-conversation input area for a local workspace project, you can choose
 
 Wework refreshes repository environment details in the background while a task is running. A refresh keeps the resolved current branch visible in the composer; the loading state appears only during the initial workspace read.
 
+When you switch tasks, a pinned open **Environment info** panel immediately shows the newly selected task's environment without an opening or slide-in animation. The panel animation is reserved for explicitly opening or closing it with the **Environment info** button in the upper-right corner.
+
 New worktrees are created under the execution device workspace root:
 
 ```bash
