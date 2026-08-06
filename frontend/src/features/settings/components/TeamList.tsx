@@ -185,6 +185,11 @@ export default function TeamList({
   const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false)
   const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
   const [isUnbindingSharedTeam, setIsUnbindingSharedTeam] = useState(false)
+  const [pendingMarketUnbind, setPendingMarketUnbind] = useState<{
+    team: Team
+    targetNamespace: string
+  } | null>(null)
+  const [isUnbindingMarketTeam, setIsUnbindingMarketTeam] = useState(false)
   const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null)
   const [isCheckingTasks, setIsCheckingTasks] = useState(false)
   const [shareModalVisible, setShareModalVisible] = useState(false)
@@ -631,6 +636,29 @@ export default function TeamList({
     }
   }
 
+  const handleConfirmMarketUnbind = async () => {
+    if (!pendingMarketUnbind) return
+
+    setIsUnbindingMarketTeam(true)
+    try {
+      await resourceLibraryApi.uninstallListing(
+        pendingMarketUnbind.team.id,
+        pendingMarketUnbind.targetNamespace
+      )
+      setTeams(current => current.filter(team => team.id !== pendingMarketUnbind.team.id))
+      setPendingMarketUnbind(null)
+      toast({ title: t('resource-library:messages.remove_from_team_agent_success') })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('resource-library:messages.remove_from_team_agent_failed'),
+        description: error instanceof Error ? error.message : undefined,
+      })
+    } finally {
+      setIsUnbindingMarketTeam(false)
+    }
+  }
+
   const handleForceDelete = async () => {
     if (!teamToDelete) return
 
@@ -728,6 +756,15 @@ export default function TeamList({
     if (!isGroupTeam(team)) return false
     return canEditGroupResource(team.namespace!)
   }
+
+  const getMarketUnbindTargetNamespace = () => {
+    if (scope !== 'group') return null
+    const targetNamespace = groupName || (groupFilter?.length === 1 ? groupFilter[0] : null)
+    return targetNamespace && canEditGroupResource(targetNamespace) ? targetNamespace : null
+  }
+
+  const shouldShowMarketUnbind = (team: Team) =>
+    isNamespaceAuthorizedTeam(team) && getMarketUnbindTargetNamespace() !== null
 
   // Check if copy button should be shown (same permission as create)
   const shouldShowCopy = (team: Team) => {
@@ -1052,6 +1089,7 @@ export default function TeamList({
                                 canCopy={shouldShowCopy(team)}
                                 canShare={shouldShowShare(team)}
                                 canDelete={shouldShowDelete(team)}
+                                canUnbindFromGroup={shouldShowMarketUnbind(team)}
                                 shared={isSharedTeam(team)}
                                 onOpenApi={() => setApiCallTeam(team)}
                                 onEdit={() => handleEditTeam(team)}
@@ -1059,6 +1097,12 @@ export default function TeamList({
                                 onCopy={targetNamespace => handleCopyTeam(team, targetNamespace)}
                                 onShare={() => handleShareTeam(team)}
                                 onDelete={() => handleDelete(team.id)}
+                                onUnbindFromGroup={() => {
+                                  const targetNamespace = getMarketUnbindTargetNamespace()
+                                  if (targetNamespace) {
+                                    setPendingMarketUnbind({ team, targetNamespace })
+                                  }
+                                }}
                               />
                             </div>
                           ) : (
@@ -1312,6 +1356,43 @@ export default function TeamList({
               ) : (
                 t('common.confirm')
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingMarketUnbind !== null}
+        onOpenChange={open => {
+          if (!open && !isUnbindingMarketTeam) setPendingMarketUnbind(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('resource-library:actions.remove_from_team')}</DialogTitle>
+            <DialogDescription>
+              {pendingMarketUnbind &&
+                t('resource-library:messages.remove_from_team_agent_confirm', {
+                  agent: getTeamDisplayName(pendingMarketUnbind.team),
+                  group: pendingMarketUnbind.targetNamespace,
+                })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => setPendingMarketUnbind(null)}
+              disabled={isUnbindingMarketTeam}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleConfirmMarketUnbind()}
+              disabled={isUnbindingMarketTeam}
+              data-testid="confirm-remove-market-agent"
+            >
+              {t('resource-library:actions.remove_from_team')}
             </Button>
           </DialogFooter>
         </DialogContent>

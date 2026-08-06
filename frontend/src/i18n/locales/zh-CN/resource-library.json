@@ -221,7 +221,10 @@
     "remove_added_skill_confirm": "确定取消添加技能「{{skill}}」吗？源技能不会被删除。",
     "remove_from_team_success": "已从团队移除技能",
     "remove_from_team_failed": "从团队移除技能失败",
-    "remove_from_team_confirm": "确定从「{{group}}」移除技能「{{skill}}」吗？源技能不会被删除。"
+    "remove_from_team_confirm": "确定从「{{group}}」移除技能「{{skill}}」吗？源技能不会被删除。",
+    "remove_from_team_agent_success": "已从团队移除智能体",
+    "remove_from_team_agent_failed": "从团队移除智能体失败",
+    "remove_from_team_agent_confirm": "确定从「{{group}}」移除智能体「{{agent}}」吗？源智能体不会被删除。"
   },
   "publish": {
     "description": "选择已有智能体或技能并发布到市场",
