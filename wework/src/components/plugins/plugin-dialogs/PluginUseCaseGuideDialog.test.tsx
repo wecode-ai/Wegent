@@ -34,6 +34,9 @@ describe('PluginUseCaseGuideDialog', () => {
       />
     )
 
+    await act(async () => {
+      await new Promise(resolve => window.requestAnimationFrame(resolve))
+    })
     await userEvent.click(screen.getByTestId('plugin-use-case-option-anonymous'))
     expect(screen.getByTestId('plugin-use-case-draft-input')).toHaveTextContent(
       'Use anonymous player IDs on the leaderboard'

@@ -302,6 +302,45 @@ describe('ComposerTextarea', () => {
   test('consumes the Tab that confirms a slash command from the / menu', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onSetGoal = vi.fn()
+    const onSubmit = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={onSubmit}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onSetGoal={onSetGoal}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '/goal'
+      editor.focus()
+    })
+    await screen.findByTestId('slash-command-option-goal')
+
+    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
+
+    expect(onSetGoal).toHaveBeenCalledOnce()
+    expect(onSubmit).not.toHaveBeenCalled()
+    await waitFor(() => expect(editor.value).toBe(''))
+    await waitFor(() => expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument())
+  })
+
+  test('does not confirm via Tab while Shift is held', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSetGoal = vi.fn()
 
     function Harness() {
       const [value, setValue] = useState('')
@@ -329,11 +368,17 @@ describe('ComposerTextarea', () => {
     })
     await screen.findByTestId('slash-command-option-goal')
 
-    fireEvent.keyDown(editor, { key: 'Tab', code: 'Tab', keyCode: 9, charCode: 9 })
-
-    expect(onSetGoal).toHaveBeenCalledOnce()
-    await waitFor(() => expect(editor.value).toBe(''))
-    await waitFor(() => expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument())
+    expect(
+      fireEvent.keyDown(editor, {
+        key: 'Tab',
+        code: 'Tab',
+        keyCode: 9,
+        charCode: 9,
+        shiftKey: true,
+      })
+    ).toBe(true)
+    expect(onSetGoal).not.toHaveBeenCalled()
+    expect(editor.value).toBe('/goal')
   })
 
   test('consumes the Tab that confirms the highlighted @ mention', async () => {

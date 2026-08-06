@@ -1232,6 +1232,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
 
         if (event.key === 'Tab' && !event.shiftKey) {
+          if (isComposing || isImeComposingEvent(event)) return false
           if (!showSkillMenuRef.current && !showSlashMenuRef.current) return false
           if (!confirmHighlightedMenuSelection()) return false
           event.preventDefault()
