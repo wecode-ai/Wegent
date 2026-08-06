@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.device.local_provider import local_device_provider
 from wecode.service.ip_user_lookup import ip_user_lookup_service
 
 
@@ -151,11 +152,12 @@ def test_internal_admin_ip_lookup_resolves_nevis_cloud_ip(
     test_db.commit()
 
     pod_lookup = AsyncMock(return_value=([], None))
+    online_key = local_device_provider.generate_online_key(test_user.id, "cloud-nevis")
     with (
         patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup),
         patch(
             "wecode.service.ip_user_lookup.cache_manager.mget",
-            new=AsyncMock(return_value={}),
+            new=AsyncMock(return_value={online_key: {"client_ip": "127.0.0.1"}}),
         ),
         patch(
             "wecode.service.ip_user_lookup.nevis_client.get_sandbox",
@@ -173,6 +175,56 @@ def test_internal_admin_ip_lookup_resolves_nevis_cloud_ip(
     assert payload["user_names"] == [test_user.user_name]
     assert payload["matches"][0]["source"] == "cloud_device"
     assert payload["matches"][0]["resource_name"] == "cloud-nevis"
+
+
+def test_internal_admin_ip_lookup_resolves_runtime_transfer_host(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_admin_token: str,
+):
+    _create_device(
+        test_db,
+        user_id=test_user.id,
+        device_id="cloud-runtime-host",
+        device_type="cloud",
+        client_ip="",
+    )
+    online_key = local_device_provider.generate_online_key(
+        test_user.id, "cloud-runtime-host"
+    )
+    pod_lookup = AsyncMock(return_value=([], None))
+    nevis_lookup = AsyncMock()
+
+    with (
+        patch.object(ip_user_lookup_service, "_find_pod_owners", pod_lookup),
+        patch(
+            "wecode.service.ip_user_lookup.cache_manager.mget",
+            new=AsyncMock(
+                return_value={
+                    online_key: {
+                        "client_ip": "127.0.0.1",
+                        "runtime_transfer_host": "10.201.4.119",
+                    }
+                }
+            ),
+        ),
+        patch(
+            "wecode.service.ip_user_lookup.nevis_client.get_sandbox",
+            new=nevis_lookup,
+        ),
+    ):
+        response = test_client.get(
+            "/api/internal/admin/users/by-ip",
+            params={"ip": "10.201.4.119"},
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_names"] == [test_user.user_name]
+    assert payload["matches"][0]["resource_name"] == "cloud-runtime-host"
+    nevis_lookup.assert_not_awaited()
 
 
 def test_internal_admin_ip_lookup_rejects_invalid_ip(

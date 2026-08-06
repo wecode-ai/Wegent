@@ -100,7 +100,13 @@ class IpUserLookupService:
         matched_rows = [
             row
             for row in rows
-            if _same_ip(row[0].json.get("spec", {}).get("clientIp"), ip_address)
+            if any(
+                _same_ip(candidate, ip_address)
+                for candidate in (
+                    row[0].json.get("spec", {}).get("clientIp"),
+                    row[0].json.get("spec", {}).get("runtimeTransferHost"),
+                )
+            )
         ]
         remaining = [row for row in rows if row not in matched_rows]
 
@@ -117,10 +123,13 @@ class IpUserLookupService:
         unresolved = []
         for row, redis_key in zip(remaining, redis_keys):
             online_info = online_map.get(redis_key) or {}
-            online_ip = online_info.get("client_ip")
-            if _same_ip(online_ip, ip_address):
+            online_ips = (
+                online_info.get("client_ip"),
+                online_info.get("runtime_transfer_host"),
+            )
+            if any(_same_ip(candidate, ip_address) for candidate in online_ips):
                 matched_rows.append(row)
-            elif not online_ip:
+            else:
                 unresolved.append(row)
 
         nevis_rows, failed_count = await self._find_nevis_matches(
