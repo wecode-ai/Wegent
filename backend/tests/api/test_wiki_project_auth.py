@@ -137,47 +137,23 @@ class TestWikiGenerationAuth:
     Generations were simply never held to it.
     """
 
-    def test_detail_without_repo_access_returns_404(
-        self, wiki_client: TestClient, test_db: Session, test_token: str
-    ) -> None:
-        project = _create_project(test_db)
-        generation = _create_generation(test_db, project_id=project.id)
-
-        response = wiki_client.get(
-            f"/api/wiki/generations/{generation.id}",
-            headers={"Authorization": f"Bearer {test_token}"},
-        )
-
-        assert response.status_code == 404
-        assert "internal architecture" not in response.text
-
-    def test_contents_without_repo_access_returns_404(
-        self, wiki_client: TestClient, test_db: Session, test_token: str
-    ) -> None:
-        """The one that returned page bodies with no project lookup at all."""
-        project = _create_project(test_db)
-        generation = _create_generation(test_db, project_id=project.id)
-
-        response = wiki_client.get(
-            f"/api/wiki/generations/{generation.id}/contents",
-            headers={"Authorization": f"Bearer {test_token}"},
-        )
-
-        assert response.status_code == 404
-        assert "internal architecture" not in response.text
-
     def test_a_code_wikis_generation_is_refused_without_the_knowledge_base(
         self, wiki_client: TestClient, test_db: Session, test_token: str
     ) -> None:
         """A code wiki generation is judged by the knowledge-base ACL, not by the
         repository. kind_id 999999 is a knowledge base this caller cannot read
         because it does not exist, which is the same answer as one they may not.
+
+        Asked through cancel, which is now the only endpoint reaching that check —
+        the two per-generation reads were removed once nothing called them. The tests
+        that covered them went with them rather than staying as assertions that a
+        missing route answers 404, which is what they had quietly become.
         """
         project = _create_project(test_db)
         generation = _create_generation(test_db, project_id=project.id, kind_id=999999)
 
-        response = wiki_client.get(
-            f"/api/wiki/generations/{generation.id}",
+        response = wiki_client.post(
+            f"/api/wiki/generations/{generation.id}/cancel",
             headers={"Authorization": f"Bearer {test_token}"},
         )
 
@@ -264,15 +240,22 @@ class TestWikiGenerationAuth:
     def test_no_token_is_refused_before_any_lookup(
         self, wiki_client: TestClient, test_db: Session
     ) -> None:
+        """The two per-generation read endpoints were removed once nothing called
+        them. What remains is the list and the cancel, and both must still reject an
+        unauthenticated caller before touching the database.
+        """
         project = _create_project(test_db)
         generation = _create_generation(test_db, project_id=project.id)
 
         assert (
-            wiki_client.get(f"/api/wiki/generations/{generation.id}").status_code == 401
+            wiki_client.get(
+                f"/api/wiki/generations?project_id={project.id}"
+            ).status_code
+            == 401
         )
         assert (
-            wiki_client.get(
-                f"/api/wiki/generations/{generation.id}/contents"
+            wiki_client.post(
+                f"/api/wiki/generations/{generation.id}/cancel"
             ).status_code
             == 401
         )

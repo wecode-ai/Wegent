@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { WikiProjectsResponse, WikiGenerationsResponse, WikiGenerationDetail } from '@/types/wiki'
+import { WikiProjectsResponse, WikiGenerationsResponse } from '@/types/wiki'
 import { apiClient } from './client'
 
 /**
@@ -69,62 +69,6 @@ export async function fetchWikiGenerations(
   } catch (error) {
     console.error('Error fetching wiki generations:', error)
     throw error
-  }
-}
-
-/**
- * Get Wiki generation detail
- * @param generationId Generation record ID
- * @returns Wiki generation detail
- */
-export async function fetchWikiGenerationDetail(
-  generationId: number
-): Promise<WikiGenerationDetail> {
-  try {
-    return await apiClient.get(`/wiki/generations/${generationId}`)
-  } catch (error) {
-    console.error('Error fetching wiki generation detail:', error)
-    throw error
-  }
-}
-
-/**
- * Get the latest completed Wiki generation record
- * @param projectId Project ID
- * @returns Latest completed Wiki generation record ID
- */
-export async function fetchLatestCompletedWikiGeneration(
-  projectId: number
-): Promise<number | null> {
-  try {
-    const generations = await fetchWikiGenerations(projectId)
-
-    // Check if API response is valid
-    if (!generations || !generations.items || !Array.isArray(generations.items)) {
-      console.error('Invalid API response from fetchWikiGenerations:', generations)
-      return null
-    }
-
-    // Sort by update time and find the latest completed record
-    const completedGenerations = generations.items
-      .filter(gen => gen && gen.status === 'COMPLETED')
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-
-    if (completedGenerations.length > 0) {
-      return completedGenerations[0].id
-    }
-
-    // If no completed records, but other records exist, return the first record ID (for testing)
-    if (generations.items.length > 0) {
-      console.log('No completed generations found, using first available:', generations.items[0].id)
-      return generations.items[0].id
-    }
-
-    return null
-  } catch (error) {
-    console.error('Error fetching latest completed wiki generation:', error)
-    // Return null instead of throwing error for better error handling
-    return null
   }
 }
 
