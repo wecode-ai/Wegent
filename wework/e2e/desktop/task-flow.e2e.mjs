@@ -95,6 +95,7 @@ const GUIDANCE_SCROLL_RESPONSE = [
   ),
 ].join('\n\n')
 const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
+const GUIDANCE_SCROLL_PRE_TOOL_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_PRE_TOOL_TEXT'
 const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
@@ -1561,6 +1562,11 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
+    value: 'guidance-scroll-setup-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   await waitForOverflowMetrics(
@@ -1598,6 +1604,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    value: 'guidance-scroll-pre-tool-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const assistantAfterGuidanceText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:not([data-e2e-anchor-id])`
+  )
+  assert.equal(
+    assistantAfterGuidanceText.includes(GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    false,
+    'The final text from before guidance was duplicated after the guidance message'
+  )
 
   const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
     control,
@@ -10028,10 +10052,12 @@ class DesktopE2EServer {
         const tool = selectShellTool(body, this.workspacePath)
         this.guidanceScrollStage = 'awaiting_tool_output'
         await this.guidanceScrollToolRelease
+        const preToolMessage = assistantMessage(GUIDANCE_SCROLL_PRE_TOOL_TEXT)
         this.writeSse(response, [
           responseCreated(responseId),
+          preToolMessage,
           ...functionCall('wework-e2e-guidance-scroll-tool', tool.name, tool.arguments),
-          responseCompleted(responseId),
+          responseCompleted(responseId, [preToolMessage.item]),
         ])
         return
       }
@@ -13543,6 +13569,21 @@ last_updated = "2026-07-30T00:00:00Z"`
       return
     }
 
+    if (GUIDANCE_SCROLL_ONLY) {
+      phase = 'guidance-scroll'
+      await verifyForegroundGuidanceScroll({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (RATE_LIMIT_ONLY) {
       phase = 'rate-limit-recovery'
       await control.command('click', '[data-testid="new-chat-button"]')
@@ -14087,18 +14128,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
-    }
-
-    if (GUIDANCE_SCROLL_ONLY) {
-      phase = 'guidance-scroll'
-      await verifyForegroundGuidanceScroll({ composerSelector, control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
-      return
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {
