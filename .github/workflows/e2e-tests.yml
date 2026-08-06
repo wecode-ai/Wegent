@@ -85,7 +85,9 @@ jobs:
       - name: Resolve Playwright version
         id: playwright-version
         working-directory: ./frontend
-        run: echo "version=$(pnpm exec playwright --version | sed 's/^Version //')" >> "$GITHUB_OUTPUT"
+        run: |
+          version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
         id: playwright-cache
