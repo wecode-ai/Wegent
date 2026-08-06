@@ -337,6 +337,7 @@ const TELEMETRY_SAFE_PROPERTY_KEYS = new Set([
   'app_version',
   'arch',
   'distinct_id',
+  'feature',
   'locale',
   'os',
   'release_channel',
