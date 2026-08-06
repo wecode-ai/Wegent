@@ -15,10 +15,8 @@ from app.db.session import get_wiki_db
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiProject
 from app.schemas.wiki import (
-    WikiContentInDB,
     WikiContentWriteRequest,
     WikiGenerationCreate,
-    WikiGenerationDetail,
     WikiGenerationInDB,
     WikiGenerationListResponse,
     WikiPageRead,
@@ -295,39 +293,6 @@ def get_wiki_generations(
     return {"total": total, "items": items}
 
 
-@router.get("/generations/{generation_id}", response_model=WikiGenerationDetail)
-def get_wiki_generation(
-    generation_id: int,
-    current_user: User = Depends(security.get_current_user),
-    wiki_db: Session = Depends(get_wiki_db),
-    main_db: Session = Depends(get_db),
-):
-    """One generation and its full page text, for a caller entitled to it."""
-    _assert_may_read_generation(wiki_db, main_db, generation_id, current_user)
-    user_id = 0  # Authorised above; the service layer reads 0 as "no user filter".
-
-    generation = wiki_service.get_generation_detail(
-        db=wiki_db, generation_id=generation_id, user_id=user_id
-    )
-
-    # Get project info
-    project = wiki_service.get_project_detail(
-        db=wiki_db, project_id=generation.project_id
-    )
-
-    # Get contents
-    contents = wiki_service.get_generation_contents(
-        db=wiki_db, generation_id=generation_id, user_id=user_id
-    )
-
-    # Build response
-    generation_dict = generation.__dict__.copy()
-    generation_dict["project"] = project
-    generation_dict["contents"] = contents
-
-    return generation_dict
-
-
 @internal_router.post("/generations/contents")
 def save_wiki_generation_contents(
     payload: WikiContentWriteRequest,
@@ -376,24 +341,6 @@ def read_wiki_generation_page(
             detail=f"Generation {generation_id} has no page at '{path}'",
         )
     return page
-
-
-@router.get(
-    "/generations/{generation_id}/contents", response_model=list[WikiContentInDB]
-)
-def get_wiki_generation_contents(
-    generation_id: int,
-    current_user: User = Depends(security.get_current_user),
-    wiki_db: Session = Depends(get_wiki_db),
-    main_db: Session = Depends(get_db),
-):
-    """A generation's page text, for a caller entitled to it."""
-    _assert_may_read_generation(wiki_db, main_db, generation_id, current_user)
-    user_id = 0  # Authorised above; the service layer reads 0 as "no user filter".
-
-    return wiki_service.get_generation_contents(
-        db=wiki_db, generation_id=generation_id, user_id=user_id
-    )
 
 
 @router.post("/generations/{generation_id}/cancel", response_model=WikiGenerationInDB)

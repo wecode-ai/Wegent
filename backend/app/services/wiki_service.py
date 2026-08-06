@@ -979,49 +979,6 @@ class WikiService:
 
         return generations, total
 
-    def get_generation_detail(
-        self, db: Session, generation_id: int, user_id: int
-    ) -> WikiGeneration:
-        """
-        Get generation record detail
-
-        Args:
-            user_id: User ID to filter by. If 0, returns generation for all users
-        """
-        query = db.query(WikiGeneration).filter(WikiGeneration.id == generation_id)
-
-        # Only filter by user_id when it's not 0 (0 means query all users)
-        if user_id != 0:
-            query = query.filter(WikiGeneration.user_id == user_id)
-
-        generation = query.first()
-
-        if not generation:
-            raise HTTPException(status_code=404, detail="Generation not found")
-
-        return generation
-
-    def get_generation_contents(
-        self, db: Session, generation_id: int, user_id: int
-    ) -> List[WikiContent]:
-        """
-        Get all contents of a wiki generation
-
-        Args:
-            user_id: User ID to filter by. If 0, returns contents for all users
-        """
-        # First verify the generation exists (and belongs to user if user_id != 0)
-        generation = self.get_generation_detail(db, generation_id, user_id)
-
-        contents = (
-            db.query(WikiContent)
-            .filter(WikiContent.generation_id == generation_id)
-            .order_by(WikiContent.created_at)
-            .all()
-        )
-
-        return contents
-
     def get_projects(
         self,
         db: Session,
