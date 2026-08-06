@@ -60,3 +60,13 @@ Optional information behaves as follows:
 If a selected item is unavailable (for example, no task data in a new conversation), it is skipped automatically and noted in the preview.
 
 Expand any entry to inspect its content before continuing. When a feedback service is configured, select **Submit feedback** to send the problem. Otherwise select **Confirm export** to save the bundle in the system Downloads directory. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but free text (such as conversation history) cannot be fully redacted, so review the bundle before sharing.
+
+### Feedback submission failed
+
+When feedback is submitted, the native application log records these events with the report ID:
+
+- `Feedback submission started`: submission began, with the report ID, a redacted endpoint summary, and bundle size.
+- `Feedback submission failed`: submission failed, with the stage, elapsed time, and error category; an HTTP status is included when the server responded.
+- `Feedback submission completed`: submission succeeded, with the report ID, feedback item ID, duplicate status, and elapsed time.
+
+Search the logs using the report ID shown in the UI, for example `report_id=WF-...`. Endpoint logs retain only the scheme, host, port, and path; they exclude query parameters and URL credentials. The logs also exclude feedback text, task context, and attachment contents.
