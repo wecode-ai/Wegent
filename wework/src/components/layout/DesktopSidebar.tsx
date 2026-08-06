@@ -3391,15 +3391,13 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={Grid3X3}
-                  label={t('workbench.sites', '应用')}
-                  testId="sites-button"
-                  selected={activeItem === 'sites'}
-                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-                />
-              )}
+              <DesktopSidebarNavItem
+                icon={Grid3X3}
+                label={t('workbench.sites', '站点与小程序')}
+                testId="sites-button"
+                selected={activeItem === 'sites'}
+                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+              />
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}

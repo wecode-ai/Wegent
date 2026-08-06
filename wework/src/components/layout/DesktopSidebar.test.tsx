@@ -1676,20 +1676,14 @@ describe('DesktopSidebar', () => {
     renderSidebar({ onOpenSites, activeItem: 'sites' })
 
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByTestId('sites-button')).toHaveTextContent('应用')
+    expect(screen.getByTestId('sites-button')).toHaveTextContent('站点与小程序')
     await userEvent.click(screen.getByTestId('sites-button'))
 
     expect(onOpenSites).toHaveBeenCalledTimes(1)
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Sites while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
-    const { unmount } = renderSidebar()
-
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    unmount()
-    experimentalFeatures.enabled = true
     renderSidebar()
 
     expect(screen.getByTestId('sites-button')).toBeInTheDocument()

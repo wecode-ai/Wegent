@@ -492,7 +492,7 @@ function AppShell() {
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
       auxiliaryRoutes: {
         plugins: t('workbench.workspace_tab_plugins', '插件'),
-        sites: t('workbench.workspace_tab_sites', '应用'),
+        sites: t('workbench.workspace_tab_sites', '站点与小程序'),
         automations: t('workbench.workspace_tab_automations', '自动化'),
         cloud: t('workbench.workspace_tab_cloud', '云端工作'),
         apps: t('workbench.workspace_tab_apps', '应用'),
