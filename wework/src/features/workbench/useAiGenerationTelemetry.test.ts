@@ -62,7 +62,7 @@ describe('useAiGenerationTelemetry', () => {
     resetRuntimeRunTraceIds()
     resetGenerationOutcomesForTests()
   })
-  test('emits $ai_generation on settled with tokens, latency, model, provider, and cost', () => {
+  test('emits $ai_generation on settled with tokens, latency, model, and provider', () => {
     const resolveModel = () => makeModel()
     const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
 
@@ -93,7 +93,7 @@ describe('useAiGenerationTelemetry', () => {
     const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
     expect(call?.[1].$ai_latency).toBeGreaterThanOrEqual(0)
     expect(call?.[1].$ai_latency).toBeLessThanOrEqual((afterSettled - beforeStart + 10) / 1000)
-    expect(call?.[1].$ai_cost).toBeGreaterThan(0)
+    expect(call?.[1]).not.toHaveProperty('$ai_cost')
   })
 
   test('uses the context usage passed at settle over the conversation snapshot', () => {
