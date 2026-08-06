@@ -252,12 +252,14 @@ async fn clear_platform_webview_data(
             };
             let kinds = windows_data_kinds(data_kinds);
             let completion_sender = Arc::clone(&sender);
-            let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |result| {
-                let completion = result
-                    .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
-                send_clear_completion(&completion_sender, completion);
-                Ok(())
-            }));
+            let handler = ClearBrowsingDataCompletedHandler::create(Box::new(
+                move |result: windows::core::Result<()>| -> windows::core::Result<()> {
+                    let completion = result
+                        .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
+                    send_clear_completion(&completion_sender, completion);
+                    Ok(())
+                },
+            ));
             if let Err(error) = unsafe { profile.ClearBrowsingData(kinds, &handler) } {
                 send_clear_completion(
                     &sender,

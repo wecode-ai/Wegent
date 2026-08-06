@@ -388,6 +388,36 @@ jobs:
           flags: wework
           name: wework-coverage
 
+  check-wework-windows-rust:
+    name: Check Wework Windows Rust
+    needs: changes
+    if: needs.changes.outputs.wework == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-wework-windows-rust-check-v1-${{ hashFiles('wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-windows-rust-check-v1-
+
+      - name: Check Wework Rust for Windows
+        working-directory: ./wework/src-tauri
+        run: cargo check --locked --target x86_64-pc-windows-msvc
+
   test-wegent-cli:
     name: Test wegent CLI
     needs: changes
@@ -530,7 +560,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [changes, test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, test-wegent-cli, test-wegent-cli-integration]
+    needs: [changes, test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, check-wework-windows-rust, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -555,5 +585,6 @@ jobs:
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
+          assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.check-wework-windows-rust.result }}" "Wework Windows Rust check"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"
