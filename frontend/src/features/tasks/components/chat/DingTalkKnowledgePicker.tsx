@@ -5,7 +5,17 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Check, ChevronRight, Database, FileText, Folder, FolderOpen } from 'lucide-react'
+import Link from 'next/link'
+import {
+  Check,
+  ChevronRight,
+  Database,
+  ExternalLink,
+  FileText,
+  Folder,
+  FolderOpen,
+  RefreshCw,
+} from 'lucide-react'
 
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ContextItem, DingTalkDocContext } from '@/types/context'
@@ -87,6 +97,53 @@ function DingTalkPickerEmpty({ label }: { label: string }) {
   return (
     <div className="flex h-full items-center justify-center p-4 text-center text-sm text-text-muted">
       {label}
+    </div>
+  )
+}
+
+function DingTalkPickerNotConfigured({ label }: { label: string }) {
+  const { t } = useTranslation('chat')
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+      <div className="text-sm text-text-muted">{label}</div>
+      <Link
+        href="/settings?section=integrations&tab=integrations"
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-primary/80"
+        data-testid="dingtalk-go-to-configure"
+      >
+        {t('dingtalkDocs.goToConfigure')}
+        <ExternalLink className="h-3.5 w-3.5" />
+      </Link>
+    </div>
+  )
+}
+
+function DingTalkPickerSyncEmpty({
+  label,
+  syncing,
+  onSync,
+}: {
+  label: string
+  syncing?: boolean
+  onSync?: () => void
+}) {
+  const { t } = useTranslation('chat')
+  if (!onSync) {
+    return <DingTalkPickerEmpty label={label} />
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+      <div className="text-sm text-text-muted">{label}</div>
+      <button
+        type="button"
+        onClick={onSync}
+        disabled={syncing}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary transition-colors hover:text-primary/80 disabled:opacity-50"
+        data-testid="dingtalk-empty-sync-button"
+      >
+        <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
+        {syncing ? t('dingtalkDocs.syncing') : t('dingtalkDocs.syncNow')}
+      </button>
     </div>
   )
 }
@@ -197,7 +254,9 @@ export function DingTalkDocsRootRow({
   error,
   configured,
   selectedIds,
+  syncing,
   onRetry,
+  onSync,
   onToggle,
 }: {
   nodes: DingtalkDocNode[]
@@ -206,14 +265,24 @@ export function DingTalkDocsRootRow({
   error: string | null
   configured: boolean
   selectedIds: Set<string>
+  syncing?: boolean
   onRetry: () => void
+  onSync?: () => void
   onToggle: () => void
 }) {
   const { t } = useTranslation('chat')
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
   if (error) return <DingTalkPickerError message={error} onRetry={onRetry} />
-  if (!configured) return <DingTalkPickerEmpty label={t('chat:dingtalkDocs.notConfigured')} />
-  if (nodes.length === 0) return <DingTalkPickerEmpty label={t('chat:dingtalkDocs.empty')} />
+  if (!configured)
+    return <DingTalkPickerNotConfigured label={t('chat:dingtalkDocs.notConfigured')} />
+  if (nodes.length === 0)
+    return (
+      <DingTalkPickerSyncEmpty
+        label={t('chat:dingtalkDocs.empty')}
+        syncing={syncing}
+        onSync={onSync}
+      />
+    )
 
   const state = getDingTalkNodeState(nodes, selectedIds)
   return (
@@ -259,7 +328,9 @@ export function DingTalkWikispaceRows({
   configured,
   selectedIds,
   activeNode,
+  syncing,
   onRetry,
+  onSync,
   onOpen,
   onToggle,
 }: {
@@ -270,7 +341,9 @@ export function DingTalkWikispaceRows({
   configured: boolean
   selectedIds: Set<string>
   activeNode: DingtalkDocNode | null
+  syncing?: boolean
   onRetry: () => void
+  onSync?: () => void
   onOpen: (node: DingtalkDocNode) => void
   onToggle: (node: DingtalkDocNode) => void
 }) {
@@ -278,7 +351,16 @@ export function DingTalkWikispaceRows({
   if (loading) return <DingTalkPickerLoading label={t('common:actions.loading')} />
   if (error) return <DingTalkPickerError message={error} onRetry={onRetry} />
   if (!configured)
-    return <DingTalkPickerEmpty label={t('chat:dingtalkDocs.wikispaceNotConfigured')} />
+    return <DingTalkPickerNotConfigured label={t('chat:dingtalkDocs.wikispaceNotConfigured')} />
+
+  if (nodes.length === 0)
+    return (
+      <DingTalkPickerSyncEmpty
+        label={t('chat:dingtalkDocs.wikispaceEmpty')}
+        syncing={syncing}
+        onSync={onSync}
+      />
+    )
 
   const visibleNodes = nodes.filter(node => dingTalkNodeMatchesSearch(node, query))
   if (visibleNodes.length === 0)
@@ -380,7 +462,9 @@ export function DingTalkDocumentColumn({
   emptyLabel,
   query,
   selectedIds,
+  syncing,
   onRetry,
+  onSync,
   onToggle,
   onToggleAll,
 }: {
@@ -394,7 +478,9 @@ export function DingTalkDocumentColumn({
   emptyLabel: string
   query: string
   selectedIds: Set<string>
+  syncing?: boolean
   onRetry: () => void
+  onSync?: () => void
   onToggle: (node: DingtalkDocNode) => void
   onToggleAll: (nodes: DingtalkDocNode[]) => void
 }) {
@@ -415,7 +501,9 @@ export function DingTalkDocumentColumn({
       ) : error ? (
         <DingTalkPickerError message={error} onRetry={onRetry} />
       ) : !configured ? (
-        <DingTalkPickerEmpty label={notConfiguredLabel} />
+        <DingTalkPickerNotConfigured label={notConfiguredLabel} />
+      ) : nodes.length === 0 ? (
+        <DingTalkPickerSyncEmpty label={emptyLabel} syncing={syncing} onSync={onSync} />
       ) : visibleNodes.length === 0 ? (
         <DingTalkPickerEmpty label={emptyLabel} />
       ) : (
