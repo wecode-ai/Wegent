@@ -4603,6 +4603,7 @@ pub fn run() {
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_agent_control_paused,
             embedded_browser::embedded_browser_set_bounds,
+            local_terminal::attach_local_terminal,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
