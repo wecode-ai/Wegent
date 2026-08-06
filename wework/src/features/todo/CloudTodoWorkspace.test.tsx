@@ -1,10 +1,16 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
+
+const telemetryMocks = vi.hoisted(() => ({
+  track: vi.fn(),
+}))
+
+vi.mock('@/telemetry/client', () => telemetryMocks)
 
 vi.mock('./ProjectSpaceChatSidebar', () => ({
   ProjectSpaceChatSidebar: ({
@@ -196,6 +202,10 @@ function services(): WorkbenchServices {
 }
 
 describe('CloudTodoWorkspace', () => {
+  beforeEach(() => {
+    telemetryMocks.track.mockClear()
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
     localStorage.clear()
@@ -341,6 +351,10 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(telemetryMocks.track).toHaveBeenCalledWith('board_view_opened', {
+      source: 'cloud',
+      view: 'board',
+    })
     await userEvent.click(await screen.findByTestId('cloud-todo-card-more-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-card-archive-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-archive-confirm'))
@@ -1336,6 +1350,10 @@ describe('CloudTodoWorkspace', () => {
         tags: [],
       })
     )
+    expect(telemetryMocks.track).toHaveBeenCalledWith('board_item_created', {
+      has_parent: true,
+      source: 'cloud',
+    })
   })
 
   it('edits TODO metadata without changing historical deliveries', async () => {

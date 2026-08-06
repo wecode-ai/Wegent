@@ -16,6 +16,7 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import { track } from '@/telemetry/client'
 import {
   isLocalBrowserConnector,
   isLocalConnector,
@@ -1315,9 +1316,15 @@ export function PluginsWorkspace({
       .then(updated => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? nextItem : item)))
+        track('plugin_enabled_changed', {
+          enabled,
+          scope: 'component',
+          source: 'local',
+        })
       })
       .catch(() => {
         setInstalledPlugins(previous => previous.map(item => (item.id === id ? plugin : item)))
+        track('operation_failed', { operation: 'plugin_toggle' })
       })
   }
 
@@ -1348,6 +1355,7 @@ export function PluginsWorkspace({
       setLocalConnectorAuthBySlug({})
       notifyLocalPluginSkillsChanged()
       setMarketplaceRefreshTick(previous => previous + 1)
+      track('plugin_uninstalled', { source: 'local' })
     }
     const isAccountUninstallSettledError = (error: Error) => {
       const message = error.message || ''
@@ -1437,6 +1445,7 @@ export function PluginsWorkspace({
           })
           return
         }
+        track('operation_failed', { operation: 'plugin_uninstall' })
         setPluginOperationNotice({
           id: `uninstall-error-${id}`,
           kind: 'error',
@@ -1716,6 +1725,7 @@ export function PluginsWorkspace({
           ),
           error: null,
         }))
+        track('plugin_installed', { source: installFromLocal ? 'local' : 'cloud' })
         setMarketplaceRefreshTick(previous => previous + 1)
         setPluginOperationNotice({
           id: `installed-${item.id}`,
@@ -1775,6 +1785,7 @@ export function PluginsWorkspace({
           items: previous.items.map(candidate => (candidate.id === item.id ? item : candidate)),
           error: null,
         }))
+        track('operation_failed', { operation: 'plugin_install' })
         setPluginOperationNotice({
           id: `install-error-${item.id}`,
           kind: 'error',

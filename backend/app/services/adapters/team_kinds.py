@@ -29,6 +29,7 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
+from app.schemas.namespace import GroupRole
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.pipeline_context import normalize_context_passing
@@ -52,7 +53,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ACCESS_RANK_NATIVE = 0
     ACCESS_RANK_USER_SHARE = 1
     ACCESS_RANK_NAMESPACE_AUTHORIZATION = 2
-    RECENT_TEAM_TASK_SCAN_LIMIT = 100
+    RECENT_TEAM_TASK_SCAN_LIMIT = 50
 
     # List of sensitive keys that should be decrypted when reading
     SENSITIVE_CONFIG_KEYS = [
@@ -61,7 +62,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ]
 
     def _get_accessible_authorization_namespace_ids(
-        self, db: Session, user_id: int, namespaces: list[str]
+        self,
+        db: Session,
+        user_id: int,
+        namespaces: list[str],
+        effective_roles: Optional[dict[str, GroupRole]] = None,
     ) -> list[int]:
         """Return namespace ids that can activate Team namespace grants."""
         group_namespaces = [
@@ -70,13 +75,22 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not group_namespaces:
             return []
 
-        from app.services.group_permission import get_effective_role_in_group
+        if effective_roles is None:
+            from app.services.group_permission import get_effective_roles_in_groups
 
-        accessible_namespaces = []
-        for namespace in group_namespaces:
-            role = get_effective_role_in_group(db, user_id, namespace)
-            if role is not None and has_permission(role, BaseRole.Reporter.value):
-                accessible_namespaces.append(namespace)
+            effective_roles = get_effective_roles_in_groups(
+                db,
+                user_id,
+                group_namespaces,
+            )
+        accessible_namespaces = [
+            namespace
+            for namespace in group_namespaces
+            if (
+                (role := effective_roles.get(namespace)) is not None
+                and has_permission(role, BaseRole.Reporter.value)
+            )
+        ]
         if not accessible_namespaces:
             return []
 
@@ -283,9 +297,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         group_name: Optional[str] = None,
     ) -> Optional[tuple[Any, Any]]:
         """Build the deduplicated accessible-Team query shared by list views."""
-        from app.services.group_permission import get_user_groups
+        from app.services.group_permission import get_user_group_roles
 
         namespaces_to_query = []
+        effective_roles: Optional[dict[str, GroupRole]] = None
         t0 = time.time()
         if scope == "personal":
             namespaces_to_query = ["default"]
@@ -293,14 +308,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if group_name:
                 namespaces_to_query = [group_name]
             else:
-                user_groups = get_user_groups(db, user_id)
-                namespaces_to_query = user_groups if user_groups else []
+                effective_roles = get_user_group_roles(db, user_id)
+                namespaces_to_query = sorted(effective_roles)
         elif scope == "all":
-            namespaces_to_query = ["default"] + get_user_groups(db, user_id)
+            effective_roles = get_user_group_roles(db, user_id)
+            namespaces_to_query = ["default", *sorted(effective_roles)]
         else:
             raise ValueError(f"Invalid scope: {scope}")
         logger.info(
-            f"[get_user_teams] get_user_groups took {time.time() - t0:.3f}s, namespaces={namespaces_to_query}"
+            "[get_user_teams] group role resolution took %.3fs, namespaces=%s",
+            time.time() - t0,
+            namespaces_to_query,
         )
 
         queries = []
@@ -308,8 +326,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         has_default = "default" in namespaces_to_query
         team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
         approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+        authorization_start = time.time()
         authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
-            db, user_id, group_namespaces
+            db,
+            user_id,
+            group_namespaces,
+            effective_roles,
+        )
+        logger.info(
+            "[get_user_teams] authorization namespace resolution took %.3fs",
+            time.time() - authorization_start,
         )
 
         if has_default:
@@ -502,49 +528,74 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         db: Session,
         *,
         user_id: int,
+        is_code: bool = False,
         limit: int = 5,
     ) -> List[Dict[str, Any]]:
-        """Return recently used accessible Teams, filled by recently updated Teams."""
+        """Return recent accessible Teams for code or non-code tasks."""
         if limit <= 0:
             return []
 
-        accessible_query = self._build_accessible_teams_query(
+        total_start = time.time()
+        refs_start = time.time()
+        recent_refs = self._get_recent_team_refs(db, user_id, is_code=is_code)
+        refs_elapsed = time.time() - refs_start
+
+        recent_query_start = time.time()
+        selected_teams, selected_identities = self._query_recent_team_kinds(
             db,
-            user_id=user_id,
-            scope="all",
-        )
-        if accessible_query is None:
-            return []
-        base_query, ranked_query = accessible_query
-        recent_refs = self._get_recent_team_refs(db, user_id)
-        recent_rows = self._query_recent_team_rows(
-            base_query,
-            ranked_query,
-            recent_refs,
-        )
-        selected_rows, selected_identities = self._select_recent_team_rows(
-            recent_rows,
             recent_refs,
             user_id=user_id,
             limit=limit,
         )
-        if len(selected_rows) < limit:
-            selected_rows.extend(
-                self._query_latest_distinct_team_rows(
+        recent_query_elapsed = time.time() - recent_query_start
+
+        build_elapsed = 0.0
+        fallback_elapsed = 0.0
+        fallback_rows = []
+        if len(selected_teams) < limit:
+            build_start = time.time()
+            accessible_query = self._build_accessible_teams_query(
+                db,
+                user_id=user_id,
+                scope="all",
+            )
+            build_elapsed = time.time() - build_start
+            if accessible_query is not None:
+                base_query, _ = accessible_query
+                fallback_start = time.time()
+                fallback_rows = self._query_latest_distinct_team_rows(
                     db,
                     base_query,
                     selected_identities,
-                    limit=limit - len(selected_rows),
+                    limit=limit - len(selected_teams),
                 )
-            )
-        return [self._team_dict_from_access_row(db, row) for row in selected_rows]
+                fallback_elapsed = time.time() - fallback_start
+
+        logger.info(
+            "[get_recent_accessible_teams] is_code=%s build=%.3fs refs=%.3fs "
+            "recent_query=%.3fs fallback=%.3fs total=%.3fs refs_count=%d result_count=%d",
+            is_code,
+            build_elapsed,
+            refs_elapsed,
+            recent_query_elapsed,
+            fallback_elapsed,
+            time.time() - total_start,
+            len(recent_refs),
+            len(selected_teams) + len(fallback_rows),
+        )
+        return [
+            *self._quick_access_team_dicts_from_kinds(selected_teams),
+            *self._quick_access_team_dicts(fallback_rows),
+        ]
 
     def _get_recent_team_refs(
         self,
         db: Session,
         user_id: int,
+        *,
+        is_code: bool,
     ) -> list[tuple[str, str, int | None]]:
-        recent_tasks = task_store.list_recent_owner_only_used_tasks(
+        recent_tasks = task_store.list_recent_owner_only_tasks(
             db,
             user_id=user_id,
             limit=self.RECENT_TEAM_TASK_SCAN_LIMIT,
@@ -552,6 +603,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         recent_refs: list[tuple[str, str, int | None]] = []
         for task in recent_tasks:
             payload = task.json if isinstance(task.json, dict) else {}
+            metadata = payload.get("metadata")
+            labels = metadata.get("labels") if isinstance(metadata, dict) else None
+            task_type = (
+                str(labels.get("taskType") or "chat")
+                if isinstance(labels, dict)
+                else "chat"
+            )
+            if (task_type == "code") != is_code:
+                continue
             spec = payload.get("spec")
             team_ref = spec.get("teamRef") if isinstance(spec, dict) else None
             if not isinstance(team_ref, dict):
@@ -570,14 +630,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 recent_refs.append(ref)
         return recent_refs
 
-    def _query_recent_team_rows(
+    def _query_recent_team_kinds(
         self,
-        base_query: Any,
-        ranked_query: Any,
+        db: Session,
         recent_refs: list[tuple[str, str, int | None]],
-    ) -> list[Any]:
+        *,
+        user_id: int,
+        limit: int,
+    ) -> tuple[list[Kind], set[tuple[str, str]]]:
         if not recent_refs:
-            return []
+            return [], set()
         exact_refs = {
             (name, namespace, owner_id)
             for name, namespace, owner_id in recent_refs
@@ -592,46 +654,48 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if exact_refs:
             ref_filters.append(
                 tuple_(
-                    ranked_query.c.team_name,
-                    ranked_query.c.team_namespace,
-                    ranked_query.c.team_user_id,
-                ).in_(exact_refs)
+                    Kind.user_id,
+                    Kind.kind,
+                    Kind.namespace,
+                    Kind.is_active,
+                    Kind.name,
+                ).in_(
+                    {
+                        (
+                            owner_id,
+                            KindType.TEAM.value,
+                            namespace,
+                            True,
+                            name,
+                        )
+                        for name, namespace, owner_id in exact_refs
+                    }
+                )
             )
         if ownerless_refs:
             ref_filters.append(
                 tuple_(
-                    ranked_query.c.team_name,
-                    ranked_query.c.team_namespace,
+                    Kind.name,
+                    Kind.namespace,
                 ).in_(ownerless_refs)
             )
-        return (
-            base_query.filter(or_(*ref_filters))
-            .order_by(
-                ranked_query.c.team_updated_at.desc(),
-                ranked_query.c.team_id.desc(),
+        teams = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == KindType.TEAM.value,
+                Kind.is_active.is_(True),
+                or_(*ref_filters),
             )
             .all()
         )
-
-    def _select_recent_team_rows(
-        self,
-        recent_rows: list[Any],
-        recent_refs: list[tuple[str, str, int | None]],
-        *,
-        user_id: int,
-        limit: int,
-    ) -> tuple[list[Any], set[tuple[str, str]]]:
-        exact_row_index = {
-            (row.team_name, row.team_namespace, int(row.team_user_id)): row
-            for row in recent_rows
+        exact_team_index = {
+            (team.name, team.namespace, int(team.user_id)): team for team in teams
         }
-        identity_row_index: dict[tuple[str, str], list[Any]] = {}
-        for row in recent_rows:
-            identity_row_index.setdefault(
-                (row.team_name, row.team_namespace), []
-            ).append(row)
+        identity_team_index: dict[tuple[str, str], list[Kind]] = {}
+        for team in teams:
+            identity_team_index.setdefault((team.name, team.namespace), []).append(team)
 
-        selected_rows = []
+        selected_teams = []
         selected_ids: set[int] = set()
         selected_identities: set[tuple[str, str]] = set()
         for name, namespace, owner_id in recent_refs:
@@ -639,25 +703,25 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if identity in selected_identities:
                 continue
             if owner_id is not None:
-                row = exact_row_index.get((name, namespace, owner_id))
+                team = exact_team_index.get((name, namespace, owner_id))
             else:
-                candidates = identity_row_index.get(identity, [])
-                row = next(
+                candidates = identity_team_index.get(identity, [])
+                team = next(
                     (
                         candidate
                         for candidate in candidates
-                        if int(candidate.team_user_id) == user_id
+                        if int(candidate.user_id) == user_id
                     ),
                     candidates[0] if candidates else None,
                 )
-            if row is None or int(row.team_id) in selected_ids:
+            if team is None or int(team.id) in selected_ids:
                 continue
-            selected_rows.append(row)
-            selected_ids.add(int(row.team_id))
+            selected_teams.append(team)
+            selected_ids.add(int(team.id))
             selected_identities.add(identity)
-            if len(selected_rows) == limit:
+            if len(selected_teams) == limit:
                 break
-        return selected_rows, selected_identities
+        return selected_teams, selected_identities
 
     def _query_latest_distinct_team_rows(
         self,
@@ -702,18 +766,61 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             .all()
         )
 
-    def _team_dict_from_access_row(self, db: Session, row: Any) -> Dict[str, Any]:
-        team = Kind(
-            id=row.team_id,
-            user_id=row.team_user_id,
-            name=row.team_name,
-            namespace=row.team_namespace,
-            json=row.team_json,
-            created_at=row.team_created_at,
-            updated_at=row.team_updated_at,
-            is_active=True,
-        )
-        return self._convert_to_team_dict(team, db, int(row.context_user_id))
+    def _quick_access_team_dicts(
+        self,
+        rows: list[Any],
+    ) -> list[Dict[str, Any]]:
+        """Build quick-access results from Team rows only."""
+        return [
+            self._quick_access_team_dict(
+                team_id=int(row.team_id),
+                user_id=int(row.team_user_id),
+                name=row.team_name,
+                team_json=row.team_json,
+            )
+            for row in rows
+        ]
+
+    def _quick_access_team_dicts_from_kinds(
+        self,
+        teams: list[Kind],
+    ) -> list[Dict[str, Any]]:
+        return [
+            self._quick_access_team_dict(
+                team_id=int(team.id),
+                user_id=int(team.user_id),
+                name=team.name,
+                team_json=team.json,
+            )
+            for team in teams
+        ]
+
+    def _quick_access_team_dict(
+        self,
+        *,
+        team_id: int,
+        user_id: int,
+        name: str,
+        team_json: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        team = Team.model_validate(team_json)
+        return {
+            "id": team_id,
+            "user_id": user_id,
+            "name": name,
+            "displayName": team.metadata.displayName,
+            "recommended_mode": self._recommended_mode(team.spec.bind_mode),
+            "agent_type": None,
+        }
+
+    @staticmethod
+    def _recommended_mode(bind_mode: Optional[List[str]]) -> str:
+        modes = bind_mode or []
+        if "chat" in modes and "code" in modes:
+            return "both"
+        if "code" in modes:
+            return "code"
+        return "chat"
 
     def get_user_teams(
         self,

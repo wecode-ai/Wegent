@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
+  EllipsisVertical,
   ExternalLink,
   Globe2,
   CircleAlert,
@@ -17,12 +18,16 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import {
   canUseEmbeddedBrowser,
+  clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
   listenEmbeddedBrowserAgentState,
+  listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowser,
@@ -30,6 +35,8 @@ import {
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
   listenEmbeddedBrowserInvalidTlsCertificates,
+  listenEmbeddedBrowserLocalFilePreview,
+  listenEmbeddedBrowserPageStateChanges,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -40,6 +47,7 @@ import {
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserAgentStateEvent,
+  type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
@@ -65,6 +73,7 @@ import {
   DEFAULT_UI_FONT_SIZE,
   resolveUiTypographyVariables,
 } from '@/features/appearance/typography'
+import { track } from '@/telemetry/client'
 
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
@@ -72,6 +81,7 @@ const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
 const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
+const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 350
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
@@ -123,6 +133,14 @@ function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
 function getFallbackBrowserTitle(url: string) {
   try {
     const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') {
+      const pathname = decodeURIComponent(parsedUrl.pathname)
+      const normalizedPath = pathname.replace(/\/+$/, '')
+      if (parsedUrl.pathname.endsWith('/')) {
+        return `Index of ${normalizedPath || '/'}`
+      }
+      return normalizedPath.split('/').filter(Boolean).pop() || normalizedPath || url
+    }
     return parsedUrl.hostname.replace(/^www\./, '') || url
   } catch {
     return url
@@ -131,7 +149,9 @@ function getFallbackBrowserTitle(url: string) {
 
 function getFallbackFaviconUrl(url: string) {
   try {
-    return new URL('/favicon.ico', url).toString()
+    const parsedUrl = new URL(url)
+    if (parsedUrl.protocol === 'file:') return null
+    return new URL('/favicon.ico', parsedUrl).toString()
   } catch {
     return null
   }
@@ -718,6 +738,7 @@ export function WorkspaceBrowserPanel({
   const activeRef = useRef(active)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
+  const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
@@ -738,6 +759,16 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
+    id: number
+    message: string
+  } | null>(null)
+  const [clearDataNotice, setClearDataNotice] = useState<{
+    id: number
+    message: string
+    tone: 'success' | 'error'
+  } | null>(null)
+  const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
@@ -797,6 +828,22 @@ export function WorkspaceBrowserPanel({
     return subscribeEmbeddedBrowserDownloadEvents(download => {
       if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
       applyDownloadEvent(download)
+      if (
+        (download.status === 'finished' ||
+          download.status === 'failed' ||
+          download.status === 'deleted') &&
+        !trackedTerminalDownloadIdsRef.current.has(download.id)
+      ) {
+        trackedTerminalDownloadIdsRef.current.add(download.id)
+        track('browser_download_completed', {
+          result:
+            download.status === 'finished'
+              ? 'success'
+              : download.status === 'failed'
+                ? 'failure'
+                : 'cancelled',
+        })
+      }
     })
   }, [applyDownloadEvent])
 
@@ -847,6 +894,78 @@ export function WorkspaceBrowserPanel({
   }, [])
 
   useEffect(() => {
+    const listener = listenEmbeddedBrowserLocalFilePreview(event => {
+      if (!activeRef.current || event.nativeLabel !== nativeLabelRef.current) return
+      setLocalFilePreviewToast({
+        id: Date.now(),
+        message: t('workbench.browser_local_file_notice'),
+      })
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) {
+        nextUnlisten()
+        return
+      }
+      unlisten = nextUnlisten
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [t])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserCloseRequests(event => {
+      if (!activeRef.current || event.label !== currentLabelRef.current) return
+      nativeBrowserOpenRef.current = false
+      nativeLabelRef.current = null
+      adoptedDownloadOwnerLabelRef.current = null
+      currentUrlRef.current = null
+      activePageUrlRef.current = null
+      annotationModeRef.current = false
+      pageStateRequestGenerationRef.current += 1
+      annotationRequestGenerationRef.current += 1
+      setCurrentUrl(null)
+      setPageUrl(null)
+      setAddress('')
+      setStatus('ready')
+      setError(null)
+      setInvalidTlsCertificate(null)
+      setAnnotationMode(false)
+      setAnnotations([])
+      setDownloads([])
+      setDownloadsOpen(false)
+      setLocalFilePreviewToast(null)
+      setClearDataNotice(null)
+      setClearingDataKind(null)
+      setAgentState(null)
+      onTitleChange?.(null)
+      onFaviconChange?.(null)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser close requests:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [onFaviconChange, onTitleChange])
+
+  useEffect(() => {
     if (!active || !nativeLabelRef.current) return
     reconcileDownloadSnapshot(nativeLabelRef.current)
   }, [active, reconcileDownloadSnapshot])
@@ -867,6 +986,38 @@ export function WorkspaceBrowserPanel({
     },
     [onFaviconChange, onTitleChange]
   )
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+      if (!activeRef.current || pageState.nativeLabel !== nativeLabelRef.current) return
+      setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+      const nextUrl = pageState.url || currentUrlRef.current
+      updatePageUrl(nextUrl)
+      if (nextUrl) {
+        onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
+        onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
+      }
+      setStatus('ready')
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser page state changes:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
@@ -1170,7 +1321,9 @@ export function WorkspaceBrowserPanel({
 
         const pageState = await openEmbeddedBrowser(currentUrl, bounds, label)
         if (disposed) {
-          await closeEmbeddedBrowser(label).catch(() => undefined)
+          if (!mountedRef.current || !activeRef.current || currentLabelRef.current !== label) {
+            await closeEmbeddedBrowser(label).catch(() => undefined)
+          }
           return
         }
         adoptNativeLabel(pageState.nativeLabel, label)
@@ -1184,6 +1337,25 @@ export function WorkspaceBrowserPanel({
         console.error('Failed to open embedded browser:', error)
         if (!disposed) {
           if (readyTimer !== null) window.clearTimeout(readyTimer)
+          const recoveryDelays = [0, 120, 300, 600]
+          for (const delay of recoveryDelays) {
+            if (delay > 0) {
+              await new Promise<void>(resolve => window.setTimeout(resolve, delay))
+            }
+            try {
+              const pageState = await readEmbeddedBrowserPageState(label)
+              if (disposed) return
+              adoptNativeLabel(pageState.nativeLabel, label)
+              setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
+              nativeBrowserOpenRef.current = true
+              updatePageUrl(pageState.url || currentUrl)
+              schedulePostOpenBoundsSync(active)
+              setStatus('ready')
+              return
+            } catch {
+              // No existing browser state to recover yet.
+            }
+          }
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
         }
@@ -1554,9 +1726,18 @@ export function WorkspaceBrowserPanel({
 
   const reloadCurrentUrl = useCallback(
     (url: string) => {
-      if (!embeddedBrowserAvailable) {
+      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
+        setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+        return
+      }
+
+      if (!nativeBrowserOpenRef.current) {
+        setStatus('loading')
+        setError(null)
+        setCurrentUrl(url)
+        setBrowserOpenAttempt(attempt => attempt + 1)
         return
       }
 
@@ -1584,6 +1765,7 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
+      setLocalFilePreviewToast(null)
       setInvalidTlsCertificate(certificate =>
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
       )
@@ -1605,12 +1787,14 @@ export function WorkspaceBrowserPanel({
         setStatus('loading')
         void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
           setCurrentUrl(nextUrl)
+          track('browser_navigation_completed', { runtime: 'embedded' })
         })
         return
       }
 
       setCurrentUrl(nextUrl)
       setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+      track('browser_navigation_completed', { runtime: 'fallback' })
     },
     [
       activePageUrl,
@@ -1635,6 +1819,9 @@ export function WorkspaceBrowserPanel({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    addressEditingRef.current = false
+    const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
+    urlInput?.blur()
     openBrowserUrl(address)
   }
 
@@ -1647,6 +1834,39 @@ export function WorkspaceBrowserPanel({
     if (!activePageUrl || internalDesktopPage) return
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
+
+  const clearBrowserData = useCallback(
+    async (kind: EmbeddedBrowserDataKind) => {
+      if (clearingDataKind) return
+      setClearingDataKind(kind)
+      setClearDataNotice({
+        id: Date.now(),
+        message: t('workbench.browser_clear_started'),
+        tone: 'success',
+      })
+      await new Promise<void>(resolve =>
+        window.setTimeout(resolve, BROWSER_CLEAR_STARTED_NOTICE_MIN_MS)
+      )
+      try {
+        await clearEmbeddedBrowserData([kind])
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_completed'),
+          tone: 'success',
+        })
+      } catch (error) {
+        console.error('Failed to clear embedded browser data:', error)
+        setClearDataNotice({
+          id: Date.now(),
+          message: t('workbench.browser_clear_failed'),
+          tone: 'error',
+        })
+      } finally {
+        setClearingDataKind(null)
+      }
+    },
+    [clearingDataKind, t]
+  )
 
   const setAgentControlPaused = useCallback(
     (paused: boolean) => {
@@ -1803,6 +2023,7 @@ export function WorkspaceBrowserPanel({
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
             <input
+              name="url"
               data-testid="workspace-browser-url-input"
               value={address}
               onChange={event => setAddress(event.target.value)}
@@ -1848,6 +2069,36 @@ export function WorkspaceBrowserPanel({
           >
             <ExternalLink className="h-4 w-4" />
           </BrowserToolbarButton>
+          {embeddedBrowserAvailable ? (
+            <ActionMenu
+              ariaLabel={t('workbench.browser_more_actions')}
+              testId="workspace-browser-more-button"
+              icon={EllipsisVertical}
+              placement="bottom-end"
+              triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              items={[
+                {
+                  label: t('workbench.browser_clear_data'),
+                  testId: 'workspace-browser-clear-data-item',
+                  disabled: Boolean(clearingDataKind),
+                  children: [
+                    {
+                      label: t('workbench.browser_clear_cookies'),
+                      testId: 'workspace-browser-clear-cookies-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData('cookies'),
+                    },
+                    {
+                      label: t('workbench.browser_clear_cache'),
+                      testId: 'workspace-browser-clear-cache-item',
+                      disabled: Boolean(clearingDataKind),
+                      onSelect: () => clearBrowserData('cache'),
+                    },
+                  ],
+                },
+              ]}
+            />
+          ) : null}
         </div>
       )}
       {shouldShowAgentState(agentState) ? (
@@ -2019,6 +2270,18 @@ export function WorkspaceBrowserPanel({
           )}
         </div>
       ) : null}
+      <TransientNotice
+        key={localFilePreviewToast?.id ?? 'workspace-browser-local-file-toast'}
+        message={localFilePreviewToast?.message ?? null}
+        tone="error"
+        onClear={() => setLocalFilePreviewToast(null)}
+      />
+      <TransientNotice
+        key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
+        message={clearDataNotice?.message ?? null}
+        tone={clearDataNotice?.tone}
+        onClear={() => setClearDataNotice(null)}
+      />
       {invalidTlsCertificate ? (
         <div
           data-testid="workspace-browser-invalid-tls-warning"
