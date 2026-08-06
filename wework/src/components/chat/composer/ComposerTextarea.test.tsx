@@ -299,6 +299,56 @@ describe('ComposerTextarea', () => {
     expect(onChange).toHaveBeenLastCalledWith(`${GMAIL_REFERENCE} `)
   })
 
+  test('does not confirm via Tab during IME composition', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={nextValue => {
+            onChange(nextValue)
+            setValue(nextValue)
+          }}
+          onSubmit={onSubmit}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+          onOpenSkillFile={vi.fn()}
+          onListLocalSkills={async () => [GMAIL_SKILL]}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '$gmail'
+      editor.focus()
+    })
+    await screen.findByTestId('local-skill-option-gmail')
+
+    expect(
+      fireEvent.keyDown(editor, {
+        key: 'Tab',
+        code: 'Tab',
+        keyCode: 229,
+        which: 229,
+        charCode: 229,
+      })
+    ).toBe(true)
+    expect(editor.value).toBe('$gmail')
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByTestId('local-skill-option-gmail')).toBeInTheDocument()
+    expect(onChange).not.toHaveBeenCalledWith(`${GMAIL_REFERENCE} `)
+  })
+
   test('consumes the Tab that confirms a slash command from the / menu', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onSetGoal = vi.fn()
