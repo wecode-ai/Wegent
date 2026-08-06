@@ -125,6 +125,7 @@ class ConnectorAppWrite(BaseModel):
     transport: Transport = "streamable-http"
     mcp_url: str = Field(min_length=1, max_length=2048)
     provider_headers: dict[str, str] = Field(default_factory=dict)
+    forward_user_context_headers: bool = False
     tool_allowlist: list[str] = Field(default_factory=list)
     http_tools: list[ConnectorHttpToolDefinition] = Field(
         default_factory=list, max_length=100
@@ -163,6 +164,7 @@ class ConnectorAppUpdate(BaseModel):
     mcp_url: str | None = Field(default=None, min_length=1, max_length=2048)
     provider_headers: dict[str, str] | None = None
     clear_provider_headers: bool = False
+    forward_user_context_headers: bool | None = None
     tool_allowlist: list[str] | None = None
     http_tools: list[ConnectorHttpToolDefinition] | None = Field(
         default=None, max_length=100
@@ -184,6 +186,7 @@ class ConnectorAppUpdate(BaseModel):
             "auth_type",
             "transport",
             "mcp_url",
+            "forward_user_context_headers",
             "tool_allowlist",
             "http_tools",
         }
@@ -211,6 +214,7 @@ class ConnectorAppAdminResponse(BaseModel):
     mcp_url: str
     provider_header_names: list[str]
     provider_headers_configured: bool
+    forward_user_context_headers: bool
     tool_allowlist: list[str]
     http_tools: list[ConnectorHttpToolDefinition]
     connection_count: int = 0
@@ -223,6 +227,20 @@ class ConnectorConnectionResponse(BaseModel):
     external_account_name: str | None = None
     granted_scopes: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
+
+
+class ConnectorOAuthSessionCreateResponse(BaseModel):
+    session_id: str
+    poll_token: str
+    authorize_url: str
+    expires_at: int
+    poll_interval_seconds: int
+
+
+class ConnectorOAuthSessionPollResponse(BaseModel):
+    status: Literal["pending", "success", "declined", "failed"]
+    connection: ConnectorConnectionResponse | None = None
+    error: str | None = None
 
 
 class ConnectorAppResponse(BaseModel):

@@ -19,7 +19,11 @@ use super::{CapabilitySyncError, PluginSyncSpec, DEFAULT_PLUGIN_MARKETPLACE, MAN
 const CLAUDE_PLUGIN_MANIFEST_PATH: &str = ".claude-plugin/plugin.json";
 const CODEX_PLUGIN_MANIFEST_PATH: &str = ".codex-plugin/plugin.json";
 const PLUGIN_MANIFEST_PATHS: [&str; 2] = [CODEX_PLUGIN_MANIFEST_PATH, CLAUDE_PLUGIN_MANIFEST_PATH];
-const CODEX_MANIFEST_FIELDS: [&str; 10] = [
+const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
+const MAX_EXPANDED_PACKAGE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+const UNIX_FILE_TYPE_MASK: u32 = 0o170_000;
+const UNIX_MODE_SYMLINK: u32 = 0o120_000;
+const CODEX_MANIFEST_FIELDS: [&str; 11] = [
     "name",
     "version",
     "description",
@@ -30,9 +34,10 @@ const CODEX_MANIFEST_FIELDS: [&str; 10] = [
     "keywords",
     "skills",
     "mcpServers",
+    "connectors",
 ];
 // Claude Code supports displayName only from 2.1.143; Wegent still supports 2.1.140.
-const CLAUDE_MANIFEST_FIELDS: [&str; 21] = [
+const CLAUDE_MANIFEST_FIELDS: [&str; 22] = [
     "name",
     "version",
     "description",
@@ -54,6 +59,7 @@ const CLAUDE_MANIFEST_FIELDS: [&str; 21] = [
     "channels",
     "themes",
     "monitors",
+    "connectors",
 ];
 
 pub(super) fn extract_plugin_zip(
@@ -61,6 +67,35 @@ pub(super) fn extract_plugin_zip(
     install_path: &Path,
 ) -> Result<(), CapabilitySyncError> {
     let mut archive = ZipArchive::new(Cursor::new(package))?;
+    if archive.len() > MAX_PACKAGE_ENTRY_COUNT {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains too many files",
+        ));
+    }
+
+    let mut normalized_paths = BTreeMap::<String, ()>::new();
+    let mut expanded_size = 0_u64;
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        validate_plugin_zip_entry(&file)?;
+        if file.is_dir() {
+            continue;
+        }
+        expanded_size = expanded_size.saturating_add(file.size());
+        if expanded_size > MAX_EXPANDED_PACKAGE_SIZE_BYTES {
+            return Err(CapabilitySyncError::invalid_payload(
+                "Expanded plugin package is too large",
+            ));
+        }
+        let normalized = normalize_zip_entry_path(file.name())?;
+        if normalized_paths.insert(normalized, ()).is_some() {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Duplicate path in plugin ZIP: {}",
+                file.name()
+            )));
+        }
+    }
+
     let mut entries = Vec::new();
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
@@ -68,13 +103,16 @@ pub(super) fn extract_plugin_zip(
             continue;
         }
         let Some(path) = file.enclosed_name().map(Path::to_path_buf) else {
-            continue;
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {}",
+                file.name()
+            )));
         };
         if is_macos_metadata_path(&path) {
             continue;
         }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.read_to_end(&mut bytes).map_err(map_zip_read_error)?;
         entries.push((path, bytes));
     }
     let manifest_prefix = plugin_manifest_prefix(&entries).ok_or_else(|| {
@@ -116,6 +154,48 @@ pub(super) fn extract_plugin_zip(
     }
     fs::rename(&temp_path, install_path)?;
     Ok(())
+}
+
+fn validate_plugin_zip_entry(file: &zip::read::ZipFile<'_>) -> Result<(), CapabilitySyncError> {
+    if let Some(mode) = file.unix_mode() {
+        if mode & UNIX_FILE_TYPE_MASK == UNIX_MODE_SYMLINK {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Symbolic links are not allowed: {}",
+                file.name()
+            )));
+        }
+    }
+    normalize_zip_entry_path(file.name())?;
+    Ok(())
+}
+
+fn normalize_zip_entry_path(name: &str) -> Result<String, CapabilitySyncError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(CapabilitySyncError::invalid_payload(
+            "Plugin package contains an empty path",
+        ));
+    }
+    if trimmed.starts_with('/') || trimmed.contains('\\') {
+        return Err(CapabilitySyncError::invalid_payload(format!(
+            "Unsafe path in plugin ZIP: {name}"
+        )));
+    }
+    for component in Path::new(trimmed).components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(CapabilitySyncError::invalid_payload(format!(
+                "Unsafe path in plugin ZIP: {name}"
+            )));
+        }
+    }
+    Ok(trimmed.trim_end_matches('/').to_owned())
+}
+
+fn map_zip_read_error(error: io::Error) -> CapabilitySyncError {
+    if error.to_string().to_ascii_lowercase().contains("encrypted") {
+        return CapabilitySyncError::invalid_payload("Encrypted files are not allowed");
+    }
+    CapabilitySyncError::Io(error)
 }
 
 pub(super) fn has_plugin_manifest(plugin_path: &Path) -> bool {
@@ -400,13 +480,17 @@ pub(super) fn upsert_installed_plugin(
     write_json(&path, &installed)
 }
 
-pub(super) fn enable_plugin(plugins_dir: &Path, key: &str) -> Result<(), CapabilitySyncError> {
+pub(super) fn set_plugin_enabled(
+    plugins_dir: &Path,
+    key: &str,
+    enabled: bool,
+) -> Result<(), CapabilitySyncError> {
     let settings_path = plugins_dir
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("settings.json");
     let mut settings = read_json_or_default(&settings_path, || json!({}))?;
-    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(true));
+    ensure_object_field(&mut settings, "enabledPlugins").insert(key.to_owned(), json!(enabled));
     write_json(&settings_path, &settings)
 }
 
@@ -424,6 +508,7 @@ pub(super) fn plugin_manifest_entry(
         entry.insert("installed_plugin_id".to_owned(), json!(id));
     }
     entry.insert("marketplace".to_owned(), json!(spec.marketplace));
+    entry.insert("enabled".to_owned(), json!(spec.enabled));
     entry.insert("version".to_owned(), json!(spec.version));
     if let Some(checksum) = &spec.checksum {
         entry.insert("checksum".to_owned(), json!(checksum));
@@ -540,6 +625,22 @@ pub(super) fn ensure_root_object(value: &mut Value) -> &mut Map<String, Value> {
         *value = Value::Object(Map::new());
     }
     value.as_object_mut().expect("manifest object")
+}
+
+pub(super) fn upsert_marketplace_plugin(
+    marketplace: &mut Value,
+    plugin_name: &str,
+    plugin: Value,
+) -> Result<(), CapabilitySyncError> {
+    let plugins = ensure_root_object(marketplace)
+        .entry("plugins")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let plugins = plugins.as_array_mut().ok_or_else(|| {
+        CapabilitySyncError::invalid_payload("Marketplace plugins must be an array")
+    })?;
+    plugins.retain(|candidate| candidate.get("name").and_then(Value::as_str) != Some(plugin_name));
+    plugins.push(plugin);
+    Ok(())
 }
 
 pub(super) fn ensure_object_field<'a>(
@@ -692,7 +793,7 @@ fn symlink_dir(target: &Path, link: &Path) -> io::Result<()> {
     std::os::windows::fs::symlink_dir(target, link)
 }
 
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
+pub(super) fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), CapabilitySyncError> {
     fs::create_dir_all(target)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -725,7 +826,7 @@ pub(super) fn remove_existing_path(path: &Path) -> Result<(), CapabilitySyncErro
     }
 }
 
-fn sibling_temp_path(path: &Path) -> PathBuf {
+pub(super) fn sibling_temp_path(path: &Path) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
@@ -758,4 +859,36 @@ pub(super) fn now_rfc3339_like() -> String {
         .unwrap_or_default()
         .as_millis();
     format!("{millis}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dual_manifest_conversion_preserves_connector_auth_contracts() {
+        let connectors = json!([{
+            "slug": "gitlab-intra",
+            "authPolicy": "on_install",
+            "localAuth": {
+                "kind": "browser_oauth",
+                "health": ["scripts/local-auth.sh", "health"],
+                "start": ["scripts/local-auth.sh", "login"]
+            }
+        }]);
+        let manifest = json!({
+            "name": "gitlab-intra",
+            "version": "1.0.0",
+            "connectors": connectors,
+        });
+
+        assert_eq!(
+            convert_plugin_manifest(&manifest, false)["connectors"],
+            manifest["connectors"]
+        );
+        assert_eq!(
+            convert_plugin_manifest(&manifest, true)["connectors"],
+            manifest["connectors"]
+        );
+    }
 }

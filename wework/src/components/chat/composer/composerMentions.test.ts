@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import {
   composerSkillFilePath,
+  createComposerMentionElement,
   findComposerMentionDeletionRange,
   parseComposerMentions,
+  registerComposerMentionIcon,
   replaceComposerMentionTrigger,
 } from './composerMentions'
 
@@ -86,5 +88,44 @@ describe('cloud references', () => {
     expect(
       findComposerMentionDeletionRange(reference, reference.length, reference.length, 'Backspace')
     ).toEqual({ start: 0, end: reference.length, cursor: 0 })
+  })
+})
+
+describe('composer mention icons', () => {
+  test('uses a registered plugin brand icon', () => {
+    const reference = '[$GitHub](plugin://github@openai-bundled)'
+    registerComposerMentionIcon(reference, 'https://example.com/github.png')
+
+    const element = createComposerMentionElement({
+      name: 'GitHub',
+      label: 'GitHub',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toHaveAttribute('src', 'https://example.com/github.png')
+  })
+
+  test('falls back to bundled plugin brand icons for plugin mentions', () => {
+    const reference = '[$superpowers](plugin://superpowers@openai-official)'
+    const element = createComposerMentionElement({
+      name: 'superpowers',
+      label: 'Superpowers',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toHaveAttribute('src', '/plugin-icons/wework.svg')
+    expect(element.querySelector('svg.composer-mention-icon')).toBeNull()
+  })
+
+  test('keeps the generic cube icon for skill mentions without a brand logo', () => {
+    const reference = '[$gmail](/tmp/gmail/SKILL.md)'
+    const element = createComposerMentionElement({
+      name: 'gmail',
+      label: 'Gmail',
+      reference,
+    })
+
+    expect(element.querySelector('img')).toBeNull()
+    expect(element.querySelector('svg.composer-mention-icon')).not.toBeNull()
   })
 })

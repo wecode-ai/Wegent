@@ -61,6 +61,8 @@ interface CompactChatComposerProps {
   submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
+  inputTestId?: string
+  submitButtonTestId?: string
   attachments?: Attachment[]
   codeComments?: CodeCommentContext[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
@@ -107,6 +109,8 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
       submitDisabled = false,
       disabledReason,
       placeholder,
+      inputTestId,
+      submitButtonTestId = 'send-message-button',
       attachments = [],
       codeComments = [],
       uploadingFiles = new Map(),
@@ -346,6 +350,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
           >
             <ComposerTextarea
               ref={composerRef}
+              testId={inputTestId}
               textareaRef={textareaRef}
               value={value}
               onChange={handleComposerChange}
@@ -406,7 +411,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
               <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-[#242424] text-white">
                 <button
                   type="submit"
-                  data-testid="send-message-button"
+                  data-testid={submitButtonTestId}
                   className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-[#333]"
                   aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
                 >
@@ -463,7 +468,7 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
             ) : (
               <button
                 type="submit"
-                data-testid="send-message-button"
+                data-testid={submitButtonTestId}
                 disabled={!canSend}
                 className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
                 aria-label={t('workbench.send_message', '发送消息')}

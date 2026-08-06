@@ -18,7 +18,7 @@ test('serves Sites upstream project API mock responses', async ({ request }) => 
   const searchBody = await searchResponse.json()
   const projectId = searchBody.items[0].id
   const miniProgramResponse = await request.get(
-    `${sitesUpstreamMockUrl}/api/v1/projects/search?username=alice&limit=20&app_type=mini_program`,
+    `${sitesUpstreamMockUrl}/api/v1/projects/search?username=alice&limit=20&app_type=miniapp`,
     {
       headers: {
         Authorization: 'Bearer e2e-sites-token',
@@ -55,7 +55,7 @@ test('serves Sites upstream project API mock responses', async ({ request }) => 
   expect(miniProgramBody.items).toEqual([
     expect.objectContaining({
       id: 'prj_e2e_mini',
-      app_type: 'mini_program',
+      app_type: 'miniapp',
       app_id: 'wx-e2e-mini',
     }),
   ])

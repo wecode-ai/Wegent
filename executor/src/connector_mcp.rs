@@ -19,6 +19,7 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 use crate::connector_gateway::load_connector_gateway_config;
 
 const WEGENT_SITES_SAVE_SOURCE_REVISION: &str = "wegent-sites__save_source_revision";
+const WEGENT_SITES_SUBMIT_MINIAPP_VERSION: &str = "wegent-sites__submit_miniapp_version";
 const MAX_SOURCE_ARCHIVE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_SOURCE_FILES: usize = 20_000;
@@ -150,12 +151,8 @@ fn mcp_tools(value: &Value) -> Vec<Value> {
 }
 
 fn mcp_tool_input_schema(tool: &Value) -> Value {
-    if tool
-        .get("name")
-        .and_then(Value::as_str)
-        .is_some_and(|name| name == WEGENT_SITES_SAVE_SOURCE_REVISION)
-    {
-        return json!({
+    match tool.get("name").and_then(Value::as_str) {
+        Some(WEGENT_SITES_SAVE_SOURCE_REVISION) => json!({
             "type": "object",
             "additionalProperties": false,
             "properties": {
@@ -184,27 +181,91 @@ fn mcp_tool_input_schema(tool: &Value) -> Value {
                 "source_directory",
                 "source_sha256"
             ]
-        });
+        }),
+        Some(WEGENT_SITES_SUBMIT_MINIAPP_VERSION) => json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 128
+                },
+                "project_url": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "source_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "source_archive_sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "size_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 104857600
+                },
+                "source_archive_path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Absolute path to a locally packaged deterministic miniapp source archive."
+                }
+            },
+            "required": [
+                "project_id",
+                "idempotency_key",
+                "project_url",
+                "label",
+                "source_sha256",
+                "source_archive_sha256",
+                "size_bytes",
+                "source_archive_path"
+            ]
+        }),
+        _ => tool.get("input_schema").cloned().unwrap_or_else(|| {
+            json!({
+                "type": "object", "properties": {}
+            })
+        }),
     }
-    tool.get("input_schema").cloned().unwrap_or_else(|| {
-        json!({
-            "type": "object", "properties": {}
-        })
-    })
 }
 
 fn normalize_tool_arguments(name: &str, arguments: Value) -> Result<Value, String> {
-    if name != WEGENT_SITES_SAVE_SOURCE_REVISION {
-        return Ok(arguments);
+    match name {
+        WEGENT_SITES_SAVE_SOURCE_REVISION => {
+            let Some(source_directory) = arguments
+                .get("source_directory")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return Ok(arguments);
+            };
+            prepare_wegent_sites_source_revision(arguments, &source_directory)
+        }
+        WEGENT_SITES_SUBMIT_MINIAPP_VERSION => {
+            let Some(source_archive_path) = arguments
+                .get("source_archive_path")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return Ok(arguments);
+            };
+            prepare_wegent_sites_miniapp_version(arguments, &source_archive_path)
+        }
+        _ => Ok(arguments),
     }
-    let Some(source_directory) = arguments
-        .get("source_directory")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    else {
-        return Ok(arguments);
-    };
-    prepare_wegent_sites_source_revision(arguments, &source_directory)
 }
 
 fn prepare_wegent_sites_source_revision(
@@ -269,6 +330,59 @@ fn prepare_wegent_sites_source_revision(
         Value::String(archive_digest),
     );
     object.insert("size_bytes".to_owned(), json!(archive.len()));
+    object.insert(
+        "source_archive_base64".to_owned(),
+        Value::String(general_purpose::STANDARD.encode(archive)),
+    );
+    Ok(arguments)
+}
+
+fn prepare_wegent_sites_miniapp_version(
+    mut arguments: Value,
+    source_archive_path: &str,
+) -> Result<Value, String> {
+    let archive_path = PathBuf::from(source_archive_path);
+    if !archive_path.is_absolute() {
+        return Err("source_archive_path must be an absolute path.".to_owned());
+    }
+    let archive_path = archive_path
+        .canonicalize()
+        .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
+    let mut archive_file = fs::File::open(&archive_path)
+        .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
+    let metadata = archive_file
+        .metadata()
+        .map_err(|_| "source_archive_path does not exist or is not a regular file.".to_owned())?;
+    if !metadata.is_file() {
+        return Err("source_archive_path does not exist or is not a regular file.".to_owned());
+    }
+
+    let size_bytes = arguments
+        .get("size_bytes")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "size_bytes is required.".to_owned())?;
+
+    let expected_archive_digest = string_argument(&arguments, "source_archive_sha256")?;
+    let mut archive = Vec::new();
+    Read::by_ref(&mut archive_file)
+        .take((MAX_SOURCE_ARCHIVE_BYTES + 1) as u64)
+        .read_to_end(&mut archive)
+        .map_err(|error| format!("Failed to read source_archive_path: {error}"))?;
+    if archive.len() > MAX_SOURCE_ARCHIVE_BYTES {
+        return Err(source_archive_size_error());
+    }
+    if size_bytes != archive.len() as u64 {
+        return Err("source_archive_path size does not match size_bytes.".to_owned());
+    }
+    let actual_archive_digest = sha256_digest(&archive);
+    if actual_archive_digest != expected_archive_digest {
+        return Err("source_archive_path digest does not match source_archive_sha256.".to_owned());
+    }
+
+    let object = arguments
+        .as_object_mut()
+        .ok_or_else(|| "Tool arguments must be an object.".to_owned())?;
+    object.remove("source_archive_path");
     object.insert(
         "source_archive_base64".to_owned(),
         Value::String(general_purpose::STANDARD.encode(archive)),
@@ -533,6 +647,41 @@ mod tests {
     }
 
     #[test]
+    fn exposes_local_source_archive_path_for_wegent_sites_miniapp_versions() {
+        let tools = mcp_tools(&json!({ "tools": [{
+            "name": WEGENT_SITES_SUBMIT_MINIAPP_VERSION,
+            "description": "Submit miniapp version",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "source_archive_base64": { "type": "string" }
+                },
+                "required": ["source_archive_base64"]
+            }
+        }] }));
+
+        assert_eq!(
+            tools[0]["inputSchema"]["required"],
+            json!([
+                "project_id",
+                "idempotency_key",
+                "project_url",
+                "label",
+                "source_sha256",
+                "source_archive_sha256",
+                "size_bytes",
+                "source_archive_path"
+            ])
+        );
+        assert!(tools[0]["inputSchema"]["properties"]
+            .get("source_archive_path")
+            .is_some());
+        assert!(tools[0]["inputSchema"]["properties"]
+            .get("source_archive_base64")
+            .is_none());
+    }
+
+    #[test]
     fn packages_wegent_sites_source_revision_before_forwarding() {
         let temp = tempfile::tempdir().expect("temporary source directory should exist");
         let root = temp.path();
@@ -580,6 +729,90 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("sha256:"));
+    }
+
+    #[test]
+    fn reads_wegent_sites_miniapp_archive_path_before_forwarding() {
+        let temp = tempfile::tempdir().expect("temporary source directory should exist");
+        let archive_path = temp.path().join("miniapp-source.zip");
+        let archive = b"deterministic miniapp archive";
+        fs::write(&archive_path, archive).expect("source archive should be written");
+        let archive_digest = sha256_digest(archive);
+
+        let normalized = normalize_tool_arguments(
+            WEGENT_SITES_SUBMIT_MINIAPP_VERSION,
+            json!({
+                "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+                "idempotency_key": "miniapp-submit-123456",
+                "project_url": "https://example.com/miniapp?id=123",
+                "label": "测试体验码 sessionId=abc",
+                "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "source_archive_sha256": archive_digest,
+                "size_bytes": archive.len(),
+                "source_archive_path": archive_path.display().to_string()
+            }),
+        )
+        .expect("miniapp version arguments should normalize");
+
+        assert!(normalized.get("source_archive_path").is_none());
+        assert_eq!(
+            normalized["source_archive_base64"],
+            json!(general_purpose::STANDARD.encode(archive))
+        );
+        assert_eq!(normalized["size_bytes"], json!(archive.len()));
+    }
+
+    #[test]
+    fn rejects_wegent_sites_miniapp_archive_path_size_mismatch() {
+        let temp = tempfile::tempdir().expect("temporary source directory should exist");
+        let archive_path = temp.path().join("miniapp-source.zip");
+        let archive = b"deterministic miniapp archive";
+        fs::write(&archive_path, archive).expect("source archive should be written");
+
+        let error = normalize_tool_arguments(
+            WEGENT_SITES_SUBMIT_MINIAPP_VERSION,
+            json!({
+                "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+                "idempotency_key": "miniapp-submit-123456",
+                "project_url": "https://example.com/miniapp?id=123",
+                "label": "测试体验码 sessionId=abc",
+                "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "source_archive_sha256": sha256_digest(archive),
+                "size_bytes": archive.len() + 1,
+                "source_archive_path": archive_path.display().to_string()
+            }),
+        )
+        .expect_err("size mismatch should be rejected");
+
+        assert_eq!(error, "source_archive_path size does not match size_bytes.");
+    }
+
+    #[test]
+    fn rejects_wegent_sites_miniapp_archive_path_digest_mismatch() {
+        let temp = tempfile::tempdir().expect("temporary source directory should exist");
+        let archive_path = temp.path().join("miniapp-source.zip");
+        let archive = b"deterministic miniapp archive";
+        fs::write(&archive_path, archive).expect("source archive should be written");
+
+        let error = normalize_tool_arguments(
+            WEGENT_SITES_SUBMIT_MINIAPP_VERSION,
+            json!({
+                "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+                "idempotency_key": "miniapp-submit-123456",
+                "project_url": "https://example.com/miniapp?id=123",
+                "label": "测试体验码 sessionId=abc",
+                "source_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "source_archive_sha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "size_bytes": archive.len(),
+                "source_archive_path": archive_path.display().to_string()
+            }),
+        )
+        .expect_err("digest mismatch should be rejected");
+
+        assert_eq!(
+            error,
+            "source_archive_path digest does not match source_archive_sha256."
+        );
     }
 
     #[test]

@@ -389,7 +389,9 @@ export function useWorkbenchRuntimeMessaging({
     (
       message: string,
       sourceAttachments?: Attachment[],
-      projectOverride?: ProjectWithTasks | null
+      projectOverride?: ProjectWithTasks | null,
+      includeSelectedSkills = !isOptionsLocked,
+      selectedSkillsOverride?: SkillRef[]
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
       const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
@@ -455,8 +457,12 @@ export function useWorkbenchRuntimeMessaging({
         payload.model_options = executionModel.modelOptions
       }
 
-      if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
-        payload.additional_skills = skillSelection.selectedSkills
+      const selectedSkills = selectedSkillsOverride ?? skillSelection.selectedSkills
+      if (
+        (selectedSkillsOverride !== undefined || includeSelectedSkills) &&
+        selectedSkills.length > 0
+      ) {
+        payload.additional_skills = selectedSkills
       }
 
       const payloadAttachments = sourceAttachments ?? attachmentSelection.attachments
@@ -513,6 +519,7 @@ export function useWorkbenchRuntimeMessaging({
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
         sideSource?: RuntimeTaskAddress | null
+        preserveAttachments?: boolean
       }
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
@@ -745,7 +752,9 @@ export function useWorkbenchRuntimeMessaging({
           }),
         })
       }
-      attachmentSelection.resetAttachments()
+      if (!options?.preserveAttachments) {
+        attachmentSelection.resetAttachments()
+      }
 
       try {
         const response = await executorClient.runtime.createRuntimeTask(createRequest)
@@ -916,7 +925,7 @@ export function useWorkbenchRuntimeMessaging({
         runtimeSelectedModelOptions
       )
 
-      if (state.currentRuntimeTask) {
+      if (state.currentRuntimeTask && !options?.forceNewTask) {
         if (hasCodeComments) {
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
@@ -948,7 +957,13 @@ export function useWorkbenchRuntimeMessaging({
         return sent
       }
 
-      const prepared = buildSendPayload(payloadMessage)
+      const prepared = buildSendPayload(
+        payloadMessage,
+        undefined,
+        undefined,
+        options?.forceNewTask || !isOptionsLocked,
+        options?.additionalSkills
+      )
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',
@@ -1028,6 +1043,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
+      isOptionsLocked,
       lifecycleStore,
       modelSelection,
       reportSendBlocked,
@@ -1094,7 +1110,7 @@ export function useWorkbenchRuntimeMessaging({
     [dispatch, modelSelection, reportSendBlocked, sendRuntimePaneMessage, state.currentRuntimeTask]
   )
 
-  const createTemporaryRuntimeTask = useCallback(
+  const createEphemeralRuntimeTask = useCallback(
     async (
       input: string,
       options?: CreateTemporaryRuntimeTaskOptions
@@ -1104,11 +1120,6 @@ export function useWorkbenchRuntimeMessaging({
         reportSendBlocked('请输入内容后再发送', undefined, options)
         return false
       }
-      if (!options?.source || !runtimeThreadId(options.source)) {
-        reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
-        return false
-      }
-
       const prepared = buildSendPayload(message, options?.attachments, options?.project)
       if (!prepared) {
         reportSendBlocked(
@@ -1123,12 +1134,27 @@ export function useWorkbenchRuntimeMessaging({
         onError: options?.onError,
         onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
         ephemeral: true,
-        sideSource: options?.source,
+        sideSource: options?.source && runtimeThreadId(options.source) ? options.source : null,
         openInMainPane: false,
         refreshWorkListsOnResolve: false,
+        preserveAttachments: true,
       })
     },
     [buildSendPayload, reportSendBlocked, sendPreparedRuntimeMessage, state.defaultTeam]
+  )
+
+  const createTemporaryRuntimeTask = useCallback(
+    async (
+      input: string,
+      options?: CreateTemporaryRuntimeTaskOptions
+    ): Promise<RuntimeTaskAddress | false> => {
+      if (!options?.source || !runtimeThreadId(options.source)) {
+        reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
+        return false
+      }
+      return createEphemeralRuntimeTask(input, options)
+    },
+    [createEphemeralRuntimeTask, reportSendBlocked]
   )
 
   const createProjectRuntimeTask = useCallback(
@@ -1333,6 +1359,7 @@ export function useWorkbenchRuntimeMessaging({
     cancelRuntimePaneTask,
     sendCurrentInput,
     createTemporaryRuntimeTask,
+    createEphemeralRuntimeTask,
     createProjectRuntimeTask,
     retryFailedMessage,
     pauseCurrentResponse,

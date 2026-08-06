@@ -68,7 +68,11 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
-import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
+import {
+  composerPathReference,
+  composerSkillFilePath,
+  resolveComposerMentionBrandIconUrl,
+} from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 import {
@@ -1744,6 +1748,10 @@ function renderUserContent(
     const pathReference = composerPathReference(match[0])
     const mentionKind = codexMentionKind(href)
     const cloudKind = mentionKind === 'cloud' ? cloudReferenceKind(href) : undefined
+    const brandIconUrl =
+      mentionKind === 'plugin' || mentionKind === 'app'
+        ? resolveComposerMentionBrandIconUrl(href)
+        : null
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
       mentionKind === 'skill'
@@ -1789,6 +1797,13 @@ function renderUserContent(
           )
         ) : mentionKind === 'conversation' ? (
           <MessageCircle data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : brandIconUrl ? (
+          <img
+            data-testid={iconTestId}
+            src={brandIconUrl}
+            alt=""
+            className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover"
+          />
         ) : (
           <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         )}
@@ -2210,22 +2225,59 @@ function generatedImageAttachment(image: GeneratedImageArtifact, index: number):
 
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
-    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
+    if (block.type !== 'tool') return []
+    if (block.toolName === 'image_generation') {
+      const payload = block.renderPayload
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+      const imageBase64 = Reflect.get(payload, 'imageBase64')
+      if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+      const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+      return [
+        {
+          id: block.id,
+          src: imageBase64.startsWith('data:')
+            ? imageBase64
+            : `data:image/png;base64,${imageBase64}`,
+          alt:
+            typeof revisedPrompt === 'string' && revisedPrompt.trim()
+              ? revisedPrompt
+              : 'Generated image',
+        },
+      ]
+    }
+
+    if (block.toolName !== 'view_image') return []
     const payload = block.renderPayload
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
-    const imageBase64 = Reflect.get(payload, 'imageBase64')
-    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
-    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
-    return [
-      {
-        id: block.id,
-        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
-        alt:
-          typeof revisedPrompt === 'string' && revisedPrompt.trim()
-            ? revisedPrompt
-            : 'Generated image',
-      },
+    const toolInput =
+      typeof Reflect.get(block, 'toolInput') === 'object' && Reflect.get(block, 'toolInput')
+        ? (Reflect.get(block, 'toolInput') as Record<string, unknown>)
+        : null
+    const candidates: Array<unknown> = [
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'dataUrl') : null,
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'imageBase64') : null,
+      payload && typeof payload === 'object' ? Reflect.get(payload, 'src') : null,
+      toolInput?.dataUrl,
+      toolInput?.imageBase64,
+      toolInput?.path,
+      toolInput?.file_path,
+      toolInput?.image_path,
     ]
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string' || !candidate.trim()) continue
+      const src = candidate.startsWith('data:')
+        ? candidate
+        : candidate.startsWith('/') || candidate.includes('://')
+          ? candidate
+          : `data:image/png;base64,${candidate}`
+      return [
+        {
+          id: block.id,
+          src,
+          alt: 'Viewed image',
+        },
+      ]
+    }
+    return []
   })
 }
 

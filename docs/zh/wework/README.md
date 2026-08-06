@@ -26,4 +26,10 @@ Wework 是面向 AI 协作的桌面工作台。你可以直接打开本地项目
 - [设置与数据](./settings.md)
 - [故障排查](./troubleshooting.md)
 
+## 开发者文档
+
+- [插件市场开发指南](./developer-guide/wework-plugin-marketplace-dev.md)：开发插件、迁移开源插件、本地联调与发布路径
+- [插件市场 V2](./developer-guide/plugin-marketplace-v2.md)：云端控制面架构与运维
+- [Codex 插件运行时](./developer-guide/wework-codex-plugins.md)：本机安装与对话 mention
+
 Wework 默认使用本机工作区和本机运行时。连接 Wegent 后，同一个工作台还会显示云端模型、云设备和远程设备。
