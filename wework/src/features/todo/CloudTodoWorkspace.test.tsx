@@ -1106,7 +1106,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
     await userEvent.click(await screen.findByTestId('cloud-project-chat-agent-add'))
 
     await waitFor(() => expect(workbenchServices.projectChatAgentApi!.list).toHaveBeenCalled())
@@ -1165,7 +1165,7 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByTestId('cloud-project-manage-view'))
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
     const addButton = await screen.findByTestId('cloud-project-chat-agent-add')
 
     expect(await screen.findByTestId('cloud-project-chat-agent-agent-1')).toHaveTextContent(
@@ -1174,6 +1174,50 @@ describe('CloudTodoWorkspace', () => {
     expect(addButton).not.toBeDisabled()
     await userEvent.click(addButton)
     expect(workbenchServices.projectChatAgentApi!.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders project AI and the execution queue inside the automation tab', async () => {
+    const workbenchServices = services()
+    workbenchServices.projectChatAgentApi = {
+      list: vi.fn(async () => [
+        {
+          id: 'agent-1',
+          projectId: project.id,
+          name: '项目 AI',
+          runtime: 'codex',
+          model: null,
+          systemPrompt: '',
+          status: 'active',
+          visibility: 'creator_admin',
+          executionEnvironment: 'local',
+          executionMode: 'auto',
+          createdByUserId: 1,
+          createdByUserName: 'local',
+          version: 1,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]),
+      create: vi.fn(),
+      update: vi.fn(),
+    }
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    expect(screen.queryByTestId('cloud-project-queue-view')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+
+    expect(await screen.findByTestId('project-automation-view')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-project-chat-agents')).toBeInTheDocument()
+    expect(await screen.findByTestId('project-queue-view')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
   })
 
   it('opens the global search with Command+K and opens a task result', async () => {

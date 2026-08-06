@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, Clock3, Inbox, LoaderCircle, RefreshCw } from 'lucide-react'
+import { Bot, CheckCircle2, Clock3, Inbox, LoaderCircle, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { LocalLoopItemExecution } from '@/api/local/localDelivery'
@@ -6,6 +6,7 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import type { TFunction } from 'i18next'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -17,6 +18,25 @@ const QUEUE_STATES = new Set([
   'running',
   'failed',
 ])
+
+function queueStateLabel(state: string, t: TFunction): string {
+  switch (state) {
+    case 'pending_approval':
+      return t('workbench.queue_state_pending_approval')
+    case 'queued':
+      return t('workbench.queue_state_queued')
+    case 'claimed':
+      return t('workbench.queue_state_claimed', '已领取')
+    case 'running':
+      return t('workbench.queue_state_running')
+    case 'failed':
+      return t('workbench.queue_state_failed')
+    case 'assigned':
+      return t('workbench.queue_state_assigned')
+    default:
+      return state
+  }
+}
 
 function isInQueue(item: CloudLoopItem): boolean {
   if (item.status === 'completed' || item.status === 'in_review') return false
@@ -59,37 +79,31 @@ function QueueStateChip({ state }: { state?: string | null }) {
   const { t } = useTranslation('common')
   const config = {
     pending_approval: {
-      label: t('workbench.queue_state_pending_approval'),
       className: 'bg-amber-500/10 text-amber-700',
       Icon: Clock3,
     },
     queued: {
-      label: t('workbench.queue_state_queued'),
       className: 'bg-sky-500/10 text-sky-700',
       Icon: Inbox,
     },
     claimed: {
-      label: t('workbench.queue_state_claimed', '已领取'),
       className: 'bg-indigo-500/10 text-indigo-700',
       Icon: Inbox,
     },
     running: {
-      label: t('workbench.queue_state_running'),
       className: 'bg-violet-500/10 text-violet-700',
       Icon: LoaderCircle,
     },
     failed: {
-      label: t('workbench.queue_state_failed'),
       className: 'bg-red-500/10 text-red-700',
       Icon: RefreshCw,
     },
     assigned: {
-      label: t('workbench.queue_state_assigned'),
       className: 'bg-emerald-500/10 text-emerald-700',
       Icon: CheckCircle2,
     },
   } as const
-  const current = config[state as keyof typeof config]
+  const current = state ? config[state as keyof typeof config] : undefined
   if (!current) return null
   const Icon = current.Icon
   return (
@@ -100,7 +114,7 @@ function QueueStateChip({ state }: { state?: string | null }) {
       )}
     >
       <Icon className="h-3 w-3" />
-      {current.label}
+      {state ? queueStateLabel(state, t) : ''}
     </span>
   )
 }
@@ -143,6 +157,7 @@ export function ProjectQueueView({
   executionApi,
   currentUserId,
   onOpenTask,
+  embedded = false,
 }: {
   api: DeliveryApi
   project: CloudProject
@@ -150,6 +165,7 @@ export function ProjectQueueView({
   executionApi?: NonNullable<WorkbenchServices['localLoopItemExecutionApi']>
   currentUserId?: string | number
   onOpenTask?: (item: CloudLoopItem) => void
+  embedded?: boolean
 }) {
   const { t } = useTranslation('common')
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
@@ -157,6 +173,8 @@ export function ProjectQueueView({
   const [botQueues, setBotQueues] = useState<Record<string, CloudLoopItem[]>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [stateFilter, setStateFilter] = useState<string>('all')
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     let active = true
@@ -232,11 +250,77 @@ export function ProjectQueueView({
     return columns
   }, [agents, botQueues, currentUserId, myTasks, t])
 
+  const stateCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: 0 }
+    QUEUE_STATES.forEach(state => {
+      counts[state] = 0
+    })
+    for (const column of queueColumns) {
+      for (const item of column.items) {
+        counts.all += 1
+        const state = item.execution_state ?? ''
+        if (counts[state] !== undefined) counts[state] += 1
+      }
+    }
+    return counts
+  }, [queueColumns])
+
+  const trimmedQuery = query.trim().toLowerCase()
+  const isVisible = (item: CloudLoopItem) =>
+    (stateFilter === 'all' || item.execution_state === stateFilter) &&
+    (!trimmedQuery || item.title.toLowerCase().includes(trimmedQuery))
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-6 pb-6 pt-4" data-testid="project-queue-view">
-      <div className="mb-3 flex items-center gap-2">
-        <h2 className="text-heading-md font-semibold">{t('workbench.queue_title')}</h2>
-        <span className="text-xs text-text-muted">{t('workbench.queue_description')}</span>
+    <div
+      className={cn('flex min-h-0 flex-1 flex-col', embedded ? '' : 'px-6 pb-6 pt-4')}
+      data-testid="project-queue-view"
+    >
+      {!embedded ? (
+        <div className="mb-3 flex items-center gap-2">
+          <h2 className="text-heading-md font-semibold">{t('workbench.queue_title')}</h2>
+          <span className="text-xs text-text-muted">{t('workbench.queue_description')}</span>
+        </div>
+      ) : null}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-testid="project-queue-filter-all"
+          onClick={() => setStateFilter('all')}
+          className={cn(
+            'h-8 rounded-lg border px-3 text-xs',
+            stateFilter === 'all'
+              ? 'border-transparent bg-text-primary font-medium text-background'
+              : 'border-border bg-background text-text-secondary hover:bg-muted'
+          )}
+        >
+          {t('workbench.queue_filter_all')} {stateCounts.all}
+        </button>
+        {Array.from(QUEUE_STATES).map(state => (
+          <button
+            key={state}
+            type="button"
+            data-testid={`project-queue-filter-${state}`}
+            onClick={() => setStateFilter(state)}
+            className={cn(
+              'h-8 rounded-lg border px-3 text-xs',
+              stateFilter === state
+                ? 'border-transparent bg-text-primary font-medium text-background'
+                : 'border-border bg-background text-text-secondary hover:bg-muted'
+            )}
+          >
+            {queueStateLabel(state, t)} {stateCounts[state]}
+          </button>
+        ))}
+        <label className="ml-auto flex h-8 min-w-52 items-center gap-2 rounded-lg border border-border px-2.5 text-xs text-text-muted focus-within:border-focus">
+          <Search className="h-3.5 w-3.5" />
+          <input
+            data-testid="project-queue-search"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={t('workbench.queue_search_placeholder')}
+            className="min-w-0 flex-1 bg-transparent text-text-primary outline-none"
+          />
+        </label>
       </div>
       {error ? <p className="mb-3 text-sm text-red-600">{error}</p> : null}
       {loading ? (
@@ -245,8 +329,13 @@ export function ProjectQueueView({
           {t('workbench.project_chat_loading')}
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-          {queueColumns.length === 0 ? (
+        <div
+          className={cn(
+            'grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3',
+            embedded ? 'overflow-visible' : 'overflow-y-auto'
+          )}
+        >
+          {queueColumns.every(column => column.items.filter(isVisible).length === 0) ? (
             <div className="col-span-full flex h-40 items-center justify-center text-sm text-text-muted">
               {t('workbench.queue_empty')}
             </div>
@@ -273,12 +362,12 @@ export function ProjectQueueView({
                 </span>
               </header>
               <div className="flex-1 space-y-1 p-2">
-                {column.items.length === 0 ? (
+                {column.items.filter(isVisible).length === 0 ? (
                   <p className="py-6 text-center text-xs text-text-muted">
                     {t('workbench.queue_column_empty')}
                   </p>
                 ) : (
-                  column.items.map(item => (
+                  column.items.filter(isVisible).map(item => (
                     <button
                       key={item.id}
                       type="button"

@@ -6,9 +6,10 @@ use super::{
     aitable_provider::AITableProvider, credentials::mask_provider_config,
     issue_provider::IssueProvider, store::task_provider, BinaryInput, ChatAgent, ChatAgentCreate,
     ChatAgentUpdate, Delivery, DeliveryAsset, DeliveryCreate, DeliveryDetail, IssueComment,
-    LocalExecution, LocalExecutionClaim, LocalTaskStore, LoopItem, ProjectCreate,
-    ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress, TaskAttachment, TaskBinding,
-    TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError, TaskUpdate,
+    LocalComment, LocalCommentCreate, LocalExecution, LocalExecutionClaim, LocalTaskStore,
+    LoopItem, ProjectCreate, ProjectDescriptor, ProjectFile, ProjectUpdate, RuntimeTaskAddress,
+    TaskAttachment, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskRuntimeError,
+    TaskUpdate,
 };
 
 /// Routes project and task operations to the provider configured on each project.
@@ -585,6 +586,40 @@ impl TaskRuntime {
     ) -> Result<Vec<LocalExecution>, TaskRuntimeError> {
         self.local_store
             .list_executions(project_id, agent_id, status, include_terminal)
+    }
+
+    pub fn list_comments(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        after_sequence: i64,
+    ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
+        self.local_store
+            .list_comments(project_id, task_id, after_sequence)
+    }
+
+    pub fn create_comment(
+        &self,
+        create: LocalCommentCreate,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        self.local_store.create_comment(&create)
+    }
+
+    pub fn enqueue_execution(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        agent_id: &str,
+        payload: serde_json::Value,
+        trigger_message_id: Option<&str>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        self.local_store.enqueue_execution(
+            project_id,
+            task_id,
+            agent_id,
+            payload,
+            trigger_message_id,
+        )
     }
 
     pub fn approve_execution(&self, execution_id: i64) -> Result<LocalExecution, TaskRuntimeError> {

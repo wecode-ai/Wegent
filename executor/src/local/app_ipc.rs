@@ -27,9 +27,9 @@ use crate::{
     logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     task_runtime::{
-        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalExecutionClaim,
-        ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress, TaskCreate,
-        TaskReorder, TaskRuntime, TaskUpdate,
+        BinaryInput, ChatAgentCreate, ChatAgentUpdate, DeliveryCreate, LocalCommentCreate,
+        LocalExecutionClaim, ProjectCreate, ProjectDescriptor, ProjectUpdate, RuntimeTaskAddress,
+        TaskCreate, TaskReorder, TaskRuntime, TaskUpdate,
     },
     version::get_version,
 };
@@ -1038,6 +1038,35 @@ async fn handle_task_runtime_request(method: &str, params: Value) -> Result<Valu
                 runtime
                     .add_comment(project_id, task_id, body)
                     .await
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.comment.list" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let after_sequence = params
+                .get("after_sequence")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            serialize_task_value(
+                runtime
+                    .list_comments(project_id, task_id, after_sequence)
+                    .map_err(task_runtime_error)?,
+            )
+        }
+        "todos.comment.create" => {
+            let create = task_input::<LocalCommentCreate>(&params, "comment")?;
+            serialize_task_value(runtime.create_comment(create).map_err(task_runtime_error)?)
+        }
+        "executions.enqueue" => {
+            let project_id = required_task_string(&params, "project_id")?;
+            let task_id = required_task_string(&params, "task_id")?;
+            let agent_id = required_task_string(&params, "agent_id")?;
+            let trigger_message_id = params.get("trigger_message_id").and_then(Value::as_str);
+            let payload = params.get("payload").cloned().unwrap_or(Value::Null);
+            serialize_task_value(
+                runtime
+                    .enqueue_execution(project_id, task_id, agent_id, payload, trigger_message_id)
                     .map_err(task_runtime_error)?,
             )
         }

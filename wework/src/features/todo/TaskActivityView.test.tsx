@@ -272,7 +272,7 @@ describe('TaskActivityView', () => {
         runtimeTaskId: 'runtime-task-1',
       })
     )
-    expect(await screen.findByText('AI 已接收')).toBeInTheDocument()
+    expect(await screen.findByText('机器人已接收')).toBeInTheDocument()
   })
 
   it('passes the per-comment model override to the AI run', async () => {
@@ -1219,6 +1219,46 @@ describe('TaskActivityView', () => {
       )
     )
     expect(attachmentSelectionMock.resetAttachments).toHaveBeenCalledOnce()
+  })
+
+  it('skips the runtime-task start when the chat client manages execution', async () => {
+    const user = userEvent.setup()
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [], latestSequence: 0, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      startAgentResponse: vi.fn(async () => agentMessage),
+      failAgentResponse: vi.fn(async () => ({ ...agentMessage, status: 'failed' as const })),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+
+    render(
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={
+          {
+            id: 'WEG-1',
+            title: 'Inspect changes',
+            description: 'Review the current diff',
+            status: 'inbox',
+            version: 1,
+            assignee_agent_id: '12',
+          } as never
+        }
+        selfManagedExecution
+        linear
+      />
+    )
+
+    await user.type(await screen.findByTestId('cloud-task-activity-composer'), '本地跑一下')
+    await user.click(screen.getByRole('button', { name: '发送消息' }))
+
+    await waitFor(() => expect(client.send).toHaveBeenCalledOnce())
+    expect(createProjectRuntimeTask).not.toHaveBeenCalled()
   })
 
   it('passes attachments from the card composer to the AI run', async () => {

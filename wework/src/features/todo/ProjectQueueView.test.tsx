@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { CloudProject } from '@/api/deliveries'
@@ -141,5 +142,97 @@ describe('ProjectQueueView', () => {
     expect(screen.getByText('Queue me')).toBeInTheDocument()
     expect(screen.getByText('Bot queued task')).toBeInTheDocument()
     expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+
+  it('filters by execution state and searches task titles', async () => {
+    const mock = services()
+    const listLoopItems = mock.deliveryApi!.listLoopItems as ReturnType<typeof vi.fn>
+    listLoopItems.mockImplementation(async (projectId: string | number, filters?: object) => {
+      const assigneeId = (filters as { assigneeId?: string | number } | undefined)?.assigneeId
+      if (assigneeId === 'bot-1') {
+        return {
+          items: [
+            {
+              id: 'T-3',
+              cloud_project_id: '11',
+              title: 'Bot queued task',
+              status: 'pending',
+              execution_state: 'queued',
+              assignment_history: [
+                {
+                  by_user_id: 2,
+                  to_type: 'agent',
+                  to_id: 'bot-1',
+                  to_name: 'Local Bot',
+                  action: 'assign',
+                  at: '2026-08-05T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        }
+      }
+      return {
+        items: [
+          {
+            id: 'T-1',
+            cloud_project_id: '11',
+            title: 'Zap the runner',
+            status: 'in_progress',
+            execution_state: 'running',
+            assignment_history: [
+              {
+                by_user_id: 2,
+                to_type: 'user',
+                to_id: '1',
+                to_name: 'local',
+                action: 'assign',
+                at: '2026-08-05T00:00:00Z',
+              },
+            ],
+          },
+          {
+            id: 'T-2',
+            cloud_project_id: '11',
+            title: 'Paperwork review',
+            status: 'pending',
+            execution_state: 'pending_approval',
+            assignment_history: [
+              {
+                by_user_id: 2,
+                to_type: 'user',
+                to_id: '1',
+                to_name: 'local',
+                action: 'assign',
+                at: '2026-08-05T00:00:00Z',
+              },
+            ],
+          },
+        ],
+      }
+    })
+
+    render(
+      <ProjectQueueView
+        api={mock.deliveryApi!}
+        project={project}
+        projectChatAgentApi={mock.projectChatAgentApi}
+        currentUserId={1}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('project-queue-column-me')).toBeInTheDocument())
+    expect(screen.getByText('Zap the runner')).toBeInTheDocument()
+    expect(screen.getByText('Paperwork review')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-queue-filter-running'))
+    expect(screen.getByText('Zap the runner')).toBeInTheDocument()
+    expect(screen.queryByText('Paperwork review')).not.toBeInTheDocument()
+    expect(screen.queryByText('Bot queued task')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-queue-filter-all'))
+    await userEvent.type(screen.getByTestId('project-queue-search'), 'queued')
+    expect(screen.getByText('Bot queued task')).toBeInTheDocument()
+    expect(screen.queryByText('Zap the runner')).not.toBeInTheDocument()
   })
 })

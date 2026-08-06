@@ -122,6 +122,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         status: AutomationRunStatus,
         error: Option<String>,
+        result_content: Option<String>,
     ) {
         let Some(context) = self.queue_runs.lock().unwrap().remove(local_task_id) else {
             return;
@@ -134,9 +135,16 @@ impl RuntimeWorkRpcHandler {
         match status {
             AutomationRunStatus::Succeeded | AutomationRunStatus::NeedsAttention => {
                 let _ = store.complete_execution(execution_id, None);
+                let _ = store.update_agent_comment_for_execution(
+                    execution_id,
+                    "completed",
+                    &result_content.unwrap_or_default(),
+                );
             }
             AutomationRunStatus::Failed | AutomationRunStatus::Cancelled => {
                 let _ = store.fail_execution(execution_id, &error_text, true);
+                let _ =
+                    store.update_agent_comment_for_execution(execution_id, "failed", &error_text);
             }
             _ => {}
         }
@@ -145,13 +153,26 @@ impl RuntimeWorkRpcHandler {
 
 fn build_local_payload(execution: &crate::task_runtime::LocalExecution) -> Value {
     let task_id = format!("codex-queue-local-{}", execution.id);
-    let prompt = format!(
-        "请开始执行任务 {}：{}\n\n你是 {}，这个项目任务的 AI 执行者。\n{}\n\n完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。",
+    let comment_text = execution
+        .execution_payload
+        .as_ref()
+        .and_then(|payload| payload.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let base = format!(
+        "请开始执行任务 {}：{}\n\n你是 {}，这个项目任务的 AI 执行者。\n{}",
         execution.loop_item_id,
         execution.task_title,
         execution.agent_name,
-        execution.agent_system_prompt,
+        execution.agent_system_prompt
     );
+    let prompt = if comment_text.is_empty() {
+        format!("{base}\n\n完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。")
+    } else {
+        format!(
+            "{base}\n\n以下是任务评论中提出的最新要求：\n{comment_text}\n\n完成后请总结实际改动、验证结果、未完成事项和风险，提交给人类验收。"
+        )
+    };
     let identity = format!(
         "你是 {}，这个项目任务的 AI 执行者。\n{}",
         execution.agent_name, execution.agent_system_prompt

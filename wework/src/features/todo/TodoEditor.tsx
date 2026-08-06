@@ -485,6 +485,7 @@ export type TodoEditorProps = {
   aitableApi?: AITableApi
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   projectChatClient?: ProjectChatClient
+  selfManagedExecution?: boolean
   currentUserId?: string | number
   allItems: CloudLoopItem[]
   onClose: () => void
@@ -1029,6 +1030,8 @@ export function TodoEditor(props: TodoEditorProps) {
         task={item}
         currentUserId={props.currentUserId}
         onTaskUpdated={editProps.onUpdated}
+        projectChatAgentApi={props.projectChatAgentApi}
+        selfManagedExecution={props.selfManagedExecution}
         linear
       />
     ) : null

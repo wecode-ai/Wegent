@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
 import type { Attachment, RuntimeTaskAddress } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -35,6 +36,11 @@ interface TaskActivityViewProps {
   task: CloudLoopItem
   currentUserId?: string | number
   onTaskUpdated?: (task: CloudLoopItem) => void
+  projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
+  // When true, the chat client owns the AI execution lifecycle (local project
+  // spaces enqueue a robot run inside send), so the shared runtime-task start
+  // flow must not run again.
+  selfManagedExecution?: boolean
   // rail mode: fill a fixed-height side column with an internally scrolling
   // message list and a composer pinned to the bottom
   rail?: boolean
@@ -47,6 +53,8 @@ export function TaskActivityView({
   task,
   currentUserId,
   onTaskUpdated,
+  projectChatAgentApi,
+  selfManagedExecution = false,
   rail = false,
   linear = false,
 }: TaskActivityViewProps) {
@@ -129,8 +137,9 @@ export function TaskActivityView({
   const compact = rail || linear
 
   useEffect(() => {
-    if (!services.projectChatAgentApi) return
-    void services.projectChatAgentApi
+    const agentApi = projectChatAgentApi ?? services.projectChatAgentApi
+    if (!agentApi) return
+    void agentApi
       .list(project.id)
       .then(setAgents)
       .catch(cause => {
@@ -138,7 +147,7 @@ export function TaskActivityView({
           cause instanceof Error ? cause.message : t('workbench.project_chat_agents_load_failed')
         )
       })
-  }, [project.id, services.projectChatAgentApi, t])
+  }, [project.id, projectChatAgentApi, services.projectChatAgentApi, t])
 
   useEffect(() => {
     if (!client) {
@@ -535,7 +544,7 @@ export function TaskActivityView({
       followCardRef.current = rootId
       setMessages(current => mergeProjectChatMessages(current, [message]))
       setCardAiErrors(current => ({ ...current, [rootId]: '' }))
-      if (assignedAgent) {
+      if (assignedAgent && !selfManagedExecution) {
         // The comment is already posted; keep the input cleared and let the
         // AI start settle in the background, surfacing failures in the card.
         void startTaskAiRun({
@@ -601,7 +610,7 @@ export function TaskActivityView({
       setNewCommentDraft('')
       attachmentSelection.resetAttachments()
       scrollTaskCommentsToTop()
-      if (assignedAgent) {
+      if (assignedAgent && !selfManagedExecution) {
         await startTaskAiRun({
           client,
           services,

@@ -59,7 +59,7 @@ import {
   type BoardCardDisplaySettings,
 } from './CloudTodoBoardCard'
 import { CloudProjectManageView } from './CloudProjectManageView'
-import { ProjectQueueView } from './ProjectQueueView'
+import { ProjectAutomationView } from './ProjectAutomationView'
 import { CloudProjectsHome } from './CloudProjectsHome'
 import { CloudFilesView } from './CloudFilesView'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
@@ -70,7 +70,7 @@ import { TodoEditor } from './TodoEditor'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } from './todoShared'
 
-type ProjectView = 'board' | 'table' | 'files' | 'queue' | 'manage'
+type ProjectView = 'board' | 'table' | 'files' | 'automation' | 'manage'
 type RootView = 'projects' | 'my-work'
 type ProjectTaskProvider = 'local' | 'github' | 'gitlab' | 'dingtalk_aitable'
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
@@ -884,6 +884,11 @@ export function CloudTodoWorkspace({
     selectedProject?.location === 'local'
       ? services.localProjectChatAgentApi
       : services.projectChatAgentApi
+  const selectedProjectChatClient =
+    selectedProject?.location === 'local'
+      ? services.localProjectChatClient
+      : services.projectChatClient
+  const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
   const boardCardDisplay: BoardCardDisplaySettings = {
     showAssignee: selectedProject?.card_display?.show_assignee ?? true,
@@ -1776,22 +1781,6 @@ export function CloudTodoWorkspace({
                     >
                       看板
                     </button>
-                    {selectedProject.project_store === 'backend' &&
-                    selectedProject.access_role !== 'RestrictedAnalyst' ? (
-                      <button
-                        type="button"
-                        data-testid="cloud-project-queue-view"
-                        onClick={() => setProjectView('queue')}
-                        className={cn(
-                          'rounded-md px-3.5 py-1 text-sm',
-                          projectView === 'queue'
-                            ? 'bg-background font-medium text-text-primary shadow-sm'
-                            : 'text-text-secondary hover:text-text-primary'
-                        )}
-                      >
-                        队列
-                      </button>
-                    ) : null}
                     {isAITableProject && aitableApi ? (
                       <button
                         type="button"
@@ -1821,6 +1810,22 @@ export function CloudTodoWorkspace({
                         文件
                       </button>
                     )}
+                    {selectedProject.project_store === 'backend' &&
+                    selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                      <button
+                        type="button"
+                        data-testid="cloud-project-automation-view"
+                        onClick={() => setProjectView('automation')}
+                        className={cn(
+                          'rounded-md px-3.5 py-1 text-sm',
+                          projectView === 'automation'
+                            ? 'bg-background font-medium text-text-primary shadow-sm'
+                            : 'text-text-secondary hover:text-text-primary'
+                        )}
+                      >
+                        自动化
+                      </button>
+                    ) : null}
                     {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') && (
                       <button
                         type="button"
@@ -1849,15 +1854,15 @@ export function CloudTodoWorkspace({
                       className="h-8 cursor-pointer bg-transparent text-xs outline-none"
                     >
                       <option value="board">看板</option>
-                      {selectedProject.project_store === 'backend' &&
-                      selectedProject.access_role !== 'RestrictedAnalyst' ? (
-                        <option value="queue">队列</option>
-                      ) : null}
                       {isAITableProject && aitableApi ? (
                         <option value="table">数据视图</option>
                       ) : null}
                       {selectedProject.access_role !== 'RestrictedAnalyst' ? (
                         <option value="files">文件</option>
+                      ) : null}
+                      {selectedProject.project_store === 'backend' &&
+                      selectedProject.access_role !== 'RestrictedAnalyst' ? (
+                        <option value="automation">自动化</option>
                       ) : null}
                       {['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner') ? (
                         <option value="manage">管理</option>
@@ -1936,10 +1941,8 @@ export function CloudTodoWorkspace({
                 <CloudFilesView api={selectedProjectApi} project={selectedProject} />
               ) : projectView === 'table' && isAITableProject && aitableApi ? (
                 <AITableView api={aitableApi} project={selectedProject} />
-              ) : projectView === 'queue' &&
-                selectedProjectApi &&
-                selectedProject.project_store === 'backend' ? (
-                <ProjectQueueView
+              ) : projectView === 'automation' && selectedProjectApi ? (
+                <ProjectAutomationView
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   executionApi={
@@ -1947,8 +1950,13 @@ export function CloudTodoWorkspace({
                       ? services.localLoopItemExecutionApi
                       : undefined
                   }
+                  deviceApi={services.deviceApi}
+                  modelApi={services.modelApi}
                   project={selectedProject}
                   currentUserId={selectedProject.current_user_id}
+                  canManageAgents={['Owner', 'Maintainer'].includes(
+                    selectedProject.access_role ?? 'Owner'
+                  )}
                   onOpenTask={item => {
                     setDetailItems(current =>
                       current.some(existing => existing.id === item.id)
@@ -1963,9 +1971,6 @@ export function CloudTodoWorkspace({
                   api={projectSpaceApis[selectedProject.location] ?? selectedProjectApi}
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
-                  projectChatAgentApi={selectedProjectAgentApi}
-                  deviceApi={services.deviceApi}
-                  modelApi={services.modelApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated =>
@@ -2333,7 +2338,8 @@ export function CloudTodoWorkspace({
           mode="edit"
           api={selectedItemApi}
           projectChatAgentApi={selectedProjectAgentApi}
-          projectChatClient={services.projectChatClient}
+          projectChatClient={selectedProjectChatClient}
+          selfManagedExecution={selectedProjectSelfManagedExecution}
           currentUserId={user.id}
           aitableApi={
             projects.find(project => project.id === selectedItem.cloud_project_id)

@@ -178,6 +178,41 @@ pub struct LocalExecution {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalComment {
+    pub id: i64,
+    pub message_id: String,
+    pub client_message_id: Option<String>,
+    pub project_id: String,
+    pub task_id: String,
+    pub sender_type: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub message_type: String,
+    pub content: String,
+    pub metadata: Value,
+    pub trigger_message_id: Option<String>,
+    pub reply_to_message_id: Option<String>,
+    pub thread_root_message_id: Option<String>,
+    pub status: String,
+    pub sequence_number: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LocalCommentCreate {
+    pub project_id: String,
+    pub task_id: String,
+    pub client_message_id: Option<String>,
+    pub sender_type: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub content: String,
+    pub metadata: Value,
+    pub reply_to_message_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskReorder {
     pub parent_id: Option<String>,

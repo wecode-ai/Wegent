@@ -133,6 +133,7 @@ import {
   createLocalLoopItemExecutionApi,
   createLocalProjectChatAgentApi,
 } from './localDelivery'
+import { createLocalProjectChatClient } from './localProjectChatClient'
 import { createLocalAITableApi } from '@/api/aitable'
 import { createDwsApi } from '@/api/dws'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -2910,6 +2911,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const externalIssueApi = createExternalIssueApi(request)
   const localProjectChatAgentApi = createLocalProjectChatAgentApi(request)
   const localLoopItemExecutionApi = createLocalLoopItemExecutionApi(request)
+  const localProjectChatClient = createLocalProjectChatClient(request, {
+    currentUser: LOCAL_USER,
+  })
   const aitableApi = createLocalAITableApi(request)
   const dwsApi = createDwsApi(request)
 
@@ -2968,6 +2972,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     externalIssueApi,
     localProjectChatAgentApi,
     localLoopItemExecutionApi,
+    localProjectChatClient,
     aitableApi,
     dwsApi,
     projectSpaceApis: {

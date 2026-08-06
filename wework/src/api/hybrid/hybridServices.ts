@@ -946,6 +946,7 @@ export function createHybridWorkbenchServices(
     dwsApi: localServices.dwsApi,
     localProjectChatAgentApi: localServices.localProjectChatAgentApi,
     localLoopItemExecutionApi: localServices.localLoopItemExecutionApi,
+    localProjectChatClient: localServices.localProjectChatClient,
     projectSpaceApis: {
       local: localServices.deliveryApi,
       cloud: cloudProjectSpaceApi,

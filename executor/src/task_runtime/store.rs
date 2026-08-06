@@ -16,12 +16,13 @@ use uuid::Uuid;
 
 use super::credentials::{encrypt_provider_config, update_provider_config};
 use super::model::{
-    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalExecution, LocalExecutionClaim, LoopItem,
-    ProjectCreate, ProjectDescriptor, ProjectStoreKind, ProjectUpdate, RuntimeTaskAddress,
-    TaskBinding, TaskCreate, TaskProviderKind, TaskReorder, TaskUpdate,
+    ChatAgent, ChatAgentCreate, ChatAgentUpdate, LocalComment, LocalCommentCreate, LocalExecution,
+    LocalExecutionClaim, LoopItem, ProjectCreate, ProjectDescriptor, ProjectStoreKind,
+    ProjectUpdate, RuntimeTaskAddress, TaskBinding, TaskCreate, TaskProviderKind, TaskReorder,
+    TaskUpdate,
 };
 
-const LOCAL_SCHEMA_VERSION: i64 = 4;
+const LOCAL_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Debug, Error)]
 pub enum TaskRuntimeError {
@@ -701,6 +702,72 @@ impl LocalTaskStore {
     }
 
     // ------------------------------------------------------------------
+    // Local comment thread
+    // ------------------------------------------------------------------
+
+    pub fn list_comments(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        after_sequence: i64,
+    ) -> Result<Vec<LocalComment>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT id, message_id, client_message_id, project_id, task_id,
+                    sender_type, sender_id, sender_name, message_type, content,
+                    metadata, trigger_message_id, reply_to_message_id,
+                    thread_root_message_id, status, sequence_number, created_at, updated_at
+             FROM loop_item_comments
+             WHERE project_id = ?1 AND task_id = ?2 AND deleted_at IS NULL
+               AND sequence_number > ?3
+             ORDER BY sequence_number ASC",
+        )?;
+        let rows =
+            statement.query_map(params![project_id, task_id, after_sequence], map_comment)?;
+        let mut comments = Vec::new();
+        for comment in rows {
+            comments.push(comment?);
+        }
+        Ok(comments)
+    }
+
+    pub fn create_comment(
+        &self,
+        create: &LocalCommentCreate,
+    ) -> Result<LocalComment, TaskRuntimeError> {
+        let connection = self.connection()?;
+        insert_comment(&connection, create, "completed")
+    }
+
+    pub fn update_agent_comment_for_execution(
+        &self,
+        execution_id: i64,
+        status: &str,
+        content: &str,
+    ) -> Result<Option<LocalComment>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let changed = connection.execute(
+            "UPDATE loop_item_comments
+             SET status = ?1, content = ?2, updated_at = ?3
+             WHERE deleted_at IS NULL
+               AND json_extract(metadata, '$.execution_id') = ?4",
+            params![status, content, now(), execution_id],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let message_id = connection.query_row(
+            "SELECT message_id FROM loop_item_comments
+             WHERE deleted_at IS NULL
+               AND json_extract(metadata, '$.execution_id') = ?1
+             ORDER BY id ASC LIMIT 1",
+            params![execution_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        Ok(Some(comment_row(&connection, &message_id)?))
+    }
+
+    // ------------------------------------------------------------------
     // Local execution lifecycle
     // ------------------------------------------------------------------
 
@@ -977,6 +1044,56 @@ impl LocalTaskStore {
             }
         }
         Ok((requeued, failed))
+    }
+
+    /// Enqueue a local robot run for a comment-triggered execution and create
+    /// the optimistic agent comment that tracks its status in the task thread.
+    pub fn enqueue_execution(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        agent_id: &str,
+        payload: Value,
+        trigger_message_id: Option<&str>,
+    ) -> Result<LocalExecution, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let agent = get_item_from(&connection, agent_id, "chat_agent")?.ok_or_else(|| {
+            TaskRuntimeError::Invalid("Robot is not active in this project".to_owned())
+        })?;
+        let task =
+            get_item_from(&connection, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        create_local_execution(
+            &connection,
+            task_id,
+            project_id,
+            agent_id,
+            &agent,
+            task.priority.as_deref().unwrap_or("none"),
+            payload.clone(),
+        )?;
+        let execution_id = connection.last_insert_rowid();
+        insert_comment(
+            &connection,
+            &LocalCommentCreate {
+                project_id: project_id.to_owned(),
+                task_id: task_id.to_owned(),
+                client_message_id: None,
+                sender_type: "agent".to_owned(),
+                sender_id: agent_id.to_owned(),
+                sender_name: agent
+                    .title
+                    .or(agent.name)
+                    .unwrap_or_else(|| "AI".to_owned()),
+                content: String::new(),
+                metadata: json!({
+                    "execution_id": execution_id,
+                    "trigger_message_id": trigger_message_id,
+                }),
+                reply_to_message_id: trigger_message_id.map(ToOwned::to_owned),
+            },
+            "streaming",
+        )?;
+        execution_row(&connection, execution_id)
     }
 
     pub fn local_execution_payload(
@@ -1405,6 +1522,29 @@ fn migrate(connection: &Connection) -> Result<(), TaskRuntimeError> {
             ON loop_item_executions(agent_id, status);
         CREATE INDEX IF NOT EXISTS ix_exec_item_status
             ON loop_item_executions(loop_item_id, status);
+        CREATE TABLE IF NOT EXISTS loop_item_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id TEXT NOT NULL UNIQUE,
+            client_message_id TEXT,
+            project_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            sender_type TEXT NOT NULL,
+            sender_id TEXT NOT NULL,
+            sender_name TEXT NOT NULL,
+            message_type TEXT NOT NULL DEFAULT 'text',
+            content TEXT NOT NULL DEFAULT '',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            trigger_message_id TEXT,
+            reply_to_message_id TEXT,
+            thread_root_message_id TEXT,
+            status TEXT NOT NULL DEFAULT 'completed',
+            sequence_number INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_loop_item_comments_task
+            ON loop_item_comments(task_id, sequence_number);
         CREATE TABLE IF NOT EXISTS project_provider_credentials (
             project_store TEXT NOT NULL,
             project_id TEXT NOT NULL,
@@ -1795,6 +1935,105 @@ fn map_chat_agent(row: LoopItem) -> ChatAgent {
     }
 }
 
+fn insert_comment(
+    connection: &Connection,
+    create: &LocalCommentCreate,
+    status: &str,
+) -> Result<LocalComment, TaskRuntimeError> {
+    let message_id = Uuid::new_v4().to_string();
+    let now = now();
+    let (reply_to_message_id, thread_root_message_id) =
+        if let Some(reply_to) = &create.reply_to_message_id {
+            let root = connection
+                .query_row(
+                    "SELECT COALESCE(thread_root_message_id, message_id)
+                     FROM loop_item_comments
+                     WHERE message_id = ?1 AND deleted_at IS NULL",
+                    params![reply_to],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_else(|| reply_to.clone());
+            (Some(reply_to.clone()), Some(root))
+        } else {
+            (None, Some(message_id.clone()))
+        };
+    let sequence_number = connection.query_row(
+        "SELECT COALESCE(MAX(sequence_number), 0) + 1
+         FROM loop_item_comments WHERE task_id = ?1",
+        params![create.task_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    connection.execute(
+        "INSERT INTO loop_item_comments (
+            message_id, client_message_id, project_id, task_id,
+            sender_type, sender_id, sender_name, message_type, content,
+            metadata, trigger_message_id, reply_to_message_id,
+            thread_root_message_id, status, sequence_number, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+        params![
+            message_id,
+            create.client_message_id,
+            create.project_id,
+            create.task_id,
+            create.sender_type,
+            create.sender_id,
+            create.sender_name,
+            "text",
+            create.content,
+            create.metadata.to_string(),
+            None::<String>,
+            reply_to_message_id,
+            thread_root_message_id,
+            status,
+            sequence_number,
+            now,
+        ],
+    )?;
+    comment_row(connection, &message_id)
+}
+
+fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
+    Ok(LocalComment {
+        id: row.get(0)?,
+        message_id: row.get(1)?,
+        client_message_id: row.get(2)?,
+        project_id: row.get(3)?,
+        task_id: row.get(4)?,
+        sender_type: row.get(5)?,
+        sender_id: row.get(6)?,
+        sender_name: row.get(7)?,
+        message_type: row.get(8)?,
+        content: row.get(9)?,
+        metadata: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or(Value::Null),
+        trigger_message_id: row.get(11)?,
+        reply_to_message_id: row.get(12)?,
+        thread_root_message_id: row.get(13)?,
+        status: row.get(14)?,
+        sequence_number: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+    })
+}
+
+fn comment_row(
+    connection: &Connection,
+    message_id: &str,
+) -> Result<LocalComment, TaskRuntimeError> {
+    connection
+        .query_row(
+            "SELECT id, message_id, client_message_id, project_id, task_id,
+                    sender_type, sender_id, sender_name, message_type, content,
+                    metadata, trigger_message_id, reply_to_message_id,
+                    thread_root_message_id, status, sequence_number, created_at, updated_at
+             FROM loop_item_comments
+             WHERE message_id = ?1 AND deleted_at IS NULL",
+            params![message_id],
+            map_comment,
+        )
+        .map_err(TaskRuntimeError::from)
+}
+
 fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
     let payload: Option<String> = row.get(22)?;
     Ok(LocalExecution {
@@ -2068,6 +2307,88 @@ mod tests {
         assert_eq!(executions[0].status, "queued");
         assert_eq!(executions[0].priority_weight, 30);
         assert!(executions[0].execution_payload.is_some());
+    }
+
+    #[test]
+    fn local_comment_thread_and_enqueue_writeback() {
+        let (directory, store, project) = chat_agent_store();
+        let _ = directory;
+        let agent = make_local_agent(&store, &project.id, "auto");
+        let task = store
+            .create_task(
+                &project.id,
+                TaskCreate {
+                    title: "Comment run".to_owned(),
+                    description: String::new(),
+                    status: "inbox".to_owned(),
+                    priority: "medium".to_owned(),
+                    parent_id: None,
+                    tags: vec![],
+                },
+            )
+            .unwrap();
+
+        let user_comment = store
+            .create_comment(&LocalCommentCreate {
+                project_id: project.id.clone(),
+                task_id: task.id.clone(),
+                client_message_id: Some("cm-1".to_owned()),
+                sender_type: "user".to_owned(),
+                sender_id: "1".to_owned(),
+                sender_name: "Ada".to_owned(),
+                content: "@Local Bot 看一下".to_owned(),
+                metadata: json!({
+                    "mentions": [{"type": "agent", "id": agent.id, "label": "Local Bot"}]
+                }),
+                reply_to_message_id: None,
+            })
+            .unwrap();
+        assert_eq!(user_comment.sequence_number, 1);
+        assert_eq!(
+            user_comment.thread_root_message_id.as_deref(),
+            Some(user_comment.message_id.as_str())
+        );
+
+        let execution = store
+            .enqueue_execution(
+                &project.id,
+                &task.id,
+                &agent.id,
+                json!({"text": "@Local Bot 看一下"}),
+                Some(&user_comment.message_id),
+            )
+            .unwrap();
+        assert_eq!(execution.status, "queued");
+        assert_eq!(execution.task_title, "Comment run");
+
+        let comments = store.list_comments(&project.id, &task.id, 0).unwrap();
+        assert_eq!(comments.len(), 2);
+        let agent_comment = comments
+            .iter()
+            .find(|comment| comment.sender_type == "agent")
+            .unwrap();
+        assert_eq!(agent_comment.status, "streaming");
+        assert_eq!(
+            agent_comment.reply_to_message_id.as_deref(),
+            Some(user_comment.message_id.as_str())
+        );
+        assert_eq!(
+            agent_comment.thread_root_message_id.as_deref(),
+            Some(user_comment.message_id.as_str())
+        );
+
+        let updated = store
+            .update_agent_comment_for_execution(execution.id, "completed", "搞定")
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, "completed");
+        assert_eq!(updated.content, "搞定");
+
+        let after = store
+            .list_comments(&project.id, &task.id, user_comment.sequence_number)
+            .unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].sender_type, "agent");
     }
 
     #[test]

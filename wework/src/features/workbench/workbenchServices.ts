@@ -125,6 +125,7 @@ export interface WorkbenchServices {
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
   projectChatClient?: ProjectChatClient
+  localProjectChatClient?: ProjectChatClient
   projectChatAgentApi?: ReturnType<typeof createProjectChatAgentApi>
   localProjectChatAgentApi?: ReturnType<typeof createLocalProjectChatAgentApi>
   localLoopItemExecutionApi?: ReturnType<typeof createLocalLoopItemExecutionApi>
