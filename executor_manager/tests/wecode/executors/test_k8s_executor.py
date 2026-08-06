@@ -24,6 +24,7 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_POOL_PROFILE,
     LABEL_POOL_STATE,
     LABEL_TASK_ID,
+    LABEL_WARM_POOL,
     POOL_PROFILE_EXECUTOR_STANDARD,
 )
 
@@ -116,9 +117,8 @@ def test_get_executor_task_id_resolves_logical_warmpool_executor(mocker):
 def test_get_executor_task_id_resolves_claim_without_pod(mocker):
     executor = object.__new__(K8sExecutor)
     mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor."
-        "EXECUTOR_WARMPOOL_TEMPLATE_NAME",
-        "wegent-executor-standard-1.0.221",
+        "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_ENABLED",
+        True,
     )
     core_v1 = mocker.MagicMock()
     core_v1.read_namespaced_pod.side_effect = ApiException(status=404)
@@ -524,6 +524,9 @@ def test_create_executor_from_warmpool_omits_task_secrets_from_metadata(mocker):
         "executor-1",
         labels=claim_labels,
     )
+    pod_labels = warm_pool_client.patch_pod_metadata.call_args.kwargs["labels"]
+    assert pod_labels[LABEL_POOL_PROFILE] == POOL_PROFILE_EXECUTOR_STANDARD
+    assert pod_labels[LABEL_POOL_STATE] == "bound"
     annotations = warm_pool_client.patch_pod_metadata.call_args.kwargs["annotations"]
     assert ANNOTATION_AUTH_TOKEN not in annotations
     assert ANNOTATION_SKILL_IDENTITY_TOKEN not in annotations
@@ -584,7 +587,7 @@ def test_create_executor_from_warmpool_reconciles_reusable_claim_metadata(mocker
     repository.save_executor_binding.assert_called_once()
 
 
-def test_standard_online_task_is_executor_warmpool_eligible(mocker):
+def test_non_git_online_task_is_executor_warmpool_eligible(mocker):
     executor = object.__new__(K8sExecutor)
     mocker.patch(
         "executor_manager.wecode.executors.k8s.k8s_executor.EXECUTOR_DEFAULT_MAGE",
@@ -595,7 +598,11 @@ def test_standard_online_task_is_executor_warmpool_eligible(mocker):
         {
             "task_id": 123,
             "type": "online",
-            "user": {"name": "test_user"},
+            "user": {
+                "name": "test_user",
+                # A configured Git account does not make this a Git task.
+                "git_domain": "git.intra.weibo.com",
+            },
         },
         "registry/executor:1.0.214",
     )
@@ -603,13 +610,14 @@ def test_standard_online_task_is_executor_warmpool_eligible(mocker):
     assert reason is None
 
 
-def test_create_instance_claims_executor_specific_warmpool(mocker):
+def test_create_instance_claims_shared_sandbox_warmpool(mocker):
     executor = object.__new__(K8sExecutor)
     module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
     mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
     mocker.patch(
-        f"{module}.EXECUTOR_WARMPOOL_TEMPLATE_NAME",
-        "wegent-executor-standard-1.0.214",
+        f"{module}.WARMPOOL_TEMPLATE_NAME",
+        "wegent-sandbox-1.0.214",
     )
     mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
     claim = mocker.patch.object(
@@ -643,10 +651,48 @@ def test_create_instance_claims_executor_specific_warmpool(mocker):
         user_name="test_user",
         task_id="123",
         subtask_id="456",
-        template_name="wegent-executor-standard-1.0.214",
+        template_name="wegent-sandbox-1.0.214",
         workload_type="executor",
     )
     direct_create.assert_not_called()
+
+
+def test_create_instance_uses_direct_pod_for_git_task(mocker):
+    executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.WARMPOOL_TEMPLATE_NAME", "wegent-sandbox-1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
+    claim = mocker.patch.object(executor, "_create_pod_from_warmpool")
+    direct_pod = {"metadata": {"name": "executor-1"}}
+    build = mocker.patch(f"{module}.build_pod_configuration", return_value=direct_pod)
+    submit = mocker.patch.object(
+        executor,
+        "_submit_kubernetes_pod",
+        return_value={"status": "success"},
+    )
+
+    task = {
+        "task_id": 123,
+        "type": "online",
+        "git_url": "https://github.com/wecode-ai/Wegent.git",
+        "git_repo": "wecode-ai/Wegent",
+        "user": {"name": "test_user"},
+    }
+    executor.create_instance(
+        task=task,
+        task_info={
+            "task_id": "123",
+            "subtask_id": "456",
+            "user_name": "test_user",
+        },
+        executor_name="executor-1",
+    )
+
+    claim.assert_not_called()
+    build.assert_called_once()
+    submit.assert_called_once_with(direct_pod, K8S_NAMESPACE, "executor-1", "123")
 
 
 def test_executor_warmpool_rejects_task_specific_pod_shapes(mocker):
@@ -668,31 +714,39 @@ def test_executor_warmpool_rejects_task_specific_pod_shapes(mocker):
     )
     assert (
         executor._executor_warmpool_ineligibility_reason(
-            {
-                "type": "online",
-                "user": {
-                    "name": "test_user",
-                    "git_domain": "git.intra.weibo.com",
-                },
-            },
-            "registry/executor:1.0.214",
-        )
-        == "task_specific_volumes"
-    )
-    assert (
-        executor._executor_warmpool_ineligibility_reason(
-            {"type": "online", "git_domain": "github.com"},
-            "registry/executor:1.0.214",
-        )
-        == "task_specific_repo_proxy"
-    )
-    assert (
-        executor._executor_warmpool_ineligibility_reason(
             {"type": "online"},
             "registry/executor:custom",
         )
         == "executor_image_mismatch"
     )
+
+
+def test_executor_warmpool_rejects_git_tasks(mocker):
+    executor = object.__new__(K8sExecutor)
+    mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor.EXECUTOR_DEFAULT_MAGE",
+        "registry/executor:1.0.214",
+    )
+
+    git_tasks = [
+        {"type": "online", "git_url": "https://github.com/org/repo.git"},
+        {"type": "online", "git_repo": "org/repo"},
+        {"type": "online", "git_repo_id": 123},
+        {"type": "online", "workspace_source": "git_worktree"},
+        {
+            "type": "online",
+            "workspace": {"repository": {"gitUrl": "ssh://git/org/repo.git"}},
+        },
+    ]
+
+    for task in git_tasks:
+        assert (
+            executor._executor_warmpool_ineligibility_reason(
+                task,
+                "registry/executor:1.0.214",
+            )
+            == "git_repository"
+        )
 
 
 def test_delete_executor_by_task_id_falls_back_from_stale_binding(mocker):
@@ -735,9 +789,8 @@ def test_delete_executor_by_task_id_falls_back_from_stale_binding(mocker):
 def test_get_old_task_ids_includes_bound_warmpool_and_claim_only(mocker):
     executor = object.__new__(K8sExecutor)
     mocker.patch(
-        "executor_manager.wecode.executors.k8s.k8s_executor."
-        "EXECUTOR_WARMPOOL_TEMPLATE_NAME",
-        "wegent-executor-standard-1.0.221",
+        "executor_manager.wecode.executors.k8s.k8s_executor.WARMPOOL_ENABLED",
+        True,
     )
     old_timestamp = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
     pods = [
@@ -760,6 +813,8 @@ def test_get_old_task_ids_includes_bound_warmpool_and_claim_only(mocker):
                     LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE,
                     LABEL_TASK_ID: "102",
                     LABEL_POOL_STATE: "bound",
+                    LABEL_POOL_PROFILE: POOL_PROFILE_EXECUTOR_STANDARD,
+                    LABEL_WARM_POOL: "true",
                 },
                 "ownerReferences": [
                     {
@@ -773,11 +828,24 @@ def test_get_old_task_ids_includes_bound_warmpool_and_claim_only(mocker):
         },
         {
             "metadata": {
-                "name": "wegent-executor-standard-warmpool-1.0.221-standby",
+                "name": "wegent-sandbox-warmpools-1.0.177-standby",
                 "creationTimestamp": old_timestamp,
                 "labels": {
                     LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE,
-                    LABEL_POOL_STATE: "standby",
+                    LABEL_WARM_POOL: "true",
+                },
+            },
+            "status": {"phase": "Running"},
+        },
+        {
+            "metadata": {
+                "name": "wegent-sandbox-claimed-interactive",
+                "creationTimestamp": old_timestamp,
+                "labels": {
+                    LABEL_EXECUTOR: LABEL_EXECUTOR_VALUE,
+                    LABEL_TASK_ID: "104",
+                    LABEL_POOL_STATE: "bound",
+                    LABEL_WARM_POOL: "true",
                 },
             },
             "status": {"phase": "Running"},

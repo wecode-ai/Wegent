@@ -30,7 +30,6 @@ from executor_manager.utils.executor_name import generate_executor_name
 from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE,
     EXECUTOR_WARMPOOL_ENABLED,
-    EXECUTOR_WARMPOOL_TEMPLATE_NAME,
     K8S_NAMESPACE,
     MAX_USER_TASKS,
     USER_WHITELIST_TASK_LIMIT_MAP,
@@ -39,7 +38,6 @@ from executor_manager.wecode.config.config import (
 )
 from executor_manager.wecode.executors.k8s.build_pod import (
     build_pod_configuration,
-    build_pod_volumes,
 )
 from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_EXECUTOR,
@@ -47,6 +45,7 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_POOL_PROFILE,
     LABEL_POOL_STATE,
     LABEL_TASK_ID,
+    LABEL_WARM_POOL,
     POOL_PROFILE_EXECUTOR_STANDARD,
     SANDBOX_API_GROUP,
     SANDBOX_KIND,
@@ -511,7 +510,8 @@ class K8sExecutor(Executor):
             task, image
         )
         use_executor_warmpool = (
-            EXECUTOR_WARMPOOL_ENABLED
+            WARMPOOL_ENABLED
+            and EXECUTOR_WARMPOOL_ENABLED
             and not is_sandbox_task
             and executor_warmpool_reason is None
         )
@@ -526,9 +526,9 @@ class K8sExecutor(Executor):
                 subtask_id=task_info["subtask_id"],
             )
         elif use_executor_warmpool:
-            if not EXECUTOR_WARMPOOL_TEMPLATE_NAME:
+            if not WARMPOOL_TEMPLATE_NAME:
                 raise RuntimeError(
-                    "EXECUTOR_WARMPOOL_TEMPLATE_NAME is required when "
+                    "WARMPOOL_TEMPLATE_NAME is required when "
                     "EXECUTOR_WARMPOOL_ENABLED=true"
                 )
             pod_result = self._create_pod_from_warmpool(
@@ -537,7 +537,7 @@ class K8sExecutor(Executor):
                 user_name=user_name,
                 task_id=task_id,
                 subtask_id=task_info["subtask_id"],
-                template_name=EXECUTOR_WARMPOOL_TEMPLATE_NAME,
+                template_name=WARMPOOL_TEMPLATE_NAME,
                 workload_type="executor",
             )
         else:
@@ -545,7 +545,7 @@ class K8sExecutor(Executor):
                 logger.info(
                     "Executor warm pool skipped for task %s: %s",
                     task_id,
-                    executor_warmpool_reason,
+                    executor_warmpool_reason or "shared_warmpool_disabled",
                 )
             base_image = self._get_base_image_from_task(task)
             if base_image:
@@ -584,12 +584,31 @@ class K8sExecutor(Executor):
             return "executor_image_mismatch"
         if self._get_base_image_from_task(task):
             return "custom_base_image"
-        if build_pod_volumes(task).get("volumes"):
-            return "task_specific_volumes"
-        git_domain = get_metadata_field(task, "git_domain", "") or ""
-        if "github.com" in git_domain:
-            return "task_specific_repo_proxy"
+        if self._task_has_git_repository(task):
+            return "git_repository"
         return None
+
+    @staticmethod
+    def _task_has_git_repository(task: Dict[str, Any]) -> bool:
+        """Return whether the task is associated with a Git repository."""
+        if any(
+            get_metadata_field(task, field)
+            for field in ("git_url", "git_repo", "git_repo_id")
+        ):
+            return True
+
+        if get_metadata_field(task, "workspace_source") == "git_worktree":
+            return True
+
+        workspace = get_metadata_field(task, "workspace", {}) or {}
+        repository = (
+            workspace.get("repository") if isinstance(workspace, dict) else None
+        )
+        if not isinstance(repository, dict):
+            return False
+        return any(
+            repository.get(field) for field in ("gitUrl", "gitRepo", "gitRepoId")
+        )
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait until Kubernetes pod is running and HTTP endpoint is available."""
@@ -1091,6 +1110,8 @@ class K8sExecutor(Executor):
                 LABEL_TEAM_MODE: get_metadata_field(task, "mode", "default"),
                 LABEL_POOL_STATE: "bound",
             }
+            if workload_type == "executor":
+                labels[LABEL_POOL_PROFILE] = POOL_PROFILE_EXECUTOR_STANDARD
             annotations = {
                 ANNOTATION_EMAIL: "weibo_ai_coding@weibo.com",
             }
@@ -1561,7 +1582,7 @@ class K8sExecutor(Executor):
                 if task_id:
                     return task_id
 
-            if EXECUTOR_WARMPOOL_TEMPLATE_NAME:
+            if WARMPOOL_ENABLED:
                 from executor_manager.wecode.executors.warmpool import WarmPoolClient
 
                 api_client = _get_api_client()
@@ -1747,14 +1768,22 @@ class K8sExecutor(Executor):
                 metadata = pod.get("metadata", {})
                 pod_name = metadata.get("name", "")
                 labels = metadata.get("labels") or {}
-                is_wegent_executor = labels.get(LABEL_EXECUTOR) == LABEL_EXECUTOR_VALUE
-                if not name_pattern.search(pod_name) and not is_wegent_executor:
+                task_id = labels.get(LABEL_TASK_ID)
+                is_bound_executor_claim = (
+                    labels.get(LABEL_EXECUTOR) == LABEL_EXECUTOR_VALUE
+                    and labels.get(LABEL_POOL_PROFILE) == POOL_PROFILE_EXECUTOR_STANDARD
+                    and labels.get(LABEL_POOL_STATE) == "bound"
+                    and bool(task_id)
+                )
+                if (
+                    labels.get(LABEL_WARM_POOL) == "true"
+                    and not is_bound_executor_claim
+                ):
                     continue
-                if labels.get(LABEL_POOL_STATE) == "standby":
+                if not name_pattern.search(pod_name) and not is_bound_executor_claim:
                     continue
                 if not self._is_resource_older_than(metadata, cutoff):
                     continue
-                task_id = labels.get(LABEL_TASK_ID)
                 sandbox_name = self._sandbox_owner_name(metadata)
                 cleanup_target = sandbox_name or pod_name
                 old_pods.append(
@@ -1817,7 +1846,7 @@ class K8sExecutor(Executor):
         existing_targets: set,
     ) -> List[Dict[str, Any]]:
         """List old standard Executor claims not already represented by a Pod."""
-        if not EXECUTOR_WARMPOOL_TEMPLATE_NAME:
+        if not WARMPOOL_ENABLED:
             return []
 
         from executor_manager.wecode.executors.warmpool import WarmPoolClient

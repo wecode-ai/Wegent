@@ -44,14 +44,11 @@ WARMPOOL_MAX_REPLICAS = int(os.getenv("WARMPOOL_MAX_REPLICAS", "20"))
 # Maximum idle time before pod recycling (e.g., "30m", "1h")
 WARMPOOL_MAX_IDLE_TIME = os.getenv("WARMPOOL_MAX_IDLE_TIME", "30m")
 
-# Enable warm pool claims for standard online executor tasks. This is separate
-# from WARMPOOL_ENABLED, which continues to control sandbox task prewarming.
+# Enable warm pool claims for non-Git standard online executor tasks. These
+# tasks share the SandboxTemplate selected by WARMPOOL_TEMPLATE_NAME.
 EXECUTOR_WARMPOOL_ENABLED = (
     os.getenv("EXECUTOR_WARMPOOL_ENABLED", "false").lower() == "true"
 )
-
-# SandboxTemplate used by standard online executor tasks.
-EXECUTOR_WARMPOOL_TEMPLATE_NAME = os.getenv("EXECUTOR_WARMPOOL_TEMPLATE_NAME", "")
 
 # ==================== Executor Manager URLs ====================
 
