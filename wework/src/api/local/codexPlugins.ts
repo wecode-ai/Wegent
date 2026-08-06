@@ -703,13 +703,6 @@ function toMarketplaceItem(
     sourceProvider: source.sourceProvider,
     sourceLabel: source.sourceLabel,
   }
-  for (const marketplace of availableMarketplaces) {
-    for (const plugin of marketplace.plugins) {
-      if (!plugin.installed) continue
-      add(marketplace, plugin)
-    }
-  }
-  return Array.from(merged.values())
 }
 
 function installedPluginSummaryIdentity(
