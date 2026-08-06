@@ -536,6 +536,7 @@ export function MobileChatInputControls({
               disabled={isStreaming}
               isLoading={false}
               hideTriggerIcon={false}
+              currentMode={teamModeFilter}
             />
           </div>
         )}
