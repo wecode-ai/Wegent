@@ -66,11 +66,9 @@ objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKWe
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
-keyring = { version = "3.6.3", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 webview2-com = "0.38.2"
 windows = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_System_Power", "Win32_System_Threading"] }
