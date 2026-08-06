@@ -102,7 +102,7 @@ export function reduceRuntimeConversationTurns(
     case 'assistant_done':
       return updateTurn(turns, action.subtaskId, turn => {
         const items = applyCompletedAssistantContent(
-          upsertBlocks(turn.items, action.blocks),
+          settleProcessingBlocks(upsertBlocks(turn.items, action.blocks)),
           turn.id,
           action.content
         )
@@ -724,6 +724,22 @@ function resolveRuntimeStreamingThinkingContent(
 
 function processingBlocks(items: RuntimeConversationItem[]): ProcessingBlock[] {
   return items.flatMap(item => (item.type === 'block' ? [item.block] : []))
+}
+
+function settleProcessingBlocks(items: RuntimeConversationItem[]): RuntimeConversationItem[] {
+  const completedAt = Date.now()
+  return items.map(item => {
+    if (item.type !== 'block') return item
+    if (item.block.status === 'done' || item.block.status === 'error') return item
+    return {
+      ...item,
+      block: {
+        ...item.block,
+        status: 'done',
+        completedAt: item.block.completedAt ?? completedAt,
+      } as ProcessingBlock,
+    }
+  })
 }
 
 function assistantTextContent(items: RuntimeConversationItem[]): string {
