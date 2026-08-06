@@ -206,6 +206,61 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('promotes the matching final process block instead of duplicating it', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'cpu-progress',
+              type: 'block',
+              block: {
+                id: 'cpu-progress',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: 'CPU 检查完成。',
+                status: 'done',
+                createdAt: Date.parse('2026-08-03T00:00:00.000Z'),
+              },
+            },
+            {
+              id: 'memory-final',
+              type: 'block',
+              block: {
+                id: 'memory-final',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: '内存检查完成。',
+                status: 'done',
+                createdAt: Date.parse('2026-08-03T00:00:01.000Z'),
+              },
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        content: '内存检查完成。',
+      }
+    )
+
+    expect(turns[0].items).toEqual([
+      expect.objectContaining({ id: 'cpu-progress', type: 'block' }),
+      expect.objectContaining({
+        id: 'runtime-final:turn-1',
+        type: 'assistant_text',
+        content: '内存检查完成。',
+      }),
+    ])
+    expect(projectRuntimeConversationTurns(turns)[0]).toMatchObject({
+      content: '内存检查完成。',
+      blocks: [expect.objectContaining({ id: 'cpu-progress' })],
+    })
+  })
+
   test('keeps streamed final text when terminal content is already present', () => {
     const turns = reduceRuntimeConversationTurns(
       [

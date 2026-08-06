@@ -527,6 +527,21 @@ function applyCompletedAssistantContent(
     (item, index) => index > lastUserIndex && item.type === 'assistant_text'
   )
   if (hasStreamedAssistantText) return items
+  const matchingProcessTextIndex = items.findLastIndex(
+    (item, index) =>
+      index > lastUserIndex &&
+      item.type === 'block' &&
+      item.block.type === 'text' &&
+      item.block.content === content
+  )
+  if (matchingProcessTextIndex >= 0) {
+    return replaceAt(items, matchingProcessTextIndex, {
+      id: `runtime-final:${turnId ?? 'pending'}`,
+      type: 'assistant_text',
+      content,
+      createdAt: new Date().toISOString(),
+    })
+  }
   const retained = items.filter(
     (item, index) => index <= lastUserIndex || item.type !== 'assistant_text'
   )

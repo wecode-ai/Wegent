@@ -383,8 +383,11 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
-            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
-                event["payload"]["data"]["delta"] == "done"
+            && find_runtime_event(runtime_events, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
+                block["type"] == "text"
+                    && block["content"] == "done"
+                    && block["status"] == "streaming"
             })
             .is_some()
             && find_runtime_event(runtime_events, "response.completed", |event| {
@@ -440,11 +443,23 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "streaming"
     );
 
-    let text_delta = find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
-        event["payload"]["data"]["delta"] == "done"
-    })
-    .expect("final answer delta should remain the main output text");
-    assert_eq!(text_delta["payload"]["data"]["delta"], "done");
+    let final_process_block =
+        find_runtime_event(&runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["type"] == "text" && block["content"] == "done" && block["status"] == "streaming"
+        })
+        .expect("final-answer phase delta should create a process text block");
+    assert_eq!(
+        final_process_block["payload"]["data"]["block"]["content"],
+        "done"
+    );
+    assert!(
+        find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
+            event["payload"]["data"]["delta"] == "done"
+        })
+        .is_none(),
+        "assistant text must not emit a final-text delta while the turn is streaming"
+    );
     let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
         event["payload"]["data"]["value"] == "done"
     })
@@ -1366,14 +1381,18 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
         .expect("second create should be accepted");
 
     let routed_events = recv_events_until(&mut events, |received| {
-        find_runtime_event(received, "response.output_text.delta", |event| {
+        find_runtime_event(received, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
             event["payload"]["taskId"] == "local-task-a"
-                && event["payload"]["data"]["delta"] == "alpha"
+                && block["type"] == "text"
+                && block["content"] == "alpha"
         })
         .is_some()
-            && find_runtime_event(received, "response.output_text.delta", |event| {
+            && find_runtime_event(received, "response.block.created", |event| {
+                let block = &event["payload"]["data"]["block"];
                 event["payload"]["taskId"] == "local-task-b"
-                    && event["payload"]["data"]["delta"] == "beta"
+                    && block["type"] == "text"
+                    && block["content"] == "beta"
             })
             .is_some()
             && find_runtime_event(received, "response.completed", |event| {
@@ -1390,20 +1409,24 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
     .await;
 
     assert!(
-        find_runtime_event(&routed_events, "response.output_text.delta", |event| {
+        find_runtime_event(&routed_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
             event["payload"]["taskId"] == "local-task-a"
-                && event["payload"]["data"]["delta"] == "beta"
+                && block["type"] == "text"
+                && block["content"] == "beta"
         })
         .is_none(),
-        "thread-b delta must not be routed to local-task-a"
+        "thread-b process text must not be routed to local-task-a"
     );
     assert!(
-        find_runtime_event(&routed_events, "response.output_text.delta", |event| {
+        find_runtime_event(&routed_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
             event["payload"]["taskId"] == "local-task-b"
-                && event["payload"]["data"]["delta"] == "alpha"
+                && block["type"] == "text"
+                && block["content"] == "alpha"
         })
         .is_none(),
-        "thread-a delta must not be routed to local-task-b"
+        "thread-a process text must not be routed to local-task-b"
     );
     wait_until_task_idle(&handler, "local-task-a").await;
     wait_until_task_idle(&handler, "local-task-b").await;
