@@ -1,6 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
+export const DEFAULT_CONTEXT_COMPACTION_THRESHOLD = 85
+export const CONTEXT_COMPACTION_THRESHOLD_MIN = 1
+export const CONTEXT_COMPACTION_THRESHOLD_MAX = 100
+
+function clampContextCompactionThreshold(value: number): number {
+  return Math.min(
+    CONTEXT_COMPACTION_THRESHOLD_MAX,
+    Math.max(CONTEXT_COMPACTION_THRESHOLD_MIN, Math.round(value))
+  )
+}
+
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
@@ -9,6 +20,7 @@ export interface AppPreferences {
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
+  contextCompactionThreshold: number
   experimentalFeaturesEnabled: boolean
   telemetryConsentAsked: boolean
   telemetryEnabled: boolean
@@ -67,6 +79,7 @@ export interface AppPreferencesPatch {
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
+  contextCompactionThreshold?: number
   experimentalFeaturesEnabled?: boolean
   telemetryConsentAsked?: boolean
   telemetryEnabled?: boolean
@@ -115,6 +128,7 @@ export const defaultAppPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: DEFAULT_CONTEXT_COMPACTION_THRESHOLD,
   experimentalFeaturesEnabled: false,
   telemetryConsentAsked: false,
   telemetryEnabled: false,
@@ -189,6 +203,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.terminalContextInjectionEnabled === 'boolean'
         ? record.terminalContextInjectionEnabled
         : defaultAppPreferences.terminalContextInjectionEnabled,
+    contextCompactionThreshold:
+      typeof record.contextCompactionThreshold === 'number' &&
+      Number.isFinite(record.contextCompactionThreshold)
+        ? clampContextCompactionThreshold(record.contextCompactionThreshold)
+        : defaultAppPreferences.contextCompactionThreshold,
     experimentalFeaturesEnabled:
       typeof record.experimentalFeaturesEnabled === 'boolean'
         ? record.experimentalFeaturesEnabled

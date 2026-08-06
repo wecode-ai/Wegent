@@ -5,8 +5,10 @@ import {
   saveLocalCodexInstructions,
 } from '@/api/local/codexInstructions'
 import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader, SettingsSwitch } from './settings-ui'
+import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import {
+  CONTEXT_COMPACTION_THRESHOLD_MAX,
+  CONTEXT_COMPACTION_THRESHOLD_MIN,
   defaultAppPreferences,
   getAppPreferences,
   updateAppPreferences,
@@ -28,6 +30,9 @@ export function ContextSettingsPage() {
   const [instructionsError, setInstructionsError] = useState<string | null>(null)
   const [supervisorPrinciples, setSupervisorPrinciples] = useState('')
   const [savedSupervisorPrinciples, setSavedSupervisorPrinciples] = useState('')
+  const [compactionThresholdDraft, setCompactionThresholdDraft] = useState(
+    String(defaultAppPreferences.contextCompactionThreshold)
+  )
 
   const instructionsDirty = instructions !== savedInstructions
 
@@ -41,6 +46,7 @@ export function ContextSettingsPage() {
           setPreferences(nextPreferences)
           setSupervisorPrinciples(nextPreferences.supervisorPrinciples)
           setSavedSupervisorPrinciples(nextPreferences.supervisorPrinciples)
+          setCompactionThresholdDraft(String(nextPreferences.contextCompactionThreshold))
           setError(null)
         }
       } catch (fetchError) {
@@ -134,6 +140,29 @@ export function ContextSettingsPage() {
     }
   }
 
+  const commitCompactionThreshold = async () => {
+    const parsed = Number.parseInt(compactionThresholdDraft, 10)
+    const nextValue = Number.isFinite(parsed)
+      ? Math.min(
+          CONTEXT_COMPACTION_THRESHOLD_MAX,
+          Math.max(CONTEXT_COMPACTION_THRESHOLD_MIN, parsed)
+        )
+      : preferences.contextCompactionThreshold
+    setCompactionThresholdDraft(String(nextValue))
+    if (nextValue === preferences.contextCompactionThreshold) return
+    setSaving(true)
+    setError(null)
+    try {
+      const nextPreferences = await updateAppPreferences({ contextCompactionThreshold: nextValue })
+      setPreferences(nextPreferences)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update context settings', saveError)
+      setError(t('workbench.context_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <SettingsPage data-testid="context-settings-page">
       <SettingsPageHeader
@@ -167,6 +196,33 @@ export function ContextSettingsPage() {
             aria-label={t('workbench.context_settings_terminal_injection')}
           />
         </div>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+        <SettingsRow
+          data-testid="context-compaction-threshold-row"
+          label={t('workbench.context_settings_compaction_threshold')}
+          description={t('workbench.context_settings_compaction_threshold_description')}
+          control={
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={CONTEXT_COMPACTION_THRESHOLD_MIN}
+                max={CONTEXT_COMPACTION_THRESHOLD_MAX}
+                data-testid="context-compaction-threshold-input"
+                value={compactionThresholdDraft}
+                onChange={event => setCompactionThresholdDraft(event.target.value)}
+                onBlur={() => void commitCompactionThreshold()}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') event.currentTarget.blur()
+                }}
+                disabled={loading || saving}
+                className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-base text-text-primary outline-none [appearance:textfield] focus:border-primary disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <span className="text-sm text-text-secondary">%</span>
+            </div>
+          }
+        />
       </section>
 
       <CodexPersonalitySettings />

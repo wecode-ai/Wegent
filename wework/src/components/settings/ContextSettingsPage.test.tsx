@@ -12,6 +12,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  contextCompactionThreshold: 85,
   supervisorPrinciples: '',
   experimentalFeaturesEnabled: false,
   telemetryEnabled: true,
@@ -48,6 +49,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    contextCompactionThreshold: 85,
     supervisorPrinciples: '',
     experimentalFeaturesEnabled: false,
     telemetryEnabled: true,
@@ -58,6 +60,8 @@ vi.mock('@/tauri/appPreferences', () => ({
     trayWegentUsageEnabled: true,
     appshotsPlaySound: true,
   },
+  CONTEXT_COMPACTION_THRESHOLD_MIN: 1,
+  CONTEXT_COMPACTION_THRESHOLD_MAX: 100,
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
 }))
@@ -100,6 +104,21 @@ describe('ContextSettingsPage', () => {
       })
     })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+
+  test('saves the context compaction threshold', async () => {
+    render(<ContextSettingsPage />)
+
+    const input = await screen.findByTestId('context-compaction-threshold-input')
+    expect(input).toHaveValue(85)
+
+    await userEvent.clear(input)
+    await userEvent.type(input, '90{Enter}')
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ contextCompactionThreshold: 90 })
+    })
+    expect(input).toHaveValue(90)
   })
 
   test('loads and saves Wework custom instructions', async () => {
