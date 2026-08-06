@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import type { CaptureResult, PostHog } from 'posthog-js'
 import {
   ANALYTICS_EVENT_PROPERTY_KEYS,
@@ -55,6 +56,15 @@ let queuedEvents: QueuedAnalyticsEvent[] = []
 let pendingCaptures: QueuedAnalyticsEvent[] = []
 let captureFlushScheduled = false
 let cachedCommonProperties: CommonTelemetryProperties | null = null
+let pendingTransition: Promise<void> = Promise.resolve()
+
+const telemetryEnabledListeners = new Set<() => void>()
+
+function setTelemetryEnabledFlag(next: boolean): void {
+  if (enabled === next) return
+  enabled = next
+  for (const listener of telemetryEnabledListeners) listener()
+}
 
 function installationId(): string {
   const stored = localStorage.getItem(INSTALLATION_ID_KEY)
@@ -351,8 +361,19 @@ export function isTelemetryEnabled(): boolean {
   return enabled
 }
 
+export function subscribeTelemetryEnabled(listener: () => void): () => void {
+  telemetryEnabledListeners.add(listener)
+  return () => {
+    telemetryEnabledListeners.delete(listener)
+  }
+}
+
+export function useTelemetryEnabled(): boolean {
+  return useSyncExternalStore(subscribeTelemetryEnabled, isTelemetryEnabled)
+}
+
 export async function installTelemetry(initiallyEnabled: boolean): Promise<void> {
-  enabled = initiallyEnabled
+  setTelemetryEnabledFlag(initiallyEnabled)
   if (!enabled) return
   await initialize()
 }
@@ -404,9 +425,15 @@ export function captureError(error: unknown): void {
   void initialize().then(() => sentry?.captureException(error))
 }
 
-export async function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
+export function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
+  const transition = pendingTransition.then(() => applyTelemetryEnabled(nextEnabled))
+  pendingTransition = transition.catch(() => undefined)
+  return transition
+}
+
+async function applyTelemetryEnabled(nextEnabled: boolean): Promise<void> {
   if (enabled === nextEnabled) return
-  enabled = nextEnabled
+  setTelemetryEnabledFlag(nextEnabled)
   if (nextEnabled) {
     await initialize()
     posthog?.opt_in_capturing()
@@ -433,7 +460,8 @@ export async function setTelemetryEnabled(nextEnabled: boolean): Promise<void> {
 }
 
 export function resetTelemetryForTests(): void {
-  enabled = false
+  setTelemetryEnabledFlag(false)
+  pendingTransition = Promise.resolve()
   initialized = false
   initializing = null
   posthog = null

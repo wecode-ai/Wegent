@@ -4697,11 +4697,13 @@ pub fn run() {
         }
     }));
 
+    #[cfg(desktop)]
+    let builder = builder.manage(NativeTelemetryState::default());
+
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
-        .manage(NativeTelemetryState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
@@ -4760,9 +4762,11 @@ pub fn run() {
                 read_app_preferences_impl(app.handle()).prevent_sleep_while_tasks_running,
             );
             #[cfg(desktop)]
-            let preferences = read_app_preferences_impl(app.handle());
-            app.state::<NativeTelemetryState>()
-                .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+            {
+                let preferences = read_app_preferences_impl(app.handle());
+                app.state::<NativeTelemetryState>()
+                    .configure(preferences.telemetry_consent_asked && preferences.telemetry_enabled);
+            }
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]

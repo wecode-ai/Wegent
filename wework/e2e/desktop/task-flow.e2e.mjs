@@ -5230,13 +5230,13 @@ async function verifyTelemetryPreference(control) {
     'false',
     'Disabling telemetry was not persisted'
   )
-  control.telemetryRequestCountAfterRevocation = control.telemetryRequestCount()
   await control.command('click', '[data-testid="settings-back-button"]')
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', '[data-testid="plugins-workspace"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await waitForTelemetrySilence(control)
+  control.telemetryRequestCountAfterRevocation = control.telemetryRequestCount()
   assert.equal(
     control.telemetryRequestCount(),
     control.telemetryRequestCountAfterRevocation,

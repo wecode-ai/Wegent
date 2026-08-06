@@ -322,7 +322,7 @@ function TaskFeedbackDialogContent({
       })
       setSubmitted(response)
       setPhase('done')
-      const attachmentCount = preview.entries.length
+      const attachmentCount = attachments.length
       track('feedback_submitted', {
         attachment_count:
           attachmentCount === 0

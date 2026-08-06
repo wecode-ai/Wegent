@@ -89,7 +89,7 @@ import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTab
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track } from '@/telemetry/client'
+import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 
@@ -322,12 +322,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
   }))
+  const telemetryEnabled = useTelemetryEnabled()
 
   useEffect(() => {
     track('feature_opened', {
       feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
     })
-  }, [isPopoutWindow, path])
+  }, [isPopoutWindow, path, telemetryEnabled])
   if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
     setMountedTabs({
       activeTabId: workspaceTabs.activeTabId,

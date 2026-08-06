@@ -18,6 +18,7 @@ function env(name: keyof ImportMetaEnv): string {
 }
 
 function sampleRate(value: string): number {
+  if (!value) return 0.05
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 0.05
 }

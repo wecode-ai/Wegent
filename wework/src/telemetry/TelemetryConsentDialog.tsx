@@ -1,4 +1,5 @@
 import { ShieldCheck } from 'lucide-react'
+import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -10,6 +11,27 @@ interface TelemetryConsentDialogProps {
 
 export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryConsentDialogProps) {
   const { t } = useTranslation('common')
+  const acceptRef = useRef<HTMLButtonElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    acceptRef.current?.focus()
+  }, [])
+
+  const trapFocus = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Tab') return
+    const focusable = sectionRef.current?.querySelectorAll<HTMLElement>('button:not([disabled])')
+    if (!focusable?.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 
   return createPortal(
     <div
@@ -17,6 +39,8 @@ export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryCon
       className="fixed inset-0 z-system flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
     >
       <section
+        ref={sectionRef}
+        onKeyDown={trapFocus}
         role="dialog"
         aria-modal="true"
         aria-labelledby="telemetry-consent-title"
@@ -55,6 +79,7 @@ export function TelemetryConsentDialog({ error, saving, onChoose }: TelemetryCon
           </button>
           <button
             type="button"
+            ref={acceptRef}
             data-testid="telemetry-consent-accept"
             disabled={saving}
             onClick={() => onChoose(true)}
