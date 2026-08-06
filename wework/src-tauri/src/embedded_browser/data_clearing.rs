@@ -8,7 +8,7 @@ use tauri::{LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Wry};
 use tokio::{sync::oneshot, time::timeout};
 
 #[cfg(target_os = "windows")]
-use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
+use webview2_com::{ClearBrowsingDataCompletedHandler, Microsoft::Web::WebView2::Win32::*};
 #[cfg(target_os = "windows")]
 use windows::core::Interface;
 
@@ -252,14 +252,12 @@ async fn clear_platform_webview_data(
             };
             let kinds = windows_data_kinds(data_kinds);
             let completion_sender = Arc::clone(&sender);
-            let handler = ClearBrowsingDataCompletedHandler::create(Box::new(
-                move |result: windows::core::Result<()>| -> windows::core::Result<()> {
-                    let completion = result
-                        .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
-                    send_clear_completion(&completion_sender, completion);
-                    Ok(())
-                },
-            ));
+            let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |result| {
+                let completion = result
+                    .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
+                send_clear_completion(&completion_sender, completion);
+                Ok(())
+            }));
             if let Err(error) = unsafe { profile.ClearBrowsingData(kinds, &handler) } {
                 send_clear_completion(
                     &sender,
