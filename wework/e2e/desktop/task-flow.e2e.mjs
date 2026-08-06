@@ -8097,7 +8097,20 @@ async function verifyGoalRestartRecoveryLifecycle({
       !snapshot.testIds.includes(goalUnreadTestId) &&
       snapshot.text.includes(GOAL_RESTART_INITIAL_TEXT),
     'The user did not see the Goal working before Wework restarted'
-  )
+  ).catch(async error => {
+    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; workbench debug: ${JSON.stringify(
+        {
+          currentRuntimeTask: debugSnapshot.workbench?.currentRuntimeTask ?? null,
+          lifecycleCurrentTaskRunning: debugSnapshot.workbench?.lifecycleCurrentTaskRunning ?? null,
+          goal: debugSnapshot.pane?.goal ?? null,
+          goalContinuing: debugSnapshot.pane?.goalContinuing ?? null,
+          goalDraftActive: debugSnapshot.pane?.goalDraftActive ?? null,
+        }
+      )}`
+    )
+  })
   await captureVerificationScreenshot(control, 'goal-restart-01-working-before-restart.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')

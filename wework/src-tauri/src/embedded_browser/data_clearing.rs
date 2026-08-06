@@ -8,7 +8,7 @@ use tauri::{LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Wry};
 use tokio::{sync::oneshot, time::timeout};
 
 #[cfg(target_os = "windows")]
-use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
+use webview2_com::{ClearBrowsingDataCompletedHandler, Microsoft::Web::WebView2::Win32::*};
 #[cfg(target_os = "windows")]
 use windows::core::Interface;
 

@@ -250,6 +250,21 @@ validates the branch after a PR is opened. A newer commit to the same PR or to
 always appear and verify that every selected job actually succeeded. Skipped,
 unrelated modules do not make the summary fail.
 
+### Writing GitHub Actions Outputs
+
+Every line written to `$GITHUB_OUTPUT` must use the `name=value` format. Do not
+write the substituted output of a command that can emit progress or diagnostic
+messages directly to that file. Extract the needed value first, then write the
+output. For example, to resolve the Playwright version:
+
+```bash
+version="$(pnpm exec playwright --version | sed -n 's/^Version //p')"
+echo "version=$version" >> "$GITHUB_OUTPUT"
+```
+
+This prevents package-manager supply-chain checks or other auxiliary logs from
+invalidating the workflow output format.
+
 ### Workflow Jobs
 
 Regular PR checks must cover module tests; E2E jobs do not replace them:

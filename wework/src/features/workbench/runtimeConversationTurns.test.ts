@@ -206,6 +206,56 @@ describe('runtimeConversationTurns', () => {
     })
   })
 
+  test('settles streaming process blocks when the assistant turn completes', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-06T00:00:00.000Z'))
+
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'process-1',
+              type: 'block',
+              block: {
+                id: 'process-1',
+                subtaskId: 'turn-1',
+                type: 'text',
+                content: '正在整理结果。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-08-05T23:59:00.000Z'),
+              },
+            },
+          ],
+          status: 'streaming',
+        },
+      ],
+      {
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        content: '整理完成。',
+      }
+    )
+
+    expect(turns[0]?.status).toBe('done')
+    expect(turns[0]?.items[0]).toMatchObject({
+      id: 'process-1',
+      type: 'block',
+      block: {
+        status: 'done',
+        completedAt: Date.parse('2026-08-06T00:00:00.000Z'),
+      },
+    })
+    expect(projectRuntimeConversationTurns(turns)[0]).toMatchObject({
+      status: 'done',
+      content: '整理完成。',
+      blocks: [expect.objectContaining({ id: 'process-1', status: 'done' })],
+    })
+
+    vi.useRealTimers()
+  })
+
   test('promotes the matching final process block instead of duplicating it', () => {
     const turns = reduceRuntimeConversationTurns(
       [
