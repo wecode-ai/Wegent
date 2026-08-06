@@ -529,8 +529,8 @@ class K8sExecutor(Executor):
         elif use_executor_warmpool:
             if not WARMPOOL_TEMPLATE_NAME:
                 raise RuntimeError(
-                    "WARMPOOL_TEMPLATE_NAME is required when "
-                    "EXECUTOR_WARMPOOL_ENABLED=true"
+                    "WARMPOOL_TEMPLATE_NAME is required when the standard "
+                    "Executor warm pool is enabled"
                 )
             pod_result = self._create_pod_from_warmpool(
                 task=task,

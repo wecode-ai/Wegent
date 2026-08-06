@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -623,6 +624,17 @@ def test_non_git_online_task_is_executor_warmpool_eligible(mocker):
     )
 
     assert reason is None
+
+
+def test_executor_warmpool_is_enabled_by_default(monkeypatch):
+    from executor_manager.wecode.config import config
+
+    with monkeypatch.context() as patch:
+        patch.delenv("EXECUTOR_WARMPOOL_ENABLED", raising=False)
+        reloaded_config = importlib.reload(config)
+        assert reloaded_config.EXECUTOR_WARMPOOL_ENABLED is True
+
+    importlib.reload(config)
 
 
 def test_create_instance_claims_shared_sandbox_warmpool(mocker):
