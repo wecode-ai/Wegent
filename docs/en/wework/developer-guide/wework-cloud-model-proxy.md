@@ -41,6 +41,7 @@ When a cloud Model CRD uses OpenAI Chat Completions and its provider model name 
 - It sends Kimi's supported `thinking` field instead of the generic `reasoning_effort` field.
 - It preserves `reasoning_content` across multi-turn messages and tool calls.
 - It preserves namespace tool identity through a reversible mapping so same-named tools still route to the correct executor.
+- It retains the top-level `type: "object"` on function parameters, equivalently nests a root `anyOf` constraint under `allOf`, and fills object types on `anyOf` branches to satisfy Kimi tool-schema validation.
 
 An explicit Anthropic Messages configuration is never overridden. Operators must select OpenAI Chat Completions in the Model CRD through `protocol` or `apiFormat`. Leaving only `env.model=claude` without protocol metadata continues to route requests as Anthropic Messages to `/v1/messages`.
 

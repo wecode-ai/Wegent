@@ -2226,11 +2226,12 @@ mod tests {
         assert_eq!(prepared["model"], "cloud-model-resource-name");
         assert_eq!(prepared["thinking"], json!({"type": "enabled"}));
         assert!(prepared.get("reasoning_effort").is_none());
-        assert!(prepared["tools"][0]["function"]["parameters"]
-            .get("type")
-            .is_none());
         assert_eq!(
-            prepared["tools"][0]["function"]["parameters"]["anyOf"][0]["type"],
+            prepared["tools"][0]["function"]["parameters"]["type"],
+            "object"
+        );
+        assert_eq!(
+            prepared["tools"][0]["function"]["parameters"]["allOf"][0]["anyOf"][0]["type"],
             "object"
         );
         assert!(matches!(conversion, Some(Conversion::Chat(_))));
