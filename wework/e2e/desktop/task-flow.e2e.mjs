@@ -12456,6 +12456,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
         VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }

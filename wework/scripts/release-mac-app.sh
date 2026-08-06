@@ -505,6 +505,7 @@ BACKEND_PORT="${BACKEND_PORT:-9100}"
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
+export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-$([ "$TARGET" = "prod" ] && printf 'stable' || printf 'development')}"
 
 download_base_url="$LOCAL_DOWNLOAD_BASE_URL"
 dist_dir="$LOCAL_DIST_DIR"
@@ -546,6 +547,7 @@ elif [ "$TARGET" = "local" ]; then
   echo "Notary profile: not set (local release will skip notarization)"
 fi
 echo "VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+echo "VITE_WEWORK_RELEASE_CHANNEL=$VITE_WEWORK_RELEASE_CHANNEL"
 echo "VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "VITE_WEWORK_FEEDBACK_URL=${VITE_WEWORK_FEEDBACK_URL:-<disabled>}"
 
