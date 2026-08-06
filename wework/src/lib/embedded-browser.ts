@@ -20,6 +20,7 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
 
 export interface EmbeddedBrowserOcclusionChange {
   id: string
@@ -41,8 +42,16 @@ export interface EmbeddedBrowserPageState {
 }
 
 export interface EmbeddedBrowserOpenRequest {
+  id: string
   url: string
-  label: string
+  /** @deprecated Use baseLabel for routing. */
+  label?: string
+  baseLabel: string
+  source: 'user' | 'agent' | 'popup' | 'restore'
+  disposition: 'new-tab' | 'current-tab' | 'restore-tab'
+  targetLabel?: string
+  parentLabel?: string
+  browserSessionId?: string
 }
 
 export interface EmbeddedBrowserCloseRequest {
@@ -88,6 +97,19 @@ export interface EmbeddedBrowserAgentApproval {
   expiresAtUnixMs: number
 }
 
+export interface EmbeddedBrowserPopupRequest {
+  popupId: string
+  parentLabel: string
+  parentNativeLabel: string
+  url: string
+  origin: string
+  kind: string
+  strategy: string
+  status: string
+  createdAtUnixMs: number
+  warning: string | null
+}
+
 export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   nativeLabel: string
   url: string
@@ -103,6 +125,15 @@ export function listenEmbeddedBrowserInvalidTlsCertificates(
     EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT,
     event => handler(event.payload)
   )
+}
+
+export function listenEmbeddedBrowserPopupRequests(
+  handler: (request: EmbeddedBrowserPopupRequest) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserPopupRequest>(EMBEDDED_BROWSER_POPUP_EVENT, event => {
+    handler(event.payload)
+  })
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
@@ -312,6 +343,13 @@ export async function relabelEmbeddedBrowser(
   })
 }
 
+export async function setEmbeddedBrowserActiveTab(
+  baseLabel: string,
+  activeTabLabel: string
+): Promise<void> {
+  await invoke('embedded_browser_set_active_tab', { baseLabel, activeTabLabel })
+}
+
 export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
   await invoke('embedded_browser_close', browserArgs(label))
 }
@@ -331,7 +369,14 @@ export function requestEmbeddedBrowserOpen(
   const normalizedUrl = normalizeBrowserUrl(url, window.location.href)
   if (!normalizedUrl) return false
 
-  const request = { url: normalizedUrl, label }
+  const request: EmbeddedBrowserOpenRequest = {
+    id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    url: normalizedUrl,
+    label,
+    baseLabel: label,
+    source: 'user',
+    disposition: 'new-tab',
+  }
   embeddedBrowserOpenRequestHandlers.forEach(handler => handler(request))
   return true
 }

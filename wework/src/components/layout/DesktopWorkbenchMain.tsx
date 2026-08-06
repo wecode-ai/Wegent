@@ -97,6 +97,7 @@ import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
   type EmbeddedBrowserOpenRequest,
@@ -1384,9 +1385,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => initialBlankBrowserMigration?.browserLabel ?? null
   )
   const temporaryChatTabSequence = useRef(0)
-  const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
-    (EmbeddedBrowserOpenRequest & { id: number }) | null
-  >(null)
+  const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] =
+    useState<EmbeddedBrowserOpenRequest | null>(null)
   const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
     id: number
     text: string
@@ -1940,10 +1940,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
         setMigratedEmbeddedBrowserLabel(request.label)
       }
-      setEmbeddedBrowserOpenRequest(previous => ({
+      setEmbeddedBrowserOpenRequest(() => ({
         ...request,
-        id: (previous?.id ?? 0) + 1,
+        id: request.id || `legacy-${Date.now()}`,
+        baseLabel: request.baseLabel || request.label || current.embeddedBrowserLabel,
+        source: request.source || 'agent',
+        disposition: request.disposition || 'current-tab',
       }))
+      current.openRightPanelTab('browser')
+    })
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [paneActive])
+  useEffect(() => {
+    if (!paneActive || typeof listenEmbeddedBrowserPopupRequests !== 'function') return
+    const listener = listenEmbeddedBrowserPopupRequests(request => {
+      const current = embeddedBrowserListenerStateRef.current
+      const baseLabel = current.embeddedBrowserLabel
+      if (
+        request.parentLabel !== baseLabel &&
+        !request.parentLabel.startsWith(`${baseLabel}--tab-`)
+      ) {
+        return
+      }
+      setEmbeddedBrowserOpenRequest({
+        id: request.popupId,
+        url: request.url,
+        baseLabel,
+        source: 'popup',
+        disposition: 'new-tab',
+        parentLabel: request.parentLabel,
+      })
       current.openRightPanelTab('browser')
     })
 

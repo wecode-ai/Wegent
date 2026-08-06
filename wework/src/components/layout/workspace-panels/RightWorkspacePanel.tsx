@@ -34,7 +34,10 @@ import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/a
 import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
-import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
+import {
+  WorkspaceBrowserPanel,
+  WORKSPACE_BROWSER_NEW_TAB_EVENT,
+} from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 
@@ -107,7 +110,7 @@ interface RightWorkspacePanelProps {
   review: RightWorkspaceReviewState
   planContent?: string | null
   embeddedBrowserLabel?: string
-  embeddedBrowserOpenRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  embeddedBrowserOpenRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
@@ -199,9 +202,15 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           ? event.ctrlKey && !event.metaKey && !event.shiftKey
           : event.metaKey && !event.shiftKey
 
-      if (primaryPressed && !event.altKey && key === 't' && !browserOpen) {
+      if (primaryPressed && !event.altKey && key === 't') {
         event.preventDefault()
-        openBrowserTab()
+        if (!browserOpen) {
+          openBrowserTab()
+        } else if (activeView === 'browser') {
+          window.dispatchEvent(new Event(WORKSPACE_BROWSER_NEW_TAB_EVENT))
+        } else {
+          onSelectBrowser()
+        }
         return
       }
 
@@ -222,9 +231,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
+    activeView,
     browserOpen,
     canBrowseFiles,
     canOpenReview,
+    onSelectBrowser,
     onSelectChat,
     onSelectFiles,
     onSelectReview,
@@ -457,6 +468,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         ))}
         {browserOpen && (
           <WorkspaceBrowserPanel
+            key={embeddedBrowserLabel}
             active={visible && activeView === 'browser'}
             label={embeddedBrowserLabel}
             openRequest={embeddedBrowserOpenRequest}

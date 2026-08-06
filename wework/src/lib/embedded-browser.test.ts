@@ -155,25 +155,45 @@ describe('embedded-browser', () => {
     const unlisten = listenEmbeddedBrowserOpenRequests(handler)
 
     expect(requestEmbeddedBrowserOpen('http://localhost:3000')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'http://localhost:3000/',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'http://localhost:3000/',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('asset://localhost/Users/me/workspace/trend.html')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'asset://localhost/Users/me/workspace/trend.html',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'asset://localhost/Users/me/workspace/trend.html',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('file:///Users/me/workspace/report.html')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'file:///Users/me/workspace/report.html',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'file:///Users/me/workspace/report.html',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('/Users/me/workspace/report.html')).toBe(true)
-    expect(handler).toHaveBeenCalledWith({
-      label: 'workspace-browser',
-      url: 'file:///Users/me/workspace/report.html',
-    })
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseLabel: 'workspace-browser',
+        disposition: 'new-tab',
+        label: 'workspace-browser',
+        source: 'user',
+        url: 'file:///Users/me/workspace/report.html',
+      })
+    )
     expect(requestEmbeddedBrowserOpen('ftp://localhost/resource')).toBe(false)
     expect(handler).toHaveBeenCalledTimes(4)
 

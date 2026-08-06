@@ -721,6 +721,7 @@
     "open_website": "Open website",
     "close_browser": "Close browser",
     "browser_new_tab": "New tab",
+    "browser_close_tab": "Close tab",
     "browser_back": "Back",
     "browser_forward": "Forward",
     "browser_reload": "Reload",

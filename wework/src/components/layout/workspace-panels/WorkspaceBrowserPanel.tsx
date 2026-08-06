@@ -91,15 +91,18 @@ const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   return true;
 })()`
 
-interface WorkspaceBrowserPanelProps {
+export interface WorkspaceBrowserPanelProps {
   active: boolean
   label?: string
-  openRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
+
+// Kept for existing consumers while the tab container is introduced around this host.
+export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
@@ -714,7 +717,7 @@ function browserAnnotationContext(
   }
 }
 
-export function WorkspaceBrowserPanel({
+export function WorkspaceBrowserTabPanel({
   active,
   label = 'workspace-browser',
   openRequest,
@@ -742,7 +745,7 @@ export function WorkspaceBrowserPanel({
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
-  const handledOpenRequestIdRef = useRef<number | null>(null)
+  const handledOpenRequestIdRef = useRef<string | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
