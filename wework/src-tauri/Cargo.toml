@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.10"
+version = "0.1.11-beta.2"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -42,6 +42,7 @@ reqwest = { version = "0.13", features = ["blocking", "multipart"] }
 base64 = "0.22"
 getrandom = "0.2"
 regex = "1"
+sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Keep Wry's devtools API available when its debug assertions are disabled below.
 wry = { version = "0.55.1", features = ["devtools"] }

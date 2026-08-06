@@ -79,6 +79,8 @@ export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<vo
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
+  forceNewTask?: boolean
+  additionalSkills?: SkillRef[]
   clientUserMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
@@ -140,6 +142,10 @@ export interface WorkbenchContextValue {
     isModelSelectionReady: boolean
     input: string
     trialTemplates: PluginPathComponent[]
+    trialPluginName?: string
+    hasConversationContext?: boolean
+    dismissTrialGuide?: () => void
+    applyTrialTemplate?: (template: PluginPathComponent) => void
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -327,6 +333,10 @@ export interface WorkbenchContextValue {
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
   createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createEphemeralRuntimeTask: (
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>

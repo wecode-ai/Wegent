@@ -1,20 +1,70 @@
-import { ArrowRight, ExternalLink, MessageCircle, MoreHorizontal } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpenText,
+  Boxes,
+  ExternalLink,
+  Link2,
+  MessageCircle,
+  MoreHorizontal,
+  Plus,
+  Sparkles,
+  TerminalSquare,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { navigateTo } from '@/lib/navigation'
 import type { InstalledPlugin } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
-import { PluginLogo } from './PluginLogo'
+import { resolvePluginLogo } from './plugin-assets'
+import { formatPluginVersion } from './plugin-display'
+import { buildPluginGuidePresentation, inferPluginGuideKind } from './plugin-guide-presentation'
+import { PluginUseCaseGuideDialog } from './plugin-dialogs/PluginUseCaseGuideDialog'
+import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
+  projectName?: string | null
   onBack: () => void
+  backLabel?: string
   onToggle: () => void
   onComponentToggle: (componentKey: string, enabled: boolean) => void
   onUninstall: () => void
   primaryActionLabel?: string
   showUninstall?: boolean
   primaryActionDisabled?: boolean
+  actionError?: string | null
+  secondaryActionLabel?: string
+  secondaryActionDisabled?: boolean
+  onSecondaryAction?: () => void
+  tertiaryActionLabel?: string
+  tertiaryActionDisabled?: boolean
+  onTertiaryAction?: () => void
+  onPromptSelect?: (prompt: string) => void
+  editActionLabel?: string
+  onEditAction?: () => void
+  onManageConnector?: (slug: string) => void
+  connectorAuthBySlug?: Record<string, 'connected' | 'disconnected'>
+  accessRole?: 'catalog' | 'owner' | 'recipient'
+  pluginVisibility?: 'personal' | 'workspace' | 'public' | null
+  shareGrantUserCount?: number
+  shareGrantNamespaceCount?: number
+  onManageAccess?: () => void
+  submissionStatus?:
+    | 'uploading'
+    | 'scanning'
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'cancelled'
+    | null
+  submissionReviewNote?: string | null
+  isExternalSource?: boolean
+  onSkillRun?: (skillName: string) => void
+  shareRecipient?: boolean
+  primaryActionIcon?: 'try' | 'install' | 'none'
+  actionMenuBeforePrimary?: boolean
+  hasConversationContext?: boolean
 }
 
 interface DetailComponentItem {
@@ -41,12 +91,6 @@ function formatManifestValue(value: unknown): string {
     if (typeof record.url === 'string') return record.url
   }
   return ''
-}
-
-function formatBytes(value?: number | null): string {
-  if (!value || value <= 0) return ''
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
-  return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
 function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
@@ -105,6 +149,14 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
             : item.name,
       toggleable: false,
     })),
+    ...(components.connectors ?? []).map(item => ({
+      key: `connector-${item.slug}`,
+      componentKey: `connector:${item.slug}`,
+      type: 'connector',
+      name: item.slug,
+      description: item.authPolicy === 'on_install' ? '安装和使用此插件需要授权' : '可选应用连接',
+      toggleable: false,
+    })),
     ...components.lsps.map(item => ({
       key: `lsp-${item.name}`,
       componentKey: `lsp:${item.name}`,
@@ -132,6 +184,14 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
   ]
 }
 
+function installedPluginLogo(plugin: InstalledPluginItem) {
+  return resolvePluginLogo({
+    pluginKey: plugin.raw.spec.source.pluginKey || plugin.name,
+    logo: plugin.raw.spec.interface?.logo,
+    composerIcon: plugin.raw.spec.interface?.composerIcon,
+  })
+}
+
 function pluginDisplayDescription(plugin: InstalledPluginItem): string {
   return (
     plugin.raw.spec.interface?.longDescription ||
@@ -140,16 +200,44 @@ function pluginDisplayDescription(plugin: InstalledPluginItem): string {
   )
 }
 
-function pluginPromptExamples(plugin: InstalledPluginItem): string[] {
-  const prompts = normalizePromptExamples(plugin.raw.spec.interface?.defaultPrompt)
-  if (prompts.length > 0) return prompts.slice(0, 3)
+interface PluginGuideExample {
+  id: string
+  title: string
+  prompt: string
+  description: string
+  logoUrl?: string | null
+}
 
-  const name = plugin.name
-  return [
-    `Use ${name} to summarize the current project status`,
-    `Use ${name} to create an editable working artifact`,
-    `Use ${name} to inspect the latest files and suggest next steps`,
-  ]
+function pluginGuideExamples(plugin: InstalledPluginItem): PluginGuideExample[] {
+  const templates = (plugin.raw.spec.components.templates ?? plugin.raw.spec.components.commands)
+    .filter(template => !template.unavailableReason)
+    .slice(0, 3)
+  if (templates.length > 0) {
+    return templates.map((template, index) => ({
+      id: template.path || `template-${index}`,
+      title: template.name,
+      prompt: template.description?.trim() || template.name,
+      description: template.description?.trim() || '',
+      logoUrl: template.logoUrl || template.logoUrlDark,
+    }))
+  }
+
+  const prompts = normalizePromptExamples(plugin.raw.spec.interface?.defaultPrompt)
+  const examples =
+    prompts.length > 0
+      ? prompts.slice(0, 3)
+      : [
+          `Use ${plugin.name} to summarize the current project status`,
+          `Use ${plugin.name} to create an editable working artifact`,
+          `Use ${plugin.name} to inspect the latest files and suggest next steps`,
+        ]
+
+  return examples.map((prompt, index) => ({
+    id: `prompt-${index}`,
+    title: prompt,
+    prompt,
+    description: '',
+  }))
 }
 
 function normalizePromptExamples(value: unknown): string[] {
@@ -185,10 +273,35 @@ function pluginCapabilitySummary(plugin: InstalledPluginItem): string {
     return capabilities.join(', ')
   }
   const counts = plugin.componentCounts
-  return Object.entries(counts)
+  const countSummary = Object.entries(counts)
     .filter(([, count]) => count > 0)
     .map(([key]) => key)
     .join(', ')
+  if (countSummary) return countSummary
+
+  const componentTypes = [
+    ...new Set(
+      buildComponentItems(plugin.raw)
+        .filter(item => item.type !== 'connector')
+        .map(item => item.type)
+    ),
+  ]
+  return componentTypes.join(', ') || 'Plugin'
+}
+
+function pluginDeviceSummary(plugin: InstalledPluginItem): string {
+  const devices = plugin.raw.status.devices ?? []
+  if (devices.length === 0) return ''
+  const installed = devices.filter(device => device.state === 'installed').length
+  const failed = devices.filter(device => device.state === 'failed').length
+  const pending = devices.length - installed - failed
+  return [
+    `${installed}/${devices.length} 已安装`,
+    pending > 0 ? `${pending} 等待同步` : '',
+    failed > 0 ? `${failed} 失败` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['t']): string {
@@ -199,6 +312,8 @@ function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['
       return t('workbench.plugin_component_type_app', '应用')
     case 'mcp':
       return t('workbench.plugin_component_type_mcp', 'MCP')
+    case 'connector':
+      return t('workbench.plugin_component_type_connector', '应用连接')
     case 'hook':
       return t('workbench.plugin_component_type_hook', 'Hook')
     case 'command':
@@ -210,17 +325,43 @@ function componentTypeLabel(type: string, t: ReturnType<typeof useTranslation>['
   }
 }
 
-function detailRows(plugin: InstalledPlugin): Array<{
+function componentIcon(type: string) {
+  switch (type) {
+    case 'skill':
+      return BookOpenText
+    case 'mcp':
+    case 'connector':
+      return Boxes
+    case 'command':
+    case 'bin':
+      return TerminalSquare
+    default:
+      return Sparkles
+  }
+}
+
+function detailRows(
+  plugin: InstalledPlugin,
+  isExternalSource: boolean,
+  t: (key: string, defaultValue: string) => string
+): Array<{
   label: string
   value: string
   href?: string
 }> {
   const manifest = plugin.spec.manifest ?? {}
   const homepage = plugin.spec.interface?.websiteUrl || formatManifestValue(manifest.homepage)
-  const repository = formatManifestValue(manifest.repository)
-  return [
+  const privacyPolicy =
+    plugin.spec.interface?.privacyPolicyUrl || formatManifestValue(manifest.privacyPolicy)
+  const termsOfService =
+    plugin.spec.interface?.termsOfServiceUrl || formatManifestValue(manifest.termsOfService)
+  const rows: Array<{
+    label: string
+    value: string
+    href?: string
+  }> = [
     {
-      label: '开发者',
+      label: t('workbench.plugin_detail_label_developer', '开发者'),
       value:
         plugin.spec.interface?.developerName ||
         formatManifestValue(manifest.author) ||
@@ -228,237 +369,578 @@ function detailRows(plugin: InstalledPlugin): Array<{
         '',
     },
     {
-      label: '类别',
-      value: plugin.spec.interface?.category || plugin.spec.source.type,
+      label: t('workbench.plugin_detail_label_version', '版本'),
+      value: formatPluginVersion(plugin.spec.version || formatManifestValue(manifest.version)),
     },
-    {
-      label: '网站',
+  ]
+  if (isExternalSource && homepage) {
+    rows.push({
+      label: t('workbench.plugin_detail_label_website', '网站'),
       value: homepage,
       href: homepage.startsWith('http') ? homepage : undefined,
-    },
-    {
-      label: '仓库',
-      value: repository,
-      href: repository.startsWith('http') ? repository : undefined,
-    },
-    {
-      label: '版本',
-      value: plugin.spec.version || formatManifestValue(manifest.version),
-    },
-    {
-      label: '包大小',
-      value: formatBytes(plugin.spec.packageRef?.sizeBytes),
-    },
-  ].filter(row => row.value)
+    })
+  }
+  if (isExternalSource && privacyPolicy) {
+    rows.push({
+      label: t('workbench.plugin_detail_label_privacy', '隐私政策'),
+      value: privacyPolicy,
+      href: privacyPolicy.startsWith('http') ? privacyPolicy : undefined,
+    })
+  }
+  if (isExternalSource && termsOfService) {
+    rows.push({
+      label: t('workbench.plugin_detail_label_terms', '服务条款'),
+      value: termsOfService,
+      href: termsOfService.startsWith('http') ? termsOfService : undefined,
+    })
+  }
+  return rows.filter(row => row.value)
 }
 
 export function PluginDetailView({
   plugin,
+  projectName,
   onBack,
+  backLabel,
   onToggle,
   onComponentToggle,
   onUninstall,
   primaryActionLabel,
   showUninstall = true,
   primaryActionDisabled = false,
+  actionError,
+  secondaryActionLabel,
+  secondaryActionDisabled = false,
+  onSecondaryAction,
+  tertiaryActionLabel,
+  tertiaryActionDisabled = false,
+  onTertiaryAction,
+  onPromptSelect,
+  editActionLabel,
+  onEditAction,
+  onManageConnector,
+  connectorAuthBySlug,
+  accessRole,
+  pluginVisibility = null,
+  shareGrantUserCount = 0,
+  shareGrantNamespaceCount = 0,
+  onManageAccess,
+  submissionStatus = null,
+  submissionReviewNote = null,
+  isExternalSource = false,
+  onSkillRun,
+  shareRecipient = false,
+  primaryActionIcon = 'try',
+  actionMenuBeforePrimary = true,
+  hasConversationContext = false,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false)
+  const [selectedSkill, setSelectedSkill] = useState<DetailComponentItem | null>(null)
+  const [guideSelection, setGuideSelection] = useState<{
+    pluginId: string
+    guideId: string
+  } | null>(null)
   const raw = plugin.raw
+  const isInstalled = raw.spec.installState === 'installed'
+  const distributionLabel =
+    plugin.distribution === 'official'
+      ? t('workbench.plugins_distribution_official', 'OpenAI官方')
+      : plugin.distribution === 'workspace'
+        ? t('workbench.plugins_distribution_workspace', '企业内部')
+        : plugin.distribution === 'personal'
+          ? t('workbench.plugins_distribution_personal', '个人创建')
+          : plugin.distribution === 'external'
+            ? t('workbench.plugins_distribution_external', '第三方市场')
+            : t('workbench.plugins_distribution_public', 'Wework官方')
+  const normalizedSourceLabel =
+    plugin.distribution === 'official' &&
+    /^(?:Codex|OpenAI)\s*(?:官方|official)$/i.test(plugin.sourceLabel.trim())
+      ? distributionLabel
+      : plugin.sourceLabel
   const componentItems = buildComponentItems(raw)
   const componentStates = raw.spec.componentStates || {}
   const rows = [
-    { label: '功能', value: pluginCapabilitySummary(plugin) },
-    ...detailRows(raw),
+    {
+      label: t('workbench.plugin_detail_label_source', '来源'),
+      value:
+        normalizedSourceLabel && normalizedSourceLabel.includes(distributionLabel)
+          ? normalizedSourceLabel
+          : normalizedSourceLabel
+            ? `${distributionLabel} · ${normalizedSourceLabel}`
+            : distributionLabel,
+    },
+    {
+      label: t('workbench.plugin_detail_label_capabilities', '功能'),
+      value: pluginCapabilitySummary(plugin),
+    },
+    ...detailRows(raw, isExternalSource, t),
   ].filter(row => row.value)
-  const logo = raw.spec.interface?.logo || raw.spec.interface?.composerIcon
-  const prompts = pluginPromptExamples(plugin)
+  const resolvedBackLabel = backLabel ?? t('workbench.plugins_back_to_marketplace', '返回插件市场')
+  const showAccessScope =
+    isInstalled &&
+    (accessRole === 'owner' || accessRole === 'recipient' || plugin.distribution === 'personal')
+  const accessScopeSummary = (() => {
+    if (pluginVisibility === 'public') {
+      return t('workbench.plugin_detail_access_public', '全部用户可用')
+    }
+    if (pluginVisibility === 'workspace') {
+      return t('workbench.plugin_detail_access_workspace', '组织内可用')
+    }
+    if (shareGrantUserCount + shareGrantNamespaceCount === 0) {
+      return t('workbench.plugin_detail_access_private', '仅自己可用')
+    }
+    return t('workbench.plugin_detail_access_shared_summary', {
+      departments: shareGrantNamespaceCount,
+      members: shareGrantUserCount,
+      defaultValue: `已分享给 ${shareGrantNamespaceCount} 个部门、${shareGrantUserCount} 位成员`,
+    })
+  })()
+  const accessScopeSection = showAccessScope && (
+    <section className="mt-7 space-y-3" data-testid="plugin-detail-access-scope">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium leading-5 text-text-primary">
+            {t('workbench.plugin_detail_access_scope', '可用范围')}
+          </h2>
+          <p className="text-xs leading-4 text-text-muted">{accessScopeSummary}</p>
+        </div>
+        {accessRole === 'owner' && onManageAccess && (
+          <button
+            type="button"
+            data-testid="plugin-detail-manage-access"
+            className="h-8 rounded-lg bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+            onClick={onManageAccess}
+          >
+            {t('workbench.plugins_manage_access', '管理权限')}
+          </button>
+        )}
+      </div>
+    </section>
+  )
+  const logo = installedPluginLogo(plugin)
+  const version = formatPluginVersion(plugin.version)
   const description = pluginDisplayDescription(plugin)
+  const guideExamples = pluginGuideExamples(plugin)
+  const selectedGuideId =
+    guideSelection?.pluginId === String(plugin.id) ? guideSelection.guideId : null
+  const selectedGuide = guideExamples.find(example => example.id === selectedGuideId) ?? null
+  const selectedGuideInputKind = selectedGuide
+    ? inferPluginGuideKind(selectedGuide.prompt)
+    : 'general'
+  const selectedGuidePresentation = selectedGuide
+    ? buildPluginGuidePresentation({
+        kind: selectedGuideInputKind,
+        prompt: selectedGuide.prompt,
+        title: selectedGuide.title,
+        pluginName: plugin.name,
+        pluginDescription: description,
+        capabilities: componentItems.map(item => ({
+          name: item.name,
+          description: item.description,
+          type: item.type,
+        })),
+        projectName,
+        t,
+      })
+    : null
+  const deviceSummary = pluginDeviceSummary(plugin)
+  const PrimaryActionIcon =
+    primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
+  const showActionMenu = showUninstall || Boolean(onEditAction)
+
+  const actionMenu = showActionMenu ? (
+    <div className="relative">
+      <button
+        type="button"
+        aria-label={t('workbench.plugins_actions', '插件操作')}
+        aria-expanded={isActionMenuOpen}
+        data-testid={`plugin-detail-actions-${plugin.id}`}
+        className="plugin-detail-action-menu"
+        onClick={() => setIsActionMenuOpen(open => !open)}
+      >
+        <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.8} />
+      </button>
+      {isActionMenuOpen && (
+        <div
+          data-testid={`plugin-detail-actions-menu-${plugin.id}`}
+          className="absolute right-0 top-[calc(100%+7px)] z-30 w-28 rounded-xl border border-border/30 bg-background p-1 shadow-lg"
+        >
+          {onEditAction && (
+            <button
+              type="button"
+              data-testid={`plugin-detail-edit-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onEditAction()
+              }}
+            >
+              {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
+            </button>
+          )}
+          {showUninstall && (
+            <button
+              type="button"
+              data-testid={`plugin-detail-uninstall-${plugin.id}`}
+              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+              onClick={() => {
+                setIsActionMenuOpen(false)
+                onUninstall()
+              }}
+            >
+              {t('workbench.plugins_uninstall', '卸载')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null
+  const primaryActionButton = (
+    <button
+      type="button"
+      data-testid={`plugin-detail-toggle-${plugin.id}`}
+      disabled={primaryActionDisabled || (isInstalled && !plugin.enabled)}
+      className="plugin-detail-action-primary"
+      onClick={onToggle}
+    >
+      {PrimaryActionIcon ? <PrimaryActionIcon className="h-4 w-4" /> : null}
+      {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '立即对话')}
+    </button>
+  )
+  const secondaryActionButton =
+    secondaryActionLabel && onSecondaryAction ? (
+      <button
+        type="button"
+        disabled={secondaryActionDisabled}
+        data-testid={`plugin-detail-secondary-${plugin.id}`}
+        className="plugin-detail-action-secondary"
+        onClick={onSecondaryAction}
+      >
+        {secondaryActionLabel}
+      </button>
+    ) : null
+  const tertiaryActionButton =
+    tertiaryActionLabel && onTertiaryAction ? (
+      <button
+        type="button"
+        disabled={tertiaryActionDisabled}
+        data-testid={`plugin-detail-tertiary-${plugin.id}`}
+        className="plugin-detail-action-secondary"
+        onClick={onTertiaryAction}
+      >
+        {tertiaryActionLabel}
+      </button>
+    ) : null
+
+  const connectorItems = componentItems.filter(item => item.type === 'connector')
+  const capabilityItems = componentItems.filter(item => item.type !== 'connector')
+  const primaryGuide = guideExamples[0]
+  const guideTemplateSection = primaryGuide && (
+    <section className="mt-7 space-y-3" data-testid="plugin-detail-get-started">
+      <div>
+        <h2 className="text-base font-medium leading-5 text-text-primary">
+          {t('workbench.plugin_detail_get_started', '开始使用')}
+        </h2>
+        <p className="text-xs leading-4 text-text-muted">
+          {isInstalled
+            ? t(
+                'workbench.plugin_detail_get_started_installed_hint',
+                '选择模板打开新对话，可继续修改且不会自动发送'
+              )
+            : t(
+                'workbench.plugin_detail_get_started_uninstalled_hint',
+                '先预览使用方式；选择模板后将引导安装'
+              )}
+        </p>
+      </div>
+      <button
+        type="button"
+        data-testid="plugin-prompt-0"
+        aria-haspopup="dialog"
+        aria-controls="plugin-use-case-guide-dialog"
+        className="group flex w-full items-center gap-3 rounded-xl bg-surface/60 px-4 py-3 text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+        onClick={() =>
+          setGuideSelection({
+            pluginId: String(plugin.id),
+            guideId: primaryGuide.id,
+          })
+        }
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background text-text-secondary shadow-sm">
+          <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <strong className="block text-sm font-medium leading-5 text-text-primary">
+            {t('workbench.plugin_detail_ai_guide', 'AI 使用向导')}
+          </strong>
+          <span className="block text-xs leading-4 text-text-muted">
+            {t(
+              'workbench.plugin_detail_ai_guide_hint',
+              '回答一个关键问题，生成可编辑、可直接使用的任务'
+            )}
+          </span>
+          <span className="mt-1 block truncate text-xs leading-4 text-text-secondary">
+            {t('workbench.plugin_detail_ai_guide_example', {
+              example: primaryGuide.title,
+              defaultValue: `推荐起点：${primaryGuide.title}`,
+            })}
+          </span>
+        </span>
+        <ArrowRight
+          className="h-4 w-4 shrink-0 text-text-muted transition-colors group-hover:text-text-primary"
+          aria-hidden="true"
+        />
+      </button>
+    </section>
+  )
 
   return (
     <main className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
       <DesktopTopBar
         testId="plugin-detail-topbar"
-        className="sticky top-0 z-40 h-12 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
+        className="sticky top-0 z-40 border-b border-border/30 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
         dragRegionClassName="hidden md:block"
         left={
-          <nav
-            className="flex items-center gap-2 text-sm font-medium leading-[18px] text-text-muted"
-            aria-label="breadcrumb"
+          <button
+            type="button"
+            data-testid="plugin-detail-back-button"
+            className="plugin-route-back-button"
+            onClick={onBack}
           >
-            <button
-              type="button"
-              data-testid="plugin-detail-back-button"
-              className="h-8 rounded-lg px-2 transition-colors hover:bg-surface hover:text-text-primary"
-              onClick={onBack}
-            >
-              {t('workbench.plugins_tab', '插件')}
-            </button>
-            <span className="text-text-muted">›</span>
-            <span className="truncate text-text-primary">{plugin.name}</span>
-          </nav>
+            ‹ {resolvedBackLabel}
+          </button>
         }
       />
-      <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-5 pb-14 pt-5 sm:px-8 sm:py-4">
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mx-auto flex w-full max-w-[1060px] flex-col px-5 pb-14 pt-7 sm:px-8">
+        <header className="grid gap-4 sm:grid-cols-[60px_minmax(0,1fr)_auto] sm:items-center">
+          <div
+            data-testid="plugin-detail-logo"
+            className={[
+              'plugin-detail-header-logo',
+              logo.source === 'provided' ? 'plugin-logo-provided' : 'plugin-logo-fallback',
+            ].join(' ')}
+          >
+            {logo.url ? <img src={logo.url} alt="" /> : <Boxes className="h-7 w-7" />}
+          </div>
           <div className="min-w-0">
-            <div className="mb-5 flex h-14 w-14 items-center justify-center overflow-hidden rounded-xl border border-border bg-violet-50 text-violet-600 shadow-sm">
-              <PluginLogo
-                source={logo}
-                fallbackClassName="h-7 w-7"
-                testId={`plugin-detail-logo-${plugin.id}`}
-              />
-            </div>
-            <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">
-              {plugin.name}
-            </h1>
-            <p className="mt-1 max-w-[560px] text-sm leading-5 text-text-secondary">
-              {plugin.description}
+            <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
+            <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
+              {plugin.raw.spec.interface?.category || plugin.sourceLabel} ·{' '}
+              {plugin.raw.spec.interface?.developerName ||
+                plugin.raw.spec.author ||
+                plugin.sourceLabel}
+              {version ? ` · v${version}` : ''}
             </p>
+            {deviceSummary && (
+              <p className="mt-1 text-xs leading-4 text-text-muted">{deviceSummary}</p>
+            )}
+            {submissionStatus === 'pending' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-text-muted"
+              >
+                {t(
+                  'workbench.plugins_publish_pending_notice',
+                  '已提交审核，通过后将出现在插件市场。'
+                )}
+              </p>
+            )}
+            {submissionStatus === 'rejected' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-red-600"
+              >
+                {t('workbench.plugins_publish_rejected_notice', {
+                  note: submissionReviewNote || '-',
+                  defaultValue: `发布被拒绝：${submissionReviewNote || '-'}`,
+                })}
+              </p>
+            )}
+            {submissionStatus === 'approved' && (
+              <p
+                data-testid="plugin-detail-submission-status"
+                className="mt-1 text-xs leading-4 text-text-muted"
+              >
+                {t('workbench.plugins_publish_approved_notice', '发布成功。')}
+              </p>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 pb-1">
-            {showUninstall && (
-              <div className="relative">
-                <button
-                  type="button"
-                  aria-label={t('workbench.plugins_actions', '插件操作')}
-                  aria-expanded={isActionMenuOpen}
-                  data-testid={`plugin-detail-actions-${plugin.id}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
-                  onClick={() => setIsActionMenuOpen(open => !open)}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </button>
-                {isActionMenuOpen && (
-                  <div
-                    data-testid={`plugin-detail-actions-menu-${plugin.id}`}
-                    className="absolute right-0 top-9 z-30 w-28 rounded-xl border border-border bg-background p-1 shadow-xl"
-                  >
-                    <button
-                      type="button"
-                      data-testid={`plugin-detail-uninstall-${plugin.id}`}
-                      className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
-                      onClick={() => {
-                        setIsActionMenuOpen(false)
-                        onUninstall()
-                      }}
-                    >
-                      {t('workbench.plugins_uninstall', '卸载')}
-                    </button>
-                  </div>
-                )}
-              </div>
+          <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
+            {actionMenuBeforePrimary ? (
+              <>
+                {tertiaryActionButton}
+                {secondaryActionButton}
+                {actionMenu}
+                {primaryActionButton}
+              </>
+            ) : (
+              <>
+                {primaryActionButton}
+                {secondaryActionButton}
+                {tertiaryActionButton}
+                {actionMenu}
+              </>
             )}
-            <button
-              type="button"
-              data-testid={`plugin-detail-toggle-${plugin.id}`}
-              disabled={primaryActionDisabled}
-              className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium leading-[18px] text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
-              onClick={onToggle}
-            >
-              <MessageCircle className="h-4 w-4" />
-              {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '在对话中试用')}
-            </button>
           </div>
         </header>
 
-        <section className="overflow-hidden rounded-xl bg-[linear-gradient(135deg,#b9d2ff_0%,#ece5ff_55%,#d8cdfd_100%)] px-5 py-8 sm:px-28">
-          <div className="space-y-3">
-            {prompts.map(prompt => (
-              <button
-                key={prompt}
-                type="button"
-                className="grid w-full grid-cols-[minmax(0,1fr)_34px] items-center gap-3 rounded-xl bg-background/80 px-3 py-2.5 text-left text-sm font-medium leading-5 text-text-primary shadow-sm backdrop-blur"
-              >
-                <span className="min-w-0">
-                  <span className="font-medium text-emerald-700">{plugin.name}</span> {prompt}
-                </span>
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/10">
-                  <ArrowRight className="h-4 w-4" />
-                </span>
-              </button>
-            ))}
+        <p className="mt-6 rounded-xl bg-surface px-5 py-4 text-sm leading-5 text-text-secondary">
+          {description}
+        </p>
+
+        {actionError && (
+          <div
+            role="alert"
+            data-testid="plugin-detail-action-error"
+            className="mt-4 rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm leading-5 text-red-600"
+          >
+            {actionError}
           </div>
-        </section>
+        )}
 
-        <p className="max-w-[720px] text-sm leading-6 text-text-secondary">{description}</p>
+        {guideTemplateSection}
 
-        <section className="space-y-5">
-          <h2 className="text-base font-medium leading-6 text-text-muted">
-            {t('workbench.plugin_detail_contents', '包含内容')} {componentItems.length}
-          </h2>
-          <div className="space-y-4">
-            {componentItems.map(item => (
-              <div
-                key={item.key}
-                className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3"
-              >
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-emerald-700">
-                  <PluginLogo
-                    source={logo}
-                    imageClassName="h-full w-full rounded-lg object-cover"
-                    fallbackClassName="h-4 w-4"
-                    testId={`plugin-component-logo-${item.key}`}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h3 className="truncate text-base font-medium leading-5">{item.name}</h3>
-                    <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium leading-4 text-text-muted">
-                      {componentTypeLabel(item.type, t)}
-                    </span>
-                  </div>
-                  <p className="truncate text-sm leading-[18px] text-text-muted">
-                    {item.description}
-                  </p>
-                </div>
-                {item.toggleable ? (
+        {accessScopeSection}
+
+        {connectorItems.length > 0 && (
+          <section className="mt-7 space-y-3">
+            <h2 className="text-base font-medium leading-5 text-text-primary">
+              {t('workbench.plugin_detail_authorization', '应用授权')}{' '}
+              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                {connectorItems.length}
+              </span>
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-border/30">
+              {connectorItems.map(item => (
+                <div
+                  key={`connector-${item.key}`}
+                  className="grid grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                    <Link2 className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <strong className="block truncate text-sm font-medium">{item.name}</strong>
+                    <small className="block truncate text-xs leading-4 text-text-secondary">
+                      {item.description}
+                    </small>
+                  </span>
                   <button
                     type="button"
-                    role="switch"
-                    aria-checked={componentStates[item.componentKey] ?? true}
-                    aria-label={item.name}
-                    data-testid={`plugin-component-toggle-${item.componentKey}`}
-                    className={[
-                      'relative h-7 w-12 rounded-full transition-colors',
-                      (componentStates[item.componentKey] ?? true) ? 'bg-blue-500' : 'bg-border',
-                    ].join(' ')}
-                    onClick={() =>
-                      onComponentToggle(
-                        item.componentKey,
-                        !(componentStates[item.componentKey] ?? true)
-                      )
-                    }
+                    data-testid={`plugin-connection-manage-${item.componentKey}`}
+                    disabled={!isInstalled}
+                    className="h-8 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    onClick={() => {
+                      if (onManageConnector) {
+                        onManageConnector(item.name)
+                        return
+                      }
+                      navigateTo('/settings/connections')
+                    }}
                   >
-                    <span
-                      className={[
-                        'absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform',
-                        (componentStates[item.componentKey] ?? true)
-                          ? 'translate-x-5'
-                          : 'translate-x-0',
-                      ].join(' ')}
-                    />
+                    {isInstalled
+                      ? connectorAuthBySlug?.[item.name] === 'connected'
+                        ? t('workbench.plugin_disconnect_connection', '退出登录')
+                        : connectorAuthBySlug?.[item.name] === 'disconnected'
+                          ? t('workbench.plugin_connect_login', '登录')
+                          : t('workbench.plugin_manage_connection', '管理连接')
+                      : t('workbench.plugin_connect_after_install', '安装后可连接')}
                   </button>
-                ) : (
-                  <span className="text-sm leading-5 text-text-muted">
-                    {t('workbench.plugins_component_included', '已包含')}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
-        <section className="space-y-5">
-          <h2 className="text-base font-medium leading-6 text-text-primary">
+        {capabilityItems.length > 0 && (
+          <section className="mt-7 space-y-3" data-testid="plugin-detail-capabilities">
+            <h2 className="text-base font-medium leading-5 text-text-primary">
+              {t('workbench.plugin_detail_capabilities', '包含能力')}{' '}
+              <span className="ml-1 rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                {capabilityItems.length}
+              </span>
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-border/30">
+              {capabilityItems.map(item => {
+                const Icon = componentIcon(item.type)
+                const enabled = componentStates[item.componentKey] ?? true
+                const rowBody = (
+                  <>
+                    <div className="mt-1 flex h-9 w-9 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="truncate text-xs leading-4 text-text-muted">
+                        {componentTypeLabel(item.type, t)}
+                      </p>
+                      <h3 className="truncate text-sm font-medium leading-5">{item.name}</h3>
+                      <p className="line-clamp-2 text-sm leading-5 text-text-secondary">
+                        {item.description}
+                      </p>
+                    </div>
+                  </>
+                )
+                return (
+                  <div
+                    key={item.key}
+                    className={[
+                      'grid grid-cols-[38px_minmax(0,1fr)_auto] items-start gap-3 border-b border-border/25 px-4 py-4 transition-colors last:border-b-0',
+                      item.type === 'skill' ? 'hover:bg-muted' : '',
+                    ].join(' ')}
+                  >
+                    {item.type === 'skill' ? (
+                      <button
+                        type="button"
+                        data-testid={`plugin-skill-open-${item.name}`}
+                        className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                        onClick={() => setSelectedSkill(item)}
+                      >
+                        {rowBody}
+                      </button>
+                    ) : (
+                      <div className="col-span-2 grid grid-cols-[38px_minmax(0,1fr)] items-center gap-3">
+                        {rowBody}
+                      </div>
+                    )}
+                    {item.toggleable && isInstalled && !shareRecipient && (
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={enabled}
+                        aria-label={item.name}
+                        data-testid={`plugin-component-toggle-${item.componentKey}`}
+                        className={[
+                          'relative h-[22px] w-[38px] rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
+                          enabled ? 'bg-emerald-500' : 'bg-border',
+                        ].join(' ')}
+                        onClick={() => onComponentToggle(item.componentKey, !enabled)}
+                      >
+                        <span
+                          className={[
+                            'absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                            enabled ? 'translate-x-4' : 'translate-x-0',
+                          ].join(' ')}
+                        />
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        <section className="mt-7 space-y-3" data-testid="plugin-detail-info">
+          <h2 className="text-base font-medium leading-5 text-text-primary">
             {t('workbench.plugin_detail_info', '信息')}
           </h2>
-          <dl className="space-y-5">
+          <dl className="border-t border-border/25">
             {rows.map(row => (
               <div
                 key={row.label}
-                className="grid gap-2 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
+                className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]"
               >
                 <dt className="font-medium text-text-muted">{row.label}</dt>
                 <dd className="min-w-0 text-text-primary">
@@ -481,6 +963,49 @@ export function PluginDetailView({
           </dl>
         </section>
       </div>
+      {selectedSkill && (
+        <SkillDetailDialog
+          skill={{
+            name: selectedSkill.name,
+            pluginName: plugin.name,
+            pluginLogoUrl: logo.url,
+            description: selectedSkill.description,
+            invocation: `/${selectedSkill.name}`,
+            installed: isInstalled,
+            enabled: (componentStates[selectedSkill.componentKey] ?? true) && plugin.enabled,
+            canToggle: isInstalled && !shareRecipient,
+          }}
+          onClose={() => setSelectedSkill(null)}
+          onRun={() => {
+            setSelectedSkill(null)
+            if (onSkillRun) {
+              onSkillRun(selectedSkill.name)
+              return
+            }
+            onToggle()
+          }}
+          onToggle={enabled => onComponentToggle(selectedSkill.componentKey, enabled)}
+        />
+      )}
+      {selectedGuide && selectedGuidePresentation && (
+        <PluginUseCaseGuideDialog
+          pluginName={plugin.name}
+          title={selectedGuidePresentation.displayTitle}
+          generatedPrompt={selectedGuidePresentation.generatedPrompt}
+          confirmation={selectedGuidePresentation.confirmation}
+          hasConversationContext={hasConversationContext}
+          installed={isInstalled}
+          onClose={() => setGuideSelection(null)}
+          onConfirm={prompt => {
+            setGuideSelection(null)
+            if (onPromptSelect) {
+              onPromptSelect(prompt)
+              return
+            }
+            onToggle()
+          }}
+        />
+      )}
     </main>
   )
 }

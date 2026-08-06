@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import type { SiteAppType } from '@/api/sites'
@@ -20,14 +22,100 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import {
+  notifyLocalPluginSkillsChanged,
+  queuePluginReferenceTrial,
+  queuePluginTrial,
+} from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
 
 class ApplicationPluginSyncConfirmationError extends Error {}
+
+const CODEX_SITES_PLUGIN_NAME = 'sites'
+const CODEX_SITES_MARKETPLACE = 'openai-bundled'
+
+function normalizedPluginKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+}
+
+function isEnabledCodexSitesPlugin(plugin: InstalledPlugin): boolean {
+  if (!plugin.spec.enabled || plugin.spec.installState !== 'installed') return false
+  if (normalizedPluginKey(plugin.spec.source.pluginKey) !== CODEX_SITES_PLUGIN_NAME) return false
+
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : {}
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.providerKey,
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
+  ].filter((marketplace): marketplace is string => typeof marketplace === 'string')
+  return marketplaceNames.some(
+    marketplace => normalizedPluginKey(marketplace) === CODEX_SITES_MARKETPLACE
+  )
+}
+
+function isNativeCodexSitesPluginSkill(skill: LocalDeviceSkill): boolean {
+  if (skill.source !== 'codex' || skill.name.trim().toLowerCase() !== 'sites:sites-building') {
+    return false
+  }
+  const normalizedPath = skill.path.trim().toLowerCase().replace(/\\/g, '/')
+  return normalizedPath.includes('/plugins/cache/openai-bundled/sites/')
+}
+
+function queueCodexSitesPluginReference(): boolean {
+  return queuePluginReferenceTrial({
+    pluginName: CODEX_SITES_PLUGIN_NAME,
+    marketplaceName: CODEX_SITES_MARKETPLACE,
+    displayName: 'Sites',
+  })
+}
+
+function nativeCodexSitesPluginPaths(nativeCodexHome: string): string[] {
+  const normalizedHome = nativeCodexHome.trim().replace(/[\\/]+$/, '')
+  if (!normalizedHome) return []
+  return [
+    `${normalizedHome}/plugins/cache/openai-bundled/sites`,
+    `${normalizedHome}/.tmp/bundled-marketplaces/openai-bundled/plugins/sites/.codex-plugin/plugin.json`,
+  ]
+}
+
+async function tryQueueLocalCodexSitesTrial(api: LocalCodexPluginApi): Promise<boolean> {
+  try {
+    const installedPlugins = await api.listInstalledPlugins()
+    const codexSitesPlugin = installedPlugins.items.find(isEnabledCodexSitesPlugin)
+    if (codexSitesPlugin && queuePluginTrial(codexSitesPlugin)) return true
+  } catch {
+    // Continue through the remaining local discovery sources.
+  }
+
+  try {
+    const migrationStatus = await api.codexHomeMigrationStatus()
+    if (migrationStatus.nativeCodexHomeExists) {
+      for (const path of nativeCodexSitesPluginPaths(migrationStatus.nativeCodexHome)) {
+        if ((await localPathExists(path)) && queueCodexSitesPluginReference()) return true
+      }
+    }
+  } catch {
+    // Continue through the remaining local discovery sources.
+  }
+
+  try {
+    const localSkills = await api.listSkills({ forceReload: true })
+    return localSkills.some(isNativeCodexSitesPluginSkill) && queueCodexSitesPluginReference()
+  } catch {
+    return false
+  }
+}
 
 export function SitesPage() {
   const { t } = useTranslation('sites')
@@ -94,6 +182,7 @@ export function SitesPage() {
     cloudConnection.token,
     isLocalFirst,
   ])
+  const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
       return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -154,6 +243,10 @@ export function SitesPage() {
         return
       }
       const createStrategy = definition.create
+      if (appType === 'web' && (await tryQueueLocalCodexSitesTrial(localCodexPluginApi))) {
+        navigateTo('/')
+        return
+      }
       if (!pluginApi) {
         setCreateError(t('plugin_cloud_unavailable', '连接云端后才能使用应用创建插件'))
         return

@@ -12,6 +12,7 @@ from app.api.endpoints.admin import (
     device_monitor,
     im_channels,
     kind_management,
+    plugins,
     public_bots,
     public_ghosts,
     public_models,
@@ -52,3 +53,4 @@ router.include_router(im_channels.router, tags=["admin-im-channels"])
 router.include_router(device_monitor.router, tags=["admin-device-monitor"])
 router.include_router(templates.router, tags=["admin-templates"])
 router.include_router(runtime_cleanup.router, tags=["admin-runtime-cleanup"])
+router.include_router(plugins.router, tags=["admin-plugins"])

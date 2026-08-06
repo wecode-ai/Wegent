@@ -55,6 +55,7 @@ export interface LocalExecutorBackendConnection {
   backendUrl: string
   socketBaseUrl: string
   authToken: string
+  runtimeAuthToken?: string | null
 }
 
 export interface BundledPluginMarketplace {
@@ -188,7 +189,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       const marketplace = await invoke<BundledPluginMarketplace>(
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
-      initializedBundledPluginMarketplace = marketplace
+      if (marketplace?.path) {
+        initializedBundledPluginMarketplace = marketplace
+      }
       const proxyUrl = getLocalProxyUrl().trim()
       const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure, {
         proxyUrl: proxyUrl || null,
@@ -231,6 +234,7 @@ export function connectLocalExecutorToBackend(
     backendUrl: connection.backendUrl,
     socketUrl: connection.socketBaseUrl,
     authToken: connection.authToken,
+    runtimeAuthToken: connection.runtimeAuthToken ?? null,
   })
 }
 

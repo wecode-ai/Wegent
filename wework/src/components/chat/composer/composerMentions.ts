@@ -1,8 +1,10 @@
-import { parsePluginMentionReference } from '@/features/plugins/pluginNavigation'
+import { parsePluginMentionReference, parsePluginUri } from '@/features/plugins/pluginNavigation'
+import { resolvePluginLogoUrl } from '@/components/plugins/plugin-assets'
 
 const LOCAL_MENTION_REFERENCE_PATTERN =
   /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+)|(?:cloud:\/\/[^)]+)|(?:wework-conversation:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
+const composerMentionIconUrls = new Map<string, string>()
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const COMPOSER_MENTION_ICON_PATHS = [
   'M16.5 9.4 7.55 4.24',
@@ -23,6 +25,35 @@ export interface ComposerMentionPayload {
 export interface ParsedComposerMention extends ComposerMentionPayload {
   start: number
   end: number
+}
+
+export function registerComposerMentionIcon(reference: string, iconUrl?: string | null): void {
+  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
+  const normalizedIconUrl = iconUrl?.trim()
+  if (!href || !normalizedIconUrl) return
+  composerMentionIconUrls.set(href, normalizedIconUrl)
+}
+
+export function getComposerMentionIconUrl(href: string): string | undefined {
+  return composerMentionIconUrls.get(href)
+}
+
+/** Brand logo for plugin/app mentions; skills and other kinds return null (use the generic cube). */
+export function resolveComposerMentionBrandIconUrl(href: string): string | null {
+  const registered = getComposerMentionIconUrl(href)?.trim()
+  if (registered) return registered
+
+  const pluginReference = parsePluginUri(href)
+  if (pluginReference) {
+    return resolvePluginLogoUrl({ pluginKey: pluginReference.pluginName })
+  }
+
+  if (href.startsWith('app://')) {
+    const appId = href.slice('app://'.length).trim()
+    return appId ? resolvePluginLogoUrl({ pluginKey: appId }) : null
+  }
+
+  return null
 }
 
 export function localSkillTestId(name: string): string {
@@ -177,12 +208,16 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
   const iconSlot = document.createElement('span')
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
+  const mentionHref = payload.reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
+  const brandIconUrl = mentionHref ? resolveComposerMentionBrandIconUrl(mentionHref) : null
   iconSlot.append(
     pathReference?.directory
       ? createComposerFolderIcon()
       : conversationReference
         ? createComposerConversationIcon()
-        : createComposerMentionIcon()
+        : brandIconUrl
+          ? createComposerBrandIcon(brandIconUrl)
+          : createComposerMentionIcon()
   )
 
   const label = document.createElement('span')
@@ -191,6 +226,14 @@ export function createComposerMentionElement(payload: ComposerMentionPayload): H
 
   element.append(iconSlot, label)
   return element
+}
+
+function createComposerBrandIcon(iconUrl: string): HTMLImageElement {
+  const icon = document.createElement('img')
+  icon.className = 'composer-mention-icon composer-mention-brand-icon'
+  icon.src = iconUrl
+  icon.alt = ''
+  return icon
 }
 
 function composerPathDisplayName(path: string): string {

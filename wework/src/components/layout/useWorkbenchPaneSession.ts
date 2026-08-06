@@ -9,7 +9,10 @@ import {
   DEBUG_SNAPSHOT_DEBOUNCE_MS,
 } from '@/lib/debugPanel'
 import type { RuntimePaneMessageAction } from '@/features/workbench/runtimePaneMessages'
-import { deriveRuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
+import {
+  deriveRuntimePaneStatus,
+  isRuntimeTaskBusyError,
+} from '@/features/workbench/runtimePaneStatus'
 import {
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -130,10 +133,6 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
 const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
-
-function isRuntimeTaskBusyError(error: string | null): boolean {
-  return error?.toLowerCase().includes('runtime task is already running') === true
-}
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const configuredRuntimeTranscriptPageSize = Number(
   import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
