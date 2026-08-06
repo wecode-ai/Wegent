@@ -16,6 +16,7 @@ import {
   type ComposerSkillMentionCandidate,
 } from './composerMentionCandidates'
 import { localSkillTestId } from './composerMentions'
+import { readRecentPluginAppIds, sortComposerPluginsByUsage } from './composerPluginSort'
 
 export function useComposerMentionCandidates(
   apps: LocalDeviceApp[],
@@ -26,25 +27,24 @@ export function useComposerMentionCandidates(
   conversationCandidates: ComposerConversationMentionCandidate[] = []
 ) {
   const { t } = useTranslation('common')
-  const appCandidates = useMemo<ComposerAppMentionCandidate[]>(
-    () =>
-      apps.map(app => {
-        const pluginNames = app.pluginDisplayNames ?? []
-        return {
-          kind: 'app',
-          key: `app:${app.id}`,
-          title: displayAppName(app),
-          description: app.description ?? undefined,
-          metaLabel: pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal'),
-          testId: localSkillTestId(app.id),
-          enabled: app.isEnabled !== false && app.isAccessible !== false,
-          reference: appReference(app),
-          searchAliases: [app.id, app.name, app.description ?? '', ...pluginNames],
-          app,
-        }
-      }),
-    [apps, t]
-  )
+  const appCandidates = useMemo<ComposerAppMentionCandidate[]>(() => {
+    const orderedApps = sortComposerPluginsByUsage(apps, readRecentPluginAppIds())
+    return orderedApps.map(app => {
+      const pluginNames = app.pluginDisplayNames ?? []
+      return {
+        kind: 'app',
+        key: `app:${app.id}`,
+        title: displayAppName(app),
+        description: app.description ?? undefined,
+        metaLabel: pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal'),
+        testId: localSkillTestId(app.id),
+        enabled: app.isEnabled !== false && app.isAccessible !== false,
+        reference: appReference(app),
+        searchAliases: [app.id, app.name, app.description ?? '', ...pluginNames],
+        app,
+      }
+    })
+  }, [apps, t])
   const skillCandidates = useMemo<ComposerSkillMentionCandidate[]>(
     () =>
       dedupeLocalSkills(skills).map(skill => {

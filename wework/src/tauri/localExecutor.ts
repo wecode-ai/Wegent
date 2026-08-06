@@ -189,7 +189,9 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       const marketplace = await invoke<BundledPluginMarketplace>(
         LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace
       )
-      initializedBundledPluginMarketplace = marketplace
+      if (marketplace?.path) {
+        initializedBundledPluginMarketplace = marketplace
+      }
       const proxyUrl = getLocalProxyUrl().trim()
       const status = await invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.ensure, {
         proxyUrl: proxyUrl || null,

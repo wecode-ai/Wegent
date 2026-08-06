@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   issueWegentConnectorToken,
   listWegentInstalledConnectorApps,
@@ -10,6 +10,8 @@ import {
   type LocalExecutorCloudConnection,
 } from './localExecutorCloudConnection'
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
+
+const CONNECTOR_AUTHORIZATION_CHANGED_EVENT = 'wegent:connector-authorization-changed'
 
 let connectorSyncRevision = Date.now() * 1_000
 
@@ -38,6 +40,13 @@ export function LocalExecutorCloudBridge({
   token,
 }: LocalExecutorCloudBridgeProps) {
   const connectionGenerationRef = useRef(0)
+  const [connectorRefreshRevision, setConnectorRefreshRevision] = useState(0)
+
+  useEffect(() => {
+    const refresh = () => setConnectorRefreshRevision(revision => revision + 1)
+    window.addEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(CONNECTOR_AUTHORIZATION_CHANGED_EVENT, refresh)
+  }, [])
 
   useEffect(() => {
     const generation = connectionGenerationRef.current + 1
@@ -177,7 +186,7 @@ export function LocalExecutorCloudBridge({
       cancelled = true
       if (refreshTimer) clearTimeout(refreshTimer)
     }
-  }, [apiBaseUrl, isConnected, token])
+  }, [apiBaseUrl, connectorRefreshRevision, isConnected, token])
 
   return null
 }

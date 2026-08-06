@@ -3,7 +3,12 @@ export interface PluginReference {
   marketplaceName: string
 }
 
-export const WEGENT_CLOUD_MARKETPLACE_ALIASES = new Set(['default', 'wegent', 'wegent-marketplace'])
+export const WEGENT_CLOUD_MARKETPLACE_ALIASES = new Set([
+  'default',
+  'wegent',
+  'wegent-market',
+  'wegent-marketplace',
+])
 
 const PLUGIN_MENTION_REFERENCE_PATTERN = /^\[\$[^\]]+]\((plugin:\/\/[^)\n]+)\)$/
 
