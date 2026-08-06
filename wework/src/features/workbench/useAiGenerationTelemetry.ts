@@ -16,6 +16,8 @@ interface PendingGeneration {
   generationId: string
   startedAt: number
   traceId: string
+  firstTokenAt?: number
+  responseSizeBytes?: number
 }
 
 export function useAiGenerationTelemetry({
@@ -42,6 +44,23 @@ export function useAiGenerationTelemetry({
     })
   }, [])
 
+  const onAssistantFirstToken = useCallback((address: RuntimeTaskAddress, subtaskId: string) => {
+    const pending = pendingRef.current.get(generationKey(address, subtaskId))
+    if (pending && pending.firstTokenAt === undefined) {
+      pending.firstTokenAt = Date.now()
+    }
+  }, [])
+
+  const onAssistantResponseSize = useCallback(
+    (address: RuntimeTaskAddress, subtaskId: string, responseSizeBytes: number) => {
+      const pending = pendingRef.current.get(generationKey(address, subtaskId))
+      if (pending) {
+        pending.responseSizeBytes = responseSizeBytes
+      }
+    },
+    []
+  )
+
   const onAssistantSettled = useCallback(
     (
       address: RuntimeTaskAddress,
@@ -56,6 +75,10 @@ export function useAiGenerationTelemetry({
       recordGenerationOutcome(address, result)
 
       const latencyMs = Math.max(0, Date.now() - pending.startedAt)
+      const ttftMs =
+        pending.firstTokenAt !== undefined
+          ? Math.max(0, pending.firstTokenAt - pending.startedAt)
+          : undefined
       const model = resolveModelRef.current(address)
       const usage = contextUsage ?? contextUsageRef.current[runtimeConversationKey(address)]
 
@@ -75,6 +98,10 @@ export function useAiGenerationTelemetry({
           $ai_total_tokens: usage.last.totalTokens,
         }),
         $ai_latency: Math.round((latencyMs / 1000) * 1000) / 1000,
+        ...(ttftMs !== undefined && { $ai_time_to_first_token: Math.round(ttftMs) }),
+        ...(pending.responseSizeBytes !== undefined && {
+          $ai_response_body_size: pending.responseSizeBytes,
+        }),
         result,
       })
     },
@@ -82,8 +109,13 @@ export function useAiGenerationTelemetry({
   )
 
   return useMemo(
-    () => ({ onAssistantStart, onAssistantSettled }),
-    [onAssistantStart, onAssistantSettled]
+    () => ({
+      onAssistantStart,
+      onAssistantFirstToken,
+      onAssistantResponseSize,
+      onAssistantSettled,
+    }),
+    [onAssistantStart, onAssistantFirstToken, onAssistantResponseSize, onAssistantSettled]
   )
 }
 

@@ -1507,6 +1507,12 @@ export function WorkbenchProvider({
             lifecycleStore.turnStarted(address, turnId)
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
+          onAssistantFirstToken: (address, turnId) => {
+            aiGenerationTelemetry.onAssistantFirstToken(address, turnId)
+          },
+          onAssistantResponseSize: (address, turnId, responseSizeBytes) => {
+            aiGenerationTelemetry.onAssistantResponseSize(address, turnId, responseSizeBytes)
+          },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
             lifecycleStore.turnSettled(address, turnId, outcome)

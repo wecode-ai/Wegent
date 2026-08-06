@@ -25,6 +25,8 @@ export interface AnalyticsEventMap {
     $ai_total_tokens?: number
     $ai_latency: number
     $ai_cost?: number
+    $ai_time_to_first_token?: number
+    $ai_response_body_size?: number
     result: 'success' | 'failure' | 'cancelled'
   }
   app_started: {
@@ -277,6 +279,8 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
     '$ai_total_tokens',
     '$ai_latency',
     '$ai_cost',
+    '$ai_time_to_first_token',
+    '$ai_response_body_size',
     'result',
   ],
   app_started: ['surface'],

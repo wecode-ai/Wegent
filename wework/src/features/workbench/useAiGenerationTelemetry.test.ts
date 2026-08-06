@@ -219,4 +219,55 @@ describe('useAiGenerationTelemetry', () => {
 
     expect(peekGenerationOutcome(address)).toBeNull()
   })
+
+  test('emits time to first token when the first token arrives before settling', () => {
+    const resolveModel = () => makeModel()
+    const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
+
+    const { result } = renderHook(() =>
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+    )
+
+    const startAt = Date.now()
+    result.current.onAssistantStart(address, 'subtask-1')
+    result.current.onAssistantFirstToken(address, 'subtask-1')
+    result.current.onAssistantSettled(address, 'subtask-1', 'success')
+    const settledAt = Date.now()
+
+    const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
+    expect(call?.[1].$ai_time_to_first_token).toBeGreaterThanOrEqual(0)
+    expect(call?.[1].$ai_time_to_first_token).toBeLessThanOrEqual(settledAt - startAt + 10)
+  })
+
+  test('emits response body size when reported before settling', () => {
+    const resolveModel = () => makeModel()
+    const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
+
+    const { result } = renderHook(() =>
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+    )
+
+    result.current.onAssistantStart(address, 'subtask-1')
+    result.current.onAssistantResponseSize(address, 'subtask-1', 1234)
+    result.current.onAssistantSettled(address, 'subtask-1', 'success')
+
+    const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
+    expect(call?.[1].$ai_response_body_size).toBe(1234)
+  })
+
+  test('omits time to first token and response body size when not observed', () => {
+    const resolveModel = () => makeModel()
+    const contextUsageByRuntimeTask = { 'local-device:task-42': makeUsage() }
+
+    const { result } = renderHook(() =>
+      useAiGenerationTelemetry({ resolveModel, contextUsageByRuntimeTask, knownModelIds })
+    )
+
+    result.current.onAssistantStart(address, 'subtask-1')
+    result.current.onAssistantSettled(address, 'subtask-1', 'success')
+
+    const call = trackMock.mock.calls.find(call => call[0] === '$ai_generation')
+    expect(call?.[1]).not.toHaveProperty('$ai_time_to_first_token')
+    expect(call?.[1]).not.toHaveProperty('$ai_response_body_size')
+  })
 })

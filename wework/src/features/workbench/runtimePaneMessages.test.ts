@@ -1011,6 +1011,107 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
     expect(warn).not.toHaveBeenCalled()
   })
+
+  test('emits onAssistantFirstToken once per turn on the first content chunk', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantFirstToken = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantFirstToken,
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: 'first',
+      offset: 0,
+      result: {},
+    })
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: 'second',
+      offset: 5,
+      result: {},
+    })
+
+    expect(onAssistantFirstToken).toHaveBeenCalledTimes(1)
+    expect(onAssistantFirstToken).toHaveBeenCalledWith('subtask-9')
+  })
+
+  test('emits onAssistantFirstToken for a leading reasoning chunk', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantFirstToken = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantFirstToken,
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: '',
+      offset: 0,
+      result: { reasoningChunk: 'thinking...' },
+    })
+
+    expect(onAssistantFirstToken).toHaveBeenCalledWith('subtask-9')
+  })
+
+  test('reports the response body size from the final assistant content', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantResponseSize = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantResponseSize,
+    })
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'hello' },
+    })
+
+    expect(onAssistantResponseSize).toHaveBeenCalledWith('subtask-9', 5)
+  })
+
+  test('does not report response body size when the turn has no final content', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantResponseSize = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantResponseSize,
+    })
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: '' },
+    })
+
+    expect(onAssistantResponseSize).not.toHaveBeenCalled()
+  })
 })
 
 describe('runtimeMessagesToWorkbenchMessages', () => {
