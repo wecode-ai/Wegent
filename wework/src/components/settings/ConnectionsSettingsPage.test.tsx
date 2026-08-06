@@ -359,6 +359,17 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
   })
 
+  test('settings page fills its container instead of the full viewport', async () => {
+    window.history.pushState({}, '', '/settings')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const settingsPage = await screen.findByTestId('wework-settings-page')
+    expect(settingsPage).toHaveClass('h-full')
+    expect(settingsPage).not.toHaveClass('h-screen')
+  })
+
   test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
