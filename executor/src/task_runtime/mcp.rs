@@ -22,6 +22,20 @@ pub fn is_space_mcp_command() -> bool {
 }
 
 pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
+    // `wework_space` is a project-space context server. Inject it only when the
+    // request is bound to a cloud project or explicitly references one, for
+    // example through the workbench cloud mention picker that emits
+    // `cloud://projects` links. Generic coding and assistant tasks must not
+    // receive project-space tools.
+    let bound_project_id = request
+        .extra
+        .get("cloudProjectId")
+        .or_else(|| request.extra.get("cloud_project_id"))
+        .and_then(id_value)
+        .filter(|value| !value.is_empty());
+    if bound_project_id.is_none() && !prompt_references_cloud_projects(&request.prompt) {
+        return;
+    }
     let Ok(executable) = env::current_exe() else {
         return;
     };
@@ -62,13 +76,7 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
         "command": executable,
         "args": ["space-mcp-server"],
     });
-    if let Some(project_id) = request
-        .extra
-        .get("cloudProjectId")
-        .or_else(|| request.extra.get("cloud_project_id"))
-        .and_then(id_value)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(project_id) = bound_project_id {
         server["env"] = json!({"WEWORK_SPACE_ID": project_id});
     }
     if let Some(backend_url) = request
@@ -91,6 +99,25 @@ pub fn ensure_space_mcp_server(request: &mut ExecutionRequest) {
         *existing = server;
     } else {
         request.mcp_servers.push(server);
+    }
+}
+
+fn prompt_references_cloud_projects(prompt: &Value) -> bool {
+    match prompt {
+        Value::String(text) => text.contains("cloud://projects"),
+        Value::Array(blocks) => blocks.iter().any(|block| match block {
+            Value::String(text) => text.contains("cloud://projects"),
+            Value::Object(object) => object
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.contains("cloud://projects")),
+            _ => false,
+        }),
+        Value::Object(object) => object
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("cloud://projects")),
+        _ => false,
     }
 }
 
@@ -1477,6 +1504,9 @@ mod tests {
     #[test]
     fn injects_wework_space_once() {
         let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
 
         ensure_space_mcp_server(&mut request);
         ensure_space_mcp_server(&mut request);
@@ -1488,6 +1518,54 @@ mod tests {
     }
 
     #[test]
+    fn skips_wework_space_without_project_space_context() {
+        let mut request = ExecutionRequest::default();
+
+        ensure_space_mcp_server(&mut request);
+
+        assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn skips_wework_space_when_prompt_lacks_a_cloud_project_reference() {
+        let mut request = ExecutionRequest {
+            prompt: json!("帮我看一下这个仓库的代码"),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert!(request.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn injects_wework_space_when_prompt_references_a_cloud_project() {
+        let mut request = ExecutionRequest {
+            prompt: json!("请查看 [任务:T-1](cloud://projects/cloud-42/todos/T-1)"),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
+        assert!(request.mcp_servers[0]["env"]["WEWORK_SPACE_ID"].is_null());
+    }
+
+    #[test]
+    fn injects_wework_space_for_array_prompt_with_cloud_project_reference() {
+        let mut request = ExecutionRequest {
+            prompt: json!([{"type": "text", "text": "参考 [整个空间](cloud://projects/proj-7)"}]),
+            ..ExecutionRequest::default()
+        };
+
+        ensure_space_mcp_server(&mut request);
+
+        assert_eq!(request.mcp_servers.len(), 1);
+        assert_eq!(request.mcp_servers[0]["name"], SPACE_MCP_SERVER_NAME);
+    }
+
+    #[test]
     fn falls_back_to_device_backend_env_for_space_mcp() {
         let previous_url = env::var("WEGENT_BACKEND_URL").ok();
         let previous_token = env::var("WEGENT_AUTH_TOKEN").ok();
@@ -1495,6 +1573,9 @@ mod tests {
         env::set_var("WEGENT_AUTH_TOKEN", "device-token");
 
         let mut request = ExecutionRequest::default();
+        request
+            .extra
+            .insert("cloudProjectId".to_owned(), json!("cloud-42"));
         ensure_space_mcp_server(&mut request);
 
         let server = &request.mcp_servers[0];
