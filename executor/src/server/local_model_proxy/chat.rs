@@ -460,15 +460,15 @@ fn normalize_function_parameters(parameters: Option<&Value>, kimi_k3_compat: boo
         _ => json!({"type": "object", "properties": {}}),
     };
     if kimi_k3_compat {
-        // Moonshot requires anyOf branches to own their types instead of the parent schema.
+        // Moonshot requires function parameters to declare an object type, while anyOf
+        // schemas must declare types only on their branches.
         normalize_kimi_k3_schema(&mut normalized);
+        nest_root_any_of_constraint(&mut normalized);
     }
     let object = normalized
         .as_object_mut()
         .expect("normalized function parameters must be an object");
-    if (!kimi_k3_compat || !has_fully_typed_any_of(object))
-        && object.get("type").and_then(Value::as_str) != Some("object")
-    {
+    if object.get("type").and_then(Value::as_str) != Some("object") {
         object.insert("type".to_owned(), Value::String("object".to_owned()));
     }
     normalized
@@ -528,18 +528,30 @@ fn move_compatible_parent_type_to_any_of(schema: &mut Map<String, Value>) {
     schema.remove("type");
 }
 
-fn has_fully_typed_any_of(schema: &Map<String, Value>) -> bool {
-    schema
+fn nest_root_any_of_constraint(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if object.get("allOf").is_some_and(|value| !value.is_array()) {
+        return;
+    }
+    let Some(any_of) = object
         .get("anyOf")
         .and_then(Value::as_array)
-        .is_some_and(|branches| {
-            !branches.is_empty()
-                && branches.iter().all(|branch| {
-                    branch
-                        .get("type")
-                        .is_some_and(|branch_type| !branch_type.is_null())
-                })
-        })
+        .filter(|branches| !branches.is_empty())
+        .cloned()
+    else {
+        return;
+    };
+    object.remove("anyOf");
+    let constraint = json!({"anyOf": any_of});
+    match object.get_mut("allOf") {
+        Some(Value::Array(all_of)) => all_of.push(constraint),
+        Some(_) => unreachable!("non-array allOf was rejected above"),
+        None => {
+            object.insert("allOf".to_owned(), Value::Array(vec![constraint]));
+        }
+    }
 }
 
 fn responses_tools(tools: &[Value], context: &ToolContext) -> Vec<Value> {
@@ -2510,9 +2522,10 @@ mod tests {
         let (converted, _) = responses_to_chat(&input).expect("request should convert");
         let parameters = &converted["tools"][0]["function"]["parameters"];
 
-        assert!(parameters.get("type").is_none());
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("anyOf").is_none());
         assert!(parameters["properties"]["metadata"].get("type").is_none());
-        assert!(parameters["anyOf"]
+        assert!(parameters["allOf"][0]["anyOf"]
             .as_array()
             .expect("root anyOf")
             .iter()
