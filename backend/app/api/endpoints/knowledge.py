@@ -107,7 +107,11 @@ from app.services.knowledge.code_wiki.registry import (
 )
 from app.services.knowledge.code_wiki.resolution import resolve_repository
 from app.services.knowledge.code_wiki.run_mode import ChangedPath
-from app.services.knowledge.code_wiki.runner import CodeWikiRunError, start_run
+from app.services.knowledge.code_wiki.runner import (
+    CodeWikiRunError,
+    republish_generation,
+    start_run,
+)
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
     SourceRepository,
@@ -938,6 +942,57 @@ def get_code_wiki_history(
             )
             for record in run_history(db, knowledge_base)
         ]
+    )
+
+
+@router.post(
+    "/{knowledge_base_id}/code-wiki/generations/{generation_id}/publish",
+    response_model=CodeWikiRunResponse,
+)
+@trace_sync("republish_code_wiki_version", "knowledge.api")
+def republish_code_wiki_version(
+    knowledge_base_id: int,
+    generation_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Make an earlier version the one readers see again.
+
+    **Write access to the repository**, the same as regenerating: this changes what
+    everybody reads, and is closer to changing the repository than to reading its
+    documentation.
+
+    It restores content and structure, not identity. The pages that were deleted on
+    the way here took their document ids with them, so anything that cited one is not
+    repaired by coming back.
+    """
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_caller_may_regenerate(db, current_user, knowledge_base)
+
+    try:
+        result = republish_generation(
+            db,
+            knowledge_base=knowledge_base,
+            generation_id=generation_id,
+            user=current_user,
+        )
+    except CodeWikiRunError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+
+    if not result.published:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=result.reason or "the publish gate refused this version",
+        )
+
+    db.commit()
+    return CodeWikiRunResponse(
+        started=False,
+        mode="republish",
+        reason=f"version {generation_id} is published again",
+        generation_id=generation_id,
     )
 
 

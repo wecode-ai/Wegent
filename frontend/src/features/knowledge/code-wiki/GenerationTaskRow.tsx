@@ -28,19 +28,19 @@ interface GenerationTaskRowProps {
  * wanted to watch one run had no way to see it short of building the wiki again.
  */
 export function GenerationTaskRow({ checked, onChange }: GenerationTaskRowProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
 
   return (
     <SimpleConfigRow
       label={
         <span className="flex items-center gap-1.5">
-          {t('knowledge:codeWiki.create.showGenerationTask')}
+          {t('codeWiki.create.showGenerationTask')}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={t('knowledge:codeWiki.create.showGenerationTaskHint')}
+                  aria-label={t('codeWiki.create.showGenerationTaskHint')}
                   data-testid="code-wiki-show-generation-task-help"
                   className="text-text-muted hover:text-text-secondary"
                 >
@@ -48,7 +48,7 @@ export function GenerationTaskRow({ checked, onChange }: GenerationTaskRowProps)
                 </button>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
-                {t('knowledge:codeWiki.create.showGenerationTaskHint')}
+                {t('codeWiki.create.showGenerationTaskHint')}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

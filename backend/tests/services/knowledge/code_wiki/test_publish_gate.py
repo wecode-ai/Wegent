@@ -122,6 +122,30 @@ def test_a_broken_diagram_is_reported_but_does_not_block():
     assert "index:" in verdict.warnings[0]
 
 
+def test_diagram_findings_are_kept_apart_from_the_rest():
+    """The two go to different places. Diagram findings are sent back to the agent,
+    which wrote the diagram and can still rewrite the page; a section with no page of
+    its own describes the shape of the wiki and is for the run history. Separating
+    them by matching on warning text would make that routing depend on wording.
+    """
+    pages = [
+        PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```"),
+        PageSource(path="architecture/backend", title="Backend", content="body"),
+    ]
+
+    verdict = evaluate_publish_gate(pages, published_paths=[])
+
+    assert len(verdict.warnings) == 2
+    assert verdict.diagram_warnings == (verdict.warnings[1],)
+    assert "index:" in verdict.diagram_warnings[0]
+
+
+def test_a_verdict_with_nothing_wrong_carries_no_diagram_findings():
+    verdict = evaluate_publish_gate(_pages(3), published_paths=_published(3))
+
+    assert verdict.diagram_warnings == ()
+
+
 def test_diagrams_can_be_made_blocking_by_policy():
     pages = [
         PageSource(path="index", title="Index", content="```mermaid\nflowchat TD\n```")

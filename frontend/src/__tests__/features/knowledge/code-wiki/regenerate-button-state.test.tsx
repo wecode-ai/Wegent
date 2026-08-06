@@ -41,7 +41,7 @@ describe('regenerate control state', () => {
     const control = regenerateControl(status({ status: 'running', is_stale: true }), false, t)
 
     expect(control.disabled).toBe(false)
-    expect(control.hint).toBe('knowledge:codeWiki.reader.previousRunStalled')
+    expect(control.hint).toBe('codeWiki.reader.previousRunStalled')
   })
 
   it('shows why the last run failed', () => {

@@ -88,6 +88,19 @@ export const codeWikiApi = {
     client.get<CodeWikiRunHistory>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`),
 
   /**
+   * Make an earlier version the one readers see again.
+   *
+   * Restores content and structure, not identity: the pages deleted on the way here
+   * took their document ids with them, so a citation pointing at one is not repaired
+   * by its content coming back.
+   */
+  republish: async (knowledgeBaseId: number, generationId: number): Promise<CodeWikiRunResponse> =>
+    client.post<CodeWikiRunResponse>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/generations/${generationId}/publish`,
+      {}
+    ),
+
+  /**
    * Regenerate now, without waiting for a schedule.
    *
    * Answers 202 even when nothing was needed; read `started` to tell which happened.

@@ -24,6 +24,7 @@ from app.schemas.wiki import (
     WikiProjectInDB,
     WikiProjectListResponse,
 )
+from app.services.knowledge.code_wiki.prompts import build_diagram_correction
 from app.services.user import user_service
 from app.services.wiki_service import wiki_service
 
@@ -305,12 +306,24 @@ def save_wiki_generation_contents(
     say nothing, so an agent whose version the gate refused was told its run was
     complete while its work was discarded — and it is the only party that could still
     act on the refusal, since it is running and its checkout is there.
+
+    ``corrections`` carries the same argument one step further. Broken diagrams never
+    hold a version back, so the run publishes and ends — and the finding was recorded
+    where only a human reading the run history would ever see it, which is the one
+    party that cannot fix a diagram. Returned here it reaches the agent while it can
+    still rewrite the page and finish again.
     """
-    refusal = wiki_service.save_generation_contents(
+    outcome = wiki_service.save_generation_contents(
         wiki_db=wiki_db,
         payload=payload,
     )
-    return {"published": refusal is None, "reason": refusal or ""}
+    if outcome is None:
+        return {"published": True, "reason": "", "corrections": ""}
+    return {
+        "published": outcome.published,
+        "reason": outcome.reason,
+        "corrections": build_diagram_correction(outcome.verdict.diagram_warnings) or "",
+    }
 
 
 @internal_router.get("/generations/{generation_id}/pages", response_model=WikiPageRead)

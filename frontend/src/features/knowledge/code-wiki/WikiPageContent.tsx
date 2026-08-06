@@ -47,7 +47,7 @@ export function WikiPageContent({
   knownPaths,
   onNavigate,
 }: WikiPageContentProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const { theme } = useTheme()
   const [markdown, setMarkdown] = useState('')
   const [loading, setLoading] = useState(false)
@@ -111,7 +111,7 @@ export function WikiPageContent({
           return (
             <span
               data-testid="wiki-page-link-broken"
-              title={t('knowledge:codeWiki.reader.linkNotFound')}
+              title={t('codeWiki.reader.linkNotFound')}
               className="text-text-tertiary underline decoration-dotted"
             >
               {children}
@@ -134,7 +134,7 @@ export function WikiPageContent({
   if (!page.has_content) {
     return (
       <p className="py-16 text-center text-sm text-text-tertiary">
-        {t('knowledge:codeWiki.reader.sectionOnly')}
+        {t('codeWiki.reader.sectionOnly')}
       </p>
     )
   }

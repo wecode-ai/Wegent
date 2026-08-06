@@ -44,7 +44,12 @@ from app.services.knowledge.code_wiki.generation import (
     start_generation,
 )
 from app.services.knowledge.code_wiki.prompts import WikiRunContext, build_prompt
-from app.services.knowledge.code_wiki.publisher import PublishResult, read_version_pages
+from app.services.knowledge.code_wiki.publisher import (
+    PublishResult,
+    publish_generation,
+    published_generation_id,
+    read_version_pages,
+)
 from app.services.knowledge.code_wiki.repo_state import read_repository_state
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
@@ -453,3 +458,54 @@ def _fail_without_a_task(
     live.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     record_failure_reason(live, str(exc), code=FailureCode.TASK_NOT_CREATED)
     db.commit()
+
+
+def republish_generation(
+    db: Session, *, knowledge_base: Kind, generation_id: int, user: User
+) -> PublishResult:
+    """Make an earlier version the one readers see again.
+
+    The publish gate exists because a run can go wrong; this exists because the gate
+    is advisory, so one that does go wrong now reaches readers. Everything a run
+    wrote is retained until retention collects it, and until this there was no way to
+    reach any of it — the pointer only ever moved forward.
+
+    It goes through the same projection as any other publish, which is the point:
+    there is one path that decides what a knowledge base holds. That also means it
+    restores content and structure but **not identity**. The pages deleted on the way
+    here took their document ids with them, and this adds them back as new documents,
+    so anything that cited one still points at nothing.
+
+    Raises:
+        CodeWikiRunError: If the version does not belong to this wiki, or never
+            finished, or is already the one published.
+    """
+    generation = db.get(WikiGeneration, generation_id)
+    if generation is None or generation.kind_id != knowledge_base.id:
+        raise CodeWikiRunError(f"Version {generation_id} does not belong to this wiki")
+
+    if generation.status != WikiGenerationStatus.COMPLETED:
+        raise CodeWikiRunError(
+            f"Version {generation_id} is {generation.status}, so it holds no result "
+            "to publish"
+        )
+
+    if published_generation_id(knowledge_base) == generation.id:
+        raise CodeWikiRunError(f"Version {generation_id} is already published")
+
+    result = publish_generation(
+        db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=user.id,
+        effects=build_projection_side_effects(
+            db, knowledge_base=knowledge_base, user=user
+        ),
+    )
+    logger.info(
+        "[code_wiki] republished generation %s into kb %s: published=%s",
+        generation.id,
+        knowledge_base.id,
+        result.published,
+    )
+    return result

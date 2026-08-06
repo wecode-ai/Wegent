@@ -31,7 +31,7 @@ interface NodeProps {
 }
 
 function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect }: NodeProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const hasChildren = node.children.length > 0
   const isOpen = expanded.has(node.path)
   const isActive = node.path === activePath
@@ -69,7 +69,7 @@ function NavigationNode({ node, depth, activePath, expanded, onToggle, onSelect 
           // expands it instead, which is the only thing it can usefully do.
           onClick={() => (node.has_content ? onSelect(node) : onToggle(node.path))}
           data-testid={`wiki-nav-page-${node.path}`}
-          title={node.has_content ? node.title : t('knowledge:codeWiki.reader.sectionOnly')}
+          title={node.has_content ? node.title : t('codeWiki.reader.sectionOnly')}
           className={`min-w-0 flex-1 truncate py-1.5 text-left text-sm ${
             isActive
               ? 'font-medium text-text-primary'

@@ -26,27 +26,37 @@ export function summarise(
   t: (key: string, options?: Record<string, unknown>) => string
 ): { label: string; tone: 'ok' | 'bad' | 'busy' | 'idle' } {
   if (!status || status.status === 'never') {
-    return { label: t('knowledge:codeWiki.history.never'), tone: 'idle' }
+    return { label: t('codeWiki.history.never'), tone: 'idle' }
   }
   if (status.status === 'running') {
     return {
-      label: status.is_stale
-        ? t('knowledge:codeWiki.history.stalled')
-        : t('knowledge:codeWiki.history.running'),
+      label: status.is_stale ? t('codeWiki.history.stalled') : t('codeWiki.history.running'),
       tone: status.is_stale ? 'bad' : 'busy',
     }
   }
   if (status.status === 'failed') {
-    return { label: t('knowledge:codeWiki.history.lastFailed'), tone: 'bad' }
+    return { label: t('codeWiki.history.lastFailed'), tone: 'bad' }
   }
   return {
     label: status.last_published_at
-      ? t('knowledge:codeWiki.history.updated', {
+      ? t('codeWiki.history.updated', {
           when: formatRelativeTime(status.last_published_at, t),
         })
-      : t('knowledge:codeWiki.history.completed'),
+      : t('codeWiki.history.completed'),
     tone: 'ok',
   }
+}
+
+/**
+ * Whether a version can be made live again.
+ *
+ * Only a completed version that is not already the one readers see. A failed run may
+ * well hold pages, but they are the pages of a run that did not succeed, and the
+ * server refuses them for the same reason — this is the client's copy of that rule,
+ * named so it can be tested rather than inlined into a condition.
+ */
+export function canRepublish(run: Pick<CodeWikiRunRecord, 'status' | 'published'>): boolean {
+  return run.status === 'completed' && !run.published
 }
 
 const TONE_CLASS: Record<string, string> = {
@@ -62,10 +72,32 @@ function RunIcon({ status }: { status: CodeWikiRunRecord['status'] }) {
   return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
 }
 
-function RunRow({ run }: { run: CodeWikiRunRecord }) {
-  const { t } = useTranslation()
+function RunRow({
+  run,
+  knowledgeBaseId,
+  onRepublished,
+}: {
+  run: CodeWikiRunRecord
+  knowledgeBaseId: number
+  onRepublished: () => void
+}) {
+  const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
   const reason = failureText(run.failure_code, run.error_message, t)
+  const [working, setWorking] = useState(false)
+
+  const republish = async () => {
+    setWorking(true)
+    try {
+      await codeWikiApi.republish(knowledgeBaseId, run.generation_id)
+      toast.success(t('codeWiki.history.republished'))
+      onRepublished()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorking(false)
+    }
+  }
 
   return (
     <li
@@ -80,12 +112,12 @@ function RunRow({ run }: { run: CodeWikiRunRecord }) {
           <span className="text-xs text-text-secondary">{when}</span>
           {run.mode && (
             <span className="text-[11px] text-text-tertiary">
-              {t(`knowledge:codeWiki.history.mode.${run.mode}`)}
+              {t(`codeWiki.history.mode.${run.mode}`)}
             </span>
           )}
           {run.published && (
             <span className="rounded bg-primary/10 px-1 text-[11px] text-primary">
-              {t('knowledge:codeWiki.history.current')}
+              {t('codeWiki.history.current')}
             </span>
           )}
         </div>
@@ -96,9 +128,7 @@ function RunRow({ run }: { run: CodeWikiRunRecord }) {
           {run.commit ? (
             run.commit.slice(0, 8)
           ) : (
-            <span className="font-sans not-italic">
-              {t('knowledge:codeWiki.history.commitUnreported')}
-            </span>
+            <span className="font-sans not-italic">{t('codeWiki.history.commitUnreported')}</span>
           )}
         </div>
         {/* The reason is the point of this panel, so it wraps rather than truncates:
@@ -109,8 +139,23 @@ function RunRow({ run }: { run: CodeWikiRunRecord }) {
             though they contradicted each other. */}
         {run.task_status === 'FAILED' && run.status === 'completed' && (
           <p className="mt-0.5 text-[11px] text-amber-500" data-testid="code-wiki-run-task-failed">
-            {t('knowledge:codeWiki.history.taskFailed')}
+            {t('codeWiki.history.taskFailed')}
           </p>
+        )}
+        {/* Only a completed version that is not the live one has anything to go
+            back to. The gate is advisory now, so a run that went wrong does reach
+            readers, and everything it replaced is still in the version store. */}
+        {canRepublish(run) && (
+          <button
+            type="button"
+            onClick={republish}
+            disabled={working}
+            title={t('codeWiki.history.republishHint')}
+            data-testid={`code-wiki-republish-${run.generation_id}`}
+            className="mt-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-text-secondary hover:border-primary/40 disabled:opacity-50"
+          >
+            {t('codeWiki.history.republish')}
+          </button>
         )}
         {reason && (
           <p
@@ -137,7 +182,7 @@ function RunRow({ run }: { run: CodeWikiRunRecord }) {
  * repeating a list of finished runs every few seconds would tell nobody anything.
  */
 export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
   const chip = summarise(status, t)
@@ -174,9 +219,7 @@ export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-3" data-testid="code-wiki-history">
-        <p className="mb-2 text-xs font-medium text-text-primary">
-          {t('knowledge:codeWiki.history.title')}
-        </p>
+        <p className="mb-2 text-xs font-medium text-text-primary">{t('codeWiki.history.title')}</p>
         {loading && runs === null ? (
           <div className="flex justify-center py-4">
             <Spinner />
@@ -184,11 +227,16 @@ export function RunHistory({ knowledgeBaseId, status }: RunHistoryProps) {
         ) : runs && runs.length > 0 ? (
           <ul className="max-h-80 overflow-auto">
             {runs.map(run => (
-              <RunRow key={run.generation_id} run={run} />
+              <RunRow
+                key={run.generation_id}
+                run={run}
+                knowledgeBaseId={knowledgeBaseId}
+                onRepublished={load}
+              />
             ))}
           </ul>
         ) : (
-          <p className="py-2 text-xs text-text-tertiary">{t('knowledge:codeWiki.history.none')}</p>
+          <p className="py-2 text-xs text-text-tertiary">{t('codeWiki.history.none')}</p>
         )}
       </PopoverContent>
     </Popover>

@@ -1132,7 +1132,8 @@
       "generating": "Generating…",
       "previousRunStalled": "The previous run stalled; you can start another",
       "linkNotFound": "This link points to a page that does not exist",
-      "backToChat": "Back to conversation"
+      "backToChat": "Back to conversation",
+      "openNavigation": "Page navigation"
     },
     "history": {
       "title": "Generation history",
@@ -1150,7 +1151,10 @@
         "custom": "Custom"
       },
       "commitUnreported": "no commit reported",
-      "taskFailed": "The task failed"
+      "taskFailed": "The task failed",
+      "republish": "Restore this version",
+      "republished": "This version is published again",
+      "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this."
     },
     "failure": {
       "task_ended_without_report": "The task ended without reporting a result",

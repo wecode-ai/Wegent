@@ -407,10 +407,23 @@ async function cmdComplete(args) {
     console.error(`❌ Not published: ${result.reason || 'the publish gate refused this version'}`)
     console.error('The pages are stored but readers still see the previous wiki.')
     console.error('Write what is missing, then run complete again.')
+    if (result.corrections) {
+      console.error(result.corrections)
+    }
     return 1
   }
 
   console.log('✅ Wiki generation completed and published')
+
+  // Printed on success too, and that is the point: broken diagrams never hold a
+  // version back, so this is the last moment anything can be done about them. Exit 0
+  // -- the run did succeed, and failing it would undo a wiki that is live and good
+  // over a figure that does not draw.
+  if (result.corrections) {
+    console.log('')
+    console.log(result.corrections)
+    console.log('Rewrite those pages and run complete again to republish.')
+  }
   return 0
 }
 
