@@ -721,6 +721,8 @@
     "close_browser": "关闭浏览器",
     "browser_new_tab": "新选项卡",
     "browser_close_tab": "关闭选项卡",
+    "browser_close_tab_with_download_confirm": "此选项卡仍有下载任务，仍要关闭吗？",
+    "browser_close_browser_with_download_confirm": "浏览器中仍有下载任务，仍要关闭吗？",
     "browser_back": "后退",
     "browser_forward": "前进",
     "browser_reload": "重新加载",

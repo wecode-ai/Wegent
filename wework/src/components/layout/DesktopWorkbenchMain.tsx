@@ -310,6 +310,7 @@ interface WorkbenchPaneWorkspaceState {
 interface PendingBlankBrowserMigration {
   sourcePaneKey: string
   browserLabel: string
+  browserLabels: string[]
   rightPanelOpen: boolean
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
@@ -347,7 +348,7 @@ function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | nu
 
   const migration = latestBlankBrowserMigration
   latestBlankBrowserMigration = null
-  markEmbeddedBrowserLabelTransferred(migration.browserLabel)
+  migration.browserLabels.forEach(label => markEmbeddedBrowserLabelTransferred(label))
   return migration
 }
 
@@ -1387,6 +1388,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const temporaryChatTabSequence = useRef(0)
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] =
     useState<EmbeddedBrowserOpenRequest | null>(null)
+  const [embeddedBrowserTabState, setEmbeddedBrowserTabState] = useState<{
+    activeLabel: string | null
+    baseLabel: string
+    labels: string[]
+    hasActiveDownload: boolean
+  }>({
+    activeLabel: null,
+    baseLabel: DEFAULT_EMBEDDED_BROWSER_LABEL,
+    labels: [],
+    hasActiveDownload: false,
+  })
   const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
     id: number
     text: string
@@ -1634,6 +1646,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     latestBlankBrowserMigration = {
       sourcePaneKey: paneKey,
       browserLabel: embeddedBrowserLabel,
+      browserLabels: embeddedBrowserTabState.labels,
       rightPanelOpen,
       rightPanelExpanded,
       rightPanelView,
@@ -1648,6 +1661,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    embeddedBrowserTabState.labels,
   ])
 
   useEffect(() => {
@@ -1655,10 +1669,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (migratedEmbeddedBrowserLabel !== initialBlankBrowserMigration.browserLabel) return
 
     let disposed = false
-    void relabelEmbeddedBrowser(
-      initialBlankBrowserMigration.browserLabel,
-      defaultEmbeddedBrowserLabel
-    )
+    const browserLabels = initialBlankBrowserMigration.browserLabels.length
+      ? initialBlankBrowserMigration.browserLabels
+      : [initialBlankBrowserMigration.browserLabel]
+    void browserLabels
+      .reduce(async (previous, label) => {
+        await previous
+        const migratedLabel =
+          label === initialBlankBrowserMigration.browserLabel
+            ? defaultEmbeddedBrowserLabel
+            : label.startsWith(`${initialBlankBrowserMigration.browserLabel}--tab-`)
+              ? defaultEmbeddedBrowserLabel +
+                label.slice(initialBlankBrowserMigration.browserLabel.length)
+              : label
+        if (migratedLabel === label) return
+        await relabelEmbeddedBrowser(label, migratedLabel)
+      }, Promise.resolve())
       .then(() => {
         if (!disposed) {
           setMigratedEmbeddedBrowserLabel(null)
@@ -1993,12 +2019,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      if (
+        tab === 'browser' &&
+        embeddedBrowserTabState.hasActiveDownload &&
+        !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
+      ) {
+        return
+      }
       track('workspace_panel_removed', { panel: rightPanelTabType(tab) })
       if (tab.startsWith('chat:')) {
         temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
       }
       if (tab === 'files') {
         setOpenFileRequest(null)
+      }
+      if (tab === 'browser') {
+        setEmbeddedBrowserTabState({
+          activeLabel: null,
+          baseLabel: DEFAULT_EMBEDDED_BROWSER_LABEL,
+          labels: [],
+          hasActiveDownload: false,
+        })
       }
       setRightPanelTabs(current => {
         const currentTabs = current.includes(tab) ? current : [...current, tab]
@@ -2015,7 +2056,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     },
-    [rightPanelView, setOpenFileRequest, setRightPanelTabs, setRightPanelView]
+    [
+      embeddedBrowserTabState.hasActiveDownload,
+      rightPanelView,
+      setOpenFileRequest,
+      setRightPanelTabs,
+      setRightPanelView,
+      t,
+    ]
   )
 
   const openReviewFromDiffLoader = useCallback(
@@ -3190,6 +3238,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               planContent={rightPanelPlanContent}
               embeddedBrowserLabel={embeddedBrowserLabel}
               embeddedBrowserOpenRequest={embeddedBrowserOpenRequest}
+              onEmbeddedBrowserTabsChange={setEmbeddedBrowserTabState}
               codeCommentCount={paneSession.codeCommentContexts.length}
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}

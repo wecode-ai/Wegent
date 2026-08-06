@@ -22,8 +22,9 @@ import { WorkspaceBrowserTabPanel, type WorkspaceBrowserPanelProps } from './Wor
 export const WORKSPACE_BROWSER_NEW_TAB_EVENT = 'wework:workspace-browser-new-tab'
 
 export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
+  const { t } = useTranslation('common')
   const baseLabel = props.label ?? 'workspace-browser'
-  const { onFaviconChange, onTitleChange, openRequest } = props
+  const { onFaviconChange, onTabsChange, onTitleChange, openRequest } = props
   const [collection, setCollection] = useState<BrowserTabCollection>(() => {
     const tab = createBrowserTab(baseLabel, { id: 'base', label: baseLabel })
     return { tabs: [tab], activeTabId: tab.id }
@@ -145,10 +146,27 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
     })
   }, [baseLabel, collection.activeTabId, collection.tabs])
 
+  useEffect(() => {
+    onTabsChange?.({
+      activeLabel: collection.tabs.find(tab => tab.id === collection.activeTabId)?.label ?? null,
+      baseLabel,
+      labels: collection.tabs.map(tab => tab.label),
+      hasActiveDownload: collection.tabs.some(
+        tab => tab.hasActiveDownload && !tab.suspended && Boolean(tab.nativeLabel)
+      ),
+    })
+  }, [baseLabel, collection.activeTabId, collection.tabs, onTabsChange])
+
   const closeTab = useCallback(
     (tabId: string) => {
       const target = collection.tabs.find(tab => tab.id === tabId)
       if (!target || collection.tabs.length <= 1) return
+      if (
+        target.hasActiveDownload &&
+        !window.confirm(t('workbench.browser_close_tab_with_download_confirm'))
+      ) {
+        return
+      }
 
       if (target.label === baseLabel) {
         const replacement = collection.tabs.find(tab => tab.id !== tabId)
@@ -174,7 +192,7 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
 
       setCollection(current => closeBrowserTab(current, tabId))
     },
-    [baseLabel, collection]
+    [baseLabel, collection, t]
   )
 
   const activeTab = collection.tabs.find(tab => tab.id === collection.activeTabId)
@@ -231,6 +249,9 @@ export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps) {
               }
               onNativeLabelChange={nativeLabel =>
                 updateTab(tab.id, { nativeLabel, suspended: !nativeLabel ? true : tab.suspended })
+              }
+              onDownloadActivityChange={hasActiveDownload =>
+                updateTab(tab.id, { hasActiveDownload })
               }
               onTitleChange={title => handleTitleChange(tab.id, title)}
               onFaviconChange={faviconUrl => handleFaviconChange(tab.id, faviconUrl)}

@@ -73,6 +73,20 @@ describe('browser tab state', () => {
     expect(findBrowserTabForLru([protectedTab, candidate], 2)?.id).toBe('candidate')
   })
 
+  test('skips tabs with active downloads when selecting an LRU candidate', () => {
+    const downloadingTab = {
+      ...createBrowserTab('base', { id: 'downloading', now: 1 }),
+      nativeLabel: 'native-downloading',
+      hasActiveDownload: true,
+    }
+    const candidate = {
+      ...createBrowserTab('base', { id: 'candidate', now: 2 }),
+      nativeLabel: 'native-candidate',
+    }
+
+    expect(findBrowserTabForLru([downloadingTab, candidate], 2)?.id).toBe('candidate')
+  })
+
   test('skips the excluded tab when selecting an LRU candidate', () => {
     const active = {
       ...createBrowserTab('base', { id: 'active', now: 1 }),

@@ -98,6 +98,13 @@ export interface WorkspaceBrowserPanelProps {
   codeCommentCount?: number
   onAddCodeComment?: (context: CodeCommentContext) => void
   onNativeLabelChange?: (nativeLabel: string | null) => void
+  onDownloadActivityChange?: (hasActiveDownload: boolean) => void
+  onTabsChange?: (state: {
+    activeLabel: string | null
+    baseLabel: string
+    labels: string[]
+    hasActiveDownload: boolean
+  }) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
@@ -725,6 +732,7 @@ export function WorkspaceBrowserTabPanel({
   codeCommentCount = 0,
   onAddCodeComment,
   onNativeLabelChange,
+  onDownloadActivityChange,
   onFaviconChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
@@ -744,6 +752,7 @@ export function WorkspaceBrowserTabPanel({
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
+  const activeDownloadIdsRef = useRef(new Set<string>())
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
@@ -794,11 +803,20 @@ export function WorkspaceBrowserTabPanel({
     setDownloadsOpen(true)
   }, [])
 
-  const reconcileDownloadSnapshot = useCallback((nativeLabel: string) => {
-    const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
-    setDownloads(snapshot)
-    setDownloadsOpen(snapshot.length > 0)
-  }, [])
+  const reconcileDownloadSnapshot = useCallback(
+    (nativeLabel: string) => {
+      const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
+      setDownloads(snapshot)
+      setDownloadsOpen(snapshot.length > 0)
+      activeDownloadIdsRef.current = new Set(
+        snapshot
+          .filter(download => download.status === 'started' || download.status === 'progress')
+          .map(download => download.id)
+      )
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+    },
+    [onDownloadActivityChange]
+  )
 
   const adoptNativeLabel = useCallback(
     (nativeLabel: string, logicalLabel: string) => {
@@ -832,8 +850,16 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
-      if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
-      applyDownloadEvent(download)
+      if (download.nativeLabel !== nativeLabelRef.current) return
+      if (download.status === 'started' || download.status === 'progress') {
+        activeDownloadIdsRef.current.add(download.id)
+      } else {
+        activeDownloadIdsRef.current.delete(download.id)
+      }
+      onDownloadActivityChange?.(activeDownloadIdsRef.current.size > 0)
+      if (activeRef.current) {
+        applyDownloadEvent(download)
+      }
       if (
         (download.status === 'finished' ||
           download.status === 'failed' ||
@@ -851,7 +877,7 @@ export function WorkspaceBrowserTabPanel({
         })
       }
     })
-  }, [applyDownloadEvent])
+  }, [applyDownloadEvent, onDownloadActivityChange])
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserAgentState(event => {
@@ -929,7 +955,9 @@ export function WorkspaceBrowserTabPanel({
       nativeBrowserOpenRef.current = false
       nativeLabelRef.current = null
       adoptedDownloadOwnerLabelRef.current = null
+      activeDownloadIdsRef.current = new Set()
       onNativeLabelChange?.(null)
+      onDownloadActivityChange?.(false)
       currentUrlRef.current = null
       activePageUrlRef.current = null
       annotationModeRef.current = false
@@ -970,7 +998,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onFaviconChange, onTitleChange])
+  }, [onFaviconChange, onNativeLabelChange, onTitleChange])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return

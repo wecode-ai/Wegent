@@ -111,6 +111,12 @@ interface RightWorkspacePanelProps {
   planContent?: string | null
   embeddedBrowserLabel?: string
   embeddedBrowserOpenRequest?: EmbeddedBrowserOpenRequest | null
+  onEmbeddedBrowserTabsChange?: (state: {
+    activeLabel: string | null
+    baseLabel: string
+    labels: string[]
+    hasActiveDownload: boolean
+  }) => void
   codeCommentCount?: number
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
@@ -155,6 +161,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   planContent,
   embeddedBrowserLabel = 'workspace-browser',
   embeddedBrowserOpenRequest,
+  onEmbeddedBrowserTabsChange,
   codeCommentCount = 0,
   canOpenReview,
   reviewViewOptions,
@@ -472,6 +479,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             active={visible && activeView === 'browser'}
             label={embeddedBrowserLabel}
             openRequest={embeddedBrowserOpenRequest}
+            onTabsChange={onEmbeddedBrowserTabsChange}
             codeCommentCount={codeCommentCount}
             onAddCodeComment={onAddCodeComment}
             onFaviconChange={setBrowserFaviconUrl}

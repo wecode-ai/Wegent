@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
@@ -9,21 +9,34 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserActiveTab: vi.fn(),
 }))
 
+const browserPanelMocks = vi.hoisted(() => ({
+  panels: new Map<
+    string,
+    {
+      onDownloadActivityChange?: (hasActiveDownload: boolean) => void
+    }
+  >(),
+}))
+
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 
 vi.mock('./WorkspaceBrowserPanel', () => ({
-  WorkspaceBrowserTabPanel: ({
-    label,
-    openRequest,
-  }: {
+  WorkspaceBrowserTabPanel: (props: {
     label: string
     openRequest: { url: string } | null
-  }) => <div data-testid={'browser-host-' + label}>{openRequest?.url ?? label}</div>,
+    onDownloadActivityChange?: (hasActiveDownload: boolean) => void
+  }) => {
+    browserPanelMocks.panels.set(props.label, props)
+    return (
+      <div data-testid={'browser-host-' + props.label}>{props.openRequest?.url ?? props.label}</div>
+    )
+  },
 }))
 
 describe('WorkspaceBrowserPanelContainer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    browserPanelMocks.panels.clear()
     embeddedBrowserMocks.closeEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.relabelEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockResolvedValue(undefined)
@@ -80,5 +93,32 @@ describe('WorkspaceBrowserPanelContainer', () => {
       expect(screen.getAllByRole('tab')).toHaveLength(1)
       expect(screen.getAllByText('https://example.test/')).toHaveLength(2)
     })
+  })
+
+  test('blocks closing a tab with active downloads', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    render(<WorkspaceBrowserPanel active label="workspace-browser-task-1" />)
+    fireEvent.click(screen.getByTestId('browser-tab-add'))
+
+    await waitFor(() => expect(browserPanelMocks.panels.size).toBe(2))
+
+    const tabLabel = Array.from(browserPanelMocks.panels.keys()).find(
+      label => label !== 'workspace-browser-task-1'
+    )
+    expect(tabLabel).toBeTruthy()
+    act(() => {
+      browserPanelMocks.panels.get(tabLabel!)?.onDownloadActivityChange?.(true)
+    })
+
+    const closeButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-testid^="browser-tab-close-"]')
+    )
+    fireEvent.click(closeButtons[1])
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })
