@@ -74,7 +74,7 @@ function fixtureHtml() {
       <option value="general">General</option>
       <option value="finance">Finance</option>
     </select>
-    <label><input id="agent-confirm" type="checkbox" /> Confirm</label>
+    <label><input id="agent-confirm" type="checkbox" aria-label="Confirm" /> Confirm</label>
     <div id="agent-scroll-box" role="region" aria-label="Scrollable results" tabindex="0">
       <div id="agent-scroll-spacer"></div>
       <div id="agent-scroll-marker">${SCROLLED_TEXT}</div>
