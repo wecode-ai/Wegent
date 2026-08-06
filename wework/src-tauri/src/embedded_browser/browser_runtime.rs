@@ -231,8 +231,8 @@ pub(super) fn embedded_browser_capabilities() -> Value {
             ]
         },
         "screenshot": {
-            "viewport": true,
-            "primaryBackend": "wkwebview-nsview-cache",
+            "viewport": cfg!(target_os = "macos"),
+            "primaryBackend": cfg!(target_os = "macos").then_some("wkwebview-nsview-cache"),
             "fallbackBackend": null,
             "wkTakeSnapshot": false
         },

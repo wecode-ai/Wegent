@@ -9995,7 +9995,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-      'first message|working\n\nbefore |继续修|'
+      'first message|working\n\nbefore '
     )
     expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
@@ -10999,6 +10999,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       message: '执行ls',
       clientGuidanceId: expect.stringMatching(/^queued-runtime-pane-/),
     })
+    expect(screen.getByTestId('runtime-open-messages')).not.toHaveTextContent('执行ls')
     await act(async () => {
       streamHandlers.onGuidanceApplied?.({
         taskId: 'runtime-a',

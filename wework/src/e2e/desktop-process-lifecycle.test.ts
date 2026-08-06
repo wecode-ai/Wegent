@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
   stopProcessGroup: (child: ChildProcess) => Promise<void>
@@ -60,6 +60,27 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('does not wait for a process group that is no longer signalable', async () => {
+    const { stopProcessGroup } = await loadProcessLifecycle()
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -42 && signal === 0) {
+        const error = Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+        throw error
+      }
+      return true
+    })
+
+    try {
+      await expect(
+        stopProcessGroup({ pid: 42, exitCode: 0, signalCode: null } as ChildProcess)
+      ).resolves.toBeUndefined()
+
+      expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM')
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
   test('stops descendants that inherit an owned process group', async () => {
     const { stopProcessGroup } = await loadProcessLifecycle()
     const parent = spawn(

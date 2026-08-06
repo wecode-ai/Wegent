@@ -95,6 +95,7 @@ const GUIDANCE_SCROLL_RESPONSE = [
   ),
 ].join('\n\n')
 const GUIDANCE_SCROLL_MESSAGE = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_MESSAGE'
+const GUIDANCE_SCROLL_PRE_TOOL_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_PRE_TOOL_TEXT'
 const GUIDANCE_SCROLL_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_COMPLETE'
 const QUEUE_DIRECT_INITIAL = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_INITIAL'
 const QUEUE_DIRECT_FIRST = 'WEWORK_DESKTOP_E2E_QUEUE_DIRECT_FIRST'
@@ -1561,6 +1562,11 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: 'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL_RESPONSE',
+    value: 'guidance-scroll-setup-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   await waitForOverflowMetrics(
@@ -1598,6 +1604,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    value: 'guidance-scroll-pre-tool-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const assistantAfterGuidanceText = await control.command(
+    'getText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:not([data-e2e-anchor-id])`
+  )
+  assert.equal(
+    assistantAfterGuidanceText.includes(GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    false,
+    'The final text from before guidance was duplicated after the guidance message'
+  )
 
   const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
     control,
@@ -10037,10 +10061,12 @@ class DesktopE2EServer {
         const tool = selectShellTool(body, this.workspacePath)
         this.guidanceScrollStage = 'awaiting_tool_output'
         await this.guidanceScrollToolRelease
+        const preToolMessage = assistantMessage(GUIDANCE_SCROLL_PRE_TOOL_TEXT)
         this.writeSse(response, [
           responseCreated(responseId),
+          preToolMessage,
           ...functionCall('wework-e2e-guidance-scroll-tool', tool.name, tool.arguments),
-          responseCompleted(responseId),
+          responseCompleted(responseId, [preToolMessage.item]),
         ])
         return
       }
@@ -12465,6 +12491,7 @@ async function buildDesktopApp(
         VITE_WEWORK_E2E_SEED_LOCAL_MODELS: RUNS_PLUGIN_E2E || MEMORY_ONLY ? 'false' : 'true',
         VITE_WEWORK_POSTHOG_HOST: modelServerUrl,
         VITE_WEWORK_POSTHOG_KEY: TELEMETRY_TEST_PROJECT_KEY,
+        VITE_WEWORK_RELEASE_CHANNEL: 'stable',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -13217,6 +13244,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
+  let desktopScenarioVerified = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -13548,6 +13576,21 @@ last_updated = "2026-07-30T00:00:00Z"`
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
       await verifyRetryFailureRestoration(control, ACTIVE_COMPOSER_SELECTOR)
       console.log(`Wework desktop retry-restoration E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (GUIDANCE_SCROLL_ONLY) {
+      phase = 'guidance-scroll'
+      await verifyForegroundGuidanceScroll({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
 
@@ -14095,18 +14138,6 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('core-task-flow')) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await configureDefaultProjectSpaceAssociation(control, projectId)
-    }
-
-    if (GUIDANCE_SCROLL_ONLY) {
-      phase = 'guidance-scroll'
-      await verifyForegroundGuidanceScroll({ composerSelector, control })
-      await writeFile(
-        join(resultDir, 'model-requests.json'),
-        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-        'utf8'
-      )
-      console.log(`Wework guidance scroll desktop E2E passed. Evidence: ${resultDir}`)
-      return
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {
@@ -15611,10 +15642,27 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
+        desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
       if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
         console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('embedded-browser')) {
+      phase = 'embedded-browser-scenario'
+      assert.ok(
+        desktopScenario,
+        'The embedded-browser checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      if (!desktopScenarioVerified) {
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
+      if (shouldStopAfterDesktopCheckpoint('embedded-browser')) {
+        console.log(`Wework desktop embedded-browser checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

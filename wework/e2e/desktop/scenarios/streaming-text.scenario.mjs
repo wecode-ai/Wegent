@@ -341,6 +341,20 @@ function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
 }
 
+async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
+  const startedAt = Date.now()
+  let lastStatus = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastStatus = snapshot.pane?.status ?? null
+    if (lastStatus?.isBusy === false && lastStatus.canSendQueuedMessage === true) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `The stopped runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`
+  )
+}
+
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
@@ -616,11 +630,14 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
       timeoutMs: uiTimeoutMs,
     })
+    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
     for (let index = 1; index <= ORDER_FOLLOW_UP_COUNT; index += 1) {
       const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
       const completion = `${ORDER_COMPLETION_PREFIX}_${index}`
       await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
-      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: completion,
         timeoutMs: uiTimeoutMs,
