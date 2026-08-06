@@ -59,7 +59,7 @@ pub(crate) use local_file_preview::{
 };
 use local_file_preview::{
     build_directory_preview, build_text_preview, file_url_path, is_generated_preview_path,
-    is_natively_renderable_html, local_file_browser_title,
+    is_natively_renderable_html, local_file_browser_title, should_block_local_file_preview,
 };
 use popup::{classify_popup_url, emit_popup_observed};
 use screenshot::screenshot_embedded_browser;
@@ -1440,6 +1440,23 @@ pub async fn embedded_browser_open(
                                 json!({
                                     "requestedUrl": &requested_url,
                                     "displayUrl": display_url.to_string(),
+                                }),
+                            );
+                            return false;
+                        }
+                        Ok(_) if should_block_local_file_preview(&url) => {
+                            emit_local_file_preview_blocked(
+                                &app_for_navigation,
+                                &state,
+                                &native_label_for_navigation,
+                                &requested_url,
+                            );
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview_blocked",
+                                json!({
+                                    "requestedUrl": &requested_url,
                                 }),
                             );
                             return false;

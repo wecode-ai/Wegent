@@ -115,6 +115,28 @@ fn previewable_mime(mime: &str) -> bool {
         || mime == "application/xml"
 }
 
+fn natively_renderable_mime(mime: &str) -> bool {
+    mime.starts_with("image/")
+        || mime.starts_with("audio/")
+        || mime.starts_with("video/")
+        || matches!(
+            mime,
+            "text/html" | "application/xhtml+xml" | "application/pdf"
+        )
+}
+
+pub(crate) fn should_block_local_file_preview(url: &tauri::Url) -> bool {
+    let Ok(path) = file_url_path(url) else {
+        return false;
+    };
+    if !path.is_file() {
+        return false;
+    }
+    MimeGuess::from_path(path)
+        .first_raw()
+        .is_some_and(|mime| !previewable_mime(mime) && !natively_renderable_mime(mime))
+}
+
 pub(crate) fn is_natively_renderable_html(path: &Path) -> bool {
     matches!(
         MimeGuess::from_path(path).first_raw(),

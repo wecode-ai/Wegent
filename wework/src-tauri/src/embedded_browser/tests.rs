@@ -18,11 +18,11 @@ use super::{
     native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
     register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
     resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
-    script_semantic_inspect, should_record_loaded_url, update_logical_entry_if_native_matches,
-    wait_for_browser_ready, DirectoryEntry, EmbeddedBrowserBridgeRequest,
-    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
-    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-    EMBEDDED_BROWSER_NOT_READY_ERROR,
+    script_semantic_inspect, should_block_local_file_preview, should_record_loaded_url,
+    update_logical_entry_if_native_matches, wait_for_browser_ready, DirectoryEntry,
+    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
+    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
+    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
 use encoding_rs::GB18030;
 use serde_json::{json, Value};
@@ -244,6 +244,9 @@ fn text_file_urls_use_generated_preview_pages() {
     let binary_url = browser_file_url_from_path(&binary_path).unwrap();
     let binary_display = resolve_browser_navigation_url(&state, binary_url.as_str()).unwrap();
     assert_eq!(binary_display.as_str(), binary_url.as_str());
+    assert!(should_block_local_file_preview(&binary_url));
+    assert!(!should_block_local_file_preview(&html_url));
+    assert!(!should_block_local_file_preview(&markdown_url));
 }
 
 #[test]
