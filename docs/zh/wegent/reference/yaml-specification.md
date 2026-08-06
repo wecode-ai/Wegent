@@ -472,7 +472,7 @@ KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
 **几个不变量：**
 
 - **`publishedGenerationId` 是唯一权威** —— 不要从「最新完成的生成」推断生效版本：一次生成可以完成后被发布闸门拒绝
-- **归属固定在 wiki 账号**（`WIKI_DEFAULT_USER_ID`）、namespace 固定 `default` —— 谁能读由**仓库权限**决定，不由知识库 ACL 决定
+- **归属是创建者**，namespace 固定 `default` —— 归属决定了普通知识库 ACL 就能生效；能否创建、能否重新生成，另由**仓库权限**决定
 - **一个仓库一份 wiki**，由 `wiki_projects.source_url` 的唯一约束保证
 - 生成页面的 `origin` 为 `generated`；投影只增删这一类，用户内容永不受影响
 

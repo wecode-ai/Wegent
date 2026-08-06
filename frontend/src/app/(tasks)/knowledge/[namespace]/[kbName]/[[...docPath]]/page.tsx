@@ -41,20 +41,11 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
 import { useKnowledgeTaskSidebar } from '@/features/knowledge/document/hooks/useKnowledgeTaskSidebar'
-
-const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
-  ssr: false,
-})
-
-const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
-  ssr: false,
-})
 
 const KnowledgeDocumentPage = dynamic(
   () =>
@@ -84,22 +75,6 @@ function KnowledgeVirtualPageContent() {
   // For "public" namespace, pass undefined so KnowledgeDocumentPageDesktop searches by name only
   // For all others, pass the actual namespace
   const namespace = rawNamespace === 'public' ? undefined : rawNamespace
-
-  // Wiki projects hook (needed for AddRepoModal and CancelConfirmDialog)
-  const {
-    isModalOpen,
-    formErrors,
-    isSubmitting,
-    confirmDialogOpen,
-    selectedRepo,
-    wikiConfig,
-    handleCloseModal,
-    handleRepoChange,
-    handleSubmit,
-    confirmCancelGeneration,
-    setConfirmDialogOpen,
-    setPendingCancelProjectId,
-  } = useWikiProjects()
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -204,31 +179,6 @@ function KnowledgeVirtualPageContent() {
           />
         </div>
       </div>
-
-      {/* Add repository modal */}
-      {isModalOpen && (
-        <AddRepoModal
-          isOpen={isModalOpen}
-          onClose={handleCloseModal}
-          formErrors={formErrors}
-          isSubmitting={isSubmitting}
-          onRepoChange={handleRepoChange}
-          onSubmit={handleSubmit}
-          selectedRepo={selectedRepo}
-          wikiConfig={wikiConfig}
-        />
-      )}
-      {/* Cancel confirm dialog */}
-      {confirmDialogOpen && (
-        <CancelConfirmDialog
-          isOpen={confirmDialogOpen}
-          onClose={() => {
-            setConfirmDialogOpen(false)
-            setPendingCancelProjectId(null)
-          }}
-          onConfirm={confirmCancelGeneration}
-        />
-      )}
     </div>
   )
 }

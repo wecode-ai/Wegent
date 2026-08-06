@@ -476,9 +476,9 @@ edited by hand.
 - **`publishedGenerationId` is the only authority.** Never infer the live version
   from the newest completed generation: one can finish and still be refused by the
   publish gate.
-- **Ownership is fixed to the wiki account** (`WIKI_DEFAULT_USER_ID`) in the
-  `default` namespace. Who may read is decided by **repository access**, not by
-  knowledge base ACLs.
+- **Ownership is the creator**, in the `default` namespace. Owning it is what
+  makes the ordinary knowledge base ACL apply; **repository access** separately
+  decides who may create one and who may regenerate it.
 - **One repository has one wiki**, enforced by the UNIQUE on
   `wiki_projects.source_url`.
 - Generated pages carry `origin = generated`; the projection only adds and removes
