@@ -34,6 +34,7 @@ jobs:
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
+      wework_rust: ${{ steps.classify.outputs.wework_rust }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
 
     steps:
@@ -391,7 +392,7 @@ jobs:
   check-wework-windows-rust:
     name: Check Wework Windows Rust
     needs: changes
-    if: needs.changes.outputs.wework == 'true'
+    if: needs.changes.outputs.wework_rust == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -585,6 +586,6 @@ jobs:
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
-          assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.check-wework-windows-rust.result }}" "Wework Windows Rust check"
+          assert_result "${{ needs.changes.outputs.wework_rust }}" "${{ needs.check-wework-windows-rust.result }}" "Wework Windows Rust check"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"

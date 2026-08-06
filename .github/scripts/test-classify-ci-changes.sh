@@ -124,6 +124,7 @@ shared=false
 knowledge_engine=false
 frontend=false
 wework=false
+wework_rust=false
 wegent_cli=false
 platform_e2e=false
 wework_e2e=false
@@ -136,6 +137,10 @@ wework_expected="${all_false/wework=false/wework=true}"
 wework_expected="${wework_expected/wework_e2e=false/wework_e2e=true}"
 assert_case "wework only" "$wework_expected" "wework/src/App.tsx"
 
+wework_rust_expected="${wework_expected/wework_rust=false/wework_rust=true}"
+assert_case "wework Rust only" "$wework_rust_expected" \
+  "wework/src-tauri/src/lib.rs"
+
 shared_expected=$(
   cat <<'EOF'
 backend=true
@@ -145,6 +150,7 @@ shared=true
 knowledge_engine=true
 frontend=false
 wework=false
+wework_rust=false
 wegent_cli=true
 platform_e2e=true
 wework_e2e=false
