@@ -11,6 +11,10 @@ let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
+export const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT =
+  'wework:embedded-browser-local-file-preview'
+export const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT = 'wework:embedded-browser-page-state-change'
+export const EMBEDDED_BROWSER_CLOSE_EVENT = 'wework:embedded-browser-close'
 export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
   'wework:embedded-browser-invalid-tls-certificate'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
@@ -41,6 +45,12 @@ export interface EmbeddedBrowserOpenRequest {
   label: string
 }
 
+export interface EmbeddedBrowserCloseRequest {
+  label: string
+}
+
+export type EmbeddedBrowserDataKind = 'cookies' | 'cache'
+
 export interface EmbeddedBrowserDownloadEvent {
   id: string
   label: string
@@ -50,6 +60,12 @@ export interface EmbeddedBrowserDownloadEvent {
   status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'
   receivedBytes: number | null
   totalBytes: number | null
+}
+
+export interface EmbeddedBrowserLocalFilePreviewEvent {
+  label: string
+  nativeLabel: string
+  url: string
 }
 
 export interface EmbeddedBrowserAgentStateEvent {
@@ -123,6 +139,34 @@ export function listenEmbeddedBrowserDownloads(
   return listen<EmbeddedBrowserDownloadEvent>(EMBEDDED_BROWSER_DOWNLOAD_EVENT, event => {
     handler(event.payload)
   })
+}
+
+export function listenEmbeddedBrowserLocalFilePreview(
+  handler: (event: EmbeddedBrowserLocalFilePreviewEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserLocalFilePreviewEvent>(
+    EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
+    event => handler(event.payload)
+  )
+}
+
+export function listenEmbeddedBrowserPageStateChanges(
+  handler: (event: EmbeddedBrowserPageState) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserPageState>(EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT, event => {
+    handler(event.payload)
+  })
+}
+
+export function listenEmbeddedBrowserCloseRequests(
+  handler: (event: EmbeddedBrowserCloseRequest) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserCloseRequest>(EMBEDDED_BROWSER_CLOSE_EVENT, event =>
+    handler(event.payload)
+  )
 }
 
 export function listenEmbeddedBrowserAgentState(
@@ -272,8 +316,8 @@ export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABE
   await invoke('embedded_browser_close', browserArgs(label))
 }
 
-export async function clearEmbeddedBrowserData(): Promise<number> {
-  return invoke<number>('embedded_browser_clear_data')
+export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
+  return invoke<number>('embedded_browser_clear_data', { dataKinds: kinds ?? null })
 }
 
 export function requestEmbeddedBrowserOpen(

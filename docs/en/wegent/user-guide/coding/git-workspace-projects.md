@@ -132,7 +132,7 @@ File link destinations can use Markdown angle-bracket syntax, such as `[file](</
 
 ## Use the Right-Side Browser
 
-In the macOS desktop Wework app, the right workspace panel can also open a browser tab. Click the new-tab button in the right panel, choose **Browser**, then enter an `http` or `https` URL in the address bar to open the page in app. The right panel keeps at most one browser tab; after the browser is open, the new-tab menu does not offer a second browser entry.
+In the macOS desktop Wework app, the right workspace panel can also open a browser tab. Click the new-tab button in the right panel, choose **Browser**, then enter an `http`, `https`, or `file://` URL, or a local absolute path, in the address bar to open a page, local file, or local folder in app. Folders render as read-only index pages where you can enter child folders or open files. The right panel keeps at most one browser tab; after the browser is open, the new-tab menu does not offer a second browser entry. Local files that cannot be previewed are not downloaded as duplicate files; Wework shows a notice instead.
 
 The browser tab preserves its current page, address, title, and favicon. Switching to Files or Review, closing and reopening the right panel, or resizing the right panel does not clear the loaded page. Dragging the right divider all the way to the edge collapses the right panel; reopening it restores the existing browser tab.
 

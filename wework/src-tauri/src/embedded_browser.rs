@@ -17,12 +17,19 @@ use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
 
+#[cfg(target_os = "macos")]
+use objc2_web_kit::WKWebView;
+
 mod agent_control;
 mod bridge_security;
 mod bridge_server;
 mod browser_runtime;
+mod data_clearing;
+mod local_file_preview;
 mod popup;
 mod screenshot;
+
+const EMBEDDED_BROWSER_CLOSE_EVENT: &str = "wework:embedded-browser-close";
 
 use agent_control::{
     agent_action_signature, agent_action_target, agent_control_paused_result,
@@ -44,6 +51,16 @@ use browser_runtime::{
     script_browser_action, script_expression, script_resolve_inspect_target,
     wait_for_embedded_browser,
 };
+use data_clearing::{clear_embedded_browser_data, EmbeddedBrowserDataKind};
+#[cfg(test)]
+pub(crate) use local_file_preview::{
+    browser_file_url_from_path, directory_entry_modified_unix_seconds, directory_listing_html,
+    format_directory_entry_modified, format_file_size, DirectoryEntry,
+};
+use local_file_preview::{
+    build_directory_preview, build_text_preview, file_url_path, is_generated_preview_path,
+    is_natively_renderable_html, local_file_browser_title, should_block_local_file_preview,
+};
 use popup::{classify_popup_url, emit_popup_observed};
 use screenshot::screenshot_embedded_browser;
 
@@ -59,6 +76,9 @@ const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_PLACEHOLDER_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
+const EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT: &str =
+    "wework:embedded-browser-local-file-preview";
+const EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT: &str = "wework:embedded-browser-page-state-change";
 const EMBEDDED_BROWSER_POPUP_EVENT: &str = "wework:embedded-browser-popup";
 const EMBEDDED_BROWSER_AGENT_STATE_EVENT: &str = "wework:embedded-browser-agent-state";
 const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
@@ -80,6 +100,7 @@ static EMBEDDED_BROWSER_POPUP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
+    preview_sources: Arc<Mutex<HashMap<String, String>>>,
     agent_control_paused: Arc<Mutex<HashMap<String, bool>>>,
     agent_approvals: Arc<Mutex<HashMap<String, EmbeddedBrowserApprovalState>>>,
     lifecycle: Arc<AsyncMutex<()>>,
@@ -204,6 +225,24 @@ struct EmbeddedBrowserDownloadPayload {
     total_bytes: Option<u64>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserLocalFilePreviewPayload {
+    label: String,
+    native_label: String,
+    url: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserPageStateChangePayload {
+    label: String,
+    native_label: String,
+    title: Option<String>,
+    url: Option<String>,
+    invalid_tls_certificate: Option<EmbeddedBrowserInvalidTlsCertificate>,
+}
+
 #[derive(Clone)]
 struct EmbeddedBrowserDownloadControl {
     app: tauri::AppHandle,
@@ -281,10 +320,62 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
+fn preview_source_url(state: &EmbeddedBrowserState, display_url: &str) -> Option<String> {
+    state
+        .preview_sources
+        .lock()
+        .ok()
+        .and_then(|previews| previews.get(display_url).cloned())
+}
+
+fn register_preview_source(state: &EmbeddedBrowserState, display_url: &str, requested_url: &str) {
+    if let Ok(mut previews) = state.preview_sources.lock() {
+        previews.insert(display_url.to_string(), requested_url.to_string());
+    }
+}
+
+fn resolve_browser_navigation_url(
+    state: &EmbeddedBrowserState,
+    requested_url: &str,
+) -> Result<tauri::Url, String> {
+    let parsed_url = browser_url(requested_url)?;
+    if parsed_url.scheme() != "file" {
+        return Ok(parsed_url);
+    }
+
+    let Ok(path) = file_url_path(&parsed_url) else {
+        return Ok(parsed_url);
+    };
+    if is_generated_preview_path(&path) {
+        return Ok(parsed_url);
+    }
+    if !path.is_dir() {
+        if is_natively_renderable_html(&path) {
+            return Ok(parsed_url);
+        }
+        if let Some((display_url, source_url)) = build_text_preview(&parsed_url)? {
+            register_preview_source(state, display_url.as_str(), &source_url);
+            return Ok(display_url);
+        }
+        return Ok(parsed_url);
+    }
+
+    let (display_url, source_url) = build_directory_preview(&parsed_url)?;
+    register_preview_source(state, display_url.as_str(), &source_url);
+    Ok(display_url)
+}
+
+fn loaded_browser_url(state: &EmbeddedBrowserState, loaded_url: &str) -> Option<String> {
+    if !should_record_loaded_url(loaded_url) {
+        return None;
+    }
+    Some(preview_source_url(state, loaded_url).unwrap_or_else(|| loaded_url.to_string()))
+}
+
 #[cfg(any(not(target_os = "macos"), test))]
 fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
     match url.scheme() {
-        "http" | "https" => WebviewUrl::External(url),
+        "http" | "https" | "file" => WebviewUrl::External(url),
         _ => WebviewUrl::CustomProtocol(url),
     }
 }
@@ -322,6 +413,31 @@ fn download_event_owner<'a>(
     native_label: &str,
 ) -> Option<String> {
     logical_owner_for_native_label(identities, native_label)
+}
+
+fn emit_local_file_preview_blocked(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    url: &str,
+) {
+    let label = state.webviews.lock().ok().and_then(|webviews| {
+        download_event_owner(
+            webviews.iter().map(|(logical_label, entry)| {
+                (logical_label.as_str(), entry.native_label.as_str())
+            }),
+            native_label,
+        )
+    });
+    let Some(label) = label else { return };
+    let _ = app.emit(
+        EMBEDDED_BROWSER_LOCAL_FILE_PREVIEW_EVENT,
+        EmbeddedBrowserLocalFilePreviewPayload {
+            label,
+            native_label: native_label.to_string(),
+            url: url.to_string(),
+        },
+    );
 }
 
 fn remove_logical_entry_if_native_matches<T>(
@@ -513,21 +629,6 @@ fn get_entry(state: &EmbeddedBrowserState, label: &str) -> Result<EmbeddedBrowse
     ready_logical_entry(&webviews, label, EmbeddedBrowserEntry::readiness).cloned()
 }
 
-fn set_entry_url(
-    state: &EmbeddedBrowserState,
-    label: &str,
-    url: impl Into<Option<String>>,
-) -> Result<(), String> {
-    let mut webviews = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-    if let Some(entry) = webviews.get_mut(label) {
-        entry.url = url.into();
-    }
-    Ok(())
-}
-
 fn update_entry_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
@@ -624,6 +725,40 @@ fn page_state_for_label(
         title: entry.title,
         url: entry.url,
     })
+}
+
+fn emit_page_state_change(
+    app: &tauri::AppHandle,
+    state: &EmbeddedBrowserState,
+    label: String,
+    native_label: String,
+) {
+    let (title, url) = state
+        .webviews
+        .lock()
+        .ok()
+        .and_then(|webviews| {
+            webviews
+                .get(&label)
+                .filter(|entry| entry.native_label == native_label)
+                .map(|entry| (entry.title.clone(), entry.url.clone()))
+        })
+        .unwrap_or((None, None));
+    #[cfg(target_os = "macos")]
+    let invalid_tls_certificate =
+        crate::embedded_browser_tls::invalid_tls_certificate(&native_label);
+    #[cfg(not(target_os = "macos"))]
+    let invalid_tls_certificate = None;
+    let _ = app.emit(
+        EMBEDDED_BROWSER_PAGE_STATE_CHANGE_EVENT,
+        EmbeddedBrowserPageStateChangePayload {
+            label,
+            native_label,
+            title,
+            url,
+            invalid_tls_certificate,
+        },
+    );
 }
 
 fn embedded_browser_entry_snapshot(state: &EmbeddedBrowserState, label: &str) -> Option<Value> {
@@ -737,8 +872,8 @@ fn log_embedded_browser_page_diagnostics(
 }
 
 fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Result<(), String> {
-    let parsed_url = browser_url(&url)?;
-    let parsed_url_string = parsed_url.to_string();
+    let display_url = resolve_browser_navigation_url(state, &url)?;
+    let display_url_string = display_url.to_string();
     let entry = get_entry(state, label)?;
     log_embedded_browser_diagnostic(
         state,
@@ -746,10 +881,10 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
         "navigate_requested",
         json!({
             "requestedUrl": &url,
-            "parsedUrl": parsed_url_string,
+            "displayUrl": display_url_string,
         }),
     );
-    if let Err(error) = entry.ready_webview()?.navigate(parsed_url) {
+    if let Err(error) = entry.ready_webview()?.navigate(display_url) {
         let message = format!("Failed to navigate embedded browser: {error}");
         log_embedded_browser_diagnostic(
             state,
@@ -931,6 +1066,16 @@ fn handle_bridge_request(
                 .map_err(|error| format!("Failed to reload embedded browser: {error}"))?;
             Ok(json!({ "ok": true }))
         }
+        "close" => {
+            close_embedded_browser_entry(state, &label)?;
+            app.emit_to(
+                MAIN_WINDOW_LABEL,
+                EMBEDDED_BROWSER_CLOSE_EVENT,
+                json!({ "label": label }),
+            )
+            .map_err(|error| format!("Failed to notify embedded browser close: {error}"))?;
+            Ok(json!({ "ok": true }))
+        }
         "back" => eval_json(
             state,
             &label,
@@ -1095,7 +1240,11 @@ pub async fn embedded_browser_open(
 ) -> Result<EmbeddedBrowserPageState, String> {
     let label = browser_label(label);
     let _lifecycle = state.lifecycle.lock().await;
-    let parsed_url = browser_url(&url)?;
+    let display_url = resolve_browser_navigation_url(&state, &url)?;
+    let initial_title = browser_url(&url)
+        .ok()
+        .filter(|url| url.scheme() == "file")
+        .and_then(|url| local_file_browser_title(&url));
     let normalized_bounds = normalize_bounds(bounds);
 
     let existing = {
@@ -1124,7 +1273,7 @@ pub async fn embedded_browser_open(
                 "nativeLabel": &entry.native_label,
             }),
         );
-        if let Err(error) = webview.navigate(parsed_url) {
+        if let Err(error) = webview.navigate(display_url) {
             let message = format!("Failed to navigate embedded browser: {error}");
             log_embedded_browser_diagnostic(
                 &state,
@@ -1154,7 +1303,11 @@ pub async fn embedded_browser_open(
             );
             return Err(error);
         }
-        set_entry_url(&state, &label, Some(url.clone()))?;
+        let initial_title_for_entry = initial_title.clone();
+        update_entry_for_native_label(&state, &entry.native_label, |entry| {
+            entry.url = Some(url.clone());
+            entry.title = initial_title_for_entry;
+        })?;
         log_embedded_browser_diagnostic(
             &state,
             &label,
@@ -1172,7 +1325,7 @@ pub async fn embedded_browser_open(
             #[cfg(not(target_os = "macos"))]
             invalid_tls_certificate: None,
             native_label: entry.native_label,
-            title: entry.title,
+            title: initial_title,
             url: Some(url),
         });
     }
@@ -1193,12 +1346,14 @@ pub async fn embedded_browser_open(
     let label_for_navigation = label.clone();
     let label_for_load = label.clone();
     let label_for_popup = label.clone();
+    let app_for_navigation = app.clone();
+    let app_for_load = app.clone();
     let app_for_popup = app.clone();
     let data_directory = browser_data_directory(&app)?;
 
     let entry = EmbeddedBrowserEntry {
         native_label: native_label.clone(),
-        title: None,
+        title: initial_title.clone(),
         url: Some(url.clone()),
         opened_at_unix_ms: current_unix_millis(),
         phase: EmbeddedBrowserPhase::Opening,
@@ -1228,7 +1383,7 @@ pub async fn embedded_browser_open(
     #[cfg(target_os = "macos")]
     let initial_url = initial_browser_webview_url()?;
     #[cfg(not(target_os = "macos"))]
-    let initial_url = browser_webview_url(parsed_url.clone());
+    let initial_url = browser_webview_url(display_url.clone());
     let builder = tauri::webview::WebviewBuilder::new(&native_label, initial_url)
         .user_agent(EMBEDDED_BROWSER_USER_AGENT)
         .data_directory(data_directory)
@@ -1239,6 +1394,7 @@ pub async fn embedded_browser_open(
         .on_navigation({
             let state = state.inner().clone();
             move |url| {
+                let requested_url = url.to_string();
                 let owner = current_logical_owner_or(
                     &state,
                     &native_label_for_navigation,
@@ -1249,9 +1405,76 @@ pub async fn embedded_browser_open(
                     &owner,
                     "navigation_requested",
                     json!({
-                        "requestedUrl": url.to_string(),
+                        "requestedUrl": &requested_url,
                     }),
                 );
+                if url.scheme() == "file" {
+                    match resolve_browser_navigation_url(&state, &requested_url) {
+                        Ok(display_url) if display_url.as_str() != requested_url => {
+                            let _ = set_entry_url_for_native_label(
+                                &state,
+                                &native_label_for_navigation,
+                                requested_url.clone(),
+                            );
+                            if let Some(webview) =
+                                app_for_navigation.get_webview(&native_label_for_navigation)
+                            {
+                                if let Err(error) = webview.navigate(display_url.clone()) {
+                                    log_embedded_browser_diagnostic(
+                                        &state,
+                                        &owner,
+                                        "navigation_local_file_preview_failed",
+                                        json!({
+                                            "requestedUrl": &requested_url,
+                                            "displayUrl": display_url.to_string(),
+                                            "error": error.to_string(),
+                                        }),
+                                    );
+                                    return true;
+                                }
+                            }
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview",
+                                json!({
+                                    "requestedUrl": &requested_url,
+                                    "displayUrl": display_url.to_string(),
+                                }),
+                            );
+                            return false;
+                        }
+                        Ok(_) if should_block_local_file_preview(&url) => {
+                            emit_local_file_preview_blocked(
+                                &app_for_navigation,
+                                &state,
+                                &native_label_for_navigation,
+                                &requested_url,
+                            );
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview_blocked",
+                                json!({
+                                    "requestedUrl": &requested_url,
+                                }),
+                            );
+                            return false;
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            log_embedded_browser_diagnostic(
+                                &state,
+                                &owner,
+                                "navigation_local_file_preview_failed",
+                                json!({
+                                    "requestedUrl": &requested_url,
+                                    "error": error,
+                                }),
+                            );
+                        }
+                    }
+                }
                 true
             }
         })
@@ -1281,11 +1504,19 @@ pub async fn embedded_browser_open(
                     &current_url,
                 );
                 let loaded_url = webview_url.clone().or(Some(current_url.clone()));
-                if let Some(loaded_url) = loaded_url.filter(|url| should_record_loaded_url(url)) {
+                if let Some(loaded_url) =
+                    loaded_url.and_then(|url| loaded_browser_url(&load_state_handle, &url))
+                {
                     let _ = update_entry_for_native_label(
                         &load_state_handle,
                         &native_label_for_load,
                         |entry| entry.url = Some(loaded_url),
+                    );
+                    emit_page_state_change(
+                        &app_for_load,
+                        &load_state_handle,
+                        owner.clone(),
+                        native_label_for_load.clone(),
                     );
                 }
                 log_embedded_browser_page_diagnostics(
@@ -1315,6 +1546,13 @@ pub async fn embedded_browser_open(
                 url.clone(),
             );
             let (_kind, strategy, _warning) = classify_popup_url(&url);
+            if strategy == "controlled_popup_required" && url.scheme() == "file" {
+                // Open local-file popups in the current window instead of a new window.
+                if let Some(webview) = app_for_popup.get_webview(&native_label_for_popup) {
+                    let _ = webview.navigate(url);
+                }
+                return NewWindowResponse::Deny;
+            }
             if strategy == "user_confirmation_required" || strategy == "controlled_popup_required" {
                 NewWindowResponse::Deny
             } else {
@@ -1329,6 +1567,17 @@ pub async fn embedded_browser_open(
         let download_state = state.inner().clone();
         builder.on_download(move |_webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
+                if url.scheme() == "file" {
+                    // The webview cannot preview this local file and would download
+                    // it. Cancel the download and let the frontend show a notice.
+                    emit_local_file_preview_blocked(
+                        &download_app,
+                        &download_state,
+                        &download_native_label,
+                        url.as_str(),
+                    );
+                    return false;
+                }
                 match browser_download_destination(&download_app, destination) {
                     Ok((path, _suggested_name, _ask_before_download)) => {
                         let url = url.to_string();
@@ -1409,7 +1658,7 @@ pub async fn embedded_browser_open(
         .await
         .and_then(|_| {
             webview
-                .navigate(parsed_url)
+                .navigate(display_url)
                 .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
         });
         if let Err(error) = tls_result {
@@ -1501,7 +1750,7 @@ pub async fn embedded_browser_open(
         #[cfg(not(target_os = "macos"))]
         invalid_tls_certificate: None,
         native_label,
-        title: None,
+        title: initial_title,
         url: Some(url),
     })
 }
@@ -1616,9 +1865,28 @@ pub fn embedded_browser_reload(
 ) -> Result<(), String> {
     let label = browser_label(label);
     let webview = get_entry(&state, &label)?.ready_webview()?;
+    #[cfg(target_os = "macos")]
+    {
+        return reload_embedded_browser_from_origin(&webview);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        return webview
+            .reload()
+            .map_err(|error| format!("Failed to reload embedded browser: {error}"));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reload_embedded_browser_from_origin(webview: &Webview<Wry>) -> Result<(), String> {
     webview
-        .reload()
-        .map_err(|error| format!("Failed to reload embedded browser: {error}"))
+        .with_webview(|platform_webview| unsafe {
+            if let Some(native_webview) = platform_webview.inner().cast::<WKWebView>().as_ref() {
+                native_webview.reloadFromOrigin();
+            }
+        })
+        .map_err(|error| format!("Failed to reload embedded browser: {error}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1712,17 +1980,29 @@ pub async fn embedded_browser_relabel(
 
 #[tauri::command]
 pub async fn embedded_browser_close(
+    app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
     label: Option<String>,
 ) -> Result<(), String> {
     let label = browser_label(label);
     let _lifecycle = state.lifecycle.lock().await;
+    close_embedded_browser_entry(&state, &label)?;
+    app.emit_to(
+        MAIN_WINDOW_LABEL,
+        EMBEDDED_BROWSER_CLOSE_EVENT,
+        json!({ "label": label }),
+    )
+    .map_err(|error| format!("Failed to notify embedded browser close: {error}"))?;
+    Ok(())
+}
+
+fn close_embedded_browser_entry(state: &EmbeddedBrowserState, label: &str) -> Result<(), String> {
     let entry = {
         let webviews = state
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(&label).cloned()
+        webviews.get(label).cloned()
     };
     if let Some(entry) = entry {
         let webview = entry.ready_webview()?;
@@ -1737,79 +2017,19 @@ pub async fn embedded_browser_close(
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
         remove_logical_entry_if_native_matches(
             &mut webviews,
-            &label,
+            label,
             &entry.native_label,
             |current| current.native_label.as_str(),
         );
     }
-    clear_label_agent_state(&state, &label)
+    clear_label_agent_state(state, label)
 }
 
 #[tauri::command]
 pub async fn embedded_browser_clear_data(
     app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
+    data_kinds: Option<Vec<EmbeddedBrowserDataKind>>,
 ) -> Result<usize, String> {
-    let _lifecycle = state.lifecycle.lock().await;
-    let webviews = {
-        let webviews = state
-            .webviews
-            .lock()
-            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        if webviews
-            .values()
-            .any(|entry| entry.readiness() == EmbeddedBrowserReadiness::Opening)
-        {
-            return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
-        }
-        webviews
-            .values()
-            .map(EmbeddedBrowserEntry::ready_webview)
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    if !webviews.is_empty() {
-        for webview in &webviews {
-            webview
-                .clear_all_browsing_data()
-                .map_err(|error| format!("Failed to clear embedded browser data: {error}"))?;
-        }
-        return Ok(webviews.len());
-    }
-
-    let window = app
-        .get_window(MAIN_WINDOW_LABEL)
-        .ok_or_else(|| "Main window not found".to_string())?;
-    let cleanup_label = format!(
-        "browser-data-cleanup-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
-    let cleanup_url = tauri::Url::parse("about:blank")
-        .map_err(|error| format!("Failed to create browser cleanup URL: {error}"))?;
-    let builder =
-        tauri::webview::WebviewBuilder::new(&cleanup_label, WebviewUrl::External(cleanup_url))
-            .data_directory(browser_data_directory(&app)?)
-            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID);
-    let webview = window
-        .add_child(
-            builder,
-            LogicalPosition::new(-10_000.0, -10_000.0),
-            LogicalSize::new(1.0, 1.0),
-        )
-        .map_err(|error| format!("Failed to create browser data cleanup view: {error}"))?;
-    webview
-        .hide()
-        .map_err(|error| format!("Failed to hide browser data cleanup view: {error}"))?;
-    let clear_result = webview
-        .clear_all_browsing_data()
-        .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
-    let close_result = webview
-        .close()
-        .map_err(|error| format!("Failed to close browser data cleanup view: {error}"));
-    clear_result?;
-    close_result?;
-    Ok(0)
+    clear_embedded_browser_data(app, state, data_kinds).await
 }
