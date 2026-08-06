@@ -37,7 +37,6 @@ import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
 import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
 import { WorkbenchBackground } from '@/features/appearance'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 
@@ -210,8 +209,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
-  const isTauri = isTauriRuntime()
-  const usesLayeredViewSurface = isTauri
 
   useEffect(() => {
     const handlePopState = () => {
@@ -641,14 +638,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
 
   return (
-    <div
-      className={cn(
-        'relative h-full overflow-hidden bg-transparent text-text-primary',
-        'flex',
-        usesLayeredViewSurface &&
-          'app-view-surface rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
-      )}
-    >
+    <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!todoOpen && <WorkbenchBackground />}
         {!settingsOpen &&
