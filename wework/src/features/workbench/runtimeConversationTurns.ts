@@ -528,11 +528,7 @@ function applyCompletedAssistantContent(
   )
   if (hasStreamedAssistantText) return items
   const matchingProcessTextIndex = items.findLastIndex(
-    (item, index) =>
-      index > lastUserIndex &&
-      item.type === 'block' &&
-      item.block.type === 'text' &&
-      item.block.content === content
+    item => item.type === 'block' && item.block.type === 'text' && item.block.content === content
   )
   if (matchingProcessTextIndex >= 0) {
     return replaceAt(items, matchingProcessTextIndex, {

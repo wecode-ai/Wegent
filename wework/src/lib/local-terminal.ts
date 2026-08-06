@@ -284,26 +284,53 @@ export function listenLocalTerminalExit(
   })
 }
 
+type LocalTerminalConnectionStage = 'listen-output' | 'listen-exit' | 'attach'
+
+function logLocalTerminalConnectionFailure(
+  sessionId: string,
+  stage: LocalTerminalConnectionStage,
+  error: unknown
+) {
+  console.error('Local terminal connection failed', {
+    sessionId,
+    stage,
+    error: error instanceof Error ? error.message : String(error),
+  })
+}
+
 export async function connectLocalTerminal(
   sessionId: string,
   onOutput: (payload: LocalTerminalOutputPayload) => void,
   onExit: (payload: LocalTerminalExitPayload) => void
 ): Promise<UnlistenFn> {
-  const outputUnlisten = await listenLocalTerminalOutput(onOutput)
+  let outputUnlisten: UnlistenFn
   try {
-    const exitUnlisten = await listenLocalTerminalExit(onExit)
-    try {
-      await attachLocalTerminal(sessionId)
-      return () => {
-        outputUnlisten()
-        exitUnlisten()
-      }
-    } catch (error) {
-      exitUnlisten()
-      throw error
-    }
+    outputUnlisten = await listenLocalTerminalOutput(onOutput)
+  } catch (error) {
+    logLocalTerminalConnectionFailure(sessionId, 'listen-output', error)
+    throw error
+  }
+
+  let exitUnlisten: UnlistenFn
+  try {
+    exitUnlisten = await listenLocalTerminalExit(onExit)
   } catch (error) {
     outputUnlisten()
+    logLocalTerminalConnectionFailure(sessionId, 'listen-exit', error)
     throw error
+  }
+
+  try {
+    await attachLocalTerminal(sessionId)
+  } catch (error) {
+    outputUnlisten()
+    exitUnlisten()
+    logLocalTerminalConnectionFailure(sessionId, 'attach', error)
+    throw error
+  }
+
+  return () => {
+    outputUnlisten()
+    exitUnlisten()
   }
 }

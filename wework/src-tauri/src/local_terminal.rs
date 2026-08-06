@@ -300,25 +300,44 @@ pub fn attach_local_terminal(
     state: State<'_, LocalTerminalState>,
     session_id: String,
 ) -> Result<(), String> {
-    let mut sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "Failed to lock local terminal state".to_string())?;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| format!("Local terminal session not found: {session_id}"))?;
+    log::info!("Tauri local terminal attach requested: session_id={session_id}");
+    let mut sessions = state.sessions.lock().map_err(|_| {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=state_lock, session_id={session_id}"
+        );
+        "Failed to lock local terminal state".to_string()
+    })?;
+    let Some(session) = sessions.get_mut(&session_id) else {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=session_not_found, session_id={session_id}"
+        );
+        return Err(format!("Local terminal session not found: {session_id}"));
+    };
     if session.attached {
+        log::info!(
+            "Tauri local terminal attach skipped: reason=already_attached, session_id={session_id}"
+        );
         return Ok(());
     }
-    let attach_sender = session
-        .attach_sender
-        .take()
-        .ok_or_else(|| format!("Local terminal session cannot be attached: {session_id}"))?;
+    let Some(attach_sender) = session.attach_sender.take() else {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=attach_sender_missing, session_id={session_id}"
+        );
+        return Err(format!(
+            "Local terminal session cannot be attached: {session_id}"
+        ));
+    };
 
-    attach_sender
-        .send(())
-        .map_err(|_| format!("Failed to attach local terminal session: {session_id}"))?;
+    if attach_sender.send(()).is_err() {
+        log::warn!(
+            "Tauri local terminal attach failed: reason=attach_receiver_closed, session_id={session_id}"
+        );
+        return Err(format!(
+            "Failed to attach local terminal session: {session_id}"
+        ));
+    }
     session.attached = true;
+    log::info!("Tauri local terminal attach succeeded: session_id={session_id}");
     Ok(())
 }
 
@@ -407,8 +426,8 @@ pub fn close_local_terminal(
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
     if let Some(mut session) = sessions.remove(&session_id) {
-        log::warn!(
-            "Tauri local terminal kill requested: sender_pid={}, session_id={session_id}",
+        log::info!(
+            "Tauri local terminal close requested: sender_pid={}, session_id={session_id}",
             std::process::id()
         );
         if let Err(error) = session.child.kill() {

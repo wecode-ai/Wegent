@@ -6742,6 +6742,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     view.rerender(renderTask(secondTask))
 
+    await new Promise(resolve => window.setTimeout(resolve, 32))
     expect(activePane().getByTestId('environment-info-panel-container')).toHaveClass(
       'transition-none'
     )
