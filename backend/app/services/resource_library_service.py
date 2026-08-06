@@ -15,7 +15,7 @@ from time import perf_counter
 from typing import Any, Iterable
 
 from fastapi import HTTPException
-from sqlalchemy import Integer, and_, cast, func, or_, select, union_all
+from sqlalchemy import Integer, and_, case, cast, func, literal, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -61,6 +61,7 @@ RESOURCE_KIND_BY_TYPE = {
     "retriever": "Retriever",
 }
 RESOURCE_TYPE_BY_KIND = {value: key for key, value in RESOURCE_KIND_BY_TYPE.items()}
+FEATURED_RECOMMENDATION_SCORE = 80
 logger = logging.getLogger(__name__)
 
 
@@ -75,8 +76,41 @@ def _resource_json_text(db: Session, path: str):
     return func.coalesce(value, "")
 
 
+def _system_marketplace_recommendation_score_expression(db: Session):
+    score = _resource_json_text(db, "$.spec.capability.marketplace.recommendationScore")
+    return case(
+        (score == "", FEATURED_RECOMMENDATION_SCORE),
+        else_=cast(score, Integer),
+    )
+
+
 def _escape_sql_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _marketplace_config(source: Kind) -> dict[str, Any]:
+    payload = source.json if isinstance(source.json, dict) else {}
+    spec = payload.get("spec", {})
+    capability = spec.get("capability", {}) if isinstance(spec, dict) else {}
+    if not isinstance(capability, dict):
+        return {}
+    marketplace = capability.get("marketplace", {})
+    return marketplace if isinstance(marketplace, dict) else {}
+
+
+def _marketplace_recommendation_score(source: Kind) -> int:
+    configured = _marketplace_config(source).get("recommendationScore")
+    if configured is None:
+        return FEATURED_RECOMMENDATION_SCORE if source.user_id == 0 else 0
+    try:
+        return max(0, min(100, int(configured)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _marketplace_examples(source: Kind) -> list[dict[str, str]]:
+    examples = _marketplace_config(source).get("exampleConversations", [])
+    return examples if isinstance(examples, list) else []
 
 
 def _is_visible_discovery_resource(source: Kind) -> bool:
@@ -86,27 +120,41 @@ def _is_visible_discovery_resource(source: Kind) -> bool:
     return not isinstance(spec, dict) or spec.get("visible", True) is not False
 
 
-def _encode_discovery_cursor(updated_at: datetime, kind_id: int) -> str:
-    payload = json.dumps(
-        {"updated_at": updated_at.isoformat(), "kind_id": kind_id},
-        separators=(",", ":"),
-    ).encode()
+def _encode_discovery_cursor(
+    recommendation_score: int | None,
+    updated_at: datetime,
+    kind_id: int,
+) -> str:
+    payload = {
+        "updated_at": updated_at.isoformat(),
+        "kind_id": kind_id,
+    }
+    if recommendation_score is not None:
+        payload["recommendation_score"] = recommendation_score
+    payload = json.dumps(payload, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def _decode_discovery_cursor(cursor: str) -> tuple[datetime, int]:
+def _decode_discovery_cursor(cursor: str) -> tuple[int | None, datetime, int]:
     try:
         padding = "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(f"{cursor}{padding}").decode())
         updated_at = datetime.fromisoformat(payload["updated_at"])
         kind_id = int(payload["kind_id"])
+        recommendation_score = (
+            int(payload["recommendation_score"])
+            if "recommendation_score" in payload
+            else None
+        )
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid discovery cursor") from exc
     if updated_at.tzinfo is not None:
         updated_at = updated_at.astimezone(timezone.utc).replace(tzinfo=None)
-    if kind_id <= 0:
+    if (
+        recommendation_score is not None and not 0 <= recommendation_score <= 100
+    ) or kind_id <= 0:
         raise HTTPException(status_code=400, detail="Invalid discovery cursor")
-    return updated_at, kind_id
+    return recommendation_score, updated_at, kind_id
 
 
 class ResourceLibraryService:
@@ -124,48 +172,58 @@ class ResourceLibraryService:
         cursor: str | None = None,
         target_namespace: str = "default",
         system_only: bool = False,
+        featured_only: bool = False,
     ) -> ResourceLibraryDiscoveryList:
         kinds = (
             [RESOURCE_KIND_BY_TYPE[resource_type]]
             if resource_type
             else list(RESOURCE_TYPE_BY_KIND)
         )
-        published_candidates = select(
-            MarketplaceResource.kind_id.label("kind_id"),
-            MarketplaceResource.updated_at.label("sort_time"),
-            MarketplaceResource.install_count.label("install_count"),
-        )
-        if resource_type:
-            published_candidates = published_candidates.where(
-                MarketplaceResource.resource_type == resource_type
-            )
-
         system_kinds = kinds
         if target_namespace != "default":
             system_kinds = [kind for kind in kinds if kind != "Team"]
-        system_candidates = select(
-            Kind.id.label("kind_id"),
-            Kind.updated_at.label("sort_time"),
-            cast(0, Integer).label("install_count"),
-        ).where(
-            Kind.user_id == 0,
-            Kind.kind.in_(system_kinds),
-            Kind.is_active == True,
+
+        system_sort_time = Kind.updated_at
+        system_recommendation_score = (
+            _system_marketplace_recommendation_score_expression(db)
         )
-        candidates = (
-            system_candidates
-            if system_only
-            else union_all(published_candidates, system_candidates)
-        ).subquery()
-        query = (
+        system_query = db.query(
+            Kind,
+            Kind.updated_at.label("sort_time"),
+            literal(0).label("install_count"),
+            system_recommendation_score.label("recommendation_score"),
+        ).filter(Kind.user_id == 0, Kind.kind.in_(system_kinds), Kind.is_active == True)
+        if featured_only:
+            system_query = system_query.filter(
+                system_recommendation_score >= FEATURED_RECOMMENDATION_SCORE
+            )
+
+        published_sort_time = MarketplaceResource.updated_at
+        published_recommendation_score = MarketplaceResource.recommendation_score
+        published_query = (
             db.query(
                 Kind,
-                candidates.c.sort_time,
-                candidates.c.install_count,
+                MarketplaceResource.updated_at.label("sort_time"),
+                MarketplaceResource.install_count.label("install_count"),
+                MarketplaceResource.recommendation_score.label("recommendation_score"),
             )
-            .join(candidates, candidates.c.kind_id == Kind.id)
-            .filter(Kind.is_active == True)
+            .select_from(MarketplaceResource)
+            .join(Kind, Kind.id == MarketplaceResource.kind_id)
+            .filter(
+                Kind.user_id != 0,
+                Kind.kind.in_(kinds),
+                Kind.is_active == True,
+            )
         )
+        if resource_type:
+            published_query = published_query.filter(
+                MarketplaceResource.resource_type == resource_type
+            )
+        if featured_only:
+            published_query = published_query.filter(
+                MarketplaceResource.recommendation_score
+                >= FEATURED_RECOMMENDATION_SCORE
+            )
 
         normalized_keyword = (keyword or "").strip().lower()
         should_hide_installed_skills = (
@@ -176,12 +234,12 @@ class ResourceLibraryService:
                 db, user_id
             )
             if installed_skill_ids:
-                query = query.filter(
-                    or_(
-                        Kind.kind != "Skill",
-                        Kind.id.notin_(installed_skill_ids),
-                    )
+                installed_filter = or_(
+                    Kind.kind != "Skill",
+                    Kind.id.notin_(installed_skill_ids),
                 )
+                system_query = system_query.filter(installed_filter)
+                published_query = published_query.filter(installed_filter)
 
         if normalized_keyword:
             keyword_pattern = f"%{_escape_sql_like(normalized_keyword)}%"
@@ -193,53 +251,109 @@ class ResourceLibraryService:
                 _resource_json_text(db, "$.spec.capability.description"),
                 _resource_json_text(db, "$.spec.description"),
             ]
-            query = query.filter(
-                or_(
-                    *[
-                        func.lower(field).like(keyword_pattern, escape="\\")
-                        for field in searchable_fields
-                    ]
-                )
+            keyword_filter = or_(
+                *[
+                    func.lower(field).like(keyword_pattern, escape="\\")
+                    for field in searchable_fields
+                ]
             )
+            system_query = system_query.filter(keyword_filter)
+            published_query = published_query.filter(keyword_filter)
 
         for tag in {item.strip().lower() for item in tags if item.strip()}:
             encoded_tag = json.dumps(tag, ensure_ascii=False)[1:-1]
             tag_pattern = f'%"{_escape_sql_like(encoded_tag)}"%'
-            query = query.filter(
-                func.lower(_resource_json_text(db, "$.spec.capability.tags")).like(
-                    tag_pattern, escape="\\"
-                )
-            )
+            tag_filter = func.lower(
+                _resource_json_text(db, "$.spec.capability.tags")
+            ).like(tag_pattern, escape="\\")
+            system_query = system_query.filter(tag_filter)
+            published_query = published_query.filter(tag_filter)
 
         scan_position = _decode_discovery_cursor(cursor) if cursor else None
-        rows = []
+        uses_legacy_cursor = scan_position is not None and scan_position[0] is None
         batch_size = limit + 1
-        ordered_query = query.order_by(candidates.c.sort_time.desc(), Kind.id.desc())
-        while len(rows) <= limit:
-            batch_query = ordered_query
-            if scan_position:
-                cursor_time, cursor_kind_id = scan_position
-                batch_query = batch_query.filter(
-                    or_(
-                        candidates.c.sort_time < cursor_time,
-                        and_(
-                            candidates.c.sort_time == cursor_time,
-                            Kind.id < cursor_kind_id,
-                        ),
-                    )
+
+        def fetch_visible_rows(query, recommendation_score, sort_time):
+            rows = []
+            query_position = scan_position
+            ordered_query = (
+                query.order_by(sort_time.desc(), Kind.id.desc())
+                if uses_legacy_cursor
+                else query.order_by(
+                    recommendation_score.desc(),
+                    sort_time.desc(),
+                    Kind.id.desc(),
                 )
-            batch_rows = batch_query.limit(batch_size).all()
-            if not batch_rows:
-                break
-            for row in batch_rows:
-                if _is_visible_discovery_resource(row[0]):
-                    rows.append(row)
-                    if len(rows) > limit:
-                        break
-            if len(rows) > limit or len(batch_rows) < batch_size:
-                break
-            last_kind, last_sort_time, _ = batch_rows[-1]
-            scan_position = (last_sort_time, last_kind.id)
+            )
+            while len(rows) <= limit:
+                batch_query = ordered_query
+                if query_position:
+                    cursor_score, cursor_time, cursor_kind_id = query_position
+                    if cursor_score is None:
+                        batch_query = batch_query.filter(
+                            or_(
+                                sort_time < cursor_time,
+                                and_(
+                                    sort_time == cursor_time,
+                                    Kind.id < cursor_kind_id,
+                                ),
+                            )
+                        )
+                    else:
+                        batch_query = batch_query.filter(
+                            or_(
+                                recommendation_score < cursor_score,
+                                and_(
+                                    recommendation_score == cursor_score,
+                                    or_(
+                                        sort_time < cursor_time,
+                                        and_(
+                                            sort_time == cursor_time,
+                                            Kind.id < cursor_kind_id,
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                batch_rows = batch_query.limit(batch_size).all()
+                if not batch_rows:
+                    break
+                for row in batch_rows:
+                    if _is_visible_discovery_resource(row[0]):
+                        rows.append(row)
+                        if len(rows) > limit:
+                            break
+                if len(rows) > limit or len(batch_rows) < batch_size:
+                    break
+                last_kind, last_sort_time, _, last_score = batch_rows[-1]
+                query_position = (
+                    None if uses_legacy_cursor else last_score,
+                    last_sort_time,
+                    last_kind.id,
+                )
+            return rows
+
+        rows = fetch_visible_rows(
+            system_query,
+            system_recommendation_score,
+            system_sort_time,
+        )
+        if not system_only:
+            rows.extend(
+                fetch_visible_rows(
+                    published_query,
+                    published_recommendation_score,
+                    published_sort_time,
+                )
+            )
+        rows.sort(
+            key=(
+                (lambda row: (row[1], row[0].id))
+                if uses_legacy_cursor
+                else (lambda row: (row[3], row[1], row[0].id))
+            ),
+            reverse=True,
+        )
 
         has_more = len(rows) > limit
         page_rows = rows[:limit]
@@ -247,8 +361,9 @@ class ResourceLibraryService:
         install_counts = {row[0].id: row[2] for row in page_rows}
         next_cursor = None
         if has_more and page_rows:
-            last_kind, last_sort_time, _ = page_rows[-1]
+            last_kind, last_sort_time, _, last_score = page_rows[-1]
             next_cursor = _encode_discovery_cursor(
+                None if uses_legacy_cursor else last_score,
                 last_sort_time,
                 last_kind.id,
             )
@@ -375,6 +490,19 @@ class ResourceLibraryService:
         }
         if source.kind != "Team":
             capability["targetGroups"] = target_groups
+        if request.example_conversations and source.kind != "Team":
+            raise HTTPException(
+                status_code=400,
+                detail="Example conversations are only supported for Agents",
+            )
+        marketplace = capability.setdefault("marketplace", {})
+        if not isinstance(marketplace, dict):
+            marketplace = {}
+            capability["marketplace"] = marketplace
+        if source.kind == "Team":
+            marketplace["exampleConversations"] = [
+                item.model_dump() for item in request.example_conversations
+            ]
         self._set_capability(source, capability)
         self._sync_publication_index(db, source)
         db.commit()
@@ -498,6 +626,18 @@ class ResourceLibraryService:
             capability["visibility"] = (
                 "public" if updates["status"] == "published" else "private"
             )
+        if "example_conversations" in updates:
+            if source.kind != "Team" and updates["example_conversations"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Example conversations are only supported for Agents",
+                )
+            if source.kind == "Team":
+                marketplace = capability.setdefault("marketplace", {})
+                if not isinstance(marketplace, dict):
+                    marketplace = {}
+                    capability["marketplace"] = marketplace
+                marketplace["exampleConversations"] = updates["example_conversations"]
         capability["updatedBy"] = current_user.id
         capability["updatedAt"] = _iso_now()
         self._set_capability(source, capability)
@@ -915,6 +1055,9 @@ class ResourceLibraryService:
                 else self._listing_install_count(db, source)
             ),
             is_installed=self._is_personally_installed(db, source, user_id),
+            example_conversations=(
+                _marketplace_examples(source) if source.kind == "Team" else []
+            ),
             bind_modes=self._bind_modes(source),
             allow_personal_install=bool(capability.get("allowPersonalInstall", True)),
             allow_group_install=bool(capability.get("allowGroupInstall", True)),
@@ -1955,6 +2098,7 @@ class ResourceLibraryService:
                 kind_id=source.id,
                 owner_user_id=source.user_id,
                 resource_type=RESOURCE_TYPE_BY_KIND[source.kind],
+                recommendation_score=0,
                 install_count=0,
                 published_at=now,
                 updated_at=now,

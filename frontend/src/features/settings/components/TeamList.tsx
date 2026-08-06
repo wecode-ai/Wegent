@@ -290,32 +290,10 @@ export default function TeamList({
   const handleTeamSaved = useCallback(
     async (team: Team) => {
       await loadData(false)
-      if (pendingCreateRequestRef.current?.publishAfterCreate) {
-        try {
-          await resourceLibraryApi.createListing({
-            resource_type: 'agent',
-            source_id: team.id,
-            name: team.name,
-            display_name: team.displayName || team.name,
-            description: team.description || null,
-            icon: team.icon || null,
-            tags: pendingCreateRequestRef.current.marketplaceTags || [],
-            version: '1.0.0',
-            manifest_options: {},
-          })
-          toast({ title: t('resource-library:messages.publish_success') })
-        } catch (error) {
-          toast({
-            variant: 'destructive',
-            title: t('resource-library:messages.publish_failed'),
-            description: error instanceof Error ? error.message : undefined,
-          })
-        }
-      }
       if (pendingCreateRequestRef.current) onCreated?.(team)
       pendingCreateRequestRef.current = null
     },
-    [loadData, onCreated, t, toast]
+    [loadData, onCreated]
   )
 
   const handleCreateOptionsChange = useCallback(

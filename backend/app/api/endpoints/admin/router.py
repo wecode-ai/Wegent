@@ -12,6 +12,7 @@ from app.api.endpoints.admin import (
     device_monitor,
     im_channels,
     kind_management,
+    marketplace,
     plugins,
     public_bots,
     public_ghosts,
@@ -44,6 +45,7 @@ router.include_router(api_keys.router, tags=["admin-api-keys"])
 router.include_router(connector_apps.router, tags=["admin-connector-apps"])
 router.include_router(token_issuers.router, tags=["admin-token-issuers"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
+router.include_router(marketplace.router, tags=["admin-marketplace"])
 router.include_router(stats.router, tags=["admin-stats"])
 router.include_router(subscription_monitor.router, tags=["admin-subscription-monitor"])
 router.include_router(tasks.router, tags=["admin-tasks"])

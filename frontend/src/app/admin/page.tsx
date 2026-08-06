@@ -61,6 +61,10 @@ const ConnectorAppList = dynamic(() => import('@/features/admin/components/Conne
 const SystemConfigPanel = dynamic(() => import('@/features/admin/components/SystemConfigPanel'), {
   ssr: false,
 })
+const MarketplaceManagement = dynamic(
+  () => import('@/features/admin/components/MarketplaceManagement'),
+  { ssr: false }
+)
 const BackgroundExecutionMonitorPanel = dynamic(
   () => import('@/features/admin/components/BackgroundExecutionMonitorPanel'),
   { ssr: false }
@@ -119,6 +123,7 @@ function AdminContent() {
         'public-bots',
         'templates',
         'api-keys',
+        'marketplace',
         'system-config',
         'im-channels',
         'connector-apps',
@@ -187,6 +192,8 @@ function AdminContent() {
         return <TemplateList />
       case 'api-keys':
         return <ApiKeyManagement />
+      case 'marketplace':
+        return <MarketplaceManagement />
       case 'system-config':
         return <SystemConfigPanel />
       case 'im-channels':
