@@ -14,14 +14,42 @@ is that the thing being checked is a complete, inspectable, retained snapshot ra
 than a knowledge base already half-rewritten: a rejected version stays in the store
 with its verdict attached, and the published one is still whatever it was.
 
-Removal is the substantive check. It is what makes agent-declared deletion safe to
-allow at all: deletions are permitted, mass deletion is not.
+**The gate is advisory now.** One rule still refuses: a version holding no pages at
+all, which is a run that produced nothing rather than an empty repository. Everything
+else is measured, recorded on the version and shown in the run history, and published.
 
-It is measured against the *set of published paths the version no longer contains*,
-not against the two page counts. Counting would miss the case that matters most: a
-version holding the same number of pages under mostly different paths is a mass
-deletion plus a mass insertion, every affected page loses its document id, and every
-stored citation and index entry pointing at it breaks. The count says nothing changed.
+It did refuse large losses, and the reasoning was sound in the abstract: an agent that
+writes four pages and reports success produces a version holding four, and the
+projection would faithfully delete the rest. In practice it blocked three consecutive
+runs — at one page, then fifteen, then nine, against twenty published — while the wiki
+never updated once, and each shape it rejected turned out to be the agent restructuring
+rather than failing. A wiki that cannot be regenerated is not being protected, and the
+instability those numbers describe is the agent's to fix, not the gate's to hide.
+
+What is lost with it: a genuinely truncated run now publishes, and the pages it did not
+write are deleted from the knowledge base along with their document ids, so anything
+citing them breaks. The version store keeps the previous version, so the content is
+recoverable; the ids are not.
+
+**How loss is measured still depends on how the version was made**, because the two
+warnings mean different things.
+
+An *incremental* version is seeded with every published page before the agent starts,
+so it cannot be a truncated run: a path that is gone was dropped by an explicit
+instruction. That is intent, not malfunction, and refusing it meant a deliberate
+restructure could not be published at all. Large removals are reported and allowed.
+The measure is still the set of missing paths rather than the two counts, because a
+version holding the same number of pages under different paths is a mass deletion
+plus a mass insertion — every affected page loses its document id, and every stored
+citation and index entry pointing at it breaks — and a count cannot see that.
+
+A *full rebuild* starts from nothing and re-derives the structure, so the paths it
+lands on carry no intent: reorganising a wiki renames most of them, and reorganising
+is what rebuilding is for. Measured by overlap, a rebuild that wrote fifteen good
+pages under a new layout was refused for "removing 95% of the published pages" — and
+no rebuild that renamed anything could ever have passed. What still separates a
+reorganised wiki from a run that died halfway is how much of it came back, so a
+rebuild is measured by size.
 """
 
 import logging
@@ -45,10 +73,19 @@ PUBLISH_GATE_EXT_KEY = "publishGate"
 class PublishPolicy:
     """Limits a version must respect to be published."""
 
-    # Share of the previously published pages that may disappear in one publish.
-    # Deleting pages is legitimate; deleting most of them is a malfunction, and the
-    # difference cannot be told apart by inspecting any single page.
-    max_removed_share: float = 0.5
+    # Share of the published pages an incremental run may drop before it is worth
+    # saying so. Reported, not refused: an incremental version is seeded with every
+    # published page before the agent starts, so a path that is gone was removed by
+    # an explicit instruction. There is no truncated-run case to catch here, and
+    # refusing meant a deliberate restructure could not be published at all.
+    warn_removed_share: float = 0.5
+    # How much smaller a rebuild may be than what it replaces before it is worth
+    # saying so. Reported, not refused. Refusing was the honest reading -- a rebuild
+    # starts empty, so a run that stopped early genuinely comes back short -- but in
+    # practice it blocked three consecutive runs while the wiki never updated once,
+    # and the shape it was rejecting kept turning out to be the agent restructuring
+    # rather than failing. A wiki that cannot be regenerated is not being protected.
+    warn_shrink_share: float = 0.5
     # A published wiki always has at least an overview page. A version with none is
     # not an empty repository, it is a run that produced nothing.
     min_pages: int = 1
@@ -87,6 +124,7 @@ def evaluate_publish_gate(
     pages: Sequence[PageSource],
     *,
     published_paths: Sequence[str],
+    rebuilt: bool = False,
     policy: Optional[PublishPolicy] = None,
 ) -> GateVerdict:
     """Judge a finished version against the currently published one.
@@ -94,8 +132,12 @@ def evaluate_publish_gate(
     Args:
         pages: Every page in the version being considered.
         published_paths: Paths currently published, empty when nothing has been.
-            Paths rather than a count: publishing a same-sized version under
-            different paths deletes every page it renamed, and a count cannot see it.
+        rebuilt: Whether this version was produced by a full rebuild. It decides
+            which measure applies, and the two are not interchangeable. An
+            incremental version starts as a copy of the published one, so a path that
+            is gone was deliberately dropped and overlap is the honest measure. A
+            rebuilt version starts empty and re-derives the structure, so overlap
+            only counts renames -- and renaming is what rebuilding does.
         policy: Limits to apply.
 
     Returns:
@@ -115,19 +157,24 @@ def evaluate_publish_gate(
             warnings=warnings,
         )
 
-    if published_paths:
+    if published_paths and rebuilt:
+        # Measured by size, not by overlap: a rebuild renames most paths by design,
+        # so overlap would only count the renaming.
+        shrink_share = 1 - (len(pages) / len(published_paths))
+        if shrink_share > policy.warn_shrink_share:
+            warnings = warnings + (
+                f"rebuild came back with {len(pages)} pages where "
+                f"{len(published_paths)} were published, {shrink_share:.0%} smaller",
+            )
+
+    if published_paths and not rebuilt:
         kept = {collation_key(page.path) for page in pages}
         removed = [path for path in published_paths if collation_key(path) not in kept]
         removed_share = len(removed) / len(published_paths)
-        if removed_share > policy.max_removed_share:
-            return GateVerdict(
-                passed=False,
-                reason=(
-                    f"version removes {removed_share:.0%} of the published pages "
-                    f"({len(removed)} of {len(published_paths)}), over the "
-                    f"{policy.max_removed_share:.0%} limit"
-                ),
-                warnings=warnings,
+        if removed_share > policy.warn_removed_share:
+            warnings = warnings + (
+                f"version removes {removed_share:.0%} of the published pages "
+                f"({len(removed)} of {len(published_paths)})",
             )
 
     # Only the diagram warnings, despite `warnings` carrying more: a policy named

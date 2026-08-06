@@ -1231,3 +1231,58 @@ def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
         )
 
     assert response.status_code == 202
+
+
+def test_the_history_reports_a_failed_task_beside_a_completed_version(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """These are two facts about one run and they can honestly differ: an agent that
+    submitted its pages and concluded the run leaves a published version behind even
+    if its container then died afterwards.
+
+    Showing only the version made them look as though they contradicted each other,
+    with nothing to say there were two.
+    """
+    from app.models.task import TaskResource
+
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+
+    test_db.add(
+        TaskResource(
+            id=8801,
+            user_id=1,
+            kind="Task",
+            name="task-8801",
+            namespace="system",
+            json={"status": {"status": "FAILED"}},
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+    )
+    test_db.commit()
+    _record_a_finished_generation(test_db, kb_id, status="COMPLETED", task_id=8801)
+
+    run = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"][0]
+
+    assert run["status"] == "completed"
+    assert run["task_status"] == "FAILED"
+
+
+def test_a_run_with_no_task_reports_no_task_status(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    """A run whose task could not be created has nothing to report, and must not be
+    made to look as though its task succeeded."""
+    with patch("app.api.endpoints.knowledge._start_the_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    _record_a_finished_generation(test_db, kb_id, status="FAILED", task_id=0)
+
+    run = test_client.get(_history_url(kb_id), headers=auth_headers).json()["runs"][0]
+
+    assert run["task_status"] == ""

@@ -85,6 +85,8 @@ class FailureCode:
     TASK_NOT_CREATED = "task_not_created"
     #: The worker stopped reporting and the run was reclaimed.
     WORKER_ABANDONED = "worker_abandoned"
+    #: The version was written but the publish gate refused it.
+    PUBLISH_REFUSED = "publish_refused"
 
 
 def record_failure_reason(
@@ -326,6 +328,24 @@ def finish_generation(
         effects=effects,
         policy=policy,
     )
+
+    if not result.published:
+        # The status was set to COMPLETED above, before publishing was attempted,
+        # because the gate refuses to consider a version that is not. A refused
+        # version then kept it: the run reported as a success while the wiki was
+        # unchanged, which is the opposite of what happened and the one case where a
+        # reader most needs to be told.
+        generation.status = WikiGenerationStatus.FAILED
+        record_failure_reason(
+            generation, result.reason, code=FailureCode.PUBLISH_REFUSED
+        )
+        db.commit()
+        logger.warning(
+            "[code_wiki] generation %s is not published, recording it as failed: %s",
+            generation.id,
+            result.reason,
+        )
+
     _collect_old_versions(db, knowledge_base)
     return result
 
@@ -496,6 +516,9 @@ class RunRecord:
     failure_code: str = ""
     published: bool = False
     task_id: int = 0
+    #: What became of the task that ran the agent, as the task itself records it.
+    #: Empty when there was no task, or it is gone.
+    task_status: str = ""
 
 
 # Enough to cover the run that broke the wiki without turning this into an audit log.
@@ -513,6 +536,12 @@ def run_history(
 
     ``completed_at`` is reported as absent for a run still going, because the column's
     default is the epoch rather than NULL and a client would otherwise render 1970.
+
+    The task's own outcome is reported alongside the version's. They are two facts
+    about one run and they can honestly differ: an agent that submitted its pages and
+    concluded the run leaves a published version behind even if its container then
+    died, and the version is not wrong about that. Showing only the version made the
+    two look as though they disagreed, with no way to see that there were two.
     """
     published = published_generation_id(knowledge_base)
     rows = (
@@ -522,6 +551,8 @@ def run_history(
         .limit(limit)
         .all()
     )
+    task_states = _task_states(db, [int(row.task_id or 0) for row in rows])
+
     return [
         RunRecord(
             generation_id=row.id,
@@ -538,9 +569,26 @@ def run_history(
             failure_code=failure_code(row),
             published=bool(published) and row.id == published,
             task_id=int(row.task_id or 0),
+            task_status=task_states.get(int(row.task_id or 0), ""),
         )
         for row in rows
     ]
+
+
+def _task_states(db: Session, task_ids: Sequence[int]) -> dict[int, str]:
+    """What became of each task, in one query for the whole page of history."""
+    wanted = {task_id for task_id in task_ids if task_id}
+    if not wanted:
+        return {}
+
+    # Through the store rather than a query of its own: task rows belong to that
+    # layer, and a static check enforces it.
+    from app.stores.tasks import task_store
+
+    return {
+        task.id: str(((task.json or {}).get("status") or {}).get("status") or "")
+        for task in task_store.list_by_ids(db, task_ids=sorted(wanted))
+    }
 
 
 def _finished_at(generation: WikiGeneration) -> Optional[datetime]:

@@ -175,8 +175,9 @@ def test_a_version_the_gate_refuses_does_not_replace_the_published_one(
         _seed_page(test_db, first, path)
     _submit(test_db, first, status="COMPLETED", head_commit=HEAD)
 
+    # Empty: the gate reports a version that shrank and refuses only one that holds
+    # nothing, which is a run that produced nothing rather than an empty repository.
     collapsed = _generation(test_db, test_user, knowledge_base.id)
-    _seed_page(test_db, collapsed, "index")
 
     _submit(test_db, collapsed, status="COMPLETED", head_commit="bbbbbbb")
 

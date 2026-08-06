@@ -1149,12 +1149,14 @@
         "incremental": "Incremental",
         "custom": "Custom"
       },
-      "commitUnreported": "no commit reported"
+      "commitUnreported": "no commit reported",
+      "taskFailed": "The task failed"
     },
     "failure": {
       "task_ended_without_report": "The task ended without reporting a result",
       "task_not_created": "The generation task could not be created",
-      "worker_abandoned": "The worker stopped reporting and the run was reclaimed"
+      "worker_abandoned": "The worker stopped reporting and the run was reclaimed",
+      "publish_refused": "The version was written but refused by the publish gate"
     }
   }
 }

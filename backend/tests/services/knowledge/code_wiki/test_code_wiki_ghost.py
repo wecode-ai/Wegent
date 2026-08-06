@@ -64,6 +64,20 @@ def test_inventing_evidence_is_forbidden(system_prompt: str):
     assert "Do not invent" in system_prompt
 
 
+def test_the_agent_is_told_to_do_the_work_itself(system_prompt: str):
+    """A real run fanned out into sub-agents and then sat blocking on their output
+    until the whole task timed out, having submitted nothing.
+
+    It is not an unreasonable instinct — a page each, read in parallel — but the
+    pages cross-reference each other, so a sub-agent returns a summary of exactly
+    the part that was needed in full.
+    """
+    assert "Plan the whole wiki first" in system_prompt
+    # Not a ban. Delegating is allowed for a repository too large to survey, and only
+    # after the plan exists -- a bounded question, not "write this page".
+    assert "only when the repository is genuinely too large" in system_prompt
+
+
 def test_how_much_to_read_is_bounded(system_prompt: str):
     """Reading everything is how a run exhausts its budget before writing."""
     assert "Do not read every file" in system_prompt
@@ -127,6 +141,16 @@ def test_the_declared_order_is_explained_as_what_readers_see(system_prompt: str)
     """Otherwise the field looks like bookkeeping and gets filled in arbitrarily."""
     assert "--structure-order" in system_prompt
     assert "order readers see" in system_prompt
+
+
+def test_the_agent_is_told_a_completed_run_can_still_be_refused(system_prompt: str):
+    """It was told "marked as COMPLETED" while its version was discarded, and it is
+    the only party that could still fix it — its checkout is there and the version
+    accepts more writes. Now the call reports the outcome, and this says what to do
+    with it.
+    """
+    assert "tells you whether the version was published" in system_prompt
+    assert "`complete` again" in system_prompt
 
 
 def test_the_run_is_required_to_be_finished(system_prompt: str):

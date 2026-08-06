@@ -695,3 +695,43 @@ def test_a_failure_to_tidy_does_not_fail_a_publish(
     )
 
     assert result is not None and result.published
+
+
+def test_a_refused_publish_is_not_recorded_as_a_successful_run(
+    test_db: Session, knowledge_base: Kind, test_user: User, effects: FakeEffects
+):
+    """The status is set to COMPLETED before publishing is attempted, because the
+    gate refuses to consider a version that is not. A refused version then kept it:
+    the run read as a success while the wiki was unchanged.
+
+    Refusal is provoked by concluding a version that holds no pages, which is the
+    only thing the gate still refuses -- shrinking and renaming are reported now.
+    """
+    from app.services.knowledge.code_wiki.generation import FailureCode
+
+    _publish_a_first_wiki(test_db, knowledge_base, test_user, effects, pages=3)
+
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=NEXT_HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    result = finish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=started.generation,
+        user=test_user,
+        effects=effects.build(),
+        succeeded=True,
+        now=NOW,
+    )
+
+    assert result is not None and not result.published
+    state = current_run_state(test_db, knowledge_base, now=NOW)
+    assert state.status == "failed"
+    assert state.failure_code == FailureCode.PUBLISH_REFUSED
+    # The gate's own words survive.
+    assert "produced nothing usable" in state.error_message

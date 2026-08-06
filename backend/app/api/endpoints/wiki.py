@@ -328,18 +328,24 @@ def get_wiki_generation(
     return generation_dict
 
 
-@internal_router.post("/generations/contents", status_code=status.HTTP_204_NO_CONTENT)
+@internal_router.post("/generations/contents")
 def save_wiki_generation_contents(
     payload: WikiContentWriteRequest,
     _: None = Depends(_verify_internal_token),
     wiki_db: Session = Depends(get_wiki_db),
 ):
-    """Write wiki generation contents and update status (internal use)."""
-    wiki_service.save_generation_contents(
+    """Write wiki generation contents and update status (internal use).
+
+    Answers with the publish outcome when a run concludes. It used to answer 204 and
+    say nothing, so an agent whose version the gate refused was told its run was
+    complete while its work was discarded — and it is the only party that could still
+    act on the refusal, since it is running and its checkout is there.
+    """
+    refusal = wiki_service.save_generation_contents(
         wiki_db=wiki_db,
         payload=payload,
     )
-    return None
+    return {"published": refusal is None, "reason": refusal or ""}
 
 
 @internal_router.get("/generations/{generation_id}/pages", response_model=WikiPageRead)
