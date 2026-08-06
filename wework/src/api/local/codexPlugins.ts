@@ -88,7 +88,7 @@ export interface PluginIdentityReference {
   pluginName: string
 }
 
-function normalizeMarketplaceSource(source: string): string {
+export function normalizeMarketplaceSource(source: string): string {
   const normalized = source.trim().replace(/\\\\/g, '/')
   return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
 }
@@ -374,11 +374,11 @@ async function resolveWeworkPersonalMarketplacePath(
   const current = state ?? cachedState ?? (await readState({ skipPersonalReconcile: true }))
   const marketplace = current.marketplaces.find(item => item.id === WEWORK_PERSONAL_MARKETPLACE_ID)
   if (marketplace && isLocalMarketplacePath(marketplace.path)) {
-    return marketplace.path
+    return normalizeMarketplaceSource(marketplace.path)
   }
   const bundled = getInitializedBundledPluginMarketplace()
   if (bundled?.path && isLocalMarketplacePath(bundled.path)) {
-    return bundled.path
+    return normalizeMarketplaceSource(bundled.path)
   }
   throw new Error(`The ${WEWORK_PERSONAL_MARKETPLACE_ID} marketplace is unavailable`)
 }

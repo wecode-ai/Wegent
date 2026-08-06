@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import type { InstalledPlugin } from '@/types/api'
+import { normalizeMarketplaceSource } from '@/api/local/codexPlugins'
 import { preferWeworkPersonalInstalled } from './personalPluginMigration'
 
 function plugin(marketplace: string, pluginKey: string): InstalledPlugin {
@@ -52,6 +53,14 @@ function plugin(marketplace: string, pluginKey: string): InstalledPlugin {
 }
 
 describe('preferWeworkPersonalInstalled', () => {
+  test('normalizes a Codex marketplace manifest path to its marketplace root', () => {
+    expect(
+      normalizeMarketplaceSource(
+        '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal/.agents/plugins/marketplace.json'
+      )
+    ).toBe('/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal')
+  })
+
   test('hides Codex personal duplicates when wework-personal already has the plugin', () => {
     const items = preferWeworkPersonalInstalled([
       plugin('personal', 'dev-tools'),
