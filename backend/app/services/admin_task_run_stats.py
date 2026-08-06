@@ -9,9 +9,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.models.user import User
 from app.schemas.admin_task_runs import (
     RecentTaskRunFailure,
     TaskRunFailureReason,
@@ -23,6 +21,7 @@ from app.services.task_run_metrics import (
     task_run_failure_message,
     task_run_metrics_store,
 )
+from app.stores.tasks import FailedSubtaskDetail, subtask_store
 
 
 def get_task_run_stats(
@@ -70,35 +69,23 @@ def get_task_run_stats(
 def _load_recent_failures(
     db: Session, subtask_ids: list[int], limit: int
 ) -> list[RecentTaskRunFailure]:
-    if not subtask_ids:
-        return []
-    rows = (
-        db.query(Subtask, TaskResource, User)
-        .join(TaskResource, TaskResource.id == Subtask.task_id)
-        .outerjoin(User, User.id == Subtask.user_id)
-        .filter(
-            Subtask.id.in_(subtask_ids),
-            Subtask.status == SubtaskStatus.FAILED,
-            TaskResource.kind == "Task",
-        )
-        .all()
+    details = subtask_store.list_failed_details_by_ids(
+        db,
+        subtask_ids=subtask_ids,
+        limit=limit,
     )
-    order = {subtask_id: index for index, subtask_id in enumerate(subtask_ids)}
-    rows.sort(key=lambda row: order.get(row[0].id, len(order)))
-    return [
-        _recent_failure(subtask, task, user) for subtask, task, user in rows[:limit]
-    ]
+    return [_recent_failure(detail) for detail in details]
 
 
-def _recent_failure(
-    subtask: Subtask, task: TaskResource, user: Optional[User]
-) -> RecentTaskRunFailure:
+def _recent_failure(detail: FailedSubtaskDetail) -> RecentTaskRunFailure:
+    subtask = detail.subtask
+    task = detail.task
     return RecentTaskRunFailure(
         subtask_id=subtask.id,
         task_id=task.id,
         task_title=_task_title(task),
         user_id=subtask.user_id,
-        user_name=user.user_name if user else None,
+        user_name=detail.user_name,
         client_origin=task.client_origin,
         error_message=normalize_failure_reason(
             task_run_failure_message(subtask.error_message, subtask.result)

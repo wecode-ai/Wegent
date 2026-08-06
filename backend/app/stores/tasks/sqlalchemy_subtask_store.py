@@ -14,7 +14,7 @@ from app.models.subtask_context import SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.task_run_metric_hooks import queue_bulk_subtask_status_metrics
-from app.stores.tasks.interfaces import TaskAccessStore
+from app.stores.tasks.interfaces import FailedSubtaskDetail, TaskAccessStore
 from shared.models.db.enums import ContextType
 
 
@@ -283,6 +283,37 @@ class SqlAlchemySubtaskStore:
             )
             .all()
         )
+
+    def list_failed_details_by_ids(
+        self,
+        db: Session,
+        *,
+        subtask_ids: Sequence[int],
+        limit: int,
+    ) -> list[FailedSubtaskDetail]:
+        if not subtask_ids or limit <= 0:
+            return []
+        rows = (
+            db.query(Subtask, TaskResource, User.user_name)
+            .join(TaskResource, TaskResource.id == Subtask.task_id)
+            .outerjoin(User, User.id == Subtask.user_id)
+            .filter(
+                Subtask.id.in_(subtask_ids),
+                Subtask.status == SubtaskStatus.FAILED,
+                TaskResource.kind == "Task",
+            )
+            .all()
+        )
+        order = {subtask_id: index for index, subtask_id in enumerate(subtask_ids)}
+        rows.sort(key=lambda row: order.get(row[0].id, len(order)))
+        return [
+            FailedSubtaskDetail(
+                subtask=subtask,
+                task=task,
+                user_name=user_name,
+            )
+            for subtask, task, user_name in rows[:limit]
+        ]
 
     def get_accessible_by_id(
         self,
