@@ -29,6 +29,7 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { track } from '@/telemetry/client'
 import { buildRuntimeTaskRoute, toBrowserPath } from '@/lib/navigation'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { Delivery } from '@/api/deliveries'
@@ -179,12 +180,15 @@ export function TodoDetailPanel({
     const path = item.parentId
       ? `work/${item.workTypeKey ?? 'general'}/${safeName}`
       : `context/${safeName}`
-    const result = await writeTodoWorkspaceFile(item.workspaceItemId, path, file)
-    if (!result) {
-      setWorkspaceError(t('todo.workspace_write_failed', '写入共享工作区失败'))
-      return
+    try {
+      const result = await writeTodoWorkspaceFile(item.workspaceItemId, path, file)
+      if (!result) throw new Error(t('todo.workspace_write_failed', '写入共享工作区失败'))
+      await refreshWorkspace()
+      track('feature_action_completed', { domain: 'task_workspace_file', action: 'upload' })
+    } catch (error) {
+      track('operation_failed', { operation: 'task_workspace_file_action' })
+      setWorkspaceError(error instanceof Error ? error.message : String(error))
     }
-    await refreshWorkspace()
   }
 
   const renameWorkspaceEntry = async (entry: TodoWorkspaceEntry) => {
@@ -197,7 +201,9 @@ export function TodoDetailPanel({
     try {
       await renameTodoWorkspaceEntry(item.workspaceItemId, entry.path, `${parent}${nextName}`)
       await refreshWorkspace()
+      track('feature_action_completed', { domain: 'task_workspace_file', action: 'rename' })
     } catch (error) {
+      track('operation_failed', { operation: 'task_workspace_file_action' })
       setWorkspaceError(error instanceof Error ? error.message : String(error))
     }
   }
@@ -209,7 +215,9 @@ export function TodoDetailPanel({
     try {
       await deleteTodoWorkspaceEntry(item.workspaceItemId, entry.path)
       await refreshWorkspace()
+      track('feature_action_completed', { domain: 'task_workspace_file', action: 'delete' })
     } catch (error) {
+      track('operation_failed', { operation: 'task_workspace_file_action' })
       setWorkspaceError(error instanceof Error ? error.message : String(error))
     }
   }

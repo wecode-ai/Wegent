@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, Sparkles, X }
 import type { AITableApi, AITableField, AITableRecord } from '@/api/aitable'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
 
 const READONLY_TYPES = new Set([
   'formula',
@@ -374,12 +375,18 @@ export function AITableTaskFields({
   }, [fields, project.provider_config?.board_mapping, record])
 
   async function updateField(fieldId: string, value: unknown) {
-    const updated = await api.updateRecord(project.id, recordId, { [fieldId]: value })
-    setRecord(current =>
-      current
-        ? { ...current, cells: { ...current.cells, [fieldId]: updated.cells[fieldId] ?? value } }
-        : current
-    )
+    try {
+      const updated = await api.updateRecord(project.id, recordId, { [fieldId]: value })
+      setRecord(current =>
+        current
+          ? { ...current, cells: { ...current.cells, [fieldId]: updated.cells[fieldId] ?? value } }
+          : current
+      )
+      track('feature_action_completed', { domain: 'table_record', action: 'update' })
+    } catch (error) {
+      track('operation_failed', { operation: 'table_action' })
+      throw error
+    }
   }
 
   if (error) return <p className="mt-5 text-sm text-destructive">{error}</p>

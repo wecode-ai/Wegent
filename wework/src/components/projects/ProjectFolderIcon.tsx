@@ -1,4 +1,4 @@
-import { Folder, FolderGit2, Globe2 } from 'lucide-react'
+import { Folder, FolderGit2, FolderOpen, Globe2 } from 'lucide-react'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks } from '@/types/api'
@@ -8,6 +8,7 @@ interface ProjectFolderIconProps {
   className?: string
   testId?: string
   remote?: boolean
+  open?: boolean
 }
 
 export function ProjectFolderIcon({
@@ -15,9 +16,10 @@ export function ProjectFolderIcon({
   className,
   testId,
   remote = false,
+  open = false,
 }: ProjectFolderIconProps) {
   const gitProject = isGitWorkspaceProject(project)
-  const Icon = gitProject ? FolderGit2 : Folder
+  const Icon = open ? FolderOpen : gitProject ? FolderGit2 : Folder
   const resolvedTestId =
     testId ??
     (remote
@@ -28,12 +30,22 @@ export function ProjectFolderIcon({
 
   if (remote) {
     return (
-      <span data-testid={resolvedTestId} className={cn('relative inline-flex', className)}>
+      <span
+        data-testid={resolvedTestId}
+        data-state={open ? 'open' : 'closed'}
+        className={cn('relative inline-flex', className)}
+      >
         <Icon className="h-full w-full" />
         <Globe2 className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-[rgb(var(--color-bg-surface))] stroke-[2.5]" />
       </span>
     )
   }
 
-  return <Icon data-testid={resolvedTestId} className={className} />
+  return (
+    <Icon
+      data-testid={resolvedTestId}
+      data-state={open ? 'open' : 'closed'}
+      className={className}
+    />
+  )
 }

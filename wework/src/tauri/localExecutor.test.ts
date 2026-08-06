@@ -40,7 +40,7 @@ describe('localExecutor', () => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({
           id: 'wework-personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           pluginCount: 0,
         })
       }
@@ -71,7 +71,7 @@ describe('localExecutor', () => {
     })
     expect(getInitializedBundledPluginMarketplace()).toEqual({
       id: 'wework-personal',
-      path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+      path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       pluginCount: 0,
     })
     expect(invokeMock.mock.calls).toEqual([
@@ -86,7 +86,7 @@ describe('localExecutor', () => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({
           id: 'wework-personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           pluginCount: 0,
         })
       }
@@ -109,7 +109,7 @@ describe('localExecutor', () => {
   })
 
   test('keeps an initialized bundled marketplace without adding it again', async () => {
-    const path = '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal'
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
         return Promise.resolve({ id: 'wework-personal', path, pluginCount: 0 })
@@ -137,8 +137,7 @@ describe('localExecutor', () => {
   })
 
   test('does not start bundled marketplace registration before reporting ready', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-background'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-background'
     let finishMarketplaceRegistration: (value: { marketplaceName: string }) => void = () =>
       undefined
     const marketplaceRegistration = new Promise<{ marketplaceName: string }>(resolve => {
@@ -194,8 +193,7 @@ describe('localExecutor', () => {
   })
 
   test('repairs a stale bundled marketplace using local-only discovery', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-repaired'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-repaired'
     let addAttempts = 0
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {
@@ -259,8 +257,7 @@ describe('localExecutor', () => {
   })
 
   test('defers bundled marketplace registration until it is explicitly requested', async () => {
-    const path =
-      '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal-deferred'
+    const path = '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal-deferred'
     let shouldPromptMigration = true
     invokeMock.mockImplementation(command => {
       if (command === LOCAL_EXECUTOR_COMMANDS.initializeBundledPluginMarketplace) {

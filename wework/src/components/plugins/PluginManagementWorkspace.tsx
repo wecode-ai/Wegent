@@ -4,6 +4,7 @@ import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { track } from '@/telemetry/client'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -203,6 +204,11 @@ export function PluginManagementWorkspace({
           )
         )
         notifyLocalPluginSkillsChanged()
+        track('plugin_enabled_changed', {
+          enabled: !plugin.enabled,
+          scope: 'plugin',
+          source: 'cloud',
+        })
       })
       .catch(() => {
         setInstalledPlugins(previous =>
@@ -210,6 +216,7 @@ export function PluginManagementWorkspace({
             String(item.id) === String(id) ? { ...item, enabled: plugin.enabled } : item
           )
         )
+        track('operation_failed', { operation: 'plugin_toggle' })
       })
   }
 
@@ -240,11 +247,17 @@ export function PluginManagementWorkspace({
             String(item.id) === String(id) ? toInstalledPluginItem(updated) : item
           )
         )
+        track('plugin_enabled_changed', {
+          enabled,
+          scope: 'component',
+          source: 'cloud',
+        })
       })
       .catch(() => {
         setInstalledPlugins(previous =>
           previous.map(item => (String(item.id) === String(id) ? plugin : item))
         )
+        track('operation_failed', { operation: 'plugin_toggle' })
       })
   }
 
@@ -289,6 +302,9 @@ export function PluginManagementWorkspace({
             defaultValue: `${pluginName} 已卸载`,
           }),
         })
+        track('plugin_uninstalled', {
+          source: isCloudManagedInstalledPlugin(plugin.raw) ? 'cloud' : 'local',
+        })
       })
       .catch((error: Error) => {
         setPluginOperationNotice({
@@ -296,6 +312,7 @@ export function PluginManagementWorkspace({
           kind: 'error',
           message: error.message,
         })
+        track('operation_failed', { operation: 'plugin_uninstall' })
       })
       .finally(() => {
         setUninstallingPluginIds(previous => {

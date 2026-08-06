@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
 import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
+import { track } from '@/telemetry/client'
 
 interface PluginCreateWorkspaceProps {
   sidebarCollapsed?: boolean
@@ -150,9 +151,13 @@ export function PluginCreateWorkspace({
         onError: setSubmitError,
       })
       if (sent) {
+        track('feature_action_completed', { domain: 'plugin', action: 'create' })
         navigateTo('/')
+      } else {
+        track('operation_failed', { operation: 'plugin_action' })
       }
     } catch (error) {
+      track('operation_failed', { operation: 'plugin_action' })
       setSubmitError(error instanceof Error ? error.message : String(error))
     } finally {
       setIsSubmitting(false)

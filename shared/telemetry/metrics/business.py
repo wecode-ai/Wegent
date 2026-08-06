@@ -199,13 +199,9 @@ def record_session_opened(
         return
 
     try:
-        attributes = {}
-        if user_id:
-            attributes["user_id"] = user_id
-        if team_id:
-            attributes["team_id"] = team_id
-
-        get_wegent_metrics().session_opened.add(1, attributes)
+        # User and resource identifiers belong in traces or events, not metric
+        # attributes, where they create unbounded cardinality.
+        get_wegent_metrics().session_opened.add(1)
     except Exception as e:
         logger.debug(f"Failed to record session opened metric: {e}")
 
@@ -248,15 +244,7 @@ def record_message_sent(
         metrics = get_wegent_metrics()
 
         # Record message sent
-        attributes = {}
-        if user_id:
-            attributes["user_id"] = user_id
-        if team_id:
-            attributes["team_id"] = team_id
-        if bot_id:
-            attributes["bot_id"] = bot_id
-
-        metrics.message_sent.add(1, attributes)
+        metrics.message_sent.add(1)
 
         # Record by message type if provided
         if message_type:
@@ -280,13 +268,7 @@ def record_task_created(
         return
 
     try:
-        attributes = {}
-        if user_id:
-            attributes["user_id"] = user_id
-        if team_id:
-            attributes["team_id"] = team_id
-
-        get_wegent_metrics().task_created.add(1, attributes)
+        get_wegent_metrics().task_created.add(1)
     except Exception as e:
         logger.debug(f"Failed to record task created metric: {e}")
 
@@ -313,10 +295,6 @@ def record_task_completed(
         metrics = get_wegent_metrics()
 
         attributes = {}
-        if user_id:
-            attributes["user_id"] = user_id
-        if team_id:
-            attributes["team_id"] = team_id
         if agent_type:
             attributes["agent_type"] = agent_type
 
@@ -351,10 +329,6 @@ def record_task_failed(
 
     try:
         attributes = {}
-        if user_id:
-            attributes["user_id"] = user_id
-        if team_id:
-            attributes["team_id"] = team_id
         if agent_type:
             attributes["agent_type"] = agent_type
 

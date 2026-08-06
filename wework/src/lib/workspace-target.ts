@@ -68,7 +68,7 @@ export function createLocalAttachmentWorkspaceTarget(
 ): WorkspaceTarget | null {
   const normalizedPath = filePath.trim().replace(/\\/g, '/')
   const isLocalAttachment =
-    normalizedPath.includes('/.wegent-executor/workspace/attachments/') ||
+    normalizedPath.includes('/.wework/workspace/attachments/') ||
     normalizedPath.includes('/.wegent/attachments/')
   return isLocalAttachment ? createLocalFileWorkspaceTarget(normalizedPath, devices) : null
 }

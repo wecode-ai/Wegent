@@ -6,6 +6,10 @@ import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/c
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
+const telemetryMocks = vi.hoisted(() => ({
+  track: vi.fn(),
+}))
+
 async function installPluginFromMarketCard(testId: string) {
   await userEvent.click(screen.getByTestId(testId))
   await userEvent.click(await screen.findByTestId('install-plugin-dialog-confirm'))
@@ -18,6 +22,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   isTauri: vi.fn(() => false),
 }))
 
+vi.mock('@/telemetry/client', () => telemetryMocks)
 vi.mock('@/api/cloud/connectorApps', () => ({
   authorizeWegentConnector: vi.fn(),
   listWegentConnectorApps: vi.fn(),
@@ -175,7 +180,7 @@ function mockCodexAppServerInvoke(
   vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
     if (command === 'local_executor_codex_home_migration_status') {
       return Promise.resolve({
-        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        weworkCodexHome: '/Users/test/.wework/codex',
         nativeCodexHome: '/Users/test/.codex',
         weworkCodexHomeExists: true,
         nativeCodexHomeExists: false,
@@ -184,7 +189,7 @@ function mockCodexAppServerInvoke(
     }
     if (command === 'local_executor_migrate_native_codex_home') {
       return Promise.resolve({
-        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        weworkCodexHome: '/Users/test/.wework/codex',
         nativeCodexHome: '/Users/test/.codex',
         weworkCodexHomeExists: true,
         nativeCodexHomeExists: true,
@@ -898,6 +903,7 @@ function mockSystemSkillsFetch(
 
 describe('PluginsWorkspace', () => {
   beforeEach(() => {
+    telemetryMocks.track.mockClear()
     vi.mocked(convertFileSrc).mockClear()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
@@ -1229,6 +1235,7 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/marketplace/101/install?device_id=current-device',
       expect.objectContaining({ method: 'POST' })
     )
+    expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_installed', { source: 'cloud' })
   })
 
   test('shows a lightweight notice while browser authorization is pending', async () => {
@@ -1410,6 +1417,9 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('安装')
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('plugin_uninstalled', { source: 'local' })
+    )
   })
 
   test('uninstalls a local Codex plugin even when cloud installs own the installed list', async () => {
@@ -1900,7 +1910,7 @@ describe('PluginsWorkspace', () => {
         {
           name: 'wework-personal',
           displayName: 'Personal',
-          path: '/Users/test/.wegent-executor/capabilities/bundled-marketplaces/wework-personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
           plugins: [
             {
               id: '202',
@@ -2136,7 +2146,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(invoke).mockImplementation((command: string) => {
       if (command === 'local_executor_codex_home_migration_status') {
         return Promise.resolve({
-          weworkCodexHome: '/Users/test/.wegent-executor/codex',
+          weworkCodexHome: '/Users/test/.wework/codex',
           nativeCodexHome: '/Users/test/.codex',
           weworkCodexHomeExists: true,
           nativeCodexHomeExists: false,

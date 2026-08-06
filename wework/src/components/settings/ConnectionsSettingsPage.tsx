@@ -1388,7 +1388,7 @@ export function ConnectionsSettingsPage({
     <div
       data-testid="wework-settings-page"
       className={cn(
-        'relative flex h-screen min-w-0 flex-1 overflow-hidden text-text-primary',
+        'relative flex h-full min-w-0 flex-1 overflow-hidden text-text-primary',
         background.imagePath && (background.inMain || background.inSidebar || background.inTopBar)
           ? 'bg-transparent'
           : 'bg-background'
