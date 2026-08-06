@@ -13,6 +13,7 @@ core_segments=(
   conversation-state
   workspace-attachments
   rendering-extensions
+  embedded-browser
 )
 plugin_segments=(
   plugin-lifecycle
@@ -152,6 +153,16 @@ classify_wework_path() {
       wework/src/components/chat/composer/WorktreeBranchSelector* | \
       wework/src/components/chat/composer/composerPathTransfer*)
       select_target "core:workspace-attachments"
+      return
+      ;;
+
+    # The embedded browser has a dedicated agent scenario checkpoint.
+    wework/src-tauri/src/embedded_browser* | \
+      wework/src/lib/embedded-browser* | \
+      wework/src/lib/browser-url* | \
+      wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      select_target "core:embedded-browser"
       return
       ;;
 

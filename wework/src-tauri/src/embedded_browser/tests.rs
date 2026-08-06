@@ -1,28 +1,44 @@
 use std::{
     collections::HashMap,
-    env,
+    env, fs,
     io::Write,
     net::TcpListener,
+    path::Path,
     sync::{Arc, Barrier, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use super::{
-    bridge_navigation_url, bridge_request_authorized, browser_open_action, browser_webview_url,
-    consume_approved_agent_risk, download_event_owner, logical_owner_for_native_label,
-    merge_request_option, native_webview_label, read_http_request, ready_logical_entry,
-    register_agent_approval, relabel_logical_entry, remove_logical_entry_if_native_matches,
-    script_browser_action, script_resolve_inspect_target, script_semantic_inspect,
-    should_record_loaded_url, update_logical_entry_if_native_matches, wait_for_browser_ready,
-    EmbeddedBrowserBridgeRequest, EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction,
-    EmbeddedBrowserPageState, EmbeddedBrowserReadiness, EmbeddedBrowserState,
-    EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, EMBEDDED_BROWSER_NOT_READY_ERROR,
+    bridge_navigation_url, bridge_request_authorized, browser_file_url_from_path,
+    browser_open_action, browser_webview_url, consume_approved_agent_risk,
+    directory_entry_modified_unix_seconds, directory_listing_html, download_event_owner,
+    file_url_path, format_directory_entry_modified, format_file_size, loaded_browser_url,
+    local_file_browser_title, logical_owner_for_native_label, merge_request_option,
+    native_webview_label, read_http_request, ready_logical_entry, register_agent_approval,
+    register_preview_source, relabel_logical_entry, remove_logical_entry_if_native_matches,
+    resolve_browser_navigation_url, script_browser_action, script_resolve_inspect_target,
+    script_semantic_inspect, should_record_loaded_url, update_logical_entry_if_native_matches,
+    wait_for_browser_ready, DirectoryEntry, EmbeddedBrowserBridgeRequest,
+    EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
+    EmbeddedBrowserReadiness, EmbeddedBrowserState, EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
+    EMBEDDED_BROWSER_NOT_READY_ERROR,
 };
+use encoding_rs::GB18030;
 use serde_json::{json, Value};
 use tauri::WebviewUrl;
 
 static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn test_temp_dir(name: &str) -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "wework-embedded-browser-test-{}-{name}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("test temp directory should be created");
+    directory
+}
 
 #[test]
 fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
@@ -47,11 +63,197 @@ fn placeholder_load_does_not_replace_the_requested_url() {
 }
 
 #[test]
-fn bridge_navigation_only_allows_http_and_https() {
+fn directory_file_url_converts_back_to_path() {
+    let root = test_temp_dir("directory-file-url");
+    let directory = root.join("reports");
+    fs::create_dir_all(&directory).unwrap();
+    let url = browser_file_url_from_path(&directory).unwrap();
+
+    assert_eq!(file_url_path(&url).unwrap(), directory);
+}
+
+#[test]
+fn directory_listing_html_links_files_and_directories() {
+    let modified = format_directory_entry_modified(Ok(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_072_504)
+    ))
+    .unwrap();
+    let html = directory_listing_html(
+        Path::new("/Users/me/reports"),
+        &[
+            DirectoryEntry {
+                name: "nested/".to_string(),
+                url: "file:///Users/me/reports/nested/".to_string(),
+                is_directory: true,
+                size: None,
+                modified: None,
+                modified_unix_seconds: None,
+            },
+            DirectoryEntry {
+                name: "a < b.txt".to_string(),
+                url: "file:///Users/me/reports/a%20%3C%20b.txt".to_string(),
+                is_directory: false,
+                size: Some(12),
+                modified: Some(modified.clone()),
+                modified_unix_seconds: Some(1_715_072_504),
+            },
+        ],
+        false,
+    );
+
+    assert!(html.contains("<table id=\"directory-listing\""));
+    assert!(html.contains("href=\"file:///Users/me/reports/nested/\""));
+    assert!(html.contains("a &lt; b.txt"));
+    assert!(html.contains("12 B"));
+    assert!(html.contains(&modified));
+    assert!(html.contains("data-testid=\"embedded-browser-directory-sort-name\""));
+    assert!(html.contains("function sortDirectory(button)"));
+    assert!(!html.contains("class=\"entry entry-"));
+    assert!(!modified.ends_with('s'));
+}
+
+#[test]
+fn file_sizes_use_readable_decimal_units() {
+    assert_eq!(format_file_size(12), "12 B");
+    assert_eq!(format_file_size(1_234), "1.2 kB");
+    assert_eq!(format_file_size(12_345_678), "12.3 MB");
+    assert_eq!(format_file_size(1_234_567_890), "1.2 GB");
+}
+
+#[test]
+fn directory_modified_unix_seconds_supports_sorting() {
+    assert_eq!(
+        directory_entry_modified_unix_seconds(Ok(
+            SystemTime::UNIX_EPOCH + Duration::from_secs(1_715_072_504)
+        )),
+        Some(1_715_072_504)
+    );
+}
+
+#[test]
+fn loaded_directory_preview_url_preserves_requested_directory_url() {
+    let state = EmbeddedBrowserState::default();
+    register_preview_source(
+        &state,
+        "file:///tmp/wework-embedded-browser/directory-1.html",
+        "file:///Users/me/reports",
+    );
+
+    assert_eq!(
+        loaded_browser_url(
+            &state,
+            "file:///tmp/wework-embedded-browser/directory-1.html"
+        ),
+        Some("file:///Users/me/reports".to_string())
+    );
+    assert_eq!(loaded_browser_url(&state, "about:blank"), None);
+}
+
+#[test]
+fn directory_preview_navigation_updates_to_nested_directory_url() {
+    let state = EmbeddedBrowserState::default();
+    let root = test_temp_dir("nested-directory-preview");
+    let nested = root.join("a").join("b");
+    fs::create_dir_all(&nested).unwrap();
+
+    let root_url = browser_file_url_from_path(&root).unwrap();
+    let root_display = resolve_browser_navigation_url(&state, root_url.as_str()).unwrap();
+    assert_eq!(
+        loaded_browser_url(&state, root_display.as_str()),
+        Some(root_url.to_string())
+    );
+    assert_eq!(
+        local_file_browser_title(&root_url),
+        Some(format!("Index of {}", root.display()))
+    );
+
+    let nested_url = browser_file_url_from_path(&nested).unwrap();
+    let nested_display = resolve_browser_navigation_url(&state, nested_url.as_str()).unwrap();
+    assert_ne!(nested_display.as_str(), root_display.as_str());
+    assert_eq!(
+        loaded_browser_url(&state, nested_display.as_str()),
+        Some(nested_url.to_string())
+    );
+    assert_eq!(
+        resolve_browser_navigation_url(&state, nested_display.as_str()).unwrap(),
+        nested_display
+    );
+}
+
+#[test]
+fn text_file_urls_use_generated_preview_pages() {
+    let state = EmbeddedBrowserState::default();
+    let root = test_temp_dir("text-preview");
+    let markdown_path = root.join("README.md");
+    let html_path = root.join("index.html");
+    let plain_text_path = root.join("plain-text");
+    let gb18030_path = root.join("chinese.txt");
+    let utf16_path = root.join("utf16.txt");
+    let binary_path = root.join("archive.zip");
+    fs::write(&markdown_path, "# 标题\n").unwrap();
+    fs::write(&html_path, "<h1>Rendered HTML</h1>").unwrap();
+    fs::write(&plain_text_path, "中文文本\n第二行").unwrap();
+    let (gb18030_text, _, _) = GB18030.encode("中文编码");
+    fs::write(&gb18030_path, gb18030_text.as_ref()).unwrap();
+    fs::write(&utf16_path, [0xFF, 0xFE, 0x2D, 0x4E, 0x87, 0x65]).unwrap();
+    fs::write(&binary_path, [0x50, 0x4b, 0x03, 0x04, 0x00]).unwrap();
+
+    let markdown_url = browser_file_url_from_path(&markdown_path).unwrap();
+    assert_eq!(
+        local_file_browser_title(&markdown_url),
+        Some("README.md".to_string())
+    );
+    let markdown_display = resolve_browser_navigation_url(&state, markdown_url.as_str()).unwrap();
+    assert_ne!(markdown_display.as_str(), markdown_url.as_str());
+    let markdown_preview = fs::read_to_string(file_url_path(&markdown_display).unwrap()).unwrap();
+    assert!(markdown_preview.contains("README.md"));
+    assert!(markdown_preview.contains("标题"));
+    assert!(!markdown_preview.contains(markdown_url.as_str()));
+    assert_eq!(
+        loaded_browser_url(&state, markdown_display.as_str()),
+        Some(markdown_url.to_string())
+    );
+
+    let plain_text_url = browser_file_url_from_path(&plain_text_path).unwrap();
+    let plain_text_display =
+        resolve_browser_navigation_url(&state, plain_text_url.as_str()).unwrap();
+    assert_ne!(plain_text_display.as_str(), plain_text_url.as_str());
+    let plain_text_preview =
+        fs::read_to_string(file_url_path(&plain_text_display).unwrap()).unwrap();
+    assert!(plain_text_preview.contains("plain-text"));
+    assert!(plain_text_preview.contains("中文文本"));
+    assert_eq!(
+        loaded_browser_url(&state, plain_text_display.as_str()),
+        Some(plain_text_url.to_string())
+    );
+
+    let gb18030_url = browser_file_url_from_path(&gb18030_path).unwrap();
+    let gb18030_display = resolve_browser_navigation_url(&state, gb18030_url.as_str()).unwrap();
+    let gb18030_preview = fs::read_to_string(file_url_path(&gb18030_display).unwrap()).unwrap();
+    assert!(gb18030_preview.contains("中文编码"));
+
+    let utf16_url = browser_file_url_from_path(&utf16_path).unwrap();
+    let utf16_display = resolve_browser_navigation_url(&state, utf16_url.as_str()).unwrap();
+    let utf16_preview = fs::read_to_string(file_url_path(&utf16_display).unwrap()).unwrap();
+    assert!(utf16_preview.contains("中文"));
+
+    let html_url = browser_file_url_from_path(&html_path).unwrap();
+    let html_display = resolve_browser_navigation_url(&state, html_url.as_str()).unwrap();
+    assert_eq!(html_display, html_url);
+
+    let binary_url = browser_file_url_from_path(&binary_path).unwrap();
+    let binary_display = resolve_browser_navigation_url(&state, binary_url.as_str()).unwrap();
+    assert_eq!(binary_display.as_str(), binary_url.as_str());
+}
+
+#[test]
+fn bridge_navigation_allows_http_https_and_file() {
     assert!(bridge_navigation_url("https://example.com/").is_ok());
     assert!(bridge_navigation_url("http://example.com/").is_ok());
-    assert!(bridge_navigation_url("file:///etc/passwd").is_err());
+    assert!(bridge_navigation_url("file:///etc/passwd").is_ok());
+    assert!(bridge_navigation_url("file:///Users/me/report.html").is_ok());
     assert!(bridge_navigation_url("javascript:alert(1)").is_err());
+    assert!(bridge_navigation_url("data:text/html,<b>x</b>").is_err());
 }
 
 #[test]

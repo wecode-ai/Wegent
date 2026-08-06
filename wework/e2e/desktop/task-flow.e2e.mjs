@@ -12947,6 +12947,7 @@ async function main() {
   let blockingNetworkProxy
   let cloudEnvironment
   let phase = 'startup'
+  let desktopScenarioVerified = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -15310,10 +15311,27 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
+        desktopScenarioVerified = true
         await desktopScenario.verify(control)
       }
       if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
         console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
+    if (shouldRunDesktopCheckpoint('embedded-browser')) {
+      phase = 'embedded-browser-scenario'
+      assert.ok(
+        desktopScenario,
+        'The embedded-browser checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      if (!desktopScenarioVerified) {
+        desktopScenarioVerified = true
+        await desktopScenario.verify(control)
+      }
+      if (shouldStopAfterDesktopCheckpoint('embedded-browser')) {
+        console.log(`Wework desktop embedded-browser checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
