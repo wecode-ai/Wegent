@@ -8,8 +8,7 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
-const RIGHT_BROWSER_OPTION_SELECTOR =
-  `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
+const RIGHT_BROWSER_OPTION_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-browser-option"]`
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
@@ -55,9 +54,11 @@ function fixtureHtml() {
     <meta charset="utf-8" />
     <title>${READY_TEXT}</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 32px; }
-      label, input, button, output, select { display: block; margin-block: 12px; }
-      input, button, select { font: inherit; padding: 8px 10px; }
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      h1 { margin: 0 0 12px; font-size: 24px; }
+      label, input, button, output, select { display: block; margin-block: 6px; }
+      input, button, select { font: inherit; padding: 4px 6px; }
+      #agent-confirm { display: inline; padding: 0; margin: 0 6px 0 0; }
       #agent-scroll-box { block-size: 120px; overflow: auto; border: 1px solid #ccc; padding: 8px; }
       #agent-scroll-spacer { block-size: 420px; }
     </style>
